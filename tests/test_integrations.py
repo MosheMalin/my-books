@@ -422,7 +422,7 @@ def test_rebooks_and_booksefer_parse_and_clean():
     assert "עוד ספר כלשהו" in titles, titles
 
 
-def test_chain_catalog_consults_later_sources_only_on_empty():
+def test_chain_catalog_unions_until_min_results():
     from booksnap.extra_catalogs import ChainCatalog
     calls = []
 
@@ -433,12 +433,22 @@ def test_chain_catalog_consults_later_sources_only_on_empty():
             calls.append(self.name)
             return self.out
 
-    hit = [CatalogEntry("1", "ספר", "")]
-    assert ChainCatalog([Src("a", hit), Src("b", hit)]).candidates("x") == hit
-    assert calls == ["a"]                      # b never consulted
+    rich = [CatalogEntry(str(i), f"ספר מספר {i}", "") for i in range(3)]
+    one = [CatalogEntry("x1", "הספר הנכון", "")]
+    # a rich first source stops the cascade
+    assert ChainCatalog([Src("a", rich), Src("b", one)]).candidates("x") == rich
+    assert calls == ["a"]
     calls.clear()
-    assert ChainCatalog([Src("a", []), Src("b", hit)]).candidates("x") == hit
-    assert calls == ["a", "b"]                 # cascade on empty
+    # a THIN first source no longer blocks the one that has the right book
+    # (שלושה ימים בספטמבר case: wrong-but-nonempty used to stop the chain)
+    got = ChainCatalog([Src("a", one),
+                        Src("b", [CatalogEntry("x2", "ספר נוסף", "")])]).candidates("x")
+    assert {e.id for e in got} == {"x1", "x2"} and calls == ["a", "b"]
+    # min_results=1 restores the pure on-empty cascade
+    calls.clear()
+    assert ChainCatalog([Src("a", one), Src("b", rich)],
+                        min_results=1).candidates("x") == one
+    assert calls == ["a"]
 
 
 def test_extra_catalog_transport_failure_is_safe():

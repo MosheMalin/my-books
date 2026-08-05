@@ -134,19 +134,27 @@ class BooksferCatalog(_HtmlSearchCatalog):
 
 
 class ChainCatalog:
-    """Ordered on-empty cascade over any number of catalogs.
+    """Ordered cascade: precise sources first, broader ones only when the
+    harvest so far is thin (fewer than `min_results` candidates, unioned).
 
-    Same semantics as FallbackCatalog's default (secondary only when the
-    primary found NOTHING), generalized: precise sources first, each broader
-    source consulted only when everything before it came up empty.
+    min_results=1 is the pure on-empty cascade. It was the measured best
+    early on, but kept failing the same way as gates improved: a precise
+    source returning WRONG-but-nonempty candidates blocks the source that
+    has the right book (מלכוד 22, The elephant, and on IMG_8131 the exact
+    NLI title שלושה ימים בספטמבר blocked by Simania's שלושה-ימים lookalikes)
+    — re-measured with the current gates, min_results=3 no longer regresses
+    the fixture, so the union is the default now.
     """
 
-    def __init__(self, catalogs: list):
+    def __init__(self, catalogs: list, min_results: int = 3):
         self.catalogs = list(catalogs)
+        self.min_results = min_results
 
     def candidates(self, query: str, limit: int = 15) -> list[CatalogEntry]:
+        merged: dict[str, CatalogEntry] = {}
         for c in self.catalogs:
-            found = c.candidates(query, limit)
-            if found:
-                return found
-        return []
+            if len(merged) >= self.min_results:
+                break
+            for e in c.candidates(query, limit):
+                merged.setdefault(normalize(e.title) + "|" + e.norm_author, e)
+        return list(merged.values())

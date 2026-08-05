@@ -16,7 +16,10 @@ from .types import Match, OcrResult
 
 
 def _tokens(s: str, cfg: MatchConfig) -> list[str]:
-    return [t for t in normalize(s).split() if len(t) >= cfg.token_min_len]
+    # digit tokens survive the length floor: dropping them made numeric
+    # titles ("14", "1984") structurally unmatchable (IMG_8131)
+    return [t for t in normalize(s).split()
+            if len(t) >= cfg.token_min_len or (t.isdigit() and len(t) >= 2)]
 
 
 def _content(tokens: list[str], cfg: MatchConfig) -> list[str]:
@@ -123,7 +126,8 @@ def _evaluate(query_tokens: list[str], entry: CatalogEntry,
     query side had lost its כן. Comparing full text to full text is
     symmetric, so short words count on both sides or neither.
     """
-    tt = [t for t in entry.norm_title.split() if len(t) >= cfg.token_min_len]
+    tt = [t for t in entry.norm_title.split()
+          if len(t) >= cfg.token_min_len or (t.isdigit() and len(t) >= 2)]
     at = [t for t in entry.norm_author.split() if len(t) >= cfg.token_min_len]
 
     def matched(catalog_tokens):
@@ -437,8 +441,10 @@ def suppress_fragment_reads(texts: list[str],
     def contained(a: set[str], b: set[str]) -> bool:
         # substring containment, not exact-token: the fragment "ראה אתמול"
         # (from the נתראה אתמול spine) must count as inside "נתראה אתמול...".
-        # 3+ char tokens only, so tiny words can't bridge unrelated reads.
-        return all(len(t) >= 3 and any(t in u for u in b) for t in a)
+        # Tokens under 3 chars are SKIPPED, not failed — the truncated "ה" in
+        # "מכונת הזמן ה..." must not shield the fragment from suppression.
+        core = [t for t in a if len(t) >= 3]
+        return bool(core) and all(any(t in u for u in b) for t in core)
 
     rank = {"AUTO": 2, "REVIEW": 1}
     toks = [set(normalize(t).split()) for t in texts]
@@ -456,8 +462,7 @@ def suppress_fragment_reads(texts: list[str],
 
 
 def suppress_author_fragments(texts: list[str],
-                              matches: list[Match | None],
-                              thresh: int = 88) -> list[Match | None]:
+                              matches: list[Match | None]) -> list[Match | None]:
     """Unmatch records whose ENTIRE read is another matched book's author.
 
     Page reading emits the author line of a spine as its own block when the
@@ -468,20 +473,31 @@ def suppress_author_fragments(texts: list[str],
     just an author's name is evidence FOR that author's book, never a book of
     its own.
     """
+    def name_only(q_toks: list[str], a_toks: list[str]) -> bool:
+        """True when the read carries NOTHING beyond the author's name.
+
+        Every substantive read token must correspond to an author token
+        (fuzzy or substring). The earlier heuristic (length guard +
+        token_set_ratio) suppressed any SHORT title+author read whose author
+        matched — measured on IMG_8131: "אקסלרנדו צ'רלס סטרוס" was eaten
+        because two of its three tokens were the author of OTHER matched
+        Stross books. אקסלרנדו corresponds to no author token, so under this
+        rule the read keeps its claim.
+        """
+        core = [t for t in q_toks if len(t) >= 3]
+        if not core:
+            return False
+        return all(any(fuzz.ratio(t, a) >= 85 or t in a or a in t
+                       for a in a_toks) for t in core)
+
     for i, (text, m) in enumerate(zip(texts, matches)):
         if not m:
             continue
-        q = normalize(text)
-        q_len = len(q.split())
+        q_toks = normalize(text).split()
         for other in matches:
             if other is None or other is m or not other.author:
                 continue
-            a = normalize(other.author)
-            # token_set_ratio scores ANY read containing the name 100 (its
-            # subset pathology), so a title+author read would be eaten too —
-            # the length guard limits suppression to name-only reads.
-            if (q_len <= len(a.split()) + 1
-                    and fuzz.token_set_ratio(q, a) >= thresh):
+            if name_only(q_toks, normalize(other.author).split()):
                 matches[i] = None
                 break
     return matches

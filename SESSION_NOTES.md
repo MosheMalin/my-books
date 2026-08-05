@@ -527,3 +527,31 @@ Residuals on these shelves: misreads needing another pass (זמן טעות,
 ובררנים, הכחול, הרפתקה בחלל, היה יהיה בעתיד), הבלשים הצעירים matches the
 short series entry instead of ...וטרזן פורצים למפרץ שלמה, and "רוברט"-class
 author fragments stay REVIEW when their book is missing from the results.
+
+## Run 13 (IMG_8131) — four more bug classes, all from owner feedback
+
+Diagnosed via the run's candidate recordings (replay.py earning its keep):
+
+1. **Author-fragment suppression REWRITTEN** — the length+token_set heuristic
+   ate "אקסלרנדו צ'רלס סטרוס" (retrieval had returned the book!) because two
+   of its three tokens were the author of OTHER matched Stross books. New
+   rule: suppress only reads carrying NOTHING beyond the name (fuzzy
+   per-token containment).
+2. **Numeric titles were structurally unmatchable** — "14" (Peter Clines):
+   digit tokens now survive the token length floor on both sides.
+3. **Fragment containment skipped-vs-failed** — the dangling "ה" in
+   "מכונת הזמן ה..." (torn המקרית) shielded the fragment from suppression;
+   sub-3-char tokens are now skipped, and the Wells מכונת-הזמן phantom dies.
+4. **ChainCatalog default is now thin-union (min_results=3)** — the on-empty
+   cascade kept failing the same way (4th case: NLI had the EXACT title
+   שלושה ימים בספטמבר, blocked by Simania's שלושה-ימים lookalikes).
+   RE-MEASURED with current gates: AUTO identical on both fixture shelves,
+   mean A+R 0.865 vs 0.86, 7849 A+R recall 1.00; 6082 A+R -0.02 (one
+   boundary case). Circumstances changed the earlier verdict — the gates
+   now absorb what the union lets in.
+
+Owner verdicts applied via the review API: both wrong claims rejected
+(persistently), 4 correct books library-added. Immediate payoff: the
+confirmed-library head matches גנב הקוונטום from its MISREAD (הקוונטים) —
+fuzzy matcher over the library succeeds where literal search engines can't.
+GT now 6 shelves (3 provisional). Tests: **29 core + 22 integrations = 51.**

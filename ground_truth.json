@@ -66,6 +66,37 @@
         {"title": "הספר הקטן", "author": "סלדן אדוארדס"}
       ]
     },
+    "IMG_8131.jpeg": {
+      "shelf": "modern SF/F (Stross, Campbell's Lost Fleet, Israeli SF)",
+      "notes": [
+        "PROVISIONAL: run #13 claims owner-reviewed as 'mostly good' plus",
+        "explicit corrections (2026-08-06). הצי האבוד: גבורה came from a",
+        "truncated read and was not explicitly owner-confirmed."
+      ],
+      "books": [
+        {"title": "העסק המשפחתי", "author": "צ'רלס סטרוס"},
+        {"title": "המשפחה הנסתרת", "author": "צ'רלס סטרוס"},
+        {"title": "ארכיון הזוועות", "author": "צ'רלס סטרוס"},
+        {"title": "אקסלרנדו", "author": "צ'רלס סטרוס"},
+        {"title": "הצי האבוד: תעוזה", "author": "ג'ק קמפבל"},
+        {"title": "הצי האבוד: אומץ", "author": "ג'ק קמפבל"},
+        {"title": "הצי האבוד: ניצחון", "author": "ג'ק קמפבל"},
+        {"title": "הצי האבוד: נחישות", "author": "ג'ק קמפבל"},
+        {"title": "הצי האבוד: גבורה", "author": "ג'ק קמפבל", "note": "truncated read, unconfirmed"},
+        {"title": "גנב הקוונטום", "author": "האנו רג'ניאמי"},
+        {"title": "14", "author": "פיטר קליינס"},
+        {"title": "הנערה עם כל המתנות", "author": "מ.ר. קרי"},
+        {"title": "נוסעים בזמן אינם מתים", "author": "ג'ק מקדוויט"},
+        {"title": "הפנטזיות של היינליין", "author": "רוברט היינליין"},
+        {"title": "רוח הרפאים: סיפור אהבה", "author": "ג'ונתן קרול"},
+        {"title": "מכונת הזמן המקרית", "author": "ג'ו הלדמן"},
+        {"title": "אבן ירח", "author": "ורד טוכטרמן"},
+        {"title": "דם כחול", "author": "ורד טוכטרמן"},
+        {"title": "שלושה ימים בספטמבר", "author": "רון יניב"},
+        {"title": "מלך ירושלים", "author": "ניר יניב"},
+        {"title": "לדגדג פרפרים", "author": "גיא חסון"}
+      ]
+    },
     "IMG_8125.jpeg": {
       "shelf": "humor (Kishon, satire, humor studies)",
       "notes": [

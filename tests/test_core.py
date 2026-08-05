@@ -313,6 +313,46 @@ def test_fragment_suppression_is_substring_tolerant():
     assert out[0] is full and out[1] is None
 
 
+
+
+def test_numeric_title_is_matchable():
+    """Digit tokens survive the length floor: "14" by Peter Clines was
+    structurally unmatchable (IMG_8131)."""
+    cat = LocalCatalog([CatalogEntry("0", "14", "פיטר קליינס")])
+    m = match_candidate("14 פיטר קליינס", cat)
+    assert m is not None and m.title == "14", m
+
+
+def test_title_plus_author_read_survives_author_suppression():
+    """"אקסלרנדו צ'רלס סטרוס" must NOT be eaten because other Stross books
+    matched — only reads carrying NOTHING beyond the name are fragments."""
+    from booksnap.match import suppress_author_fragments
+    a = Match(title="ארכיון הזוועות", author="צ'רלס סטרוס", tier="AUTO",
+              score=130.0, catalog_id="s1")
+    b = Match(title="אקסלרנדו", author="צ'רלס סטרוס", tier="AUTO",
+              score=130.0, catalog_id="s2")
+    frag = Match(title="ספר על סטרוס", author="מישהו", tier="AUTO",
+                 score=100.0, catalog_id="s3")
+    texts = ["ארכיון הזוועות צ'רלס סטרוס", "אקסלרנדו צ'רלס סטרוס",
+             "צ'רלס סטרוס"]                       # name-only read
+    out = suppress_author_fragments(texts, [a, b, frag])
+    assert out[0] is a and out[1] is b, "title+author reads must survive"
+    assert out[2] is None, "name-only read must be suppressed"
+
+
+def test_truncated_short_tail_does_not_shield_fragment():
+    """"מכונת הזמן ה..." is a torn read of מכונת הזמן המקרית; the dangling
+    "ה" must be skipped by containment, not fail it (IMG_8131)."""
+    from booksnap.match import suppress_fragment_reads
+    full = Match(title="מכונת הזמן המקרית", author="ג'ו הלדמן", tier="AUTO",
+                 score=130.0, catalog_id="s1")
+    frag = Match(title="מכונת הזמן", author="ה.ג'. וולס", tier="REVIEW",
+                 score=115.0, catalog_id="n1")
+    texts = ["מכונת הזמן המקרית ג'ו הלדמן", "מכונת הזמן ה..."]
+    out = suppress_fragment_reads(texts, [full, frag])
+    assert out[0] is full and out[1] is None
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     passed = 0

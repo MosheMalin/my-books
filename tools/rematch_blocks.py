@@ -79,6 +79,10 @@ def main() -> None:
             "C  best-of both + gate": ((
                 SimaniaCatalog(cache_dir=CONFIG.paths.work_dir / "simania_cache"),
                 NLICatalog(cache_dir=CONFIG.paths.work_dir / "nli_cache")), True),
+            "D  thin-union(3) + gate": (FallbackCatalog(
+                SimaniaCatalog(cache_dir=CONFIG.paths.work_dir / "simania_cache"),
+                NLICatalog(cache_dir=CONFIG.paths.work_dir / "nli_cache"),
+                min_results=3), True),
         }
 
         print(f"\n=== {name} ({len(ocrs)} stored reads) ===")
