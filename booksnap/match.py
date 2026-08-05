@@ -479,8 +479,13 @@ def suppress_fragment_reads(texts: list[str],
             # read it duplicates. A read naming a DIFFERENT author (מכונת
             # הזמן ה.ג. ולס next to the Haldeman book) is not contained and
             # keeps its claim.
+            # Suppression demands STRICT superiority: on IMG_8133 the clean
+            # read "יד הכאוס מרגרט..." (correct volume) TIED the compound
+            # read's series-record claim and was wrongly eaten — a tie means
+            # we cannot tell which claim is better, so both stay and the
+            # review flow decides.
             if (contained(toks[i], world(j)) and not contained(toks[j], world(i))
-                    and (rank[other.tier], other.score) >= (rank[m.tier], m.score)):
+                    and (rank[other.tier], other.score) > (rank[m.tier], m.score)):
                 matches[i] = None
                 break
     return matches

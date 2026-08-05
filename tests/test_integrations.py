@@ -513,6 +513,18 @@ def test_nli_creator_strips_roles_and_dates():
     assert _clean_creator("קארני, פול") == "קארני, פול"
 
 
+
+
+def test_union_catalog_merges_all_sources():
+    """Simania junk must not block NLI's exact hit (על דם ואור class)."""
+    from booksnap.extra_catalogs import UnionCatalog
+    junk = LocalCatalog([CatalogEntry(str(i), f"ספר לא קשור {i}", "")
+                         for i in range(4)])
+    nli = LocalCatalog([CatalogEntry("n", "על דם ואור", "קמילה מונק")])
+    got = UnionCatalog([junk, nli]).candidates("על דם ואור קמילה מונק")
+    assert any(e.title == "על דם ואור" for e in got), [e.title for e in got]
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items())
            if k.startswith("test_") and callable(v)]

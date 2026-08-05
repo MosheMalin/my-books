@@ -193,16 +193,19 @@ def _build_catalog():
         # deposit authority) -> used-book shops (out-of-print residue like
         # old SF that neither of the first two carries).
         from .extra_catalogs import (BooksferCatalog, ChainCatalog,
-                                     RebooksCatalog)
+                                     RebooksCatalog, UnionCatalog)
         from .simania_catalog import SimaniaCatalog
-        chain = [SimaniaCatalog(cache_dir=WORK / "simania_cache")]
+        primaries = [SimaniaCatalog(cache_dir=WORK / "simania_cache")]
         parts = ["simania"]
         if os.environ.get("NLI_API_KEY"):
             from .nli_catalog import NLICatalog
-            chain.append(NLICatalog(cache_dir=WORK / "nli_cache"))
+            primaries.append(NLICatalog(cache_dir=WORK / "nli_cache"))
             parts.append("nli")
-        chain += [RebooksCatalog(cache_dir=WORK / "rebooks_cache"),
-                  BooksferCatalog(cache_dir=WORK / "booksefer_cache")]
+        # primaries are ALWAYS unioned (see UnionCatalog: thin-union let junk
+        # block exact hits); the shop tail joins only when the union is thin
+        chain = [UnionCatalog(primaries),
+                 RebooksCatalog(cache_dir=WORK / "rebooks_cache"),
+                 BooksferCatalog(cache_dir=WORK / "booksefer_cache")]
         parts += ["rebooks", "booksefer"]
         # confirmed library AUGMENTS the chain (union, never a gate): a book
         # the owner confirmed once matches instantly on every later shelf

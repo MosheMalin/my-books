@@ -66,6 +66,68 @@
         {"title": "הספר הקטן", "author": "סלדן אדוארדס"}
       ]
     },
+    "IMG_8132.jpeg": {
+      "shelf": "romantasy / fantasy (Snyder, Gillig, Lancaster, Harper)",
+      "notes": [
+        "PROVISIONAL: run #15 claims owner-reviewed ('almost perfect') plus",
+        "the one reported miss (2026-08-06). לימודי אש was READ on this shelf",
+        "but not owner-confirmed here (the trio also appears on IMG_7849 —",
+        "books may have moved)."
+      ],
+      "books": [
+        {"title": "לימודי אש", "author": "מריה וי. סניידר", "note": "read here, owner-unconfirmed"},
+        {"title": "לימודי קסם", "author": "מריה וי. סניידר"},
+        {"title": "לימודי רעל", "author": "מריה וי. סניידר"},
+        {"title": "ירח מים", "author": "סמנתה סוטו ימבאו"},
+        {"title": "שני כתרים מפותלים", "author": "רייצ'ל גיליג"},
+        {"title": "חלון אחד חשוך", "author": "רייצ'ל גיליג"},
+        {"title": "על דם ואור", "author": "קמילה מונק"},
+        {"title": "נסיך הסודות", "author": "איי.ג'יי לנקסטר"},
+        {"title": "הלורד של סטאריאל", "author": "איי.ג'יי לנקסטר"},
+        {"title": "מכשפה ידוענית", "author": "הלן הרפר"},
+        {"title": "מכשפה רוחנית", "author": "הלן הרפר"},
+        {"title": "מכשפה עצלנית", "author": "הלן הרפר"}
+      ]
+    },
+    "IMG_8133.jpeg": {
+      "shelf": "fantasy (Death Gate Cycle, Salvatore, Magisterium, DWJ)",
+      "notes": [
+        "PROVISIONAL: run #15 claims owner-reviewed plus corrections",
+        "(2026-08-06): the מחזור שער המוות series-record claim is really",
+        "volume 5, יד הכאוס. המורשת and אלקטרז 2 were read but not",
+        "owner-confirmed; שלדון פוקס claimed at score 70, unconfirmed."
+      ],
+      "books": [
+        {"title": "הילד של המכשפה", "author": "מייקל גרובר"},
+        {"title": "כנף הדרקון", "author": "מרגרט וייס וטרייסי היקמן"},
+        {"title": "כוכב הרפאים", "author": "מרגרט וייס וטרייסי היקמן"},
+        {"title": "ים האש", "author": "מרגרט וייס וטרייסי היקמן"},
+        {"title": "קוסם הנחש", "author": "מרגרט וייס וטרייסי היקמן"},
+        {"title": "יד הכאוס", "author": "מרגרט וייס וטרייסי היקמן"},
+        {"title": "אל תוך המבוך", "author": "מרגרט וייס וטרייסי היקמן"},
+        {"title": "השער השביעי", "author": "מרגרט וייס וטרייסי היקמן"},
+        {"title": "מולדת", "author": "ר.א. סלבטורה"},
+        {"title": "גלות", "author": "ר.א. סלבטורה"},
+        {"title": "המורשת", "author": "ר.א. סלבטורה", "note": "read, owner-unconfirmed"},
+        {"title": "שהות", "author": "מגי סטיווטר"},
+        {"title": "ספינת המתים", "author": "ריק ריירדן"},
+        {"title": "שלדון פוקס", "author": "דרק לנדי", "note": "low-score claim, owner-unconfirmed"},
+        {"title": "הטירה הנעה", "author": "דיאנה ווין ג'ונס"},
+        {"title": "עיר הזמן", "author": "דיאנה ווין ג'ונס"},
+        {"title": "מבחן הברזל", "author": "הולי בלק וקסנדרה קלייר"},
+        {"title": "יד הנחושת", "author": "הולי בלק וקסנדרה קלייר"},
+        {"title": "מפתח הארד", "author": "הולי בלק וקסנדרה קלייר"},
+        {"title": "מסכת הכסף", "author": "הולי בלק וקסנדרה קלייר"},
+        {"title": "מגדל הזהב", "author": "הולי בלק וקסנדרה קלייר"},
+        {"title": "גילדת ההרפתקנים", "author": "זאק לוראן קלארק"},
+        {"title": "אלקטרז נגד ספרני הרשע 1", "author": "ברנדון סנדרסון"},
+        {"title": "אלקטרז נגד ספרני הרשע 2 - עצמות הלבלר", "author": "ברנדון סנדרסון", "note": "read, owner-unconfirmed"},
+        {"title": "מיתולוגיה נורדית", "author": "ניל גיימן"},
+        {"title": "מפתח הקסמים", "author": "טוני אלמייל"},
+        {"title": "שומרת הדרקונים", "author": "קרול וילקינסון"},
+        {"title": "עיני דרקון", "author": "", "author_on_spine": false}
+      ]
+    },
     "IMG_8134.jpeg": {
       "shelf": "YA fantasy/SF (Pullman, Shusterman, de Castell, Collins, Meyer)",
       "notes": [

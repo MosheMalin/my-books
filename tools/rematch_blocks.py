@@ -83,6 +83,10 @@ def main() -> None:
                 SimaniaCatalog(cache_dir=CONFIG.paths.work_dir / "simania_cache"),
                 NLICatalog(cache_dir=CONFIG.paths.work_dir / "nli_cache"),
                 min_results=3), True),
+            "E  full-union   + gate": (FallbackCatalog(
+                SimaniaCatalog(cache_dir=CONFIG.paths.work_dir / "simania_cache"),
+                NLICatalog(cache_dir=CONFIG.paths.work_dir / "nli_cache"),
+                min_results=10**6), True),
         }
 
         print(f"\n=== {name} ({len(ocrs)} stored reads) ===")

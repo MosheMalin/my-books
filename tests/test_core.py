@@ -401,6 +401,23 @@ def test_fragment_with_stray_tokens_still_suppressed():
     assert out[0] is full and out[1] is None
 
 
+
+
+def test_tied_claims_both_survive_fragment_suppression():
+    """The clean read "יד הכאוס מרגרט..." TIED the compound read's
+    series-record claim and was wrongly eaten — a tie must keep both claims
+    (the review flow decides), never silently drop the possibly-right one."""
+    from booksnap.match import suppress_fragment_reads
+    series = Match(title="מחזור שער המוות", author="וייס, מרגרט", tier="AUTO",
+                   score=122.5, catalog_id="n1")
+    volume = Match(title="יד הכאוס", author="מרגרט וייס", tier="AUTO",
+                   score=122.5, catalog_id="s1")
+    texts = ["יד הכאוס - מחזור שער המוות חלק 5 מרגרט וויז וטרייסי היקמן",
+             "יד הכאוס מרגרט וויז וטרייסי היקמן"]
+    out = suppress_fragment_reads(texts, [series, volume])
+    assert out[0] is series and out[1] is volume
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     passed = 0

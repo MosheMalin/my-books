@@ -579,3 +579,26 @@ every sliver. All wrong claims were tile-overlap re-reads of THIS shelf.
 
 Verdicts applied (4 rejections, וורקרוס author fix, 6 manual adds; library
 47 books). Fixture unchanged. GT 7 shelves. Tests: **32 + 23 = 55.**
+
+## Run 15 (IMG_8132/8133) — suppression tie bug; primaries now fully unioned
+
+1. **Fragment suppression demands STRICT superiority.** The candidates
+   recording exposed a backfire: the clean read "יד הכאוס מרגרט..." (the
+   correct volume) is token-contained in the compound spine read
+   "יד הכאוס - מחזור שער המוות חלק 5...", whose claim (a series RECORD)
+   tied it exactly on rank+score — so the right claim was eaten and the
+   wrong one survived. Ties now keep both claims; the review flow decides.
+2. **Simania+NLI are ALWAYS unioned** (`UnionCatalog`; measured E vs D in
+   rematch_blocks): thin-union's threshold kept mis-firing — 4 junk Simania
+   rows "satisfied" min_results and blocked NLI's EXACT hit (על דם ואור
+   קמילה מונק, first result). Full primary union beats thin-union on both
+   fixture means (AUTO 0.805 vs 0.79, A+R 0.87 vs 0.865). The shop tail
+   stays thin-gated. Retrieval-combination lesson closed: gates carry the
+   precision, so union the good sources and cascade only into noisy ones.
+3. Residuals: לימודי אש is in NO catalog (its own trio-mates match fine);
+   עיר הזמן misread (עיד); עיני דרקון never read. All library-added, which
+   also future-proofs them (the גנב הקוונטום effect).
+
+Verdicts applied (series-record rejection + 5 adds; library 82 — run 15's
+AUTO claims were the first fully-automatic absorption). GT 9 shelves.
+Tests: **33 + 24 = 57.**

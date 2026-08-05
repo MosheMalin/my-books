@@ -133,6 +133,28 @@ class BooksferCatalog(_HtmlSearchCatalog):
         return super()._clean(self._TAIL.sub("", html.unescape(raw)))
 
 
+class UnionCatalog:
+    """Merge candidates from ALL sources, deduped — no gating at all.
+
+    Adopted for Simania+NLI (2026-08-06 measurement, tools/rematch_blocks E
+    vs D): thin-union's threshold kept mis-firing — 3-4 junk Simania rows
+    "satisfied" it and blocked NLI's EXACT hit (על דם ואור). Full union of
+    the two primary sources beats thin-union on both fixture means (AUTO
+    0.805 vs 0.79, A+R 0.87 vs 0.865) now that the gates carry the
+    precision. The shop tail stays thin-gated (noisy + slow).
+    """
+
+    def __init__(self, catalogs: list):
+        self.catalogs = list(catalogs)
+
+    def candidates(self, query: str, limit: int = 15) -> list[CatalogEntry]:
+        merged: dict[str, CatalogEntry] = {}
+        for c in self.catalogs:
+            for e in c.candidates(query, limit):
+                merged.setdefault(normalize(e.title) + "|" + e.norm_author, e)
+        return list(merged.values())
+
+
 class ChainCatalog:
     """Ordered cascade: precise sources first, broader ones only when the
     harvest so far is thin (fewer than `min_results` candidates, unioned).
