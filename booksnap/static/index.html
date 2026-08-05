@@ -194,6 +194,10 @@
           <strong>Drop shelf photos here</strong><br>or click to choose files
           <input type="file" id="file" accept="image/*" multiple hidden>
         </div>
+        <div class="img-sub" id="phoneHint" style="display:none;margin-top:6px">
+          📱 From your phone (same Wi-Fi): open <b id="phoneUrl"></b> —
+          you can shoot and upload straight from the camera.
+        </div>
 
         <div style="display:flex;gap:8px;align-items:center;margin:12px 0 6px;flex-wrap:wrap">
           <button class="linkish" id="selAll">select all</button>
@@ -735,6 +739,10 @@ function escapeHtml(s) {
       r.disabled = true;
       r.closest('.mode-opt').title = 'needs BOOKSNAP_FALLBACK=google_vision';
       r.closest('.mode-opt').style.opacity = .5;
+    }
+    if (h.lan_url) {
+      $('#phoneUrl').textContent = h.lan_url;
+      $('#phoneHint').style.display = '';
     }
     // same only-when-positively-off rule for llmpage
     if (h.anthropic_key_set === false) {

@@ -742,11 +742,29 @@ def explain_spine(run_id: str, spine_id: str) -> dict:
             **result}
 
 
+def _lan_url(port: int = 8756) -> str | None:
+    """This machine's LAN address, for phone access on the same Wi-Fi.
+
+    The UDP-connect trick: no packet is sent; the OS just picks the outbound
+    interface, which is the address other devices on the network can reach.
+    """
+    import socket
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return f"http://{ip}:{port}"
+    except OSError:
+        return None
+
+
 @app.get("/api/health")
 def health() -> dict:
     cat = _catalog_path()
     backend = os.environ.get("BOOKSNAP_CATALOG_BACKEND", "local").lower()
     return {"ok": True,
+            "lan_url": _lan_url(),
             "catalog_backend": backend,
             "catalog": str(cat) if backend == "local" else "NLI search API",
             "catalog_exists": cat.exists() if backend == "local" else True,
