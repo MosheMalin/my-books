@@ -1,0 +1,42 @@
+# --- secrets: NEVER commit these ---
+.env
+.env.*
+*.key
+*-key.json
+service-account*.json
+credentials.json
+gcloud-*.json
+
+# --- generated at runtime ---
+# (crops, debug overlays, OCR cache, catalog response caches, run history)
+# NOTE: gitignore has no inline comments — a trailing comment on the pattern
+# line makes the pattern match nothing.
+work/
+*.log
+results.json
+
+# --- downloaded model blobs (fetched by setup.sh; ~5MB, not source) ---
+tessdata/
+tessfast/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# --- editor / OS ---
+.vscode/
+.idea/
+.DS_Store
+
+# --- per-user Claude Code permissions (machine-local) ---
+.claude/settings.local.json
+
+# --- downloaded model checkpoints (fetched, not source) ---
+models/
+*.pt
+*.pth

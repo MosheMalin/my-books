@@ -1,0 +1,119 @@
+{
+  "_readme": [
+    "Hand-labelled contents of the sample shelf photos — the fixture every",
+    "approach is scored against. Owner-supplied; treat as authoritative even",
+    "where it disagrees with a catalog (NLI editions differ in spelling, and",
+    "sample_catalog.json contains a few wrong titles).",
+    "",
+    "'subtitle' is scored as optional: a prediction may include or omit it.",
+    "Scoring is on the DISTINCT set of books a run reports for the photo, which",
+    "is what matters for cataloguing — a phantom book costs precision, a missed",
+    "one costs recall."
+  ],
+  "images": {
+    "IMG_6082.jpeg": {
+      "shelf": "Durrell / Herriot nature writing",
+      "notes": [
+        "Owner-labelled. Spellings kept verbatim: these editions really do use",
+        "כ where modern orthography would use ו (NLI confirms 'כל היצורים",
+        "גדולים כקטנים'), so they are NOT typos to be normalised away.",
+        "author_on_spine=false marks books whose spine shows no author at all —",
+        "author evidence is unavailable for them by construction."
+      ],
+      "books": [
+        {"title": "המסע המופלא של ילדי שכונת הפועלים", "author": "אילן אשל", "author_on_spine": false},
+        {"title": "כל הדברים מבהיקים כיפים", "author": "ג'ימס הריוט"},
+        {"title": "כל היצורים גדולים כקטנים", "author": "ג'ימס הריוט"},
+        {"title": "כל הדברים נבונים כמופלאים", "author": "ג'ימס הריוט"},
+        {"title": "את כולם ברא אלוהים", "author": "ג'ימס הריוט"},
+        {"title": "הרפתקאותיי עם אי אי", "author": "ג'ראלד דארל"},
+        {"title": "גן האלים", "author": "ג'ראלד דארל"},
+        {"title": "סנדל וכל השאר", "author": "ג'ראלד דארל"},
+        {"title": "גן חיות במזוודה", "author": "ג'ראלד דארל"},
+        {"title": "לחתן את אמא", "author": "ג'ראלד דארל"},
+        {"title": "חיות ציפורים וקרובים", "author": "ג'ראלד דארל"},
+        {"title": "פגישות עם בלי חיים", "author": "ג'ראלד דארל", "note": "very thin spine"},
+        {"title": "הפיקניק ומהומות אחרות", "author": "ג'ראלד דארל"},
+        {"title": "קרובתי רוזי", "author": "ג'ראלד דארל"},
+        {"title": "ציפור הלעג", "author": "ג'ראלד דארל"},
+        {"title": "הזדמנות אחרונה לראות", "author": "דגלס אדמס ומארק קרווארדיין"},
+        {"title": "מדריך לציפואים של מזרח אפריקה", "author": "ניקולס דרייסון"},
+        {"title": "חברברי הסוונה", "author": "ג'ראלד דארל"},
+        {"title": "היער השיכור", "author": "ג'ראלד דארל"},
+        {"title": "The elephant", "author": "", "author_on_spine": false},
+        {"title": "ציפורי ישראל והמזרח התיכון", "author": "", "author_on_spine": false}
+      ]
+    },
+    "IMG_8123.jpeg": {
+      "shelf": "translated literary fiction (Hasek, Clavell, Whitehead...)",
+      "notes": [
+        "Labelled BLIND-first (run #8 predictions made before labelling, then",
+        "owner-confirmed): all 11 claimed books correct; the two misses below",
+        "were owner-supplied. Spellings follow the confirmed run/owner text.",
+        "החייל האמיץ שוויק is a two-volume set — two physical spines, one book."
+      ],
+      "books": [
+        {"title": "החייל האמיץ שוויק", "author": "ירוסלב האשק", "note": "2-volume set"},
+        {"title": "שוגון", "author": "ג'יימס קלאוול"},
+        {"title": "מחתרת המסילה", "author": "קולסון וייטהד"},
+        {"title": "קמצ'טקה", "author": "מרסלו פיגרס"},
+        {"title": "אפלה בצהריים", "author": "ארתור קסטלר"},
+        {"title": "מלכוד 22", "author": "ג'וזף הלר"},
+        {"title": "חצי שמש צהובה", "author": "צ'יממנדה נגוזי אדיצ'יה"},
+        {"title": "איגוד השוטרים היידים", "author": "מייקל שייבון"},
+        {"title": "עמודי תבל", "author": "קן פולט"},
+        {"title": "הסיפור השלושה-עשר", "author": "דיאן סטרפילד"},
+        {"title": "הספר הקטן", "author": "סלדן אדוארדס"}
+      ]
+    },
+    "IMG_8125.jpeg": {
+      "shelf": "humor (Kishon, satire, humor studies)",
+      "notes": [
+        "PROVISIONAL: assembled from run #9 claims the owner reviewed as",
+        "'mostly correct' plus their four explicit corrections (2026-08-05):",
+        "the זיידמן claim was a phantom (real book: הומור by ענת זיידמן); the",
+        "PM book is כן אדוני ראש הממשלה; אוי למנצחים and סליחה שניצחנו were",
+        "missing. English titles and authors not owner-verified — confirm."
+      ],
+      "books": [
+        {"title": "דוש - קריקטוריסט", "author": "מיכל ברושי"},
+        {"title": "ממאדים וגם מנוגה", "author": "דייב בארי"},
+        {"title": "הומור", "author": "ענת זיידמן"},
+        {"title": "ספר משפחתי", "author": "אפרים קישון"},
+        {"title": "פרטאצ'יה ללא הפסקה", "author": "אפרים קישון"},
+        {"title": "חוק דילברט", "author": "סקוט אדמס"},
+        {"title": "הומור יהודי", "author": "אבנר זיו"},
+        {"title": "האדם מנתק משמעות", "author": "רון אהרוני"},
+        {"title": "הומור בדרכו של האדם הצוחק", "author": "אריה סובר"},
+        {"title": "כן אדוני ראש הממשלה", "author": "", "author_on_spine": false},
+        {"title": "ארבינקא", "author": "אפרים קישון"},
+        {"title": "A Treasury of Jewish Humor", "author": "Nathan Ausubel"},
+        {"title": "Isaac Asimov's Treasury of Humor", "author": "Isaac Asimov"},
+        {"title": "הצחקתם אותנו", "author": "יצחק גל-נור"},
+        {"title": "רצינות ההומור", "author": "רות בונדי"},
+        {"title": "המלון הגיקי-עברי", "author": "רפאל שנקולבסקי"},
+        {"title": "אוי למנצחים", "author": "אפרים קישון"},
+        {"title": "סליחה שניצחנו", "author": "אפרים קישון"}
+      ]
+    },
+    "IMG_7849.jpeg": {
+      "shelf": "fantasy (Kearney, Snyder, Pearson, Martin)",
+      "books": [
+        {"title": "קרב הארגמן", "author": "בריאן מקללן"},
+        {"title": "הבטחה של דם", "author": "בריאן מקללן"},
+        {"title": "לימודי אש", "author": "מריה וי. סניידר"},
+        {"title": "לימודי קסם", "author": "מריה וי. סניידר"},
+        {"title": "לימודי רעל", "author": "מריה וי. סניידר"},
+        {"title": "אנטומיה", "subtitle": "סיפור אהבה", "author": "דיינה שוורץ"},
+        {"title": "ריקוד הגנבים", "author": "מרי א. פירסון"},
+        {"title": "שבועת הגנבים", "author": "מרי א. פירסון"},
+        {"title": "המסע של הוקווד", "author": "פול קארני"},
+        {"title": "ספינות מן המערב", "author": "פול קארני"},
+        {"title": "המלכים הכופרים", "author": "פול קארני"},
+        {"title": "מלחמת הברזל", "author": "פול קארני"},
+        {"title": "האימפריה השנייה", "author": "פול קארני"},
+        {"title": "משחקי הכס", "author": "ג'ורג' מרטין"}
+      ]
+    }
+  }
+}

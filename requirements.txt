@@ -1,0 +1,10 @@
+opencv-python-headless>=4.8
+# stdlib urllib is used for NLI HTTP; no extra dep needed there.
+pytesseract>=0.3.10
+rapidfuzz>=3.0
+scipy>=1.10
+scikit-image>=0.21
+# web UI (booksnap.server); the core pipeline does not import these.
+fastapi>=0.110
+uvicorn[standard]>=0.27
+python-multipart>=0.0.9

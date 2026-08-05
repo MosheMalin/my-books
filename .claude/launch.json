@@ -1,0 +1,15 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "booksnap-ui",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "uvicorn", "booksnap.server:app", "--port", "8756"],
+      "port": 8756,
+      "env": {
+        "BOOKSNAP_CATALOG_BACKEND": "simania",
+        "BOOKSNAP_FALLBACK": "google_vision"
+      }
+    }
+  ]
+}
