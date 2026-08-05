@@ -70,12 +70,12 @@
       "shelf": "romantasy / fantasy (Snyder, Gillig, Lancaster, Harper)",
       "notes": [
         "PROVISIONAL: run #15 claims owner-reviewed ('almost perfect') plus",
-        "the one reported miss (2026-08-06). לימודי אש was READ on this shelf",
-        "but not owner-confirmed here (the trio also appears on IMG_7849 —",
-        "books may have moved)."
+        "the one reported miss (2026-08-06). Owner confirmed the Snyder trio",
+        "was MOVED to this shelf after IMG_7849 was taken — both photos'",
+        "ground truths are correct for their moment; the library dedups."
       ],
       "books": [
-        {"title": "לימודי אש", "author": "מריה וי. סניידר", "note": "read here, owner-unconfirmed"},
+        {"title": "לימודי אש", "author": "מריה וי. סניידר"},
         {"title": "לימודי קסם", "author": "מריה וי. סניידר"},
         {"title": "לימודי רעל", "author": "מריה וי. סניידר"},
         {"title": "ירח מים", "author": "סמנתה סוטו ימבאו"},

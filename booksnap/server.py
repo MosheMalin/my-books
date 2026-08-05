@@ -825,10 +825,27 @@ def alternatives(run_id: str, spine_id: str, exclude: str = "") -> dict:
     if not texts:
         return {"candidates": []}
     catalog, _ = _build_catalog()
-    excluded = {normalize(t) for t in exclude.split(",") if t.strip()}
+    # exclusion is by title+author PAIR: excluding by title alone hid exactly
+    # the wanted alternative when two books share a title (שהות by Salvatore
+    # vs the rejected שהות by Stiefvater). `exclude` is a JSON list of
+    # {title, author}; bare comma-separated titles still accepted.
+    from .library import book_key
+    try:
+        pairs = json.loads(exclude) if exclude.strip().startswith("[") else None
+    except json.JSONDecodeError:
+        pairs = None
+    if pairs is not None:
+        excluded = {book_key(p.get("title", ""), p.get("author", ""))
+                    for p in pairs}
+        def is_excluded(c):
+            return book_key(c["title"], c.get("author", "")) in excluded
+    else:
+        titles = {normalize(t) for t in exclude.split(",") if t.strip()}
+        def is_excluded(c):
+            return normalize(c["title"]) in titles
     out = []
     for c in explain(texts[0], catalog, limit=12)["candidates"]:
-        if c["rejected"] or normalize(c["title"]) in excluded:
+        if c["rejected"] or is_excluded(c):
             continue
         out.append({"title": c["title"], "author": c["author"],
                     "score": round(c["score"], 1)})

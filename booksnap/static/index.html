@@ -612,10 +612,15 @@ async function renderResults() {
 
   renderTabs(run);
 
-  // review state for this run + the confirmed library size
-  let decisions = {}, libCount = null;
+  // review state for this run + the confirmed library (count + author list
+  // for the light autocomplete on author inputs)
+  let decisions = {}, libCount = null, libAuthors = [];
   try { decisions = (await api(`/api/runs/${run.run_id}/decisions`)).decisions || {}; } catch {}
-  try { libCount = (await api('/api/library')).count; } catch {}
+  try {
+    const L = await api('/api/library');
+    libCount = L.count;
+    libAuthors = [...new Set(L.books.map(b => b.author).filter(Boolean))].sort();
+  } catch {}
 
   const t = data.totals;
   $('#stats').innerHTML = [
@@ -672,7 +677,7 @@ async function renderResults() {
       <button class="linkish rv" data-a="edit" data-spine="${sp}">✎ fix details</button>`;
   };
 
-  box.innerHTML = rows.map(f => `
+  const rowHtml = f => `
     <div class="row">
       <img src="${cropUrl(f)}" alt="" loading="lazy"
            onerror="this.style.visibility='hidden'"
@@ -697,26 +702,60 @@ async function renderResults() {
       </div>
     </div>
     <div class="why-box" id="why-${escapeHtml(f.spine_id)}" style="display:none"></div>
-    <div class="why-box" id="alts-${escapeHtml(f.spine_id)}" style="display:none"></div>`)
-    .join('') || '<div class="empty">Nothing to show with this filter.</div>';
+    <div class="why-box" id="alts-${escapeHtml(f.spine_id)}" style="display:none"></div>`;
 
-  // "the shelf has a book you didn't find" — manual entry joins the library
-  box.insertAdjacentHTML('beforeend', `
+  // rows come ordered per image — group them so each shelf gets its own
+  // footer: add-a-missing-book + bulk-approve for that shelf's AUTO rows
+  const groups = [];
+  for (const f of rows) {
+    const g = groups[groups.length - 1];
+    if (!g || g.name !== f.image_name) groups.push({ name: f.image_name, rows: [f] });
+    else g.rows.push(f);
+  }
+  const groupFooter = g => {
+    const autos = g.rows.filter(f => f.tier === 'AUTO' && f.title && !decisions[f.spine_id]);
+    return `
     <div class="row" style="align-items:center;gap:8px">
-      <div style="flex:1;display:flex;gap:6px;flex-wrap:wrap">
-        <input type="text" id="missTitle" class="rtl" placeholder="add a missing book — title" style="flex:2;min-width:140px">
-        <input type="text" id="missAuthor" class="rtl" placeholder="author (optional)" style="flex:1;min-width:110px">
-        <button id="missAdd">+ add to library</button>
+      <div style="flex:1;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <span class="img-sub" style="flex-basis:100%">${escapeHtml(g.name)}</span>
+        <input type="text" class="rtl miss-t" placeholder="add a missing book — title" style="flex:2;min-width:130px">
+        <input type="text" class="rtl miss-a" list="libAuthors" placeholder="author (optional)" style="flex:1;min-width:100px">
+        <button class="miss-add">+ add to library</button>
+        ${autos.length ? `<button class="bulk-ok">✓ approve all auto (${autos.length})</button>` : ''}
       </div>
-    </div>`);
-  $('#missAdd').onclick = async () => {
-    const title = $('#missTitle').value.trim();
-    if (!title) return;
-    await api('/api/review', jsonReq('POST', {
-      run_id: run.run_id, spine_id: `manual-${Date.now()}`,
-      action: 'manual_add', title, author: $('#missAuthor').value.trim() }));
-    await renderResults();
+    </div>`;
   };
+  box.innerHTML =
+    `<datalist id="libAuthors">${libAuthors.map(a => `<option value="${escapeHtml(a)}">`).join('')}</datalist>` +
+    (groups.map(g => g.rows.map(rowHtml).join('') + groupFooter(g)).join('')
+     || '<div class="empty">Nothing to show with this filter.</div>');
+
+  box.querySelectorAll('button.miss-add').forEach(b => {
+    b.onclick = async () => {
+      const wrap = b.closest('.row');
+      const title = wrap.querySelector('.miss-t').value.trim();
+      if (!title) return;
+      await api('/api/review', jsonReq('POST', {
+        run_id: run.run_id, spine_id: `manual-${Date.now()}`,
+        action: 'manual_add', title,
+        author: wrap.querySelector('.miss-a').value.trim() }));
+      await renderResults();
+    };
+  });
+  box.querySelectorAll('button.bulk-ok').forEach((b, gi) => {
+    b.onclick = async () => {
+      b.disabled = true;
+      const g = groups[gi];
+      for (const f of g.rows) {
+        if (f.tier === 'AUTO' && f.title && !decisions[f.spine_id]) {
+          await api('/api/review', jsonReq('POST', {
+            run_id: run.run_id, spine_id: f.spine_id, action: 'approve',
+            title: f.title, author: f.author || '' }));
+        }
+      }
+      await renderResults();
+    };
+  });
 
   box.querySelectorAll('button.why').forEach(b => {
     b.onclick = () => showWhy(run.run_id, b.dataset.spine, b);
@@ -749,9 +788,11 @@ function showEdit(runId, f) {
       <input type="text" class="rtl" id="edT-${f.spine_id}" value="${escapeHtml(f.title)}"
              style="flex:2;min-width:150px" placeholder="title">
       <input type="text" class="rtl" id="edA-${f.spine_id}" value="${escapeHtml(f.author || '')}"
-             style="flex:1;min-width:120px" placeholder="author">
+             list="libAuthors" style="flex:1;min-width:120px" placeholder="author">
       <button id="edS-${f.spine_id}">save to library</button>
+      <button class="linkish" id="edX-${f.spine_id}">✕ cancel</button>
     </div>`;
+  document.getElementById('edX-' + f.spine_id).onclick = () => { box.style.display = 'none'; };
   document.getElementById('edS-' + f.spine_id).onclick = async () => {
     const title = document.getElementById('edT-' + f.spine_id).value.trim();
     if (!title) return;
@@ -770,10 +811,15 @@ async function showAlternatives(runId, f, decisions) {
   box.style.display = '';
   box.innerHTML = '<div class="ocr">looking for alternatives…</div>';
   const d = decisions[f.spine_id];
-  const exclude = [f.title, d && d.rejected_title].filter(Boolean).join(',');
+  // exclude by title+author PAIR — excluding by title alone hid a same-title
+  // different-author alternative (שהות by Salvatore vs the Stiefvater claim)
+  const exclude = JSON.stringify([
+    { title: f.title, author: f.author || '' },
+    ...(d && d.rejected_title ? [{ title: d.rejected_title, author: d.rejected_author || '' }] : [])
+  ]);
   const r = await api(`/api/runs/${runId}/alternatives/${encodeURIComponent(f.spine_id)}?exclude=${encodeURIComponent(exclude)}`);
   if (!r.candidates.length) {
-    box.innerHTML = '<div class="ocr">no other plausible candidate — you can add the right book manually below.</div>';
+    box.innerHTML = '<div class="ocr">no other plausible candidate — you can add the right book manually below. <button class="linkish" onclick="this.closest(\'.why-box\').style.display=\'none\'">✕ close</button></div>';
     return;
   }
   box.innerHTML = r.candidates.map((c, i) => `
@@ -781,7 +827,10 @@ async function showAlternatives(runId, f, decisions) {
       <button class="alt-use" data-i="${i}">use this</button>
       <span class="rtl">${escapeHtml(c.title)} — ${escapeHtml(c.author || '')}</span>
       <span class="muted mono">${c.score}</span>
-    </div>`).join('');
+    </div>`).join('') + `
+    <div style="padding:3px 0">
+      <button class="linkish" onclick="this.closest('.why-box').style.display='none'">✕ none of these — close</button>
+    </div>`;
   box.querySelectorAll('button.alt-use').forEach(b => {
     b.onclick = async () => {
       const c = r.candidates[+b.dataset.i];
