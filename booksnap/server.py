@@ -188,17 +188,25 @@ def _build_catalog():
     """
     backend = os.environ.get("BOOKSNAP_CATALOG_BACKEND", "local").lower()
     if backend == "simania":
-        # Simania first (edition-true spellings, series metadata), NLI for
-        # whatever it misses — measured the best retrieval combination.
-        from .simania_catalog import FallbackCatalog, SimaniaCatalog
-        sim = SimaniaCatalog(cache_dir=WORK / "simania_cache")
+        # Retrieval chain, precise -> broad, each source only on-empty:
+        # Simania (edition-true spellings, series metadata) -> NLI (legal
+        # deposit authority) -> used-book shops (out-of-print residue like
+        # old SF that neither of the first two carries).
+        from .extra_catalogs import (BooksferCatalog, ChainCatalog,
+                                     RebooksCatalog)
+        from .simania_catalog import SimaniaCatalog
+        chain = [SimaniaCatalog(cache_dir=WORK / "simania_cache")]
+        parts = ["simania"]
         if os.environ.get("NLI_API_KEY"):
             from .nli_catalog import NLICatalog
-            cat = FallbackCatalog(sim, NLICatalog(cache_dir=WORK / "nli_cache"))
-            return cat, {"backend": "simania+nli", "entries": None,
-                         "note": "simania suggestions first, NLI on empty"}
-        return sim, {"backend": "simania", "entries": None,
-                     "note": "simania suggestions API"}
+            chain.append(NLICatalog(cache_dir=WORK / "nli_cache"))
+            parts.append("nli")
+        chain += [RebooksCatalog(cache_dir=WORK / "rebooks_cache"),
+                  BooksferCatalog(cache_dir=WORK / "booksefer_cache")]
+        parts += ["rebooks", "booksefer"]
+        return ChainCatalog(chain), {
+            "backend": "+".join(parts), "entries": None,
+            "note": "on-empty cascade, precise source first"}
     if backend == "nli":
         from .nli_catalog import NLICatalog
         key = os.environ.get("NLI_API_KEY", "")

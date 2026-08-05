@@ -397,6 +397,58 @@ def test_truncated_llm_read_is_never_auto():
     assert recs[0].match.tier == "REVIEW", recs[0].match.tier
 
 
+# --- last-resort shop catalogs ----------------------------------------------
+REBOOKS_HTML = '''
+<h3 class="wd-entities-title title post-title">
+  <a href="https://rebooks.org.il/product/x" rel="bookmark">הקרע &#8211; וולטר ג'ון ויליאמס</a>
+</h3>
+<h3 class="wd-entities-title title post-title"><a href="y">ספר אחר לגמרי</a></h3>'''
+
+BOOKSEFER_HTML = '''
+<div class="box-product__title text-center"> קמט בזמן מדלין לאנגל ספרי מדע בדיוני חסר </div>
+<div class="box-product__title text-center"> עוד ספר כלשהו אזל </div>'''
+
+
+def test_rebooks_and_booksefer_parse_and_clean():
+    from booksnap.extra_catalogs import BooksferCatalog, RebooksCatalog
+    rb = RebooksCatalog(transport=lambda url: REBOOKS_HTML, delay_s=0)
+    titles = [e.title for e in rb.candidates("הקרע")]
+    assert "הקרע – וולטר ג'ון ויליאמס" in titles, titles
+
+    bs = BooksferCatalog(transport=lambda url: BOOKSEFER_HTML, delay_s=0)
+    titles = [e.title for e in bs.candidates("קמט בזמן")]
+    # category marker + stock word stripped; author kept (it is spine text)
+    assert "קמט בזמן מדלין לאנגל" in titles, titles
+    assert "עוד ספר כלשהו" in titles, titles
+
+
+def test_chain_catalog_consults_later_sources_only_on_empty():
+    from booksnap.extra_catalogs import ChainCatalog
+    calls = []
+
+    class Src:
+        def __init__(self, name, out):
+            self.name, self.out = name, out
+        def candidates(self, q, limit=15):
+            calls.append(self.name)
+            return self.out
+
+    hit = [CatalogEntry("1", "ספר", "")]
+    assert ChainCatalog([Src("a", hit), Src("b", hit)]).candidates("x") == hit
+    assert calls == ["a"]                      # b never consulted
+    calls.clear()
+    assert ChainCatalog([Src("a", []), Src("b", hit)]).candidates("x") == hit
+    assert calls == ["a", "b"]                 # cascade on empty
+
+
+def test_extra_catalog_transport_failure_is_safe():
+    from booksnap.extra_catalogs import RebooksCatalog
+
+    def boom(url):
+        raise ConnectionError("down")
+    assert RebooksCatalog(transport=boom, delay_s=0).candidates("ספר") == []
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items())
            if k.startswith("test_") and callable(v)]
