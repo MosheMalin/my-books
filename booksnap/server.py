@@ -300,6 +300,7 @@ def _run_job(run_id: str, image_ids: list[str], mode: str = "spines") -> None:
         img_started = time.monotonic()
         _set_job(state="running", run_id=run_id, image_id=img_id, name=rec["name"],
                  image_no=n, image_total=len(image_ids), done=0, spines=0,
+                 phase=None,      # else the previous image's phase mislabels
                  error=None, stopping=_stop_event.is_set())
         _update(lambda d: d["images"][img_id].update(status="running", error=None))
 

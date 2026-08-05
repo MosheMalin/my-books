@@ -80,6 +80,12 @@ class SimaniaCatalog:
         if len(toks) > 3:
             terms.append(" ".join(toks[:3]))       # title-side window
             terms.append(" ".join(toks[-3:]))      # author-side window
+        if len(toks) > 2:
+            # SHORT leading window: a 2-word title + author defeats every
+            # window above (all contain author words, typeahead returns 0 —
+            # measured: "קמט בזמן מדלין ל'אנגל" found nothing while the bare
+            # "קמט בזמן" hits immediately)
+            terms.append(" ".join(toks[:2]))
         return terms
 
 

@@ -162,7 +162,15 @@ def _evaluate(query_tokens: list[str], entry: CatalogEntry,
         "n_title_hits": n_title_hits, "has_distinct_title": has_distinct_title,
         "n_title_content": len(tt_content),
         "n_query_content": len(q_content),
-        "title_sim": title_sim, "ngram_sim": ngram_sim(q, entry.norm_title),
+        # spine reads usually carry the author too, which dilutes an n-gram
+        # cosine taken against the title alone — "נהר השמים / גרגורי בנפורד"
+        # scored 49.96 vs "נהר השמים הגדול" and died on the gate by 0.04.
+        # When the entry has an author, the read is also compared against
+        # title+author; the higher of the two is the honest similarity.
+        "title_sim": title_sim,
+        "ngram_sim": max(ngram_sim(q, entry.norm_title),
+                         ngram_sim(q, f"{entry.norm_title} {entry.norm_author}".strip())
+                         if entry.norm_author else 0.0),
         "score": 0.0, "rejected": None,
     }
 
@@ -176,7 +184,14 @@ def _evaluate(query_tokens: list[str], entry: CatalogEntry,
     # EXISTENCE GATE — title evidence only. Author agreement may raise the
     # tier but must never be what makes a match exist: pooling title and
     # author evidence let one noise token plus a series author invent a title.
-    if not (n_title_hits >= 2 or has_distinct_title):
+    # One narrow exception (IMG_8129): a SHORT one-word title (עדן, הצלם) can
+    # never produce 2 hits or a 5-char token, making such books structurally
+    # unmatchable. When the ENTIRE title is matched and the author strongly
+    # corroborates, that is real evidence — this is not author-alone (the
+    # full title must still match), so the original bug can't return.
+    full_title_with_author = (tt and tcov == 1.0 and n_title_hits >= 1
+                              and acov >= 0.5)
+    if not (n_title_hits >= 2 or has_distinct_title or full_title_with_author):
         info["rejected"] = "no title evidence (needs 2 title tokens, or 1 of " \
                            f"{cfg.distinctive_len}+ chars)"
         return info
@@ -419,6 +434,12 @@ def suppress_fragment_reads(texts: list[str],
     read A appears in a longer matched read B, A is a partial view of B's
     spine — B's claim already speaks for it.
     """
+    def contained(a: set[str], b: set[str]) -> bool:
+        # substring containment, not exact-token: the fragment "ראה אתמול"
+        # (from the נתראה אתמול spine) must count as inside "נתראה אתמול...".
+        # 3+ char tokens only, so tiny words can't bridge unrelated reads.
+        return all(len(t) >= 3 and any(t in u for u in b) for t in a)
+
     rank = {"AUTO": 2, "REVIEW": 1}
     toks = [set(normalize(t).split()) for t in texts]
     for i, m in enumerate(matches):
@@ -427,7 +448,7 @@ def suppress_fragment_reads(texts: list[str],
         for j, other in enumerate(matches):
             if i == j or other is None:
                 continue
-            if (len(toks[i]) < len(toks[j]) and toks[i] <= toks[j]
+            if (len(toks[i]) < len(toks[j]) and contained(toks[i], toks[j])
                     and (rank[other.tier], other.score) >= (rank[m.tier], m.score)):
                 matches[i] = None
                 break

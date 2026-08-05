@@ -483,3 +483,47 @@ acceptEdits. Tests: **21 core + 18 integrations = 39, all offline.**
   restart the server after code changes, or runs execute old code.
 - Labelled-shelf rematch after all of the above: numbers unchanged.
   Tests: **23 core + 18 integrations = 41.**
+
+## Run 12 (8127/8128/8129, old SF shelves) — owner feedback session
+
+Baseline committed first (819c8cb) per owner request; fixes on top.
+
+UI: mode hint under Run is now mode-aware (the "~10s per spine" text was
+spines-only); ONE continuous progress bar across images and phases —
+"reading the photo (part k/n)" then "checking N found titles against the
+catalog (k/N)", weighted 50/50, advancing across images. The "runs twice
+per image" impression was the tile-reading phase (8 parts) being labelled
+like a title count.
+
+Matcher/retrieval fixes (all tested, 26 core tests):
+1. **Simania first-2-token window** — a 2-word title + author defeated every
+   existing query window (all contained author words -> typeahead 0).
+   Measured: קמט בזמן, השקעות (both IN Simania) were unfindable.
+2. **Author-corroborated existence** — short one-word titles (עדן, הצלם,
+   len<5) could NEVER pass the 2-hits-or-distinctive gate. New narrow path:
+   FULL title match + acov>=0.5. Author-alone still cannot create a match.
+3. **n-gram gate no longer diluted by the author in the read** — compare
+   also vs title+author, take max (נהר השמים הגדול died on the gate 49.96
+   vs 50).
+4. **Fragment suppression is substring-tolerant** — "ראה אתמול" (torn from
+   the נתראה אתמול spine) claimed the wrong book "אתמול"; ראה is inside
+   נתראה but not an exact token.
+
+Retested on the owner's reported reads: 8/10 now resolve correctly (קמט
+בזמן, עדן, הצלם, נהר השמים הגדול, הגבעות הירוקות של הארץ, השקעות, זמן
+טעות, קבצנים ובררנים, האטום הכחול — the misread ones resolve once read
+right). **הקרע (וו"ג ויליאמס) is in NEITHER catalog** — genuine gap, stays
+unverified (correct behaviour). The ווהן ויליאמס phantom candidate came
+from NLI's junk results for ויליאמס queries; one-word-title cap keeps that
+class at REVIEW.
+
+Fixture shelves after: mean UNCHANGED (A+R 0.86, AUTO 0.79) but
+redistributed — 7849 B AUTO 0.89->0.93 (לימודי אש recovered), 6082 down a
+notch (boundary jitter; and rematch_blocks measures RANKING ONLY — the real
+pipeline adds the suppression chain on top). 35-book-fixture jitter, net
+strongly positive with the 8 run-12 corrections.
+
+Residuals on these shelves: misreads needing another pass (זמן טעות,
+ובררנים, הכחול, הרפתקה בחלל, היה יהיה בעתיד), הבלשים הצעירים matches the
+short series entry instead of ...וטרזן פורצים למפרץ שלמה, and "רוברט"-class
+author fragments stay REVIEW when their book is missing from the results.

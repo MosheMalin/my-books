@@ -277,6 +277,42 @@ def test_fragment_read_yields_to_its_full_read():
     assert out2[0] is a and out2[1] is b
 
 
+
+
+def test_short_oneword_title_matchable_with_author_corroboration():
+    """עדן/הצלם class: a short one-word title can never yield 2 hits or a
+    5-char token, so it was structurally unmatchable. Full title match +
+    strong author agreement is real evidence -> REVIEW (never author-alone:
+    the whole title must still match)."""
+    cat = LocalCatalog([CatalogEntry("0", "עדן", "סטניסלב לם")])
+    m = match_candidate("עדן סטניסלב לם", cat)
+    assert m is not None and m.title == "עדן", m
+    # author alone must still NOT create a match
+    assert match_candidate("סטניסלב לם", LocalCatalog(
+        [CatalogEntry("0", "עדן", "סטניסלב לם")])) is None
+
+
+def test_ngram_gate_not_diluted_by_author_in_read():
+    """The read carries the author; n-gram cosine vs the title ALONE punished
+    exactly the right entry (נהר השמים הגדול died on the gate by 0.04)."""
+    cat = LocalCatalog([CatalogEntry("0", "נהר השמים הגדול", "גרגורי בנפורד")])
+    m = match_candidate("נהר השמים / גרגורי בנפורד", cat)
+    assert m is not None and m.title == "נהר השמים הגדול", m
+
+
+def test_fragment_suppression_is_substring_tolerant():
+    """"ראה אתמול" is a torn read of the נתראה אתמול spine — ראה is not an
+    exact token of the fuller read, but it is inside נתראה."""
+    from booksnap.match import suppress_fragment_reads
+    full = Match(title="נתראה אתמול", author="רייצ'ל לין סולומון", tier="AUTO",
+                 score=130.0, catalog_id="s1")
+    frag = Match(title="אתמול", author="אבדי, אהרן", tier="REVIEW",
+                 score=115.0, catalog_id="n1")
+    texts = ["נתראה אתמול רייצ'ל לין סולומון", "ראה אתמול"]
+    out = suppress_fragment_reads(texts, [full, frag])
+    assert out[0] is full and out[1] is None
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     passed = 0

@@ -221,7 +221,7 @@
             <div class="img-sub" id="progText"></div>
             <div class="bar"><div id="progBar"></div></div>
           </div>
-          <div class="img-sub" style="margin-top:8px">
+          <div class="img-sub" style="margin-top:8px" id="modeHint">
             ~10s per spine. Stopping keeps every spine already read.
           </div>
         </div>
@@ -446,6 +446,23 @@ $('#stopBtn').onclick = async () => {
   try { await api('/api/stop', { method: 'POST' }); } catch (e) { alert(e.message); }
 };
 
+/* the footnote under the Run button must describe the SELECTED mode — the
+   "~10s per spine" text only applies to the Tesseract spines path */
+const MODE_HINTS = {
+  spines: '~10s per spine. Stopping keeps every spine already read.',
+  fullpage: 'One Vision call per photo, then each found title is checked ' +
+            'against the catalog. Stopping keeps finished images.',
+  llmpage: 'Claude reads each photo in parts (~1 min), then each found ' +
+           'title is checked against the catalog. Stopping keeps finished images.',
+};
+function updateModeHint() {
+  const m = document.querySelector('input[name=mode]:checked');
+  $('#modeHint').textContent = MODE_HINTS[m ? m.value : 'spines'];
+}
+document.querySelectorAll('input[name=mode]')
+  .forEach(r => r.addEventListener('change', updateModeHint));
+updateModeHint();
+
 function startPolling() { if (!polling) { polling = setInterval(pollJob, 1200); pollJob(); } }
 
 async function pollJob() {
@@ -460,12 +477,25 @@ async function pollJob() {
 
   if (running) {
     const done = job.done || 0, tot = job.spines || 0;
-    const label = { reading: 'reading tile', matching: 'matching block',
-                    ocr: 'block' }[job.phase] || 'spine';
+    // One continuous bar. LLM/page runs have two long phases per image —
+    // reading the photo (tiles), then verifying each found book against the
+    // catalog — weighted 50/50 within the image; the bar then advances
+    // across images, never restarting from zero.
+    let frac = tot ? done / tot : 0, msg = tot ? `spine ${done}/${tot}` : 'segmenting…';
+    if (job.phase === 'reading') {
+      frac = 0.5 * (tot ? done / tot : 0);
+      msg = `reading the photo (part ${done}/${tot})`;
+    } else if (job.phase === 'matching') {
+      frac = 0.5 + 0.5 * (tot ? done / tot : 0);
+      msg = `checking ${tot} found titles against the catalog (${done}/${tot})`;
+    } else if (job.phase === 'ocr') {
+      msg = `reading block ${done}/${tot}`;
+    }
+    const nImg = job.image_total || 1, iImg = Math.max(1, job.image_no || 1);
+    const overall = ((iImg - 1) + frac) / nImg;
     $('#progText').textContent =
-      `Image ${job.image_no || 0}/${job.image_total || 0} — ${job.name || ''} · ` +
-      (tot ? `${label} ${done}/${tot}` : 'segmenting…');
-    $('#progBar').style.width = tot ? `${(done / tot) * 100}%` : '4%';
+      `Image ${iImg}/${nImg} — ${job.name || ''} · ${msg}`;
+    $('#progBar').style.width = `${Math.round(overall * 100)}%`;
     images = (await api('/api/images')).images;
     renderImages();
   } else {
