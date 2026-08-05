@@ -449,6 +449,48 @@ def test_extra_catalog_transport_failure_is_safe():
     assert RebooksCatalog(transport=boom, delay_s=0).candidates("ספר") == []
 
 
+
+
+# --- confirmed library / review flow -----------------------------------------
+def test_library_roundtrip_and_confirmed_catalog(tmp_dir=None):
+    import tempfile
+    import booksnap.library as lib
+    d = Path(tempfile.mkdtemp())
+    lib._lib_path = lambda: d / "library.json"
+    lib._dec_path = lambda: d / "decisions.json"
+
+    # AUTO claims absorbed on run completion, rejected ones never re-enter
+    lib.record_decision("r0", "s9", {"action": "reject_ignore",
+                                     "rejected_title": "ספר שגוי",
+                                     "rejected_author": "מישהו"})
+    n = lib.absorb_auto_claims("r1", [
+        {"spine_id": "s1", "match": {"tier": "AUTO", "title": "גן האלים",
+                                     "author": "ג'ראלד דארל"}},
+        {"spine_id": "s2", "match": {"tier": "REVIEW", "title": "ספר אחר",
+                                     "author": ""}},
+        {"spine_id": "s3", "match": {"tier": "AUTO", "title": "ספר שגוי",
+                                     "author": "מישהו"}},
+    ])
+    assert n == 1                                  # REVIEW waits; rejected blocked
+    books = lib.load_library()["books"]
+    assert len(books) == 1 and list(books.values())[0]["status"] == "auto"
+
+    # human approval upgrades; rejection removes
+    lib.add_book("גן האלים", "ג'ראלד דארל", "approved", {})
+    assert list(lib.load_library()["books"].values())[0]["status"] == "approved"
+    assert lib.remove_book("גן האלים", "ג'ראלד דארל")
+    assert lib.load_library()["books"] == {}
+
+    # ConfirmedCatalog: overlap-filtered; LibraryFirst UNIONS, never gates
+    lib.add_book("קמט בזמן", "מדלין ל'אנגל", "approved", {})
+    cc = lib.ConfirmedCatalog()
+    assert [e.title for e in cc.candidates("קמט בזמן מדלין")] == ["קמט בזמן"]
+    assert cc.candidates("ספר לא קשור בכלל") == []
+    chain = LocalCatalog([CatalogEntry("c1", "רוח בדלת", "מדלן ל'אנגל")])
+    both = lib.LibraryFirstCatalog(cc, chain).candidates("קמט בזמן")
+    assert {e.title for e in both} == {"קמט בזמן", "רוח בדלת"}
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items())
            if k.startswith("test_") and callable(v)]

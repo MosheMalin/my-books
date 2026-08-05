@@ -210,12 +210,12 @@
         <div style="margin-top:12px">
           <div style="font-size:12.5px;color:var(--muted);margin-bottom:5px">Processing mode</div>
           <div style="display:flex;gap:6px;margin-bottom:10px">
-            <label class="mode-opt"><input type="radio" name="mode" value="spines" checked>
+            <label class="mode-opt"><input type="radio" name="mode" value="spines">
               <span><b>Split to spines</b><br>Tesseract per spine, free, ~10s/spine</span></label>
             <label class="mode-opt"><input type="radio" name="mode" value="fullpage">
               <span><b>Whole image</b><br>1 Vision call per photo</span></label>
-            <label class="mode-opt"><input type="radio" name="mode" value="llmpage">
-              <span><b>LLM read</b><br>Claude reads tiles, ~$0.08/photo</span></label>
+            <label class="mode-opt"><input type="radio" name="mode" value="llmpage" checked>
+              <span><b>LLM read</b><br>Claude reads tiles, ~$0.15/photo</span></label>
           </div>
           <div style="display:flex;gap:8px">
             <button class="primary" id="runBtn" style="flex:1">Run on selected</button>
@@ -612,10 +612,16 @@ async function renderResults() {
 
   renderTabs(run);
 
+  // review state for this run + the confirmed library size
+  let decisions = {}, libCount = null;
+  try { decisions = (await api(`/api/runs/${run.run_id}/decisions`)).decisions || {}; } catch {}
+  try { libCount = (await api('/api/library')).count; } catch {}
+
   const t = data.totals;
   $('#stats').innerHTML = [
     ['spines', t.spines, null], ['AUTO', t.auto, 'auto'], ['review', t.review, 'review'],
-    ['unmatched', t.unmatched, 'unmatched'], ['unique titles', t.unique_titles, null]
+    ['unmatched', t.unmatched, 'unmatched'], ['unique titles', t.unique_titles, null],
+    ...(libCount === null ? [] : [['in library 📚', libCount, null]])
   ].map(([l, n, key]) => `
       <div class="stat">
         <div class="n">${n} ${key && tab === 'all'
@@ -641,6 +647,30 @@ async function renderResults() {
   const onlyMatched = $('#onlyMatched').checked;
   const rows = data.found.filter(f => !onlyMatched || f.title);
   const cropUrl = f => `/api/runs/${run.run_id}/crops/${encodeURIComponent(f.spine_id)}`;
+
+  // review controls per claim: ✓ approve · ✗ wrong (ignore) · ⟳ find better.
+  // AUTO claims are already in the library ("auto"); ✗ removes them.
+  const reviewCell = f => {
+    if (!f.title) return '';
+    const d = decisions[f.spine_id];
+    const sp = escapeHtml(f.spine_id);
+    if (d && (d.action === 'approve' || d.action === 'replace' || d.action === 'manual_add')) {
+      const repl = d.action === 'replace' && d.title !== f.title
+        ? `<div class="ocr rtl">→ ${escapeHtml(d.title)}</div>` : '';
+      return `<span class="badge b-AUTO" title="confirmed in library">✓ library</span>${repl}
+        <button class="linkish rv" data-a="reject_ignore" data-spine="${sp}">undo</button>`;
+    }
+    if (d && d.action === 'reject_ignore') {
+      return `<span class="badge b-none">✗ rejected</span>
+        <button class="linkish rv" data-a="alts" data-spine="${sp}">find better</button>`;
+    }
+    const auto = f.tier === 'AUTO';
+    return `${auto ? '<span class="badge b-AUTO" title="added automatically on new runs; ✗ removes">auto ✓</span>' : ''}
+      <button class="linkish rv" data-a="approve" data-spine="${sp}">✓ approve</button>
+      <button class="linkish rv" data-a="reject_ignore" data-spine="${sp}">✗ wrong</button>
+      <button class="linkish rv" data-a="alts" data-spine="${sp}">⟳ find better</button>`;
+  };
+
   box.innerHTML = rows.map(f => `
     <div class="row">
       <img src="${cropUrl(f)}" alt="" loading="lazy"
@@ -659,16 +689,82 @@ async function renderResults() {
           f.ocr_score ? ` · score ${f.ocr_score}` : ''}${
           tab === 'all' ? ` · ${escapeHtml(f.image_name)}` : ''}</div>
       </div>
-      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex:none">
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex:none;max-width:170px">
         <span class="badge b-${f.tier || 'none'}">${f.tier || 'none'}</span>
         <button class="linkish why" data-spine="${escapeHtml(f.spine_id)}">why?</button>
+        ${reviewCell(f)}
       </div>
     </div>
-    <div class="why-box" id="why-${escapeHtml(f.spine_id)}" style="display:none"></div>`)
+    <div class="why-box" id="why-${escapeHtml(f.spine_id)}" style="display:none"></div>
+    <div class="why-box" id="alts-${escapeHtml(f.spine_id)}" style="display:none"></div>`)
     .join('') || '<div class="empty">Nothing to show with this filter.</div>';
+
+  // "the shelf has a book you didn't find" — manual entry joins the library
+  box.insertAdjacentHTML('beforeend', `
+    <div class="row" style="align-items:center;gap:8px">
+      <div style="flex:1;display:flex;gap:6px;flex-wrap:wrap">
+        <input type="text" id="missTitle" class="rtl" placeholder="add a missing book — title" style="flex:2;min-width:140px">
+        <input type="text" id="missAuthor" class="rtl" placeholder="author (optional)" style="flex:1;min-width:110px">
+        <button id="missAdd">+ add to library</button>
+      </div>
+    </div>`);
+  $('#missAdd').onclick = async () => {
+    const title = $('#missTitle').value.trim();
+    if (!title) return;
+    await api('/api/review', jsonReq('POST', {
+      run_id: run.run_id, spine_id: `manual-${Date.now()}`,
+      action: 'manual_add', title, author: $('#missAuthor').value.trim() }));
+    await renderResults();
+  };
 
   box.querySelectorAll('button.why').forEach(b => {
     b.onclick = () => showWhy(run.run_id, b.dataset.spine, b);
+  });
+  box.querySelectorAll('button.rv').forEach(b => {
+    const f = rows.find(r => r.spine_id === b.dataset.spine);
+    b.onclick = async () => {
+      if (b.dataset.a === 'alts') return showAlternatives(run.run_id, f, decisions);
+      const body = { run_id: run.run_id, spine_id: f.spine_id, action: b.dataset.a };
+      if (b.dataset.a === 'approve') { body.title = f.title; body.author = f.author || ''; }
+      if (b.dataset.a === 'reject_ignore') {
+        const d = decisions[f.spine_id];   // undo of replace removes the replacement
+        body.old = (d && d.title) ? { title: d.title, author: d.author || '' }
+                                  : { title: f.title, author: f.author || '' };
+      }
+      await api('/api/review', jsonReq('POST', body));
+      await renderResults();
+    };
+  });
+}
+
+/* ---------------- "find better" alternatives ---------------- */
+async function showAlternatives(runId, f, decisions) {
+  const box = document.getElementById('alts-' + f.spine_id);
+  if (box.style.display !== 'none') { box.style.display = 'none'; return; }
+  box.style.display = '';
+  box.innerHTML = '<div class="ocr">looking for alternatives…</div>';
+  const d = decisions[f.spine_id];
+  const exclude = [f.title, d && d.rejected_title].filter(Boolean).join(',');
+  const r = await api(`/api/runs/${runId}/alternatives/${encodeURIComponent(f.spine_id)}?exclude=${encodeURIComponent(exclude)}`);
+  if (!r.candidates.length) {
+    box.innerHTML = '<div class="ocr">no other plausible candidate — you can add the right book manually below.</div>';
+    return;
+  }
+  box.innerHTML = r.candidates.map((c, i) => `
+    <div style="display:flex;gap:8px;align-items:center;padding:3px 0">
+      <button class="alt-use" data-i="${i}">use this</button>
+      <span class="rtl">${escapeHtml(c.title)} — ${escapeHtml(c.author || '')}</span>
+      <span class="muted mono">${c.score}</span>
+    </div>`).join('');
+  box.querySelectorAll('button.alt-use').forEach(b => {
+    b.onclick = async () => {
+      const c = r.candidates[+b.dataset.i];
+      await api('/api/review', jsonReq('POST', {
+        run_id: runId, spine_id: f.spine_id, action: 'replace',
+        title: c.title, author: c.author || '',
+        old: { title: f.title, author: f.author || '' } }));
+      await renderResults();
+    };
   });
 }
 
@@ -744,12 +840,17 @@ function escapeHtml(s) {
       $('#phoneUrl').textContent = h.lan_url;
       $('#phoneHint').style.display = '';
     }
-    // same only-when-positively-off rule for llmpage
+    // same only-when-positively-off rule for llmpage; if the default (llm)
+    // is unavailable, fall back to the free spines mode
     if (h.anthropic_key_set === false) {
       const r = document.querySelector('input[name=mode][value=llmpage]');
       r.disabled = true;
       r.closest('.mode-opt').title = 'needs ANTHROPIC_API_KEY in .env';
       r.closest('.mode-opt').style.opacity = .5;
+      if (r.checked) {
+        document.querySelector('input[name=mode][value=spines]').checked = true;
+        updateModeHint();
+      }
     }
   } catch {}
   await refresh();

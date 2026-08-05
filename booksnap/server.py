@@ -204,9 +204,13 @@ def _build_catalog():
         chain += [RebooksCatalog(cache_dir=WORK / "rebooks_cache"),
                   BooksferCatalog(cache_dir=WORK / "booksefer_cache")]
         parts += ["rebooks", "booksefer"]
-        return ChainCatalog(chain), {
-            "backend": "+".join(parts), "entries": None,
-            "note": "on-empty cascade, precise source first"}
+        # confirmed library AUGMENTS the chain (union, never a gate): a book
+        # the owner confirmed once matches instantly on every later shelf
+        from .library import ConfirmedCatalog, LibraryFirstCatalog
+        cat = LibraryFirstCatalog(ConfirmedCatalog(), ChainCatalog(chain))
+        return cat, {
+            "backend": "library+" + "+".join(parts), "entries": None,
+            "note": "confirmed library union, then on-empty cascade"}
     if backend == "nli":
         from .nli_catalog import NLICatalog
         key = os.environ.get("NLI_API_KEY", "")
@@ -340,6 +344,10 @@ def _run_job(run_id: str, image_ids: list[str], mode: str = "spines") -> None:
         _records_path(run_id, img_id).write_text(
             json.dumps(records, ensure_ascii=False, indent=1), encoding="utf-8")
         catalog.save(_run_dir(run_id) / "candidates" / f"{img_id}.json")
+        # AUTO claims join the confirmed library (status "auto", reversible);
+        # REVIEW claims wait for a human decision in the review flow
+        from .library import absorb_auto_claims
+        absorb_auto_claims(run_id, records)
 
         was_stopped = _stop_event.is_set()
         summary = _summarise(records)
@@ -698,6 +706,20 @@ def score_run_endpoint(run_id: str) -> dict:
             "scored": out, "unlabelled_images": unlabelled}
 
 
+def _find_record(run_id: str, spine_id: str) -> dict:
+    run = _load()["runs"].get(run_id)
+    if not run:
+        raise HTTPException(404, "no such run")
+    for iid in run.get("images", {}):
+        p = _records_path(run_id, iid)
+        if not p.exists():
+            continue
+        for r in json.loads(p.read_text(encoding="utf-8")):
+            if r["spine_id"] == spine_id:
+                return r
+    raise HTTPException(404, "no such spine in this run")
+
+
 @app.get("/api/runs/{run_id}/explain/{spine_id}")
 def explain_spine(run_id: str, spine_id: str) -> dict:
     """Why did this spine match (or fail to match) a title?
@@ -707,27 +729,12 @@ def explain_spine(run_id: str, spine_id: str) -> dict:
     tuning ("would my change have fixed this spine?"), but it means the answer
     can disagree with an old run's stored result. The UI says so.
     """
-    data = _load()
-    run = data["runs"].get(run_id)
-    if not run:
-        raise HTTPException(404, "no such run")
-
-    record = None
-    for iid in run.get("images", {}):
-        p = _records_path(run_id, iid)
-        if not p.exists():
-            continue
-        for r in json.loads(p.read_text(encoding="utf-8")):
-            if r["spine_id"] == spine_id:
-                record = r
-                break
-        if record:
-            break
-    if record is None:
-        raise HTTPException(404, "no such spine in this run")
+    record = _find_record(run_id, spine_id)
 
     from .match import explain
-    catalog = LocalCatalog.from_json(_catalog_path())
+    # explain against the SAME retrieval the runs use (was: always the local
+    # sample catalog, which silently disagreed with chain-backend runs)
+    catalog, _ = _build_catalog()
     ocr = record.get("ocr") or {}
     texts = [t for t in [ocr.get("text"), *(ocr.get("lines") or [])] if t]
     # the matcher scores the joined text and each line separately; explain the
@@ -740,6 +747,91 @@ def explain_spine(run_id: str, spine_id: str) -> dict:
             "explained_with": "current code/config",
             "code_version": _code_version(),
             **result}
+
+
+# --------------------------------------------------------------------------
+# review flow -> the confirmed library (see library.py for the semantics)
+# --------------------------------------------------------------------------
+@app.get("/api/library")
+def get_library() -> dict:
+    from .library import load_library
+    books = (load_library().get("books") or {})
+    return {"count": len(books),
+            "books": sorted(books.values(), key=lambda b: b["title"])}
+
+
+@app.get("/api/runs/{run_id}/decisions")
+def get_decisions(run_id: str) -> dict:
+    from .library import load_decisions
+    return {"decisions": load_decisions(run_id)}
+
+
+@app.post("/api/review")
+def review(payload: dict = Body(...)) -> dict:
+    """One review decision: approve / reject_ignore / replace / manual_add."""
+    from .library import add_book, record_decision, remove_book
+    run_id = payload.get("run_id") or ""
+    spine_id = payload.get("spine_id") or ""
+    action = payload.get("action")
+    title = (payload.get("title") or "").strip()
+    author = (payload.get("author") or "").strip()
+    old = payload.get("old") or {}
+
+    if action not in ("approve", "reject_ignore", "replace", "manual_add"):
+        raise HTTPException(400, f"unknown action {action!r}")
+    if action in ("approve", "replace", "manual_add") and not title:
+        raise HTTPException(400, f"{action} needs a title")
+
+    decision = {"action": action, "title": title, "author": author}
+    if action == "approve":
+        add_book(title, author, "approved",
+                 {"run_id": run_id, "spine_id": spine_id})
+    elif action == "manual_add":
+        add_book(title, author, "approved",
+                 {"run_id": run_id, "spine_id": spine_id, "manual": True})
+    elif action == "reject_ignore":
+        if old.get("title"):
+            remove_book(old["title"], old.get("author", ""))
+        decision.update(rejected_title=old.get("title", ""),
+                        rejected_author=old.get("author", ""))
+    elif action == "replace":
+        if old.get("title"):
+            remove_book(old["title"], old.get("author", ""))
+        add_book(title, author, "approved",
+                 {"run_id": run_id, "spine_id": spine_id,
+                  "replaced": old.get("title", "")})
+        decision.update(rejected_title=old.get("title", ""),
+                        rejected_author=old.get("author", ""))
+    if spine_id:
+        record_decision(run_id, spine_id, decision)
+    return {"ok": True, "decision": decision}
+
+
+@app.get("/api/runs/{run_id}/alternatives/{spine_id}")
+def alternatives(run_id: str, spine_id: str, exclude: str = "") -> dict:
+    """Ranked replacement candidates for a rejected claim ('find better').
+
+    Recomputes with the CURRENT retrieval chain and gates; `exclude` is a
+    comma-separated list of normalized titles already rejected for this spine.
+    """
+    from .catalog import normalize
+    from .match import explain
+    record = _find_record(run_id, spine_id)
+    ocr = record.get("ocr") or {}
+    texts = [t for t in [ocr.get("text"), *(ocr.get("lines") or [])] if t]
+    if not texts:
+        return {"candidates": []}
+    catalog, _ = _build_catalog()
+    excluded = {normalize(t) for t in exclude.split(",") if t.strip()}
+    out = []
+    for c in explain(texts[0], catalog, limit=12)["candidates"]:
+        if c["rejected"] or normalize(c["title"]) in excluded:
+            continue
+        out.append({"title": c["title"], "author": c["author"],
+                    "score": round(c["score"], 1)})
+        if len(out) >= 5:
+            break
+    return {"candidates": out}
 
 
 def _lan_url(port: int = 8756) -> str | None:
