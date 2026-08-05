@@ -285,9 +285,14 @@ def _clean(s: str) -> str:
 
 
 def _clean_creator(s: str) -> str:
-    """NLI creators look like "דארל, ג'ראלד, 1925-1995$$Qדארל, ג'ראלד" —
-    strip the MARC subfield tail and the life dates."""
+    """NLI creators look like "דארל, ג'ראלד, 1925-1995$$Qדארל, ג'ראלד" or
+    "לו, מרי, 1984- מחבר" — strip the MARC subfield tail, cataloguer role
+    words, and the life dates. The roles leaked into the UI (the owner had to
+    ask why וורקרוס was "by מרי לו 1984- מחבר") and depress author matching.
+    """
     s = str(s).split("$$")[0]
+    # trailing role designators, possibly several: מחבר מאייר / עורך / מתרגם
+    s = re.sub(r"(?:\s+(?:מחבר|מאייר|עורך|עורכת|מתרגם|מתרגמת|כותב))+\s*$", "", s)
     s = re.sub(r",?\s*\d{3,4}\s*-\s*\d{0,4}\.?\s*$", "", s)
     s = re.sub(r"\s*[.,;:]\s*$", "", s)
     return s.strip()

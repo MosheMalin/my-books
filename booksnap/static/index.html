@@ -668,7 +668,8 @@ async function renderResults() {
     return `${auto ? '<span class="badge b-AUTO" title="added automatically on new runs; ✗ removes">auto ✓</span>' : ''}
       <button class="linkish rv" data-a="approve" data-spine="${sp}">✓ approve</button>
       <button class="linkish rv" data-a="reject_ignore" data-spine="${sp}">✗ wrong</button>
-      <button class="linkish rv" data-a="alts" data-spine="${sp}">⟳ find better</button>`;
+      <button class="linkish rv" data-a="alts" data-spine="${sp}">⟳ find better</button>
+      <button class="linkish rv" data-a="edit" data-spine="${sp}">✎ fix details</button>`;
   };
 
   box.innerHTML = rows.map(f => `
@@ -724,6 +725,7 @@ async function renderResults() {
     const f = rows.find(r => r.spine_id === b.dataset.spine);
     b.onclick = async () => {
       if (b.dataset.a === 'alts') return showAlternatives(run.run_id, f, decisions);
+      if (b.dataset.a === 'edit') return showEdit(run.run_id, f);
       const body = { run_id: run.run_id, spine_id: f.spine_id, action: b.dataset.a };
       if (b.dataset.a === 'approve') { body.title = f.title; body.author = f.author || ''; }
       if (b.dataset.a === 'reject_ignore') {
@@ -735,6 +737,30 @@ async function renderResults() {
       await renderResults();
     };
   });
+}
+
+/* ---------------- "fix details" — the match is right, the text is off ------ */
+function showEdit(runId, f) {
+  const box = document.getElementById('alts-' + f.spine_id);
+  if (box.style.display !== 'none') { box.style.display = 'none'; return; }
+  box.style.display = '';
+  box.innerHTML = `
+    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+      <input type="text" class="rtl" id="edT-${f.spine_id}" value="${escapeHtml(f.title)}"
+             style="flex:2;min-width:150px" placeholder="title">
+      <input type="text" class="rtl" id="edA-${f.spine_id}" value="${escapeHtml(f.author || '')}"
+             style="flex:1;min-width:120px" placeholder="author">
+      <button id="edS-${f.spine_id}">save to library</button>
+    </div>`;
+  document.getElementById('edS-' + f.spine_id).onclick = async () => {
+    const title = document.getElementById('edT-' + f.spine_id).value.trim();
+    if (!title) return;
+    await api('/api/review', jsonReq('POST', {
+      run_id: runId, spine_id: f.spine_id, action: 'replace',
+      title, author: document.getElementById('edA-' + f.spine_id).value.trim(),
+      old: { title: f.title, author: f.author || '' } }));
+    await renderResults();
+  };
 }
 
 /* ---------------- "find better" alternatives ---------------- */

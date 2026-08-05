@@ -501,6 +501,18 @@ def test_library_roundtrip_and_confirmed_catalog(tmp_dir=None):
     assert {e.title for e in both} == {"קמט בזמן", "רוח בדלת"}
 
 
+
+
+def test_nli_creator_strips_roles_and_dates():
+    """"לו, מרי, 1984- מחבר" leaked into the UI; roles and life dates are
+    cataloguer metadata, not spine text."""
+    from booksnap.nli_catalog import _clean_creator
+    assert _clean_creator("לו, מרי, 1984- מחבר") == "לו, מרי"
+    assert _clean_creator("שנקולבסקי, רפאל, 1928-1986 מחבר מאייר") == "שנקולבסקי, רפאל"
+    assert _clean_creator("דארל, ג'ראלד, 1925-1995$$Qדארל, ג'ראלד") == "דארל, ג'ראלד"
+    assert _clean_creator("קארני, פול") == "קארני, פול"
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items())
            if k.startswith("test_") and callable(v)]

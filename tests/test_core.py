@@ -353,6 +353,54 @@ def test_truncated_short_tail_does_not_shield_fragment():
     assert out[0] is full and out[1] is None
 
 
+
+
+def test_fragment_containment_includes_matched_entry_text():
+    """"הסכין ה פיליפ פולמן" is a torn re-read of the הסכין המעודן spine but
+    carries פיליפ, which the fuller read lacks — the matched entry's own
+    title+author closes the gap. A read naming a DIFFERENT author survives."""
+    from booksnap.match import suppress_fragment_reads
+    full = Match(title="הסכין המעודן", author="פולמן, פיליפ", tier="AUTO",
+                 score=115.7, catalog_id="s1")
+    frag = Match(title="הסכין", author="תדהר ניר", tier="REVIEW",
+                 score=115.0, catalog_id="n1")
+    texts = ["הסכין המעונדן פולמן", "הסכין ה פיליפ פולמן"]
+    out = suppress_fragment_reads(texts, [full, frag])
+    assert out[0] is full and out[1] is None
+    # genuinely different book naming its own author: kept
+    a = Match(title="מכונת הזמן המקרית", author="ג'ו הלדמן", tier="AUTO",
+              score=130.0, catalog_id="s2")
+    b = Match(title="מכונת הזמן", author="ה.ג'. וולס", tier="AUTO",
+              score=115.0, catalog_id="s3")
+    out2 = suppress_fragment_reads(
+        ["מכונת הזמן המקרית ג'ו הלדמן", "מכונת הזמן ה.ג. וולס"], [a, b])
+    assert out2[0] is a and out2[1] is b
+
+
+def test_verbatim_title_read_is_matchable():
+    """"צל אפל" read cleanly had ZERO usable tokens (צל under the length
+    floor, אפל short of distinctive) — a read that IS the title, verbatim,
+    is evidence enough to surface the claim."""
+    cat = LocalCatalog([CatalogEntry("0", "צל אפל", "סבסטיאן דה קסטל")])
+    m = match_candidate("צל אפל", cat)
+    assert m is not None and m.title == "צל אפל", m
+
+
+
+
+def test_fragment_with_stray_tokens_still_suppressed():
+    """"המצפן ה פיליפ פולמן" has MORE tokens than the clean read "המצפן
+    הזהוב פולמן" — containment must be asymmetric, not length-based."""
+    from booksnap.match import suppress_fragment_reads
+    full = Match(title="המצפן הזהוב", author="פיליפ פולמן", tier="AUTO",
+                 score=122.5, catalog_id="s1")
+    frag = Match(title="המצפן", author="ג'ון ספנסר אליס", tier="REVIEW",
+                 score=115.0, catalog_id="n1")
+    texts = ["המצפן הזהוב פולמן", "המצפן ה פיליפ פולמן"]
+    out = suppress_fragment_reads(texts, [full, frag])
+    assert out[0] is full and out[1] is None
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     passed = 0

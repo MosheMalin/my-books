@@ -555,3 +555,27 @@ Owner verdicts applied via the review API: both wrong claims rejected
 confirmed-library head matches גנב הקוונטום from its MISREAD (הקוונטים) —
 fuzzy matcher over the library succeeds where literal search engines can't.
 GT now 6 shelves (3 provisional). Tests: **29 core + 22 integrations = 51.**
+
+## Run 14 (IMG_8134) — adjacent shelves are harmless; three more fixes
+
+Owner's framing worry (photo includes slivers of the shelves above/below):
+**measured harmless** — no neighbor-shelf book was claimed; the gates ate
+every sliver. All wrong claims were tile-overlap re-reads of THIS shelf.
+
+1. **Fragment suppression is now ASYMMETRIC-containment**, checked against
+   the fuller claim's read PLUS its matched entry's title+author. Two
+   sub-bugs fixed on the way: a torn read + stray letter can have MORE
+   tokens than the clean read it duplicates (length guards mislead —
+   המצפן ה פיליפ פולמן vs המצפן הזהוב פולמן), and short tokens satisfy by
+   substring but are never skipped (the ה of a truncated word matches
+   inside הזהוב; the אש of לימודי אש still blocks against לימודי רעל).
+2. **Verbatim-title existence** — "צל אפל" read perfectly had ZERO usable
+   tokens (צל under the length floor, אפל short of distinctive). A read
+   that IS the title, whole-string, now passes existence (surfaces REVIEW).
+3. **NLI creator cleanup** — role words + life dates ("לו, מרי, 1984- מחבר")
+   stripped at parse; they leaked into the UI and depressed author matching.
+4. **UI "✎ fix details"** — inline title/author edit on any claim (the
+   owner's וורקרוס adjustment), wired to the replace action.
+
+Verdicts applied (4 rejections, וורקרוס author fix, 6 manual adds; library
+47 books). Fixture unchanged. GT 7 shelves. Tests: **32 + 23 = 55.**

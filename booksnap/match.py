@@ -195,7 +195,13 @@ def _evaluate(query_tokens: list[str], entry: CatalogEntry,
     # full title must still match), so the original bug can't return.
     full_title_with_author = (tt and tcov == 1.0 and n_title_hits >= 1
                               and acov >= 0.5)
-    if not (n_title_hits >= 2 or has_distinct_title or full_title_with_author):
+    # ...and a read that IS the title, verbatim: "צל אפל" read cleanly still
+    # had zero usable tokens (צל under the length floor, אפל short of
+    # distinctive), making the book unmatchable however well it was read.
+    # Whole-string equality of the full normalized read is strong evidence.
+    verbatim_title = bool(entry.norm_title) and q == entry.norm_title
+    if not (n_title_hits >= 2 or has_distinct_title or full_title_with_author
+            or verbatim_title):
         info["rejected"] = "no title evidence (needs 2 title tokens, or 1 of " \
                            f"{cfg.distinctive_len}+ chars)"
         return info
@@ -441,20 +447,39 @@ def suppress_fragment_reads(texts: list[str],
     def contained(a: set[str], b: set[str]) -> bool:
         # substring containment, not exact-token: the fragment "ראה אתמול"
         # (from the נתראה אתמול spine) must count as inside "נתראה אתמול...".
-        # Tokens under 3 chars are SKIPPED, not failed — the truncated "ה" in
-        # "מכונת הזמן ה..." must not shield the fragment from suppression.
-        core = [t for t in a if len(t) >= 3]
-        return bool(core) and all(any(t in u for u in b) for t in core)
+        # EVERY token must be found, including short ones — but short tokens
+        # satisfy by substring, so the truncated "ה" of "מכונת הזמן ה..."
+        # matches inside המקרית, while a real short word that distinguishes a
+        # sibling (לימודי אש vs לימודי רעל) blocks the suppression. A read of
+        # only sub-3-char tokens is never treated as contained.
+        if not any(len(t) >= 3 for t in a):
+            return False
+        return all(any(t in u for u in b) for t in a)
 
     rank = {"AUTO": 2, "REVIEW": 1}
     toks = [set(normalize(t).split()) for t in texts]
+
+    def world(k: int) -> set[str]:
+        # a claim's "world": its read plus its matched entry's title+author.
+        # "הסכין ה פיליפ פולמן" is a torn re-read of the הסכין המעודן spine
+        # but carries פיליפ, which only the ENTRY (not the fuller read) has.
+        m = matches[k]
+        return toks[k] | set(normalize(f"{m.title} {m.author}").split())
+
     for i, m in enumerate(matches):
         if not m or not toks[i]:
             continue
         for j, other in enumerate(matches):
             if i == j or other is None:
                 continue
-            if (len(toks[i]) < len(toks[j]) and contained(toks[i], toks[j])
+            # ASYMMETRIC containment, not length: the fragment fits entirely
+            # inside the fuller claim's world while the fuller claim has
+            # substance the fragment lacks (הזהוב). Token counts mislead —
+            # a torn read plus a stray letter can be "longer" than the clean
+            # read it duplicates. A read naming a DIFFERENT author (מכונת
+            # הזמן ה.ג. ולס next to the Haldeman book) is not contained and
+            # keeps its claim.
+            if (contained(toks[i], world(j)) and not contained(toks[j], world(i))
                     and (rank[other.tier], other.score) >= (rank[m.tier], m.score)):
                 matches[i] = None
                 break
