@@ -864,8 +864,8 @@ def get_decisions(run_id: str) -> dict:
 def review(payload: dict = Body(...)) -> dict:
     """One review decision: approve / reject_ignore / replace / manual_add /
     clear (undo a stored decision without touching the library)."""
-    from .library import (add_book, clear_decision, record_decision,
-                          remove_book)
+    from .library import (add_book, clear_decision, load_decisions,
+                          record_decision, remove_book)
     run_id = payload.get("run_id") or ""
     spine_id = payload.get("spine_id") or ""
     action = payload.get("action")
@@ -886,6 +886,12 @@ def review(payload: dict = Body(...)) -> dict:
         # which shelf the hand-added book belongs to, so the review UI can
         # render it as a row on that shelf instead of a silent library bump
         decision["image"] = payload["image"]
+    elif action == "replace":
+        # editing a hand-added book must not orphan it: without its shelf the
+        # row would render nowhere and only the library count would move
+        prev = (load_decisions(run_id) or {}).get(spine_id) or {}
+        if prev.get("image"):
+            decision["image"] = prev["image"]
     if action == "approve":
         add_book(title, author, "approved",
                  {"run_id": run_id, "spine_id": spine_id})

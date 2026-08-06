@@ -108,6 +108,22 @@
   .b-none   { color: var(--none);   background: var(--none-bg); }
   .b-WRONG  { color: var(--danger); background: var(--danger-bg); }
   .b-MANUAL { color: var(--accent); background: rgba(47,111,237,.12); }
+  .b-EDIT   { color: var(--accent); background: rgba(47,111,237,.12); }
+
+  /* author autocomplete (replaces <datalist>, whose popup the browser placed
+     far to the left on these RTL inputs) */
+  .ac-pop {
+    position: absolute; z-index: 60; display: none;
+    direction: rtl; text-align: right;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 8px; box-shadow: 0 8px 22px rgba(0,0,0,.18);
+    max-height: 236px; overflow-y: auto; padding: 3px;
+  }
+  .ac-pop > div {
+    padding: 5px 9px; border-radius: 6px; cursor: pointer; font-size: 13.5px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .ac-pop > div:hover, .ac-pop > div.sel { background: rgba(47,111,237,.14); }
 
   /* "is this book already here?" hint under the add/search box */
   .miss-hint { font-size: 12.5px; line-height: 1.7; margin-top: 2px; }
@@ -293,6 +309,22 @@ const api = async (url, opt) => {
 const jsonReq = (method, body) => ({
   method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
 });
+// image names and spine ids go inside attribute selectors; CSS.escape is the
+// only correct quoting (a bare "." in "IMG_8139.jpeg" would read as a class)
+const cssEsc = s => (window.CSS && CSS.escape) ? CSS.escape(s) : s;
+
+/** Re-render without the page jumping: rows change height as their controls
+ *  change, so the element you were looking at slides away under the cursor.
+ *  Pins `selector`'s element to the same viewport offset across `fn`. */
+async function keepInPlace(selector, fn) {
+  const before = document.querySelector(selector)?.getBoundingClientRect().top;
+  await fn();
+  const el = document.querySelector(selector);
+  if (el && before != null) {
+    const delta = el.getBoundingClientRect().top - before;
+    if (delta) window.scrollBy(0, delta);
+  }
+}
 
 let images = [], runs = [], selected = new Set();
 let viewRun = null;      // run_id being viewed, null = latest
@@ -300,6 +332,7 @@ let tab = 'all', polling = null;
 // per-shelf "is it already here?" queries, kept across re-renders so an
 // approve/reject elsewhere doesn't wipe what you were checking
 const missQueries = {};
+let libAuthors = [];     // confirmed-library authors, for author autocomplete
 
 /* ---------------- upload ---------------- */
 const drop = $('#drop'), fileInput = $('#file');
@@ -632,7 +665,7 @@ async function renderResults() {
 
   // review state for this run + the confirmed library (count + author list
   // for the light autocomplete on author inputs)
-  let decisions = {}, libCount = null, libAuthors = [];
+  let decisions = {}, libCount = null;
   try { decisions = (await api(`/api/runs/${run.run_id}/decisions`)).decisions || {}; } catch {}
   try {
     const L = await api('/api/library');
@@ -686,12 +719,16 @@ async function renderResults() {
       const repl = changed
         ? `<div class="ocr rtl" title="what the library holds">→ ${escapeHtml(d.title)}${
             d.author ? ` — ${escapeHtml(d.author)}` : ''}</div>` : '';
+      // a confirmed row stays editable: a typo noticed after approving used
+      // to need undo-then-fix (owner feedback)
       return `<span class="badge b-AUTO" title="confirmed in library">✓ library</span>${repl}
+        <button class="linkish rv" data-a="edit" data-spine="${sp}">✎ fix details</button>
         <button class="linkish rv" data-a="reject_ignore" data-spine="${sp}">undo</button>`;
     }
     if (d && d.action === 'reject_ignore') {
       return `<span class="badge b-WRONG">✗ marked wrong</span>
         <button class="linkish rv" data-a="alts" data-spine="${sp}">find better</button>
+        <button class="linkish rv" data-a="edit" data-spine="${sp}">✎ fix details</button>
         <button class="linkish rv" data-a="clear" data-spine="${sp}"
                 title="mis-click? return to undecided (does not re-add to library)">undo</button>`;
     }
@@ -710,9 +747,16 @@ async function renderResults() {
   // appears anywhere on the row — a rejected row wearing a green badge
   // looked like a confirmed book (owner feedback, run 18)
   const isRejected = f => (decisions[f.spine_id] || {}).action === 'reject_ignore';
-  const tierBadge = f => isRejected(f)
-    ? `<span class="badge b-WRONG" title="marked wrong">${f.tier || 'none'}</span>`
-    : `<span class="badge b-${f.tier || 'none'}">${f.tier || 'none'}</span>`;
+  // "replace" is the only decision that CHANGES the book (via ✎ fix details
+  // or ⟳ find better) — flag it beside the tier so an edited row is
+  // distinguishable from an untouched one at a glance
+  const isEdited = f => (decisions[f.spine_id] || {}).action === 'replace';
+  const tierBadge = f => `<div style="display:flex;gap:4px;align-items:center">${
+    isRejected(f)
+      ? `<span class="badge b-WRONG" title="marked wrong">${f.tier || 'none'}</span>`
+      : `<span class="badge b-${f.tier || 'none'}">${f.tier || 'none'}</span>`}${
+    isEdited(f) ? '<span class="badge b-EDIT" title="title/author changed by hand">✎ edited</span>' : ''
+    }</div>`;
 
   const rowHtml = f => `
     <div class="row${isRejected(f) ? ' rejected' : ''}" data-spine="${escapeHtml(f.spine_id)}">
@@ -757,8 +801,10 @@ async function renderResults() {
 
   // books added by hand for this shelf render as their own rows, so the
   // addition is visible in place instead of only in the library count
+  // (a 'replace' keeps the shelf: editing a hand-added book must not orphan it)
   const manualRows = g => Object.entries(decisions)
-    .filter(([, d]) => d.action === 'manual_add' && d.image === g.name)
+    .filter(([, d]) => ['manual_add', 'replace'].includes(d.action)
+                       && d.image === g.name)
     .map(([sid, d]) => `
     <div class="row" data-spine="${escapeHtml(sid)}">
       <div style="flex:1;min-width:0">
@@ -767,34 +813,42 @@ async function renderResults() {
         <div class="ocr">added by hand — no spine crop</div>
       </div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex:none;max-width:170px">
-        <span class="badge b-MANUAL" title="added manually to this shelf">+ manual</span>
+        <div style="display:flex;gap:4px;align-items:center">
+          <span class="badge b-MANUAL" title="added manually to this shelf">+ manual</span>
+          ${d.action === 'replace'
+            ? '<span class="badge b-EDIT" title="title/author changed by hand">✎ edited</span>' : ''}
+        </div>
         <span class="badge b-AUTO" title="confirmed in library">✓ library</span>
+        <button class="linkish man-ed" data-sid="${escapeHtml(sid)}"
+                data-t="${escapeHtml(d.title)}" data-a="${escapeHtml(d.author || '')}">✎ fix details</button>
         <button class="linkish man-rm" data-sid="${escapeHtml(sid)}"
                 data-t="${escapeHtml(d.title)}" data-a="${escapeHtml(d.author || '')}">✕ remove</button>
       </div>
-    </div>`).join('');
+    </div>
+    <div class="why-box" id="alts-${escapeHtml(sid)}" style="display:none"></div>`).join('');
 
   const groupFooter = (g, gi) => {
     const autos = bulkable(g);
     return `
-    <div class="row" style="align-items:center;gap:8px">
+    <div class="row" data-footer="${escapeHtml(g.name)}" style="align-items:center;gap:8px">
       <div style="flex:1;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
         <span class="img-sub" style="flex-basis:100%">${escapeHtml(g.name)}</span>
         <input type="text" class="rtl miss-t" placeholder="search this run, or add — title"
                data-img="${escapeHtml(g.name)}" value="${escapeHtml(missQueries[g.name] || '')}"
                style="flex:2;min-width:130px">
-        <input type="text" class="rtl miss-a" list="libAuthors" placeholder="author (optional)" style="flex:1;min-width:100px">
+        <input type="text" class="rtl miss-a authorbox" placeholder="author (optional)" style="flex:1;min-width:100px">
         <button class="miss-add" data-img="${escapeHtml(g.name)}">+ add to library</button>
         ${autos.length ? `<button class="bulk-ok" data-g="${gi}">✓ approve all auto (${autos.length})</button>` : ''}
         <div class="miss-hint" style="flex-basis:100%"></div>
       </div>
     </div>`;
   };
+  clearAuthorPopups();              // popups outlive the inputs they anchor to
   box.innerHTML =
-    `<datalist id="libAuthors">${libAuthors.map(a => `<option value="${escapeHtml(a)}">`).join('')}</datalist>` +
-    (groups.map((g, gi) => g.rows.map(rowHtml).join('') + manualRows(g)
-                           + groupFooter(g, gi)).join('')
-     || '<div class="empty">Nothing to show with this filter.</div>');
+    groups.map((g, gi) => g.rows.map(rowHtml).join('') + manualRows(g)
+                          + groupFooter(g, gi)).join('')
+    || '<div class="empty">Nothing to show with this filter.</div>';
+  box.querySelectorAll('input.authorbox').forEach(attachAuthorComplete);
 
   // "did I miss it?" — the same box that adds a book first tells you whether
   // this run already found it, read it without matching, or the library
@@ -861,8 +915,20 @@ async function renderResults() {
         action: 'manual_add', title, image: b.dataset.img,
         author: wrap.querySelector('.miss-a').value.trim() }));
       delete missQueries[b.dataset.img];      // question answered by adding
-      await renderResults();
+      await keepInPlace(`[data-footer="${cssEsc(b.dataset.img)}"]`, renderResults);
+      // straight back to the search/add box: adding one missing book usually
+      // means adding the next one too
+      const next = document.querySelector(
+        `input.miss-t[data-img="${cssEsc(b.dataset.img)}"]`);
+      if (next) next.focus();
     };
+  });
+  // a hand-added book is editable like any other row; showEdit only needs
+  // {spine_id, title, author}, and the decision it writes keeps the shelf
+  box.querySelectorAll('button.man-ed').forEach(b => {
+    b.onclick = () => showEdit(run.run_id,
+      { spine_id: b.dataset.sid, title: b.dataset.t, author: b.dataset.a },
+      decisions[b.dataset.sid]);
   });
   // removing a hand-added book = reject it (deletes the library entry and
   // overwrites the manual_add decision, so the row disappears)
@@ -886,7 +952,9 @@ async function renderResults() {
           run_id: run.run_id, spine_id: f.spine_id, action: 'approve',
           title: f.title, author: f.author || '' }));
       }
-      await renderResults();
+      // every approved row loses buttons and shrinks, so the shelf's footer
+      // used to jump far up the page — hold it where the eye left it
+      await keepInPlace(`[data-footer="${cssEsc(g.name)}"]`, renderResults);
     };
   });
 
@@ -897,7 +965,7 @@ async function renderResults() {
     const f = rows.find(r => r.spine_id === b.dataset.spine);
     b.onclick = async () => {
       if (b.dataset.a === 'alts') return showAlternatives(run.run_id, f, decisions);
-      if (b.dataset.a === 'edit') return showEdit(run.run_id, f);
+      if (b.dataset.a === 'edit') return showEdit(run.run_id, f, decisions[f.spine_id]);
       const body = { run_id: run.run_id, spine_id: f.spine_id, action: b.dataset.a };
       if (b.dataset.a === 'approve') { body.title = f.title; body.author = f.author || ''; }
       if (b.dataset.a === 'reject_ignore') {
@@ -906,25 +974,110 @@ async function renderResults() {
                                   : { title: f.title, author: f.author || '' };
       }
       await api('/api/review', jsonReq('POST', body));
-      await renderResults();
+      // the row's controls change height — keep it under the cursor
+      await keepInPlace(`.row[data-spine="${cssEsc(f.spine_id)}"]`, renderResults);
     };
   });
 }
 
+/* ---------------- author autocomplete ---------------------------------------
+   Replaces <datalist>: its popup is positioned by the browser alone, with no
+   CSS hook, and on these RIGHT-TO-LEFT inputs it rendered far off to the
+   left. This one is a plain absolutely-positioned list anchored to the input.
+   It lives on <body> so no ancestor's `overflow: hidden` (the results panel
+   has one) can clip it; stale popups are cleared on every results render. */
+function clearAuthorPopups() {
+  document.querySelectorAll('.ac-pop').forEach(p => p.remove());
+}
+
+function attachAuthorComplete(inp) {
+  if (!inp) return;
+  const pop = document.createElement('div');
+  pop.className = 'ac-pop';
+  document.body.appendChild(pop);
+  let items = [], sel = -1;
+
+  const place = () => {
+    const r = inp.getBoundingClientRect();
+    pop.style.left = (r.left + window.scrollX) + 'px';
+    pop.style.top = (r.bottom + window.scrollY + 2) + 'px';
+    pop.style.width = r.width + 'px';
+  };
+  const hide = () => { pop.style.display = 'none'; sel = -1; };
+  const paint = () => {
+    pop.innerHTML = items.map((a, i) =>
+      `<div class="${i === sel ? 'sel' : ''}" data-i="${i}">${escapeHtml(a)}</div>`).join('');
+  };
+  const open = () => {
+    const q = inp.value.trim();
+    items = (q ? libAuthors.filter(a => a.includes(q)) : libAuthors).slice(0, 8);
+    if (!items.length) return hide();
+    sel = -1;
+    paint();
+    place();
+    pop.style.display = 'block';
+  };
+  const pick = i => {
+    if (i < 0 || i >= items.length) return;
+    inp.value = items[i];
+    hide();
+    inp.focus();
+  };
+
+  inp.addEventListener('input', open);
+  inp.addEventListener('focus', open);
+  inp.addEventListener('blur', () => setTimeout(hide, 120));
+  inp.addEventListener('keydown', ev => {
+    if (pop.style.display === 'none') return;
+    if (ev.key === 'ArrowDown') {
+      ev.preventDefault();
+      sel = (sel + 1) % items.length;
+      paint();
+    } else if (ev.key === 'ArrowUp') {
+      ev.preventDefault();
+      sel = (sel <= 0 ? items.length : sel) - 1;
+      paint();
+    } else if (ev.key === 'Enter' && sel >= 0) {
+      ev.preventDefault();
+      pick(sel);
+    } else if (ev.key === 'Escape') {
+      hide();
+    }
+  });
+  // mousedown, not click: blur fires first on click and would close the list
+  pop.addEventListener('mousedown', ev => {
+    const d = ev.target.closest('[data-i]');
+    if (d) { ev.preventDefault(); pick(+d.dataset.i); }
+  });
+  window.addEventListener('scroll', () => {
+    if (pop.style.display !== 'none') place();
+  }, true);
+}
+
 /* ---------------- "fix details" — the match is right, the text is off ------ */
-function showEdit(runId, f) {
+function showEdit(runId, f, d) {
   const box = document.getElementById('alts-' + f.spine_id);
   if (box.style.display !== 'none') { box.style.display = 'none'; return; }
+  // edit what the row currently SHOWS: after an approve/replace the library
+  // holds the decision's text, not the run's original claim, so prefilling
+  // (and retracting) the claim would resurrect a title already corrected
+  const held = d && ['approve', 'replace', 'manual_add'].includes(d.action) && d.title;
+  const curT = held ? d.title : f.title;
+  const curA = held ? (d.author || '') : (f.author || '');
+  // a rejected row holds nothing in the library — nothing to retract
+  const old = (d && d.action === 'reject_ignore') ? {}
+                                                  : { title: curT, author: curA };
   box.style.display = '';
   box.innerHTML = `
     <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-      <input type="text" class="rtl" id="edT-${f.spine_id}" value="${escapeHtml(f.title)}"
+      <input type="text" class="rtl" id="edT-${f.spine_id}" value="${escapeHtml(curT)}"
              style="flex:2;min-width:150px" placeholder="title">
-      <input type="text" class="rtl" id="edA-${f.spine_id}" value="${escapeHtml(f.author || '')}"
-             list="libAuthors" style="flex:1;min-width:120px" placeholder="author">
+      <input type="text" class="rtl authorbox" id="edA-${f.spine_id}" value="${escapeHtml(curA)}"
+             style="flex:1;min-width:120px" placeholder="author">
       <button id="edS-${f.spine_id}">save to library</button>
       <button class="linkish" id="edX-${f.spine_id}">✕ cancel</button>
     </div>`;
+  attachAuthorComplete(box.querySelector('.authorbox'));
   document.getElementById('edX-' + f.spine_id).onclick = () => { box.style.display = 'none'; };
   document.getElementById('edS-' + f.spine_id).onclick = async () => {
     const title = document.getElementById('edT-' + f.spine_id).value.trim();
@@ -932,7 +1085,7 @@ function showEdit(runId, f) {
     await api('/api/review', jsonReq('POST', {
       run_id: runId, spine_id: f.spine_id, action: 'replace',
       title, author: document.getElementById('edA-' + f.spine_id).value.trim(),
-      old: { title: f.title, author: f.author || '' } }));
+      old }));
     await renderResults();
   };
 }
