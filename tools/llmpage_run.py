@@ -2,7 +2,7 @@
 """E2: mode='llmpage' end-to-end — Claude reads, NLI retrieves, gates verify.
 
 Runs the real pipeline (ClaudePageReader + NLICatalog + matcher) on the
-labelled shelves and scores against ground_truth.json. Retrieval is recorded
+labelled shelves and scores against fixtures/ground_truth.json. Retrieval is recorded
 (RecordingCatalog) so the run is replayable later.
 
 Usage: python tools/llmpage_run.py [IMG_6082.jpeg IMG_7849.jpeg]

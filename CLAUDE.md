@@ -37,9 +37,23 @@ booksnap/
   pipeline.py   orchestrator: segment -> ocr -> match -> optional fallback
   cli.py        `python -m booksnap.cli --catalog ... img...`
   server.py     FastAPI: upload/select images, background runs, run history
-  static/       single-file vanilla-JS UI (no build step, no CDN)
+  static/       vanilla-JS review UI (no build step, no CDN, no bundler)
+    index.html    markup only
+    css/app.css   all styles
+    js/           ES modules, loaded via <script type="module" src="/js/main.js">
 tests/          test_core.py (matcher/normalize), test_integrations.py (adapters, mocked)
+docs/           VISION.md (product), SESSION_NOTES.md (history), INTEGRATIONS.md
+fixtures/       ground_truth.json, sweep/ (committed replay inputs), spotchecks/
 ```
+
+The UI's modules split by concern and share one mutable `state.js` object;
+`main.js` is the entry point and reads as a table of contents. Two import
+cycles exist by design (`results` ↔ `review`, `refresh` ↔ `images`) — the
+render-act-rerender loop is genuinely circular. They are safe because every
+function crossing a cycle is a hoisted `function` declaration called only from
+an event handler, never during module evaluation. `showViewer` is published on
+`window` on purpose: row crops use an inline `onclick`, which resolves against
+global scope that modules don't share.
 
 Stages are independent and individually callable, so the server can parallelise
 OCR across cores and run the fallback in a separate queue.
@@ -98,6 +112,12 @@ GATES:
     A rival scoring below `dup_drop_frac` (0.70) of the winner is DROPPED, not
     just demoted — the winner already explains that title, so a far-weaker
     claim is a mis-assignment, and unmatched (-> fallback) beats a wrong title.
+
+Structurally, scoring one (read, entry) pair is three steps: `_signals()`
+measures everything and judges nothing, `_rejection()` runs the gates above in
+order and names the first that refuses, and `_evaluate()` joins them and
+computes the score. The gates need far more than the public `info` dict
+carries, so the measurements travel between the two as one `_Signals` object.
 
 `match.explain()` ranks every candidate and keeps the REJECTED ones with the
 gate that refused them; `GET /api/runs/{id}/explain/{spine_id}` and the UI's
@@ -162,7 +182,7 @@ init arg for this; all optional, so the CLI path is unchanged.
 
 ## Measuring accuracy (do this before believing any change)
 
-`ground_truth.json` holds the owner's hand-labelled shelves (8 as of
+`fixtures/ground_truth.json` holds the owner's hand-labelled shelves (8 as of
 2026-08-06). **GT coverage is CURATED, not automatic** (owner decision): a
 processed shelf joins the fixture only when the owner chooses to label it —
 do not treat unlabelled shelves (e.g. run 16's IMG_8135-8138) as a backlog
@@ -210,7 +230,7 @@ pre-commit hook (`tools/githooks/pre-commit`, installed via
 `git config core.hooksPath tools/githooks` — already set on this machine,
 one-time per clone) runs `sweep.py --check` whenever accuracy-relevant files
 are staged (match/config/pipeline/catalog/scoring/replay/types/the catalog
-adapters/ground_truth). The check compares mean AUTO P, AUTO F1 and A+R F1
+adapters/fixtures/ground_truth.json). The check compares mean AUTO P, AUTO F1 and A+R F1
 against the COMMITTED baseline `tools/sweep_baseline.json` (tolerance 0.01)
 and BLOCKS the commit on regression. Per-shelf F1 moves are printed but never
 block — accepted changes routinely trade a point on one shelf for gains
@@ -313,11 +333,14 @@ default) so it's testable offline. Caches responses on disk by query.
   `_default_transport` now sends a browser UA. With that, the endpoint answers
   normally, so the transport path is confirmed working — only a real key is
   missing.
-  ⚠️ ONE THING TO VERIFY AGAINST LIVE DATA: NLI's exact JSON field names vary
-  by record. `_parse()` probes common title/creator keys defensively, but on
-  the FIRST real call, dump one raw response and confirm/adjust the field
-  mapping. This is the single spot most likely to need a tweak. It could not be
-  verified during prototyping (no API access in that sandbox).
+  RESOLVED (was flagged here as the one unverified spot — the field mapping):
+  a real response IS on disk at `work/nli_raw_sample.json` (49 records), and
+  the field names are Dublin Core URIs, not short keys:
+  `{"http://purl.org/dc/elements/1.1/title": [{"@value": "..."}]}`.
+  `_parse()` now reads exactly that via `_dc()`; its docstring records the
+  earlier bug (probing "title"/"dc:title" then str()-ing the dict, so titles
+  came out as `"{'@value': '...'}"`). Keep the sample file — it is the only
+  captured evidence of the live schema.
 
 ## Two processing modes (`mode=` on `Pipeline.run` / `POST /api/run`)
 
@@ -390,7 +413,7 @@ BOOKSNAP_TESSDATA_FAST, BOOKSNAP_WORK.
 `python tests/test_core.py` (52, matcher/normalize/gates) and
 `python tests/test_integrations.py` (24, catalog+fallback adapters, fully
 mocked/offline — no key, no network, no cloud SDK needed). Keep these green.
-Counts grow with each run's fixes; SESSION_NOTES.md tracks the history.
+Counts grow with each run's fixes; docs/SESSION_NOTES.md tracks the history.
 
 ## Known constraints / next steps (roughly prioritised, updated 2026-08-06)
 

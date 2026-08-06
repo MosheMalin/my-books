@@ -6,7 +6,7 @@
 OCR is the expensive stage (~10s/spine) but it is also *pure input* to
 matching: changing match.py cannot change what Tesseract or Vision read. So
 tuning the matcher never needs a re-run — replay the stored per-spine OCR text
-through the current code and score against ground_truth.json. Seconds instead
+through the current code and score against fixtures/ground_truth.json. Seconds instead
 of minutes, and the OCR is held identical so the comparison is controlled.
 
 Catalog lookups are cached on disk (work/nli_cache), so repeated sweeps are

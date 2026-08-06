@@ -284,21 +284,91 @@ def _records_path(run_id: str, img_id: str) -> Path:
     return _run_dir(run_id) / f"{img_id}.json"
 
 
+def _start_pipeline(run_id: str, mode: str):
+    """Build the catalog/fallback/reader chain one run will use.
+
+    Raises on bad catalog or credentials — the caller turns that into the
+    run's "setup: ..." error, since nothing has been processed yet.
+    """
+    catalog, cat_meta = _build_catalog()
+    fallback, fb_meta = _build_fallback()
+    page_reader = (_build_page_reader(mode)
+                   if mode in ("fullpage", "llmpage") else None)
+    # Record retrieval so this run can be replayed exactly later; without
+    # it a live search backend makes past runs impossible to reproduce.
+    from .replay import RecordingCatalog
+    catalog = RecordingCatalog(catalog)
+    pipe = Pipeline(catalog=catalog, fallback=fallback,
+                    page_reader=page_reader,
+                    crops_dir=_run_dir(run_id) / "crops")
+    return pipe, catalog, fallback, cat_meta, fb_meta
+
+
+def _process_image(run_id: str, img_id: str, rec: dict, n: int, total: int,
+                   pipe, catalog, use_fallback: bool, mode: str) -> str:
+    """Read one photo end to end and persist it; returns its final status
+    ("done", "stopped" or "error"). A stop is cooperative, so the spines
+    already read are matched and saved — a stopped image is a real partial
+    result, not a discarded one."""
+    path = Path(rec["path"])
+    img_started = time.monotonic()
+    _set_job(state="running", run_id=run_id, image_id=img_id, name=rec["name"],
+             image_no=n, image_total=total, done=0, spines=0,
+             phase=None,      # else the previous image's phase mislabels
+             error=None, stopping=_stop_event.is_set())
+    _update(lambda d: d["images"][img_id].update(status="running", error=None))
+
+    detected = {"n": 0}
+
+    def on_progress(ev: dict) -> None:
+        st = ev.get("stage")
+        if st in ("segmented", "page_read"):
+            detected["n"] = ev["spines"]
+            _set_job(spines=ev["spines"])
+        elif st in ("reading", "matching", "ocr"):
+            # page modes have two long phases (LLM tile reads, then
+            # catalog lookups per block) — surface which one is running
+            # so the bar moves instead of stalling at "spine 1/N"
+            _set_job(phase=st, done=ev["done"], spines=ev["total"])
+
+    try:
+        records = [r.to_dict() for r in pipe.run(
+            [path], use_fallback=use_fallback, progress=on_progress,
+            should_stop=_stop_event.is_set, mode=mode)]
+    except Exception as exc:
+        msg = str(exc)
+        _update(lambda d, e=msg: (d["images"][img_id].update(status="error", error=e),
+                                  d["runs"][run_id]["images"].__setitem__(
+                                      img_id, {"status": "error", "error": e})))
+        return "error"
+
+    _run_dir(run_id).mkdir(parents=True, exist_ok=True)
+    _records_path(run_id, img_id).write_text(
+        json.dumps(records, ensure_ascii=False, indent=1), encoding="utf-8")
+    catalog.save(_run_dir(run_id) / "candidates" / f"{img_id}.json")
+    # AUTO claims join the confirmed library (status "auto", reversible);
+    # REVIEW claims wait for a human decision in the review flow
+    from .library import absorb_auto_claims
+    absorb_auto_claims(run_id, records)
+
+    img_status = "stopped" if _stop_event.is_set() else "done"
+    entry = {"status": img_status, "error": None, "summary": _summarise(records),
+             "spines_detected": detected["n"],
+             "spines_processed": len(records),
+             "duration_s": round(time.monotonic() - img_started, 1)}
+    _update(lambda d, e=entry, s=img_status: (
+        d["runs"][run_id]["images"].__setitem__(img_id, e),
+        d["images"][img_id].update(status=s, error=None,
+                                   latest_run_id=run_id, summary=e["summary"],
+                                   processed_at=_now())))
+    return img_status
+
+
 def _run_job(run_id: str, image_ids: list[str], mode: str = "spines") -> None:
     """Worker body: process each selected image, saving results as they land."""
     started = time.monotonic()
     try:
-        catalog, cat_meta = _build_catalog()
-        fallback, fb_meta = _build_fallback()
-        page_reader = (_build_page_reader(mode)
-                       if mode in ("fullpage", "llmpage") else None)
-        # Record retrieval so this run can be replayed exactly later; without
-        # it a live search backend makes past runs impossible to reproduce.
-        from .replay import RecordingCatalog
-        catalog = RecordingCatalog(catalog)
-        pipe = Pipeline(catalog=catalog, fallback=fallback,
-                        page_reader=page_reader,
-                        crops_dir=_run_dir(run_id) / "crops")
+        pipe, catalog, fallback, cat_meta, fb_meta = _start_pipeline(run_id, mode)
     except Exception as exc:                       # bad catalog/credentials
         _update(lambda d: d["runs"][run_id].update(
             status="error", error=f"setup: {exc}", finished_at=_now()))
@@ -313,64 +383,11 @@ def _run_job(run_id: str, image_ids: list[str], mode: str = "spines") -> None:
         if _stop_event.is_set():
             stopped = True
             break
-        data = _load()
-        rec = data["images"].get(img_id)
+        rec = _load()["images"].get(img_id)
         if not rec:
             continue
-        path = Path(rec["path"])
-        img_started = time.monotonic()
-        _set_job(state="running", run_id=run_id, image_id=img_id, name=rec["name"],
-                 image_no=n, image_total=len(image_ids), done=0, spines=0,
-                 phase=None,      # else the previous image's phase mislabels
-                 error=None, stopping=_stop_event.is_set())
-        _update(lambda d: d["images"][img_id].update(status="running", error=None))
-
-        detected = {"n": 0}
-
-        def on_progress(ev: dict) -> None:
-            st = ev.get("stage")
-            if st in ("segmented", "page_read"):
-                detected["n"] = ev["spines"]
-                _set_job(spines=ev["spines"])
-            elif st in ("reading", "matching", "ocr"):
-                # page modes have two long phases (LLM tile reads, then
-                # catalog lookups per block) — surface which one is running
-                # so the bar moves instead of stalling at "spine 1/N"
-                _set_job(phase=st, done=ev["done"], spines=ev["total"])
-
-        try:
-            records = [r.to_dict() for r in pipe.run(
-                [path], use_fallback=use_fallback, progress=on_progress,
-                should_stop=_stop_event.is_set, mode=mode)]
-        except Exception as exc:
-            msg = str(exc)
-            _update(lambda d, e=msg: (d["images"][img_id].update(status="error", error=e),
-                                      d["runs"][run_id]["images"].__setitem__(
-                                          img_id, {"status": "error", "error": e})))
-            continue
-
-        _run_dir(run_id).mkdir(parents=True, exist_ok=True)
-        _records_path(run_id, img_id).write_text(
-            json.dumps(records, ensure_ascii=False, indent=1), encoding="utf-8")
-        catalog.save(_run_dir(run_id) / "candidates" / f"{img_id}.json")
-        # AUTO claims join the confirmed library (status "auto", reversible);
-        # REVIEW claims wait for a human decision in the review flow
-        from .library import absorb_auto_claims
-        absorb_auto_claims(run_id, records)
-
-        was_stopped = _stop_event.is_set()
-        summary = _summarise(records)
-        img_status = "stopped" if was_stopped else "done"
-        entry = {"status": img_status, "error": None, "summary": summary,
-                 "spines_detected": detected["n"],
-                 "spines_processed": len(records),
-                 "duration_s": round(time.monotonic() - img_started, 1)}
-        _update(lambda d, e=entry, s=img_status: (
-            d["runs"][run_id]["images"].__setitem__(img_id, e),
-            d["images"][img_id].update(status=s, error=None,
-                                       latest_run_id=run_id, summary=e["summary"],
-                                       processed_at=_now())))
-        if was_stopped:
+        if _process_image(run_id, img_id, rec, n, len(image_ids),
+                          pipe, catalog, use_fallback, mode) == "stopped":
             stopped = True
             break
 
@@ -718,6 +735,32 @@ def lookup(run_id: str, q: str, limit: int = 3) -> dict:
         return max(fuzz.ratio(nq, nt), fuzz.token_set_ratio(nq, nt))
 
     decisions = load_decisions(run_id)
+    out = (_lookup_claim_rows(run_id, run, data, decisions, sim)
+           + _lookup_manual_rows(decisions, sim))
+    out.sort(key=lambda r: -r["sim"])
+    return {"query": q, "strong": STRONG_SIM, "matches": out[:limit]}
+
+
+def _row_as_displayed(m: dict, d: dict) -> tuple[str, str, str]:
+    """The title, author and state the review list SHOWS for one claim.
+
+    A replace/approve decision renames the row, while a rejection leaves the
+    original claim on screen (struck through) — so that is still what the eye
+    would find.
+    """
+    act = d.get("action")
+    renamed = act in ("approve", "replace") and d.get("title")
+    title = d["title"] if renamed else m["title"]
+    author = (d.get("author") or "") if renamed else (m.get("author") or "")
+    state = ("wrong" if act == "reject_ignore" else
+             "library" if act in ("approve", "replace") else
+             m.get("tier") or "")
+    return title, author, state
+
+
+def _lookup_claim_rows(run_id: str, run: dict, data: dict,
+                       decisions: dict, sim) -> list[dict]:
+    """Every matched claim this run displays, scored against the query."""
     out = []
     for iid in run.get("images", {}):
         p = _records_path(run_id, iid)
@@ -728,15 +771,8 @@ def lookup(run_id: str, q: str, limit: int = 3) -> dict:
             m = r.get("match") or {}
             if not m.get("title"):
                 continue                      # unmatched: not displayed
-            d = decisions.get(r["spine_id"]) or {}
-            act = d.get("action")
-            # search what the ROW SHOWS: a replace/approve decision renames
-            # the row, while a rejection leaves the original claim on screen
-            # (struck through), so that is still what the eye would find
-            title = d.get("title") if act in ("approve", "replace") and \
-                d.get("title") else m["title"]
-            author = d.get("author") if act in ("approve", "replace") and \
-                d.get("title") else (m.get("author") or "")
+            title, author, state = _row_as_displayed(
+                m, decisions.get(r["spine_id"]) or {})
             s = sim(title)
             if s < NEAR_SIM:
                 continue
@@ -744,11 +780,14 @@ def lookup(run_id: str, q: str, limit: int = 3) -> dict:
             out.append({
                 "spine_id": r["spine_id"], "image_name": name,
                 "band": loc.get("band"), "index": loc.get("index"),
-                "title": title, "author": author or "", "sim": round(s),
-                "state": ("wrong" if act == "reject_ignore" else
-                          "library" if act in ("approve", "replace") else
-                          m.get("tier") or "")})
+                "title": title, "author": author, "sim": round(s),
+                "state": state})
+    return out
 
+
+def _lookup_manual_rows(decisions: dict, sim) -> list[dict]:
+    """Books added to a shelf by hand — they render as rows too."""
+    out = []
     for sid, d in decisions.items():
         # only shelf-attached manual adds are DISPLAYED as rows; one recorded
         # before the shelf was tracked shows nowhere, so searching it would
@@ -761,9 +800,7 @@ def lookup(run_id: str, q: str, limit: int = 3) -> dict:
                         "band": None, "index": None, "title": d["title"],
                         "author": d.get("author") or "", "sim": round(s),
                         "state": "manual"})
-
-    out.sort(key=lambda r: -r["sim"])
-    return {"query": q, "strong": STRONG_SIM, "matches": out[:limit]}
+    return out
 
 
 @app.get("/api/runs/{run_id}/score")

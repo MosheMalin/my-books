@@ -10,7 +10,7 @@
 watch="booksnap/match.py booksnap/config.py booksnap/pipeline.py \
 booksnap/catalog.py booksnap/scoring.py booksnap/replay.py booksnap/types.py \
 booksnap/nli_catalog.py booksnap/simania_catalog.py booksnap/extra_catalogs.py \
-ground_truth.json"
+fixtures/ground_truth.json"
 
 staged=$(git diff --cached --name-only)
 hit=""

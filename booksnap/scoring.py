@@ -25,7 +25,7 @@ from rapidfuzz import fuzz
 from .catalog import normalize
 from .config import REPO_ROOT
 
-GROUND_TRUTH_PATH = REPO_ROOT / "ground_truth.json"
+GROUND_TRUTH_PATH = REPO_ROOT / "fixtures" / "ground_truth.json"
 TITLE_HIT = 82          # normalized token_set_ratio to call two titles the same
 AUTHOR_HIT = 72
 

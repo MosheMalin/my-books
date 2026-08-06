@@ -5,7 +5,7 @@ The LLM reads are a paid, non-deterministic stage — but they are *stored* with
 every run, so rule/threshold changes never need to call the model again. This
 tool replays the stored reads for each GT-labelled shelf through the current
 match pipeline (the same post-match path Pipeline.run_page uses), scores
-against ground_truth.json, and appends the result to an experiments ledger so
+against fixtures/ground_truth.json, and appends the result to an experiments ledger so
 "did my change help?" is answerable against history.
 
 Retrieval modes (the second frozen input):

@@ -2,7 +2,7 @@
 """E1 probe: can a cheap vision LLM read the shelves that Tesseract/Vision can't?
 
 One whole-photo call per image (same granularity as `fullpage` mode), model
-returns structured [{title, author}], scored against ground_truth.json with the
+returns structured [{title, author}], scored against fixtures/ground_truth.json with the
 project's own particle-tolerant scorer. This measures READING only — no NLI
 retrieval, no matcher gates — i.e. the candidate-generation ceiling of an
 llmpage mode.

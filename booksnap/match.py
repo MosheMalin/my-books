@@ -7,6 +7,7 @@ is what kept garbage OCR from resolving to spurious titles.
 """
 from __future__ import annotations
 import re
+from dataclasses import dataclass
 from functools import lru_cache
 
 from rapidfuzz import fuzz
@@ -119,12 +120,37 @@ def _token_hit(q: str, c: str, cfg: MatchConfig) -> bool:
     return fuzz.ratio(qs, cs) >= thr
 
 
-def _evaluate(query_tokens: list[str], entry: CatalogEntry,
-              cfg: MatchConfig, query_text: str = "") -> dict:
-    """Score one catalog entry, always returning the reasoning.
+@dataclass(slots=True)
+class _Signals:
+    """Everything one (read, entry) pair measures, computed once.
 
-    `rejected` names the gate that refused the entry (None if it passed), so
-    the same code can both match and explain why a book did or didn't win.
+    The gates need far more than the public `info` dict carries — the token
+    lists, the coverage ratios and the normalized read all feed rejection
+    rules — so they travel together instead of as a dozen parameters.
+    """
+    entry: CatalogEntry
+    info: dict
+    query_tokens: list[str]
+    tt: list[str]           # catalog title tokens above the length floor
+    at: list[str]           # catalog author tokens above the length floor
+    tt_content: list[str]   # tt minus stopwords
+    mt: list[str]           # title tokens this read matched
+    ma: list[str]           # author tokens this read matched
+    own_hits: list[str]     # title hits that aren't the author's own name
+    q: str                  # the whole normalized read
+    q_content: list[str]    # deduped, stopword-free read tokens
+    tcov: float
+    tcov_c: float
+    acov: float
+    qcov: float
+    title_sim: float
+    n_title_hits: int
+    has_distinct_title: bool
+
+
+def _signals(query_tokens: list[str], entry: CatalogEntry,
+             cfg: MatchConfig, query_text: str = "") -> _Signals:
+    """Measure one catalog entry against one read — no judgement, no gates.
 
     `query_text` (the raw OCR string) feeds the WHOLE-TITLE similarities.
     Token filtering drops short words (כן, אב) from `query_tokens`, but
@@ -218,6 +244,44 @@ def _evaluate(query_tokens: list[str], entry: CatalogEntry,
                          if entry.norm_author else 0.0),
         "score": 0.0, "rejected": None,
     }
+    return _Signals(
+        entry=entry, info=info, query_tokens=query_tokens,
+        tt=tt, at=at, tt_content=tt_content, mt=mt, ma=ma,
+        own_hits=own_hits, q=q, q_content=q_content,
+        tcov=tcov, tcov_c=tcov_c, acov=acov, qcov=qcov, title_sim=title_sim,
+        n_title_hits=n_title_hits, has_distinct_title=has_distinct_title,
+    )
+
+
+def _evaluate(query_tokens: list[str], entry: CatalogEntry,
+              cfg: MatchConfig, query_text: str = "") -> dict:
+    """Score one catalog entry, always returning the reasoning.
+
+    `rejected` names the gate that refused the entry (None if it passed), so
+    the same code can both match and explain why a book did or didn't win.
+    """
+    s = _signals(query_tokens, entry, cfg, query_text)
+    reason = _rejection(s, cfg)
+    if reason:
+        s.info["rejected"] = reason
+        return s.info
+    s.info["score"] = (60 * s.tcov_c + 25 * s.tcov + 15 * s.acov
+                       + 0.30 * s.title_sim)
+    return s.info
+
+
+def _rejection(s: _Signals, cfg: MatchConfig) -> str | None:
+    """Apply the evidence gates in order; name the first one that refuses.
+
+    Every block below is a regression fence with a run number attached, not a
+    general principle — re-measure with tools/sweep.py before loosening one.
+    """
+    entry, info, query_tokens = s.entry, s.info, s.query_tokens
+    tt, at, tt_content = s.tt, s.at, s.tt_content
+    mt, ma, own_hits = s.mt, s.ma, s.own_hits
+    q, q_content = s.q, s.q_content
+    tcov, acov, qcov, title_sim = s.tcov, s.acov, s.qcov, s.title_sim
+    n_title_hits, has_distinct_title = s.n_title_hits, s.has_distinct_title
 
     # ULTRA-SHORT titles (ג'ם normalizes to גם, 2 chars) have no token above
     # the length floor at all: tt is empty, so such a book is structurally
@@ -235,8 +299,7 @@ def _evaluate(query_tokens: list[str], entry: CatalogEntry,
     # spine printed "ספר שלישי" would otherwise resolve to a book literally
     # titled "השלישי". Same for imprint boilerplate ("ספרית פועלים").
     if _is_junk_title(tt_content or tt, cfg) and not tiny_title:
-        info["rejected"] = "catalog title is only volume/publisher boilerplate"
-        return info
+        return "catalog title is only volume/publisher boilerplate"
 
     # EXISTENCE GATE — title evidence only. Author agreement may raise the
     # tier but must never be what makes a match exist: pooling title and
@@ -280,10 +343,9 @@ def _evaluate(query_tokens: list[str], entry: CatalogEntry,
                      and len(own_hits) >= 1)
     if not (len(own_hits) >= 2 or has_distinct_title or full_title_with_author
             or verbatim_title or near_verbatim or author_backed or tiny_title):
-        info["rejected"] = "no title evidence beyond the author's own name " \
-                           "(needs 2 title tokens, or 1 of " \
-                           f"{cfg.distinctive_len}+ chars)"
-        return info
+        return ("no title evidence beyond the author's own name "
+                "(needs 2 title tokens, or 1 of "
+                f"{cfg.distinctive_len}+ chars)")
     # A ONE-word read is inherently ambiguous between every title containing
     # that word, so its single hit must be EXACT: the barely-visible spine of
     # הענן השחור was read as just "השחור" and went AUTO on ז'נה's השחורים
@@ -291,16 +353,13 @@ def _evaluate(query_tokens: list[str], entry: CatalogEntry,
     # matches (המחזורית, שוגון) and the tier guards keep it honest.
     if (len(q_content) <= 1 and not verbatim_title
             and not any(x == c for x in query_tokens for c in own_hits)):
-        info["rejected"] = ("a one-word read needs an exact title-word hit "
-                            "(fuzzy/truncated is ambiguous across titles)")
-        return info
+        return ("a one-word read needs an exact title-word hit "
+                "(fuzzy/truncated is ambiguous across titles)")
     if title_sim < cfg.min_title_sim:
-        info["rejected"] = f"title similarity {title_sim} < {cfg.min_title_sim}"
-        return info
+        return f"title similarity {title_sim} < {cfg.min_title_sim}"
     if cfg.min_ngram_sim > 0 and info["ngram_sim"] < cfg.min_ngram_sim:
-        info["rejected"] = (f"n-gram similarity {info['ngram_sim']:.0f} < "
-                            f"{cfg.min_ngram_sim:.0f}")
-        return info
+        return (f"n-gram similarity {info['ngram_sim']:.0f} < "
+                f"{cfg.min_ngram_sim:.0f}")
     # A claim hanging on a SINGLE matched title word, explaining at most half
     # of what was read, with no author signal at all, is the subset pathology
     # outright: the entry "covers itself" and ignores the rest of the spine.
@@ -323,12 +382,10 @@ def _evaluate(query_tokens: list[str], entry: CatalogEntry,
             fuzz.ratio(x, a) >= cfg.soft_author_ratio
             for x in query_tokens for a in at)
         if not soft_author:
-            info["rejected"] = ("a single matched title word explains at "
-                                "most half the read, with no author signal")
-            return info
+            return ("a single matched title word explains at "
+                    "most half the read, with no author signal")
 
-    info["score"] = 60 * tcov_c + 25 * tcov + 15 * acov + 0.30 * title_sim
-    return info
+    return None
 
 
 def _score_entry(query_tokens: list[str], entry: CatalogEntry,

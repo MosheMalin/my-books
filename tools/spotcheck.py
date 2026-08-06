@@ -4,7 +4,7 @@
 `fixtures/spotchecks/<name>.json` encodes review feedback the owner gave on a
 specific run — wrong books, missing books, must-stay-ambiguous books — as
 checkable expectations against that run's STORED reads and candidates
-recording. Where ground_truth.json labels whole shelves, a spotcheck file
+recording. Where fixtures/ground_truth.json labels whole shelves, a spotcheck file
 labels only the flagged spines, so feedback on unlabelled shelves still
 becomes a permanent, re-runnable measurement instead of a one-off fix.
 
