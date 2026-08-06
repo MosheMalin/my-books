@@ -1,0 +1,55 @@
+{
+ "accepted": "20260806-133243",
+ "ts": "2026-08-06T13:32:44",
+ "code": {
+  "sha": "ffbc749",
+  "dirty": true
+ },
+ "note": "initial gate baseline (post run-15 rules)",
+ "aggregate": {
+  "auto": {
+   "p": 0.941,
+   "r": 0.726,
+   "f1": 0.815
+  },
+  "auto_review": {
+   "p": 0.923,
+   "r": 0.814,
+   "f1": 0.863
+  }
+ },
+ "per_shelf_f1": {
+  "IMG_6082.jpeg": {
+   "auto": 0.765,
+   "ar": 0.927
+  },
+  "IMG_7849.jpeg": {
+   "auto": 0.72,
+   "ar": 0.769
+  },
+  "IMG_8123.jpeg": {
+   "auto": 0.818,
+   "ar": 0.818
+  },
+  "IMG_8125.jpeg": {
+   "auto": 0.882,
+   "ar": 0.882
+  },
+  "IMG_8131.jpeg": {
+   "auto": 0.8,
+   "ar": 0.865
+  },
+  "IMG_8132.jpeg": {
+   "auto": 0.909,
+   "ar": 0.909
+  },
+  "IMG_8133.jpeg": {
+   "auto": 0.816,
+   "ar": 0.885
+  },
+  "IMG_8134.jpeg": {
+   "auto": 0.809,
+   "ar": 0.852
+  }
+ }
+}

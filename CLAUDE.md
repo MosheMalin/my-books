@@ -186,6 +186,25 @@ catalog call. Rules of use:
   - baseline row 20260806-131823: AUTO mean P 0.94 R 0.73 F1 0.81, A+R
     P 0.92 R 0.81 F1 0.86 over 8 shelves. `--list` shows history.
 
+**The sweep is ENFORCED, not advisory** (owner request, 2026-08-06): a git
+pre-commit hook (`tools/githooks/pre-commit`, installed via
+`git config core.hooksPath tools/githooks` — already set on this machine,
+one-time per clone) runs `sweep.py --check` whenever accuracy-relevant files
+are staged (match/config/pipeline/catalog/scoring/replay/types/the catalog
+adapters/ground_truth). The check compares mean AUTO P, AUTO F1 and A+R F1
+against the COMMITTED baseline `tools/sweep_baseline.json` (tolerance 0.01)
+and BLOCKS the commit on regression. Per-shelf F1 moves are printed but never
+block — accepted changes routinely trade a point on one shelf for gains
+elsewhere (see run 13). An intended trade-off is accepted explicitly:
+`python tools/sweep.py --accept-baseline --note "why"`, then commit the
+updated baseline file. Rehearsed end-to-end: min_title_sim 47→95 was blocked
+(mean AUTO F1 0.815→0.754); NOTE that a change which only LOOSENS a gate can
+sweep identical (other gates absorb it) — the hook proves non-regression,
+not that a change did anything. server.py changes only get a printed
+reminder: `_build_catalog`'s retrieval chain is invisible to the offline
+replay and needs a manual `--live` judgment. On a machine without `work/`
+the check skips rather than blocks (nothing to measure there).
+
 Two hard-won rules:
 
 1. **Never trust an idea that wasn't measured on the fixture.** Three plausible

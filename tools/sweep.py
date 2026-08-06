@@ -39,6 +39,20 @@ detail (config snapshot, phantom/missed lists) in work/experiments/<id>.json.
     python tools/sweep.py --dry                 # print only, no ledger row
     python tools/sweep.py --list                # show ledger history
     python tools/sweep.py --images IMG_8131.jpeg
+
+Regression gate (wired into git pre-commit via tools/githooks/):
+
+    python tools/sweep.py --check               # replay sweep vs committed
+                                                # baseline; exit 1 on regression
+    python tools/sweep.py --accept-baseline --note "why the trade-off is ok"
+                                                # bless the current numbers
+
+The baseline lives in tools/sweep_baseline.json (COMMITTED, unlike the
+work/ ledger) so the gate travels with the code: a commit that regresses the
+aggregate means is blocked until the owner either fixes it or explicitly
+accepts the new numbers. The gate compares MEANS (auto P, auto F1, A+R F1,
+tolerance 0.01) — per-shelf trade-offs are printed but don't block, because
+accepted changes routinely trade a point on one shelf for gains elsewhere.
 """
 from __future__ import annotations
 
@@ -79,8 +93,16 @@ STORE = WORK / "store.json"
 LLM_PROBE = WORK / "llm_probe"
 EXP_DIR = WORK / "experiments"
 LEDGER = WORK / "experiments.jsonl"
+BASELINE = REPO / "tools" / "sweep_baseline.json"
 
 ALL_SOURCES = ("simania", "nli", "rebooks", "booksefer")
+
+#: gated metrics (means across shelves) and the drop that blocks a commit
+GATE_METRICS = (("auto", "p", "mean AUTO precision"),
+                ("auto", "f1", "mean AUTO F1"),
+                ("auto_review", "f1", "mean A+R F1"))
+GATE_EPS = 0.01
+SHELF_FLAG_EPS = 0.03      # per-shelf F1 moves worth printing (never blocking)
 
 
 # -- fixtures: (reads, candidates recording) per GT shelf ---------------------
@@ -224,6 +246,69 @@ def show_history() -> None:
               f"  {row.get('note', '')}")
 
 
+# -- regression gate ----------------------------------------------------------
+
+def check_against_baseline(aggregate: dict, per_shelf: list[dict],
+                           total_misses: int) -> int:
+    """Compare a replay sweep to the committed baseline. Returns exit code."""
+    if not BASELINE.exists():
+        print("check: no tools/sweep_baseline.json — run "
+              "`python tools/sweep.py --accept-baseline` once to create it")
+        return 1
+    base = json.loads(BASELINE.read_text(encoding="utf-8"))
+
+    failed = []
+    for tier, metric, label in GATE_METRICS:
+        was, now = base["aggregate"][tier][metric], aggregate[tier][metric]
+        delta = now - was
+        mark = "FAIL" if delta < -GATE_EPS else "ok  "
+        if delta < -GATE_EPS:
+            failed.append(label)
+        print(f"  check {label:22} {was:.3f} -> {now:.3f} ({delta:+.3f}) {mark}")
+
+    base_shelves = base.get("per_shelf_f1", {})
+    for row in per_shelf:
+        b = base_shelves.get(row["image"])
+        if not b:
+            print(f"  check {row['image']:16} not in baseline (new shelf)")
+            continue
+        for tier, key in (("auto", "auto"), ("auto_review", "ar")):
+            d = row[tier]["f1"] - b[key]
+            if abs(d) > SHELF_FLAG_EPS:
+                print(f"  note  {row['image']:16} {tier:11} F1 "
+                      f"{b[key]:.2f} -> {row[tier]['f1']:.2f} ({d:+.2f})")
+    gone = set(base_shelves) - {r["image"] for r in per_shelf}
+    for name in sorted(gone):
+        print(f"  ⚠ baseline shelf {name} missing from this sweep "
+              f"(fixtures unavailable?) — its score is unverified")
+
+    if total_misses:
+        print(f"  ⚠ {total_misses} queries not in the recordings: this change "
+              f"affects RETRIEVAL, so the replay score above is not the whole "
+              f"story — run `python tools/sweep.py --live` and judge manually")
+    if failed:
+        print(f"check: REGRESSION vs baseline "
+              f"{base.get('accepted', '?')} ({', '.join(failed)})")
+        return 1
+    print(f"check: OK vs baseline {base.get('accepted', '?')}")
+    return 0
+
+
+def write_baseline(exp_id: str, note: str, aggregate: dict,
+                   per_shelf: list[dict]) -> None:
+    BASELINE.write_text(json.dumps({
+        "accepted": exp_id,
+        "ts": datetime.now().isoformat(timespec="seconds"),
+        "code": code_version(), "note": note,
+        "aggregate": {t: {k: aggregate[t][k] for k in ("p", "r", "f1")}
+                      for t in ("auto", "auto_review")},
+        "per_shelf_f1": {r["image"]: {"auto": r["auto"]["f1"],
+                                      "ar": r["auto_review"]["f1"]}
+                         for r in per_shelf},
+    }, ensure_ascii=False, indent=1), encoding="utf-8")
+    print(f"baseline accepted -> {BASELINE.name} (commit this file)")
+
+
 # -- main ---------------------------------------------------------------------
 
 def main() -> None:
@@ -240,17 +325,33 @@ def main() -> None:
     ap.add_argument("--note", default="", help="label for the ledger row")
     ap.add_argument("--dry", action="store_true", help="don't write the ledger")
     ap.add_argument("--list", action="store_true", help="show ledger history")
+    ap.add_argument("--check", action="store_true",
+                    help="regression gate: replay sweep vs tools/"
+                         "sweep_baseline.json; exit 1 on regression, no ledger")
+    ap.add_argument("--accept-baseline", action="store_true",
+                    help="bless this sweep's numbers as the committed baseline")
     args = ap.parse_args()
 
     if args.list:
         show_history()
         return
+    if args.check and (args.live or args.replay_exp or args.images):
+        raise SystemExit("--check is the deterministic full replay sweep; "
+                         "it takes no retrieval or image filters")
+    if args.accept_baseline and (args.live or args.replay_exp or args.images
+                                 or args.dry):
+        raise SystemExit("--accept-baseline must be a full, logged replay "
+                         "sweep (no --live/--replay-exp/--images/--dry)")
 
     fixtures = find_fixtures()
     if args.images:
         want = {s.strip() for s in args.images.split(",")}
         fixtures = {k: v for k, v in fixtures.items() if k in want}
     if not fixtures:
+        if args.check:
+            # fresh clone without work/: nothing to measure — don't block
+            print("check: skipped, no stored reads/recordings on this machine")
+            return
         raise SystemExit("no GT shelf has stored reads + candidates")
 
     sources = [s.strip() for s in args.sources.split(",") if s.strip()]
@@ -332,6 +433,9 @@ def main() -> None:
         print(f"  ⚠ {total_misses} queries not in the recording — this change "
               f"affects RETRIEVAL; confirm with --live before trusting the score")
 
+    if args.check:
+        sys.exit(check_against_baseline(aggregate, per_shelf, total_misses))
+
     cfg = config_snapshot()
     cfg_hash = hashlib.sha256(
         json.dumps(cfg, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:12]
@@ -365,6 +469,8 @@ def main() -> None:
     print(f"logged -> {LEDGER.name} + experiments/{exp_id}.json"
           f"  (config {cfg_hash}, "
           f"sha {ledger_row['code']['sha']}{'*' if ledger_row['code']['dirty'] else ''})")
+    if args.accept_baseline:
+        write_baseline(exp_id, args.note, aggregate, per_shelf)
 
 
 if __name__ == "__main__":

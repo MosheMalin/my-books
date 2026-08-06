@@ -1,0 +1,48 @@
+#!/bin/sh
+# Regression gate: changes that can affect matching accuracy must pass the
+# sweep check before they can be committed. Installed via:
+#     git config core.hooksPath tools/githooks
+#
+# Watchlist = everything the replay sweep actually exercises. If any of these
+# are staged, run `sweep.py --check` (offline, ~2s) against the committed
+# baseline in tools/sweep_baseline.json.
+
+watch="booksnap/match.py booksnap/config.py booksnap/pipeline.py \
+booksnap/catalog.py booksnap/scoring.py booksnap/replay.py booksnap/types.py \
+booksnap/nli_catalog.py booksnap/simania_catalog.py booksnap/extra_catalogs.py \
+ground_truth.json"
+
+staged=$(git diff --cached --name-only)
+hit=""
+for f in $watch; do
+    for s in $staged; do
+        [ "$s" = "$f" ] && hit="$hit $f"
+    done
+done
+
+# server.py owns the production retrieval chain (_build_catalog), which the
+# offline replay sweep cannot exercise — remind, don't block.
+for s in $staged; do
+    if [ "$s" = "booksnap/server.py" ]; then
+        echo "pre-commit note: server.py staged — if _build_catalog's retrieval"
+        echo "chain changed, the replay gate can't see it; judge with:"
+        echo "    python tools/sweep.py --live"
+    fi
+done
+
+[ -z "$hit" ] && exit 0
+
+echo "pre-commit: accuracy-relevant files staged:$hit"
+echo "pre-commit: running regression gate (tools/sweep.py --check)"
+python tools/sweep.py --check
+rc=$?
+if [ $rc -ne 0 ]; then
+    echo ""
+    echo "COMMIT BLOCKED: this change regresses the measured baseline."
+    echo "Either fix it, or if the trade-off is intended and understood:"
+    echo "    python tools/sweep.py --accept-baseline --note \"why\""
+    echo "    git add tools/sweep_baseline.json"
+    echo "and commit again."
+    exit $rc
+fi
+exit 0
