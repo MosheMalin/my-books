@@ -83,7 +83,6 @@ ALLOWED_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
 # a glance, missing one costs a duplicate hand-added book.
 STRONG_SIM = 88        # call it the same book
 NEAR_SIM = 65          # worth showing as "similar"
-READ_SIM = 78          # raw-read match; higher, reads carry author noise too
 
 app = FastAPI(title="booksnap")
 
@@ -684,17 +683,17 @@ def results(run_id: Optional[str] = None, image_id: Optional[str] = None) -> dic
 
 @app.get("/api/runs/{run_id}/lookup")
 def lookup(run_id: str, q: str, limit: int = 3) -> dict:
-    """Is this book already accounted for? Three places it could hide.
+    """Did this run already report this book, on any of its shelves?
 
     The review flow's expensive human error is adding a book by hand that the
     run DID find and the eye simply skipped (a 40-row shelf in a language
-    read right-to-left). This answers, for a typed title:
+    read right-to-left).
 
-      claims  — already matched in this run (possibly on another shelf);
-      reads   — a spine whose RAW READ looks like this title but matched
-                nothing: the fix there is 'find better' on that spine, not a
-                manual add, because that keeps the book tied to its crop;
-      library — already confirmed, from this run or any earlier one.
+    Scope is exactly the rows the review list DISPLAYS — matched claims at
+    any tier, including ones already approved, replaced by hand, or marked
+    wrong, plus books added manually to a shelf. Unmatched spines are
+    deliberately NOT searched: they are not shown, and a book that only
+    exists as an unread spine is correctly treated as a new manual add.
 
     Deliberately server-side: it reuses catalog.normalize (geresh deletion,
     final-letter folding) and rapidfuzz, so the search behaves like the
@@ -702,7 +701,7 @@ def lookup(run_id: str, q: str, limit: int = 3) -> dict:
     """
     from rapidfuzz import fuzz
     from .catalog import normalize
-    from .library import load_library
+    from .library import load_decisions
 
     data = _load()
     run = data["runs"].get(run_id)
@@ -710,7 +709,7 @@ def lookup(run_id: str, q: str, limit: int = 3) -> dict:
         raise HTTPException(404, "no such run")
     nq = normalize(q)
     if len(nq) < 2:
-        return {"query": q, "claims": [], "reads": [], "library": []}
+        return {"query": q, "strong": STRONG_SIM, "matches": []}
 
     def sim(text: str) -> float:
         nt = normalize(text)
@@ -718,7 +717,8 @@ def lookup(run_id: str, q: str, limit: int = 3) -> dict:
             return 0.0
         return max(fuzz.ratio(nq, nt), fuzz.token_set_ratio(nq, nt))
 
-    claims, reads = [], []
+    decisions = load_decisions(run_id)
+    out = []
     for iid in run.get("images", {}):
         p = _records_path(run_id, iid)
         if not p.exists():
@@ -726,33 +726,44 @@ def lookup(run_id: str, q: str, limit: int = 3) -> dict:
         name = (data["images"].get(iid) or {}).get("name") or ""
         for r in json.loads(p.read_text(encoding="utf-8")):
             m = r.get("match") or {}
+            if not m.get("title"):
+                continue                      # unmatched: not displayed
+            d = decisions.get(r["spine_id"]) or {}
+            act = d.get("action")
+            # search what the ROW SHOWS: a replace/approve decision renames
+            # the row, while a rejection leaves the original claim on screen
+            # (struck through), so that is still what the eye would find
+            title = d.get("title") if act in ("approve", "replace") and \
+                d.get("title") else m["title"]
+            author = d.get("author") if act in ("approve", "replace") and \
+                d.get("title") else (m.get("author") or "")
+            s = sim(title)
+            if s < NEAR_SIM:
+                continue
             loc = r.get("location") or {}
-            where = {"spine_id": r["spine_id"], "image_name": name,
-                     "band": loc.get("band"), "index": loc.get("index")}
-            if m.get("title"):
-                s = sim(m["title"])
-                if s >= NEAR_SIM:
-                    claims.append({**where, "title": m["title"],
-                                   "author": m.get("author") or "",
-                                   "tier": m.get("tier"), "sim": round(s)})
-            else:
-                text = ((r.get("ocr") or {}).get("text") or "").strip()
-                # a read is title+author, so the title is a PART of it
-                s = max(sim(text), fuzz.partial_ratio(nq, normalize(text))) \
-                    if text else 0.0
-                if s >= READ_SIM:
-                    reads.append({**where, "ocr_text": text, "sim": round(s)})
+            out.append({
+                "spine_id": r["spine_id"], "image_name": name,
+                "band": loc.get("band"), "index": loc.get("index"),
+                "title": title, "author": author or "", "sim": round(s),
+                "state": ("wrong" if act == "reject_ignore" else
+                          "library" if act in ("approve", "replace") else
+                          m.get("tier") or "")})
 
-    lib = []
-    for b in (load_library().get("books") or {}).values():
-        s = sim(b.get("title", ""))
+    for sid, d in decisions.items():
+        # only shelf-attached manual adds are DISPLAYED as rows; one recorded
+        # before the shelf was tracked shows nowhere, so searching it would
+        # report a hit the eye can never find
+        if d.get("action") != "manual_add" or not d.get("image"):
+            continue
+        s = sim(d.get("title", ""))
         if s >= NEAR_SIM:
-            lib.append({"title": b["title"], "author": b.get("author") or "",
-                        "status": b.get("status"), "sim": round(s)})
+            out.append({"spine_id": sid, "image_name": d.get("image", ""),
+                        "band": None, "index": None, "title": d["title"],
+                        "author": d.get("author") or "", "sim": round(s),
+                        "state": "manual"})
 
-    top = lambda rows: sorted(rows, key=lambda r: -r["sim"])[:limit]
-    return {"query": q, "strong": STRONG_SIM,
-            "claims": top(claims), "reads": top(reads), "library": top(lib)}
+    out.sort(key=lambda r: -r["sim"])
+    return {"query": q, "strong": STRONG_SIM, "matches": out[:limit]}
 
 
 @app.get("/api/runs/{run_id}/score")

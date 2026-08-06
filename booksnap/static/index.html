@@ -113,7 +113,6 @@
   .miss-hint { font-size: 12.5px; line-height: 1.7; margin-top: 2px; }
   .miss-hint .hint-ok   { color: var(--auto);   font-weight: 600; }
   .miss-hint .hint-near { color: var(--review); font-weight: 600; }
-  .miss-hint .hint-warn { color: var(--review); font-weight: 600; }
   .miss-hint .hint-miss { color: var(--muted); }
   .miss-hint a.hint-jump { color: var(--accent); }
   @keyframes flashrow {
@@ -675,18 +674,9 @@ async function renderResults() {
   // review controls per claim: ✓ approve · ✗ wrong (ignore) · ⟳ find better.
   // AUTO claims are already in the library ("auto"); ✗ removes them.
   const reviewCell = f => {
+    if (!f.title) return '';
     const d = decisions[f.spine_id];
     const sp = escapeHtml(f.spine_id);
-    // an UNMATCHED spine is still actionable: it was read, just not matched,
-    // and assigning the right book here keeps it tied to its crop — better
-    // than a detached manual add (this is what the search hint points at)
-    if (!f.title && !d) {
-      return (f.ocr_text || '').trim()
-        ? `<button class="linkish rv" data-a="alts" data-spine="${sp}">⟳ find better</button>
-           <button class="linkish rv" data-a="edit" data-spine="${sp}">✎ set manually</button>`
-        : '';
-    }
-    if (!f.title && d && d.action === 'reject_ignore') return '';
     if (d && (d.action === 'approve' || d.action === 'replace' || d.action === 'manual_add')) {
       // the row above shows the RUN's original claim (immutable record);
       // when the decision changed title OR author, say what the library
@@ -770,7 +760,7 @@ async function renderResults() {
   const manualRows = g => Object.entries(decisions)
     .filter(([, d]) => d.action === 'manual_add' && d.image === g.name)
     .map(([sid, d]) => `
-    <div class="row">
+    <div class="row" data-spine="${escapeHtml(sid)}">
       <div style="flex:1;min-width:0">
         <div class="title rtl">${escapeHtml(d.title)}</div>
         <div class="ocr rtl">${escapeHtml(d.author || '')}</div>
@@ -813,45 +803,26 @@ async function renderResults() {
     const hint = inp.closest('.row').querySelector('.miss-hint');
     let timer = null, seq = 0;
     const render = (r, strong) => {
-      const where = c => `${escapeHtml(c.image_name || '')} b${c.band}·s${
-        String(c.index).padStart(2, '0')}`;
-      const jump = c => `<a href="#" class="hint-jump" data-spine="${
-        escapeHtml(c.spine_id)}">${where(c)}</a>`;
-      const lines = [];
-      for (const c of r.claims) {
+      const where = c => c.band === null ? escapeHtml(c.image_name || '')
+        : `${escapeHtml(c.image_name || '')} b${c.band}·s${
+            String(c.index).padStart(2, '0')}`;
+      hint.innerHTML = r.matches.length ? r.matches.map(c => {
         const hit = c.sim >= strong;
-        lines.push(`<span class="${hit ? 'hint-ok' : 'hint-near'}">${
-          hit ? '✓ already found' : `≈ similar (${c.sim}%)`}</span> ${
+        // link only when that row is on screen (another shelf's tab isn't)
+        const here = document.querySelector(`.row[data-spine="${c.spine_id}"]`);
+        const loc = here ? `<a href="#" class="hint-jump" data-spine="${
+          escapeHtml(c.spine_id)}">${where(c)}</a>` : where(c);
+        return `<span class="${hit ? 'hint-ok' : 'hint-near'}">${
+          hit ? '✓ already listed' : `≈ similar (${c.sim}%)`}</span> ${
           escapeHtml(c.title)}${c.author ? ' — ' + escapeHtml(c.author) : ''}
-          <span class="ocr">· ${jump(c)} · ${c.tier}</span>`);
-      }
-      for (const c of r.reads) {
-        lines.push(`<span class="hint-warn">⚠ read but unmatched</span>
-          <span class="rtl">${escapeHtml(c.ocr_text)}</span>
-          <span class="ocr">· ${jump(c)} — use ⟳ find better there</span>`);
-      }
-      for (const c of r.library) {
-        lines.push(`<span class="${c.sim >= strong ? 'hint-ok' : 'hint-near'}">${
-          c.sim >= strong ? '✓ in your library' : `≈ similar in library (${c.sim}%)`
-          }</span> ${escapeHtml(c.title)}${
-          c.author ? ' — ' + escapeHtml(c.author) : ''}`);
-      }
-      hint.innerHTML = lines.length ? lines.join('<br>')
-        : '<span class="hint-miss">no match in this run or your library — safe to add</span>';
+          <span class="ocr">· ${loc}${c.state ? ' · ' + escapeHtml(c.state) : ''}</span>`;
+      }).join('<br>')
+        : '<span class="hint-miss">not in this shelf list — add it</span>';
       hint.querySelectorAll('a.hint-jump').forEach(a => {
-        a.onclick = async ev => {
+        a.onclick = ev => {
           ev.preventDefault();
-          const find = () => document.querySelector(
+          const row = document.querySelector(
             `.row[data-spine="${a.dataset.spine}"]`);
-          let row = find();
-          // the most useful hint points at an UNMATCHED spine, which the
-          // "matched only" filter hides — reveal it rather than doing
-          // nothing. (A spine on another shelf's tab still needs that tab.)
-          if (!row && $('#onlyMatched').checked) {
-            $('#onlyMatched').checked = false;
-            await renderResults();
-            row = find();
-          }
           if (!row) return;
           row.scrollIntoView({ block: 'center', behavior: 'smooth' });
           row.classList.remove('flash');
@@ -947,7 +918,7 @@ function showEdit(runId, f) {
   box.style.display = '';
   box.innerHTML = `
     <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-      <input type="text" class="rtl" id="edT-${f.spine_id}" value="${escapeHtml(f.title || '')}"
+      <input type="text" class="rtl" id="edT-${f.spine_id}" value="${escapeHtml(f.title)}"
              style="flex:2;min-width:150px" placeholder="title">
       <input type="text" class="rtl" id="edA-${f.spine_id}" value="${escapeHtml(f.author || '')}"
              list="libAuthors" style="flex:1;min-width:120px" placeholder="author">
@@ -961,8 +932,7 @@ function showEdit(runId, f) {
     await api('/api/review', jsonReq('POST', {
       run_id: runId, spine_id: f.spine_id, action: 'replace',
       title, author: document.getElementById('edA-' + f.spine_id).value.trim(),
-      // no old title on an unmatched spine — nothing to retract, just add
-      old: f.title ? { title: f.title, author: f.author || '' } : {} }));
+      old: { title: f.title, author: f.author || '' } }));
     await renderResults();
   };
 }
@@ -976,10 +946,8 @@ async function showAlternatives(runId, f, decisions) {
   const d = decisions[f.spine_id];
   // exclude by title+author PAIR — excluding by title alone hid a same-title
   // different-author alternative (שהות by Salvatore vs the Stiefvater claim)
-  // an unmatched spine has no claim to exclude (and a null title would blow
-  // up normalize() server-side)
   const exclude = JSON.stringify([
-    ...(f.title ? [{ title: f.title, author: f.author || '' }] : []),
+    { title: f.title, author: f.author || '' },
     ...(d && d.rejected_title ? [{ title: d.rejected_title, author: d.rejected_author || '' }] : [])
   ]);
   const r = await api(`/api/runs/${runId}/alternatives/${encodeURIComponent(f.spine_id)}?exclude=${encodeURIComponent(exclude)}`);
@@ -1002,7 +970,7 @@ async function showAlternatives(runId, f, decisions) {
       await api('/api/review', jsonReq('POST', {
         run_id: runId, spine_id: f.spine_id, action: 'replace',
         title: c.title, author: c.author || '',
-        old: f.title ? { title: f.title, author: f.author || '' } : {} }));
+        old: { title: f.title, author: f.author || '' } }));
       await renderResults();
     };
   });
