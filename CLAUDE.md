@@ -65,7 +65,9 @@ total confidence wins.
   line-detection fragments decorative-font titles. Don't remove it.
 
 **Matching** (`match.py`): normalise Hebrew (strip nikud/punct, fold final
-letters so OCR final/medial confusion is harmless), then per catalog entry
+letters so OCR final/medial confusion is harmless; geresh/gershayim are
+DELETED in-word, not space-split — splitting shredded הצ'ופצ'יק into junk
+tokens and cost the true book its match on run 16), then per catalog entry
 count token-level fuzzy hits on title and author separately, with EVIDENCE
 GATES:
   - EXISTENCE needs >=2 matched *title* content tokens, or one distinctive
@@ -84,6 +86,14 @@ GATES:
     title; the fantasy shelf has many same-author siblings);
   - a whole-title similarity term disambiguates siblings (מלכי הכופרים vs
     ספינות מן המערב, same author);
+  - run-16 additions: a claim hanging on ONE matched title word that explains
+    <=half its read with no author signal is REJECTED (subset pathology —
+    שפירא/הקומקום/סטארט); author-name-in-title tokens are not existence
+    evidence; a read token that is a prefix of a longer catalog token counts
+    (סטארט->סטארטאפיסט); score-tied volume siblings the read can't separate
+    cap at REVIEW; fragment suppression arbitrates by qcov (how much of its
+    OWN read a claim explains), because scores across different entries are
+    incomparable;
   - dedup: the same catalog entry can't be AUTO on two spines of one shelf.
     A rival scoring below `dup_drop_frac` (0.70) of the winner is DROPPED, not
     just demoted — the winner already explains that title, so a far-weaker
@@ -183,8 +193,16 @@ catalog call. Rules of use:
     an *outcome* of runs, not a source (revisit if the system ever has many
     users). Caveat: recordings from runs 13+ were captured with the library
     head in the chain, so its influence is frozen inside those recordings;
-  - baseline row 20260806-131823: AUTO mean P 0.94 R 0.73 F1 0.81, A+R
-    P 0.92 R 0.81 F1 0.86 over 8 shelves. `--list` shows history.
+  - baseline row 20260806-142543 (run-16 fixes): AUTO mean P 0.94 R 0.78
+    F1 0.85, A+R P 0.94 R 0.83 F1 0.88 over 8 shelves. `--list` shows history.
+
+**`tools/spotcheck.py` complements the sweep for shelves WITHOUT full GT**:
+owner review feedback on a run (wrong books, missing books, must-stay-REVIEW)
+is encoded in `fixtures/spotchecks/<name>.json` as forbid/want/not_auto
+expectations and replayed offline against that run's own candidates
+recording. A rule change must pass BOTH `sweep --check` and the spotchecks
+(`python tools/spotcheck.py run16`). This is how one-off feedback becomes a
+permanent measurement.
 
 **The sweep is ENFORCED, not advisory** (owner request, 2026-08-06): a git
 pre-commit hook (`tools/githooks/pre-commit`, installed via
@@ -368,7 +386,7 @@ BOOKSNAP_TESSDATA_FAST, BOOKSNAP_WORK.
 
 ## Tests
 
-`python tests/test_core.py` (33, matcher/normalize/gates) and
+`python tests/test_core.py` (43, matcher/normalize/gates) and
 `python tests/test_integrations.py` (24, catalog+fallback adapters, fully
 mocked/offline — no key, no network, no cloud SDK needed). Keep these green.
 Counts grow with each run's fixes; SESSION_NOTES.md tracks the history.

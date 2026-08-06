@@ -133,6 +133,17 @@ class MatchConfig:
     # is strict enough that edition spellings scored 71 and were counted as
     # both a phantom and a miss. Different comparison, different answer.
     strip_prefixes: bool = False
+    # Run-16 fix: a one-content-word title with no author agreement that
+    # explains only part of the read is REJECTED, not merely demoted to
+    # REVIEW. Measured pathology: authorless/foreign-author subset records
+    # (הקומקום, שפירא, המבוך, הזריחה, סטארט, בא בחשבון) displacing the true
+    # book, which was present in the same candidate list.
+    reject_lone_title_partial: bool = True
+    # Relaxed per-token author bar used ONLY as a keep-alive signal by the
+    # lone-title rejection above (never to create evidence): מארי~מרי is 86,
+    # under the short-token bar of 90, but is real author agreement; רינה~אריה
+    # is 75 and is noise, so the bar sits at 80.
+    soft_author_ratio: int = 80
     # Character n-gram cosine floor between OCR text and candidate title.
     # token_set_ratio has a pathology: a SHORT title that is a subset of the
     # query scores a perfect 100 — which is how the one-word "ציפורי"

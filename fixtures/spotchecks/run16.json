@@ -1,0 +1,89 @@
+{
+  "_comment": [
+    "Owner feedback on run 16 (2026-08-06), translated into checkable expectations.",
+    "Unlike ground_truth.json (full shelf labels), these are SPOT checks: only the",
+    "spines the owner explicitly flagged. 'forbid' = catalog ids that must not be",
+    "claimed by the shelf at any tier; 'want' = at least one of these ids should be",
+    "claimed (tier irrelevant); 'want_unmatched' = these spine reads must yield no",
+    "match (a wrong claim is worse than none); 'not_auto' = the id may be claimed",
+    "but not at AUTO tier (genuine ambiguity a human must resolve)."
+  ],
+  "run": "d37442d58597",
+  "shelves": {
+    "IMG_8138": {
+      "image_id": "4c430ddc27d3",
+      "checks": [
+        {"name": "chupchik not almagor-anthology",
+         "forbid": ["sim254227"],
+         "why": "s00 read is only the author line (משירי דן אלמגור); the title token אלמגור is an echo of the author, not title evidence"},
+        {"name": "chupchik not bare kumkum",
+         "forbid": ["990020532990205171"],
+         "why": "one-word title הקומקום is a subset of the real title read on s06/s10"},
+        {"name": "chupchik found",
+         "want": ["sim541953", "990033776970205171"],
+         "why": "true book הצ'ופצ'יק של הקומקום is in the recorded candidates of s06/s10"},
+        {"name": "shapira not architecture-book",
+         "forbid": ["997011001349205171"],
+         "why": "s01 שפירא is the AUTHOR (רחל שפירא); the one-word title שפירא explains 1 of 4 read tokens"}
+      ]
+    },
+    "IMG_8136": {
+      "image_id": "06dbb16e6718",
+      "checks": [
+        {"name": "surprising-truth not life-according-to",
+         "forbid": ["990026869120205171"],
+         "why": "s01 fragment read matched a different (wrong) animal book while s13 found the real one"},
+        {"name": "surprising-truth found",
+         "want": ["sim996247", "997007606788405171"]},
+        {"name": "modern-philosophy not oko-inro",
+         "forbid": ["sim460568", "990022992290205171", "383181"],
+         "why": "s42 truncated read matched the shorter title by a different author; s28 found the real one"},
+        {"name": "modern-philosophy found",
+         "want": ["sim9797", "990013489390205171"]},
+        {"name": "briah-motza-hachaim not gore-vidal",
+         "forbid": ["sim17393", "990018888200205171", "sim78508"],
+         "why": "s00 read בריאה - מוצא החחים is the Trop book (in candidates), not Vidal's בריאה"},
+        {"name": "briah-motza-hachaim found",
+         "want": ["sim950664", "990009166790205171"],
+         "why": "owner listed it missing; it IS in the recorded candidates of s00 and s12"}
+      ]
+    },
+    "IMG_8135": {
+      "image_id": "0f522d1e341d",
+      "checks": [
+        {"name": "maze-crawler not coulter-maze",
+         "forbid": ["990018122180205171"],
+         "why": "s09 המבוך is a subset of the real title זוחל המבוך read on s09/s25"},
+        {"name": "maze-crawler found",
+         "want": ["sim1027787", "997014670885605171"],
+         "why": "true book זוחל המבוך קארל is in the recorded candidates of s25 (and NLI variant in s09)"},
+        {"name": "sunrise not hislop",
+         "forbid": ["990037944430205171"],
+         "why": "s27 read טקסי הזריחה; the one-word הזריחה leaves טקסי unexplained; true book absent from candidates -> unmatched is correct"},
+        {"name": "murderbot not auto-vol1",
+         "not_auto": ["sim1026206"],
+         "why": "owner: the physical book is כרך 2; the read has no volume info and כרך 2 is also a candidate -> genuine ambiguity, at most REVIEW"},
+        {"name": "shelcha-eli found",
+         "want": ["sim1028287"],
+         "why": "s35 read שרך, אלי לאה סאקס: author matches fully, title off by one letter; book is in the recorded candidates"}
+      ]
+    },
+    "IMG_8137": {
+      "image_id": "3a34d9bfeeb7",
+      "checks": [
+        {"name": "everything-counts not bare-ba-becheshbon",
+         "forbid": ["990010479330205171"],
+         "why": "s01 בא בחשבון (authorless NLI record) explains 1 of 3 read tokens; true book is כל דבר בא בחשבון"},
+        {"name": "startupist not start",
+         "forbid": ["990021704850205171"],
+         "why": "s08 סטארט is a truncation of סטארטאפיסט; wrong book by שבדיק"},
+        {"name": "startupist found",
+         "want": ["sim36427", "990021567460205171"],
+         "why": "true book יומנו של סטארטאפיסט בדרך למכה is in the recorded candidates of s08"},
+        {"name": "family not naomi-ben-gur",
+         "forbid": ["sim84038"],
+         "why": "s27 read is a fragment of כולם במשפחה שלי הרגו מישהו, found on s36"}
+      ]
+    }
+  }
+}

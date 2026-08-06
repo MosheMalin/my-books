@@ -113,14 +113,15 @@ def test_short_subset_title_is_rejected_by_ngram_gate():
     assert fuzz.token_set_ratio(q, t) == 100, "pathology precondition"
     assert ngram_sim(q, t) < 60, ngram_sim(q, t)
 
-    # NOTE: this pair scores 51, so the SHIPPED threshold (50) does not reject
-    # it — 55 would, but swept worse overall. The gate is a broad precision
-    # win, not a fix for this one spine; asserting otherwise would be a test
-    # that lies about what the product does.
+    # NOTE: this pair scores 51, so the ngram threshold (50) alone does not
+    # reject it — 55 would, but swept worse overall. Since the run-16 fixes,
+    # the LONE-TITLE rejection catches this exact spine anyway: a single
+    # matched title word explaining 1 of 4 read tokens with no author signal
+    # is dropped outright (see test_lone_title_subset_claims_are_rejected).
     cat = LocalCatalog([CatalogEntry("0", "ציפורי", "ויס, זאב")])
     cfg = dataclasses.replace(CONFIG.match, min_ngram_sim=55)
     assert match_candidate("ציפורי ישראל והמזרת התיכון", cat, cfg) is None
-    assert match_candidate("ציפורי ישראל והמזרת התיכון", cat) is not None
+    assert match_candidate("ציפורי ישראל והמזרת התיכון", cat) is None
 
 
 def test_fused_ocr_words_still_match():
@@ -232,10 +233,12 @@ def test_short_title_words_count_in_whole_title_similarity():
 def test_one_word_title_explaining_partial_read_is_review():
     """The subset pathology in miniature: a single-content-word title that
     leaves part of the read unexplained must not be AUTO (measured phantoms:
-    "סליחה" on the read "סליחה שטעינו", "ציפורים" on "ציפורים וקרובים")."""
+    "סליחה" on the read "סליחה שטעינו", "ציפורים" on "ציפורים וקרובים").
+    Since the run-16 fixes such a claim is REJECTED outright when no author
+    signal backs it — a phantom REVIEW still displaces the true book."""
     cat = LocalCatalog([CatalogEntry("0", "סליחה", "ישראל הר")])
     m = match_candidate("סליחה שטעינו", cat)
-    assert m is not None and m.tier == "REVIEW", m and m.tier
+    assert m is None, m and (m.title, m.tier)
     # ...but a one-word title whose read is FULLY explained stays AUTO
     cat2 = LocalCatalog([CatalogEntry("0", "ארבינקא", "אפרים קישון")])
     m2 = match_candidate("ארבינקא קישון", cat2)
@@ -416,6 +419,137 @@ def test_tied_claims_both_survive_fragment_suppression():
              "יד הכאוס מרגרט וויז וטרייסי היקמן"]
     out = suppress_fragment_reads(texts, [series, volume])
     assert out[0] is series and out[1] is volume
+
+
+# --- run-16 fixes (owner review feedback, 2026-08-06) -----------------------
+
+
+def test_normalize_keeps_geresh_words_whole():
+    """The geresh marks a foreign sound INSIDE a word (צ'ופצ'יק, ריצ'רד).
+    Space-splitting it shredded הצ'ופצ'יק into הצ/ופצ/יק, leaving the entry
+    a single usable title token — which lost to a subset record on run 16."""
+    assert normalize("הצ'ופצ'יק של הקומקום") == "הצופציק של הקומקומ"
+    assert normalize("ריצ'רד דוקינס") == "ריצרד דוקינס"
+
+
+def test_lone_title_subset_claims_are_rejected():
+    """Run 16: one-word titles claiming reads they barely explain, with no
+    author signal, displaced the true books (הקומקום, שפירא, המבוך, סטארט)."""
+    cat = LocalCatalog([CatalogEntry("0", "שפירא", "מאירי, יואב (אדריכל)")])
+    assert match_candidate("אדבר איתן רחל שפירא", cat) is None
+    # ...and hit-count, not entry word-count, is what matters: after the lone
+    # הזריחה was rejected, the two-word sibling הזריחה הזהובה stepped in.
+    cat2 = LocalCatalog([CatalogEntry("0", "הזריחה הזהובה", "האמפסון, אן")])
+    assert match_candidate("טקסי הזריחה", cat2) is None
+
+
+def test_soft_author_signal_keeps_lone_title_claim():
+    """The read "וורקרוס מארי לו" must keep its claim: מארי~מרי scores 86,
+    under the 90 short-token bar, but is plainly the right author."""
+    cat = LocalCatalog([CatalogEntry("0", "וורקרוס", "לו, מרי, 1984- מחבר")])
+    m = match_candidate("וורקרוס מארי לו", cat)
+    assert m is not None and m.title == "וורקרוס", m
+
+
+def test_author_echo_in_title_is_not_title_evidence():
+    """Run 16: the author-only read "משירי דן אלמגור דן אלמגור" matched
+    אלמגור inside the TITLE "דן אלמגור: איש חסיד היה" and invented the book.
+    An author's name printed in the title is not independent title evidence."""
+    cat = LocalCatalog([CatalogEntry("0", "דן אלמגור: איש חסיד היה", "דן אלמגור")])
+    assert match_candidate("משירי דן אלמגור דן אלמגור", cat) is None
+    # the same entry still matches when real title words are read
+    m = match_candidate("איש חסיד היה דן אלמגור", cat)
+    assert m is not None and m.catalog_id == "0"
+
+
+def test_truncated_query_token_matches_catalog_token():
+    """Run 16: the spine יומנו של סטארטאפיסט was read "יומנו של סטארט"; the
+    truncated סטארט matched nothing in the true title while fully matching a
+    wrong book titled סטארט. A long read token that is a PREFIX of a longer
+    catalog token is that word, truncated."""
+    cat = LocalCatalog([
+        CatalogEntry("0", "יומנו של סטארטאפיסט בדרך למכה", "גידי רף"),
+        CatalogEntry("1", "סטארט", "שבדיק, הנך"),
+        CatalogEntry("2", "יומנו של כלב", "ראובן, אבא"),
+    ])
+    m = match_candidate("יומנו של סטארט גידי רף", cat)
+    assert m is not None and m.catalog_id == "0", m and m.title
+
+
+def test_volume_ambiguity_caps_auto_to_review():
+    """Run 16: a read with no volume evidence went AUTO on כרך 1 while כרך 2
+    (the actual book) sat in the same candidate list at the same score. The
+    matcher cannot tell the volumes apart, so the coin-flip must be REVIEW."""
+    cat = LocalCatalog([
+        CatalogEntry("0", "יומני רובורצח - כרך 1", "מרתה וולס"),
+        CatalogEntry("1", "יומני רובורצח - כרך 2", "מרתה וולס"),
+    ])
+    m = match_candidate("יומני רובורצח מרתה וולס", cat)
+    assert m is not None and m.tier == "REVIEW", m and (m.title, m.tier)
+    # ...but a read that SHOWS the distinguishing token keeps AUTO
+    cat2 = LocalCatalog([
+        CatalogEntry("0", "1000 זמר ועוד זמר", "תלמה אליגון-רוז"),
+        CatalogEntry("1", "זמר ועוד זמר", ""),
+    ])
+    m2 = match_candidate("1000 זמר ועוד זמר", cat2)
+    assert m2 is not None and m2.catalog_id == "0" and m2.tier == "AUTO", \
+        m2 and (m2.title, m2.tier)
+
+
+def test_full_author_plus_half_title_is_matchable():
+    """Run 16: the read "שרך, אלי לאה סאקס" (misread שלך) carries the author
+    in full and half the title, but אלי is under the distinctive bar — title
+    evidence alone can never see this book."""
+    cat = LocalCatalog([CatalogEntry("0", "שלך, אלי", "לאה סאקס")])
+    m = match_candidate("שרך, אלי לאה סאקס", cat)
+    assert m is not None and m.catalog_id == "0", m
+    # one noise token + author must still NOT match (the original bug)
+    cat2 = LocalCatalog([CatalogEntry("0", "החיה", "מריה וי סניידר")])
+    assert match_candidate("היה מריה וי סניידר", cat2) is None
+
+
+def test_fragment_suppression_prefers_higher_qcov_not_score():
+    """Run 16: the fragment read "המפתיעה על בעלי החיים לוסי קוק" matched a
+    wrong shorter title AND outscored (111.9 vs 92.3) the clean read of the
+    true book, so score-based superiority kept the wrong twin. The claim that
+    explains more of its own read wins; score only breaks qcov ties."""
+    from booksnap.match import suppress_fragment_reads
+    wrong = Match(title="החיים על-פי בעלי-החיים", author="לונד, ג'ון",
+                  tier="AUTO", score=111.9, catalog_id="w", qcov=0.4)
+    right = Match(title="האמת המפתיעה על בעלי החיים", author="לוסי קוק",
+                  tier="AUTO", score=92.3, catalog_id="r", qcov=1.0)
+    texts = ["המפתיעה על בעלי החיים לוסי קוק", "האמת המפתיעה על בעלי ה"]
+    out = suppress_fragment_reads(texts, [wrong, right])
+    assert out[0] is None and out[1] is right
+
+
+def test_fragment_containment_sees_through_particles():
+    """Run 16: the fragment "המשפחה שלי הרגו מישהו" is a partial view of the
+    "כולם במשפחה שלי הרגו מישהו" spine; only the ה/ב particle kept המשפחה
+    from being found inside במשפחה, so the wrong twin survived."""
+    from booksnap.match import suppress_fragment_reads
+    wrong = Match(title="המשפחה שלי?", author="נעמי בן-גור", tier="REVIEW",
+                  score=115.0, catalog_id="w", qcov=0.33)
+    right = Match(title="כולם במשפחה שלי הרגו מישהו", author="בנג'מין סטיבנסון",
+                  tier="AUTO", score=115.0, catalog_id="r", qcov=1.0)
+    texts = ["המשפחה שלי הרגו מישהו בנג'מין סטיבנסון",
+             "כולם במשפחה שלי הרגו מישהו"]
+    out = suppress_fragment_reads(texts, [wrong, right])
+    assert out[0] is None and out[1] is right
+
+
+def test_author_initials_cannot_absorb_title_words():
+    """The author "מ.מ.טרופ" normalizes to tokens מ/מ/טרופ; the single letter
+    מ is a substring of most Hebrew words, and the author-fragment pass ate
+    the unrelated correct match מחשבות על המציאות as an "author fragment"."""
+    from booksnap.match import suppress_author_fragments
+    briah = Match(title="בריאה מוצא החיים", author="מ.מ.טרופ", tier="AUTO",
+                  score=100.0, catalog_id="b")
+    other = Match(title="מחשבות על המציאות", author="יקיר שושני", tier="AUTO",
+                  score=115.0, catalog_id="m")
+    texts = ["בריאה - מוצא החחים", "מחשבות על המציאות"]
+    out = suppress_author_fragments(texts, [briah, other])
+    assert out[1] is other, "eaten as a false author fragment"
 
 
 if __name__ == "__main__":

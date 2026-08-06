@@ -14,6 +14,13 @@ from pathlib import Path
 from typing import Protocol, Iterable
 
 _NIKUD = re.compile(r"[\u0591-\u05C7]")
+# geresh/gershayim (and their ASCII stand-ins) mark foreign sounds and
+# acronyms INSIDE a word \u2014 \u05E6'\u05D5\u05E4\u05E6'\u05D9\u05E7, \u05E8\u05D9\u05E6'\u05E8\u05D3, \u05D6'\u05D5\u05DC, \u05D7\u05D6"\u05DC. They must be
+# deleted, not replaced by a space: space-splitting shredded \u05D4\u05E6'\u05D5\u05E4\u05E6'\u05D9\u05E7 into
+# the junk tokens \u05D4\u05E6/\u05D5\u05E4\u05E6/\u05D9\u05E7, and the entry's only usable title token was
+# whatever word carried no geresh (run 16: the true book lost to a subset
+# record because of exactly this).
+_INWORD_MARKS = re.compile(r"[\u05F3\u05F4'\"`\u2018\u2019\u201C\u201D]")
 _KEEP = re.compile(r"[^\u05D0-\u05EAa-zA-Z0-9 ]")
 _WS = re.compile(r"\s+")
 
@@ -23,6 +30,7 @@ def normalize(s: str) -> str:
     variants folded, collapse whitespace."""
     s = unicodedata.normalize("NFKD", s)
     s = _NIKUD.sub("", s)
+    s = _INWORD_MARKS.sub("", s)
     s = _KEEP.sub(" ", s)
     # fold final letters to base forms so OCR mid/final confusion is harmless
     s = s.translate(str.maketrans("\u05da\u05dd\u05df\u05e3\u05e5",

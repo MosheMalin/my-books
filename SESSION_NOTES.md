@@ -602,3 +602,57 @@ Verdicts applied (4 rejections, וורקרוס author fix, 6 manual adds; librar
 Verdicts applied (series-record rejection + 5 adds; library 82 — run 15's
 AUTO claims were the first fully-automatic absorption). GT 9 shelves.
 Tests: **33 + 24 = 57.**
+
+## Run 16 (IMG_8135-8138) — owner review feedback becomes spotchecks; subset-claim purge
+
+Owner flagged ~12 wrong + ~8 missing books across the 4 shelves. Diagnosis
+against the stored candidates recordings: in nearly every WRONG case the true
+book WAS in the candidate list — these were matching losses, not retrieval
+losses. Root pattern: token_set_ratio hands a short subset title a perfect
+100, so it outscores the true fuller title read with one OCR error.
+
+1. **`tools/spotcheck.py` + `fixtures/spotchecks/run16.json`** — owner
+   feedback on an (unlabelled) run is now a permanent, re-runnable fixture:
+   forbid/want/not_auto expectations replayed offline against the run's own
+   recording. Rule changes must pass BOTH the GT sweep and the spotchecks.
+   Run 16 spotchecks: 2/19 before, **19/19 after**.
+2. **Geresh normalization bug (load-bearing).** normalize() space-split
+   geresh words: הצ'ופצ'יק -> הצ/ופצ/יק, leaving the true entry ONE usable
+   title token; a bare הקומקום record beat it. Geresh/gershayim/apostrophes
+   are now deleted in-word (הצופציק stays whole). Affects ג'/צ'/ז' names
+   everywhere.
+3. **Lone-title rejection** (`reject_lone_title_partial`): a claim hanging on
+   a single matched title word, explaining <=half its read, with no author
+   signal (soft bar 80, no short-token escalation — מארי~מרי=86 keeps
+   וורקרוס; רינה~אריה=75 stays out) is REJECTED, not demoted. Killed שפירא,
+   הקומקום, המבוך, הזריחה(+הזהובה), סטארט, בא בחשבון, בריאה/וידאל, and the
+   ORIGINAL ציפורי spine the ngram gate was tuned around.
+4. **Fragment arbitration by qcov, not score** — scores of claims on
+   different entries are incomparable (wrong twin 111.9 vs true twin 92.3);
+   the claim that explains more of ITS OWN read wins, score only breaks
+   ties. Containment also checks particle-stripped tokens (המשפחה⊂במשפחה).
+   Match now carries qcov for this.
+5. **Author-echo gate**: title tokens that duplicate the entry's author are
+   not existence evidence (משירי דן אלמגור vs "דן אלמגור: איש חסיד היה").
+6. **Truncated-token hits**: read token >=5 chars that is a PREFIX of a
+   catalog token counts (יומנו של סטארט -> סטארטאפיסט, now AUTO-correct).
+7. **Volume-ambiguity cap**: score-tied candidates differing only in
+   volume/digit tokens the read never showed -> REVIEW (רובורצח כרך 1 vs 2);
+   a read showing "1000" keeps its AUTO.
+8. **Author-backed existence**: full 2+-token author + >=half title matched
+   (שרך,אלי לאה סאקס -> שלך, אלי). One noise token + author still can't.
+9. **Author-fragment initials bug**: מ.מ.טרופ -> tokens מ/מ/טרופ; single
+   letters matched inside everything and ate מחשבות על המציאות. Substring
+   correspondence now needs a >=3-char author token.
+
+Sweep (8 GT shelves): AUTO P 0.941->0.943, AUTO F1 0.815->**0.848**, A+R F1
+0.863->**0.882**; biggest movers IMG_8131 AUTO F1 +0.12, A+R +0.11. Cost:
+IMG_6082 A+R F1 -0.06 (two authorless REVIEW-tier claims eaten by the
+lone-title rule — precision-first trade). Baseline re-accepted 20260806-142543.
+
+Honest residue on run 16 (not matching-fixable): ספר הבדיחה והחידוד x3
+(vertical, never read), 1000 זמר חלק ב/ג (read as "ועוד זמן", volume records
+not retrieved), לעזאזל (diagonal, misread לשדאזל), זאבי ציון (read PERFECTLY,
+absent from every source — library-add candidate), טקסי הזריחה + כל דבר בא
+בחשבון (now honestly unmatched instead of wrong; the latter's read shows only
+the generic fragment + publisher אריה ניר). Tests: **43 + 24 = 67.**

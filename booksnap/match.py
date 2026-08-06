@@ -101,6 +101,14 @@ def _token_hit(q: str, c: str, cfg: MatchConfig) -> bool:
     if (len(c) >= cfg.embedded_token_len and len(q) > len(c)
             and c in q):
         return True
+    # ...and the mirror image, words CUT by the reader: the spine
+    # יומנו של סטארטאפיסט was read "יומנו של סטארט", and the truncated
+    # סטארט matched nothing in the true title while fully matching a wrong
+    # book titled סטארט. A long query token found at the start of a longer
+    # catalog token is that word, truncated. Same length floor.
+    if (len(q) >= cfg.embedded_token_len and len(c) > len(q)
+            and c.startswith(q)):
+        return True
     if not cfg.strip_prefixes:
         return False
     qs, cs = strip_prefix(q), strip_prefix(c)
@@ -140,7 +148,15 @@ def _evaluate(query_tokens: list[str], entry: CatalogEntry,
     acov = len(ma) / len(at) if at else 0.0
     tcov_c = (len(mt_content) / len(tt_content)) if tt_content else 0.0
     n_title_hits = len(mt_content)
-    has_distinct_title = any(len(t) >= cfg.distinctive_len for t in mt_content)
+    # A matched title token that is just the entry's AUTHOR printed inside the
+    # title is an echo, not independent title evidence: the author-only read
+    # "משירי דן אלמגור" matched אלמגור in the title "דן אלמגור: איש חסיד היה"
+    # and invented that book (run 16). Echo hits still count for
+    # coverage/score, but cannot by themselves establish existence.
+    echo = [c for c in mt_content
+            if any(c == a or fuzz.ratio(c, a) >= 90 for a in at)]
+    own_hits = [c for c in mt_content if c not in echo]
+    has_distinct_title = any(len(t) >= cfg.distinctive_len for t in own_hits)
 
     q = normalize(query_text) if query_text else " ".join(query_tokens)
     # whole-title similarity — separates series siblings (מלכי הכופרים vs
@@ -200,9 +216,19 @@ def _evaluate(query_tokens: list[str], entry: CatalogEntry,
     # distinctive), making the book unmatchable however well it was read.
     # Whole-string equality of the full normalized read is strong evidence.
     verbatim_title = bool(entry.norm_title) and q == entry.norm_title
-    if not (n_title_hits >= 2 or has_distinct_title or full_title_with_author
-            or verbatim_title):
-        info["rejected"] = "no title evidence (needs 2 title tokens, or 1 of " \
+    # A FULLY-matched multi-token author plus at least half the title is real
+    # evidence even when every matched title token is short or fuzzy: the
+    # read "שרך, אלי לאה סאקס" (misread שלך) carries the author לאה סאקס in
+    # full and half of the title שלך, אלי — but אלי is under the distinctive
+    # bar and שלך was misread, so title evidence alone can never see it.
+    # Unlike the original pooled-evidence bug, one noise token cannot fire
+    # this: it takes BOTH a 2+-token author at 100% AND half the title.
+    author_backed = (len(ma) >= 2 and acov >= 1.0 and tt and tcov >= 0.5
+                     and len(own_hits) >= 1)
+    if not (len(own_hits) >= 2 or has_distinct_title or full_title_with_author
+            or verbatim_title or author_backed):
+        info["rejected"] = "no title evidence beyond the author's own name " \
+                           "(needs 2 title tokens, or 1 of " \
                            f"{cfg.distinctive_len}+ chars)"
         return info
     if title_sim < cfg.min_title_sim:
@@ -212,6 +238,31 @@ def _evaluate(query_tokens: list[str], entry: CatalogEntry,
         info["rejected"] = (f"n-gram similarity {info['ngram_sim']:.0f} < "
                             f"{cfg.min_ngram_sim:.0f}")
         return info
+    # A claim hanging on a SINGLE matched title word, explaining at most half
+    # of what was read, with no author signal at all, is the subset pathology
+    # outright: the entry "covers itself" and ignores the rest of the spine.
+    # Run 16 wrongs of exactly this shape: הקומקום claiming הציפציק של
+    # הקומקום, שפירא claiming אדבר איתן רחל שפירא, המבוך claiming קאדרו
+    # המבוך זוחל, סטארט claiming יומנו של סטארט גידי רף — and, once the lone
+    # entry is rejected, a two-word sibling stepping into the hole (הזריחה
+    # הזהובה for טקסי הזריחה, ספר יהודית for השדים יהודית קגן), which is why
+    # the rule keys on matched-hit count, not the entry's word count.
+    # The demotion in _tier is not enough — the wrong claim displaces the
+    # true book and surfaces as a wrong REVIEW.
+    # Author support is judged at a RELAXED ratio without the short-token
+    # escalation: the read "וורקרוס מארי לו" scores מארי~מרי at 86, under the
+    # 90 short-token bar, yet that is plainly the right author — while the
+    # wrong claims here have zero author signal at any bar. (80, not lower:
+    # רינה~אריה already scores 75.)
+    # A fully-explained read (verbatim one-word title, qcov 1.0) still passes.
+    if cfg.reject_lone_title_partial and qcov <= 0.5 and len(own_hits) <= 1:
+        soft_author = bool(ma) or any(
+            fuzz.ratio(x, a) >= cfg.soft_author_ratio
+            for x in query_tokens for a in at)
+        if not soft_author:
+            info["rejected"] = ("a single matched title word explains at "
+                                "most half the read, with no author signal")
+            return info
 
     info["score"] = 60 * tcov_c + 25 * tcov + 15 * acov + 0.30 * title_sim
     return info
@@ -277,26 +328,57 @@ def _tier(tcov, tcov_c, acov, evidence, n_title_hits, has_distinct_title,
     return "REVIEW"
 
 
+_ROMAN = frozenset({"i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x",
+                    "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"})
+
+
+def _volume_core(norm_title: str, cfg: MatchConfig) -> tuple[str, ...]:
+    """Title tokens with volume designators (חלק/כרך/ספר, digits, romans)
+    removed — two titles with the same core are volumes of one work."""
+    return tuple(t for t in norm_title.split()
+                 if not (t.isdigit() or t in _ROMAN or t in cfg.junk_title_words))
+
+
 def match_candidate(text: str, catalog: Catalog,
                     cfg: MatchConfig = CONFIG.match) -> Match | None:
     qt = _tokens(text, cfg)
     if not qt:
         return None
-    best = None
+    best, runners = None, []
     for entry in catalog.candidates(text):
         res = _score_entry(qt, entry, cfg, text)
         if res is None:
             continue
+        runners.append((res[0], entry))
         if best is None or res[0] > best[0][0]:
             best = (res, entry)
     if best is None:
         return None
     (score, tcov, tcov_c, acov, ev, nth, hdt, qcov, ntc, nqc), entry = best
-    return Match(title=entry.title, author=entry.author,
-                 tier=_tier(tcov, tcov_c, acov, ev, nth, hdt, cfg, qcov,
-                            ntc, nqc),
+    tier = _tier(tcov, tcov_c, acov, ev, nth, hdt, cfg, qcov, ntc, nqc)
+    # Volume ambiguity: when a rival candidate scores IDENTICALLY and differs
+    # from the winner only in volume designators the read never showed, the
+    # matcher literally cannot tell the volumes apart — a spine reading
+    # "יומני רובורצח" went AUTO on כרך 1 while כרך 2 (the actual book) sat in
+    # the same list with the same score. That coin-flip must not auto-accept.
+    if tier == "AUTO":
+        core = _volume_core(entry.norm_title, cfg)
+        qt_set = set(qt)
+        for s, rival in runners:
+            if (rival.id != entry.id and abs(s - score) < 1e-6
+                    and rival.norm_title != entry.norm_title
+                    and _volume_core(rival.norm_title, cfg) == core):
+                # only when the read shows NONE of the differing volume
+                # tokens: a spine that actually printed "1000" or "III" has
+                # picked its volume; a bare "יומני רובורצח" has not.
+                diff = (set(entry.norm_title.split())
+                        ^ set(rival.norm_title.split()))
+                if not diff & qt_set:
+                    tier = "REVIEW"
+                    break
+    return Match(title=entry.title, author=entry.author, tier=tier,
                  score=round(score, 1), matched_text=text,
-                 catalog_id=entry.id)
+                 catalog_id=entry.id, qcov=round(qcov, 3))
 
 
 def match_spine(ocr: OcrResult, catalog: Catalog,
@@ -391,7 +473,7 @@ def resolve_assignment(per_spine: list[dict[str, dict]],
                        cfg, info["qcov"], info.get("n_title_content", 99),
                        info.get("n_query_content", 99)),
             score=round(s, 1), matched_text=info["matched_text"],
-            catalog_id=entry.id)
+            catalog_id=entry.id, qcov=round(info["qcov"], 3))
     return out
 
 
@@ -452,9 +534,12 @@ def suppress_fragment_reads(texts: list[str],
         # matches inside המקרית, while a real short word that distinguishes a
         # sibling (לימודי אש vs לימודי רעל) blocks the suppression. A read of
         # only sub-3-char tokens is never treated as contained.
+        # Particle-stripped forms count too: the fragment "המשפחה שלי הרגו
+        # מישהו" is a partial view of the "כולם במשפחה שלי הרגו מישהו" spine,
+        # and only the ה/ב particle kept המשפחה from being found in במשפחה.
         if not any(len(t) >= 3 for t in a):
             return False
-        return all(any(t in u for u in b) for t in a)
+        return all(any(t in u or strip_prefix(t) in u for u in b) for t in a)
 
     rank = {"AUTO": 2, "REVIEW": 1}
     toks = [set(normalize(t).split()) for t in texts]
@@ -479,13 +564,20 @@ def suppress_fragment_reads(texts: list[str],
             # read it duplicates. A read naming a DIFFERENT author (מכונת
             # הזמן ה.ג. ולס next to the Haldeman book) is not contained and
             # keeps its claim.
-            # Suppression demands STRICT superiority: on IMG_8133 the clean
-            # read "יד הכאוס מרגרט..." (correct volume) TIED the compound
-            # read's series-record claim and was wrongly eaten — a tie means
-            # we cannot tell which claim is better, so both stay and the
-            # review flow decides.
+            # Suppression demands STRICT superiority, judged by (tier, qcov,
+            # score) — NOT raw score. Scores of claims on different entries
+            # are incomparable: a fragment matching a short wrong title gets
+            # perfect coverage and an inflated score (run 16: the fragment
+            # read "המפתיעה על בעלי החיים לוסי קוק" outscored 111.9 vs 92.3
+            # the clean read of the true האמת המפתיעה על בעלי החיים). qcov —
+            # how much of its OWN read each claim explains — is the honest
+            # comparison: the wrong twin leaves half its read unexplained.
+            # Score stays as the final tie-break, and the IMG_8133 protection
+            # holds: a clean read (qcov 1.0) still cannot be eaten by a
+            # compound read's series-record claim that explains less.
             if (contained(toks[i], world(j)) and not contained(toks[j], world(i))
-                    and (rank[other.tier], other.score) > (rank[m.tier], m.score)):
+                    and (rank[other.tier], other.qcov, other.score)
+                    > (rank[m.tier], m.qcov, m.score)):
                 matches[i] = None
                 break
     return matches
@@ -517,7 +609,12 @@ def suppress_author_fragments(texts: list[str],
         core = [t for t in q_toks if len(t) >= 3]
         if not core:
             return False
-        return all(any(fuzz.ratio(t, a) >= 85 or t in a or a in t
+        # substring correspondence needs a REAL author token on the other
+        # side: initials ("מ.מ.טרופ" -> tokens מ,מ,טרופ) made the single
+        # letter מ "contained in" nearly every Hebrew word, and this pass ate
+        # correct matches (מחשבות על המציאות) as author fragments.
+        return all(any(fuzz.ratio(t, a) >= 85
+                       or (len(a) >= 3 and (t in a or a in t))
                        for a in a_toks) for t in core)
 
     for i, (text, m) in enumerate(zip(texts, matches)):

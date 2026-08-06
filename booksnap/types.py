@@ -45,6 +45,11 @@ class Match:
     score: float
     matched_text: str = ""                # the OCR candidate that triggered it
     catalog_id: Optional[str] = None
+    # How much of the read this entry explains (title+author). Kept on the
+    # match because within-shelf arbitration (fragment suppression) needs it:
+    # absolute scores of claims on DIFFERENT entries are not comparable, but
+    # "explains its own read fully" vs "leaves half unexplained" is.
+    qcov: float = 1.0
 
 
 @dataclass
