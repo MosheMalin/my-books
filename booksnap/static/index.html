@@ -711,17 +711,11 @@ async function renderResults() {
     const d = decisions[f.spine_id];
     const sp = escapeHtml(f.spine_id);
     if (d && (d.action === 'approve' || d.action === 'replace' || d.action === 'manual_add')) {
-      // the row above shows the RUN's original claim (immutable record);
-      // when the decision changed title OR author, say what the library
-      // actually holds — a same-title different-author replace (שהות:
-      // Stiefvater -> Salvatore) was invisible otherwise
-      const changed = d.title !== f.title || (d.author || '') !== (f.author || '');
-      const repl = changed
-        ? `<div class="ocr rtl" title="what the library holds">→ ${escapeHtml(d.title)}${
-            d.author ? ` — ${escapeHtml(d.author)}` : ''}</div>` : '';
+      // (the corrected title is the row's headline — see `effective` below;
+      // this cell only carries the state badge and the actions)
       // a confirmed row stays editable: a typo noticed after approving used
       // to need undo-then-fix (owner feedback)
-      return `<span class="badge b-AUTO" title="confirmed in library">✓ library</span>${repl}
+      return `<span class="badge b-AUTO" title="confirmed in library">✓ library</span>
         <button class="linkish rv" data-a="edit" data-spine="${sp}">✎ fix details</button>
         <button class="linkish rv" data-a="reject_ignore" data-spine="${sp}">undo</button>`;
     }
@@ -751,6 +745,19 @@ async function renderResults() {
   // or ⟳ find better) — flag it beside the tier so an edited row is
   // distinguishable from an untouched one at a glance
   const isEdited = f => (decisions[f.spine_id] || {}).action === 'replace';
+  // What this row IS, now: once a decision approves or rewrites a claim, the
+  // library holds the decision's text, so that is the row's headline. The
+  // run's original claim stays visible underneath as "was …" — it is the
+  // immutable record, but it is history, not the answer (owner feedback: a
+  // row fixed to "יער דנקטון חלק א'" still read "יער דנקטון").
+  const effective = f => {
+    const d = decisions[f.spine_id];
+    if (d && ['approve', 'replace', 'manual_add'].includes(d.action) && d.title) {
+      return { title: d.title, author: d.author || '',
+               changed: d.title !== f.title || (d.author || '') !== (f.author || '') };
+    }
+    return { title: f.title, author: f.author || '', changed: false };
+  };
   const tierBadge = f => `<div style="display:flex;gap:4px;align-items:center">${
     isRejected(f)
       ? `<span class="badge b-WRONG" title="marked wrong">${f.tier || 'none'}</span>`
@@ -765,8 +772,12 @@ async function renderResults() {
            onclick="showViewer('${cropUrl(f)}')" style="cursor:zoom-in">
       <div style="flex:1;min-width:0">
         ${f.title
-          ? `<div class="title rtl">${escapeHtml(f.title)}</div>
-             <div class="ocr rtl">${escapeHtml(f.author || '')}</div>`
+          ? `<div class="title rtl">${escapeHtml(effective(f).title)}</div>
+             <div class="ocr rtl">${escapeHtml(effective(f).author)}</div>
+             ${effective(f).changed
+                ? `<div class="ocr rtl" title="what this run matched before you corrected it">was: ${
+                    escapeHtml(f.title)}${f.author ? ` — ${escapeHtml(f.author)}` : ''}</div>`
+                : ''}`
           : '<div class="muted">— no match —</div>'}
         <div class="ocr rtl" title="raw OCR">${escapeHtml(f.ocr_text || '')}</div>
         <div class="ocr mono" title="${escapeHtml(f.spine_id)}">b${f.band}·s${
@@ -1101,6 +1112,9 @@ async function showAlternatives(runId, f, decisions) {
   // different-author alternative (שהות by Salvatore vs the Stiefvater claim)
   const exclude = JSON.stringify([
     { title: f.title, author: f.author || '' },
+    // the book currently on this row (after a correction) is not an
+    // "alternative" to itself
+    ...(d && d.title ? [{ title: d.title, author: d.author || '' }] : []),
     ...(d && d.rejected_title ? [{ title: d.rejected_title, author: d.rejected_author || '' }] : [])
   ]);
   const r = await api(`/api/runs/${runId}/alternatives/${encodeURIComponent(f.spine_id)}?exclude=${encodeURIComponent(exclude)}`);
