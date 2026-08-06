@@ -608,6 +608,103 @@ def test_distinct_volumes_same_entry_demoted_not_dropped():
     assert out[1] is not None and out[1].tier == "REVIEW"
 
 
+# --- run-18 fixes (owner review feedback, 2026-08-06) -----------------------
+
+
+def test_near_verbatim_read_is_matchable():
+    """Run 18: the fragment "לכת השלג" is one OCR letter from מלכת השלג, but
+    its only hit (השלג) is under the distinctive bar and no author was read.
+    Whole-string ratio >= 92 admits it; subset titles stay out (ratio is
+    length-sensitive, unlike token_set_ratio)."""
+    cat = LocalCatalog([CatalogEntry("0", "מלכת השלג", "ג'ואן ד. וינג'")])
+    m = match_candidate("לכת השלג", cat)
+    assert m is not None and m.catalog_id == "0", m
+
+
+def test_one_word_read_needs_exact_hit():
+    """Run 18: the barely-visible הענן השחור spine read as just "השחור" went
+    AUTO on ז'נה's השחורים via the truncated-prefix rule. A one-word read is
+    ambiguous across every title containing that word — only an exact hit
+    (or verbatim title) may match."""
+    cat = LocalCatalog([CatalogEntry("0", "השחורים", "ז'ן ז'נה")])
+    assert match_candidate("השחור", cat) is None
+    # exact one-word hits still match (המחזורית-style stays REVIEW-capped)
+    cat2 = LocalCatalog([CatalogEntry("0", "כוכב ניוטרון", "לארי ניבן")])
+    m = match_candidate("ניוטרון", cat2)
+    assert m is not None and m.tier == "REVIEW", m and (m.title, m.tier)
+
+
+def test_intra_entry_author_echo_does_not_inflate_score():
+    """Run 18: the NLI record 'ארץ לא נודעת' by 'מטה ארץ ישראל. כנס מסבירים'
+    beat the true Connie Willis book because its junk author repeats the
+    title word ארץ — double-counting, not corroboration."""
+    from booksnap.match import _evaluate, _tokens
+    from booksnap.config import CONFIG
+    e = CatalogEntry("0", "ארץ לא נודעת", "מטה ארץ ישראל. כנס מסבירים")
+    info = _evaluate(_tokens("ארץ לא-נודעת", CONFIG.match), e, CONFIG.match,
+                     "ארץ לא-נודעת")
+    assert info["acov"] == 0.0, info["acov"]
+    # ...so the two same-title entries tie and catalog order (library first)
+    # decides, instead of the junk author winning
+    cat = LocalCatalog([CatalogEntry("lib", "ארץ לא נודעת", "קוני ויליס"), e])
+    m = match_candidate("ארץ לא-נודעת", cat)
+    assert m is not None and m.catalog_id == "lib", m and m.catalog_id
+
+
+def test_title_built_from_another_books_author_is_suppressed():
+    """Run 18: the read "ההחזק פיטר ס. ביגל" (the החדקרן האחרון spine) went
+    AUTO on the biography 'פיטר ברויגל' — its entire title evidence is the
+    true book's AUTHOR name. A claim with any title evidence of its own
+    (אקסלרנדו) survives, and a SHORT token inside a longer author name
+    (אלי ⊂ אליצור) is not name-like."""
+    from booksnap.match import suppress_author_fragments
+    bruegel = Match("פיטר ברויגל", "טימרמנס, פליכס", "AUTO", 104.3,
+                    catalog_id="b")
+    unicorn = Match("החדקרן האחרון", "פיטר ס. ביגל", "AUTO", 122.5,
+                    catalog_id="u")
+    out = suppress_author_fragments(
+        ["ההחזק פיטר ס. ביגל", "החדקרן האחרון ס. ביגל"], [bruegel, unicorn])
+    assert out[0] is None and out[1] is unicorn
+    # אלי ⊂ אליצור must NOT suppress the שלך, אלי claim
+    eli = Match("שלך, אלי", "לאה סאקס", "REVIEW", 60.0, catalog_id="e")
+    other = Match("השנה שאחרי הפור", "אברהם אליצור", "AUTO", 122.5,
+                  catalog_id="o")
+    out2 = suppress_author_fragments(
+        ["שרך, אלי לאה סאקס", "השנה שאחרי הפור אליצור"], [eli, other])
+    assert out2[0] is eli
+
+
+def test_second_pass_rescues_spine_whose_first_claim_was_deduped():
+    """Run 18: the read המוסד האחד אסימוב first-pass-matched the shelf-mate's
+    המוסד השמימי, lost the dedup, and — because the second pass ran BEFORE
+    dedup — never got its variant queries. The rescue must run on whatever
+    is unmatched AFTER the shelf cleanup."""
+    from booksnap.match import apply_second_pass, postprocess_matches
+    from booksnap.types import OcrResult
+
+    right = CatalogEntry("right", "המוסד האחר", "אסימוב, אייזיק")
+    decoy = CatalogEntry("decoy", "המוסד השמימי", "אסימוב, אייזיק")
+
+    class Scripted:
+        def candidates(self, q, limit=15):
+            # base queries see only the decoy; the leave-one-out variant
+            # (misread token dropped) surfaces the whole series
+            if q == "המוסד אסימוב":
+                return [decoy, right]
+            return [decoy]
+
+    ocrs = [OcrResult(spine_id="a", text="המוסד השמימי אסימוב"),
+            OcrResult(spine_id="b", text="המוסד האחד אסימוב")]
+    texts = [o.text for o in ocrs]
+    cat = Scripted()
+    matches = [match_candidate(o.text, cat) for o in ocrs]
+    matches = postprocess_matches(texts, matches)
+    assert matches[1] is None, "precondition: weak duplicate claim dropped"
+    matches = apply_second_pass(ocrs, matches, cat)
+    assert matches[1] is not None and matches[1].catalog_id == "right", \
+        matches[1] and matches[1].catalog_id
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     passed = 0

@@ -709,3 +709,48 @@ no source (library-add candidates); מערות הפלדה/הענן השחור/ה
 פטיש השטן/מוקינגברד/ג'ם need the next RUN (their spines were misread or
 unread; sources have them, and the second pass + prompt changes give them a
 real path in). Tests: **47 + 24 = 71.**
+
+## Run 18 (rerun of 8139-8141) — verification run: 3 wins, 3 new wrongs, 3 fixes
+
+Run 18 confirmed the run-17 fixes where their inputs cooperated: סנוקראש AUTO
+via the second pass, סוזנה gone, פטיש השטן found, plus bonus recoveries
+(סדרה מתכנסת, התלת רגלים). It also exposed exactly where the remaining rules
+were thin:
+
+1. **Second pass ran too early** (before dedup/suppression): a spine whose
+   weak first-pass claim was LATER dropped never got its variant queries —
+   המוסד האחד matched the shelf-mate's המוסד השמימי, lost the dedup, and
+   the true המוסד האחר stayed unfound. `apply_second_pass` now rescues
+   whatever is unmatched AFTER `postprocess_matches`, then cleans up again.
+   Verified live on the shelf: s03 -> AUTO המוסד 3 - המוסד האחר.
+2. **New wrong AUTO, 'פיטר ברויגל'**: the read ההחזק פיטר ס. ביגל (the
+   החדקרן האחרון spine) matched the Bruegel BIOGRAPHY — its entire title
+   evidence was the true book's AUTHOR name. suppress_author_fragments got
+   an evidence-level variant: a claim whose every contributing title token
+   is another matched claim's author dies; a short token inside a longer
+   name (אלי⊂אליצור) is NOT name-like, which protects שלך, אלי.
+3. **New wrong AUTO, 'השחורים'**: the barely-visible הענן השחור read as one
+   word (השחור) and the truncated-prefix rule extended it into ז'נה's book.
+   A ONE-word read now requires an exact title-word hit (or verbatim title).
+4. **New wrong AUTO, conference booklet 'ארץ לא נודעת'**: its junk author
+   (מטה ארץ ישראל...) repeats the title word ארץ, and that echo token
+   counted in acov, outscoring the library's Connie Willis book by 2.1.
+   Author tokens duplicating title tokens no longer count toward acov.
+5. **מלכת השלג regression**: read as the fragment לכת השלג, rejected as a
+   lone-title subset because לכת (one letter off מלכת, ratio 86) counted as
+   unexplained. qcov now counts SOFT hits (ratio >= soft_author_ratio) as
+   explained — never as evidence — and a whole-string near-verbatim read
+   (ratio >= 92; length-sensitive, so subset titles stay out) passes
+   existence. -> REVIEW on the right book.
+6. **Reader still ignored volume markers** (no I/II or */** in any run-18
+   read; Strange & Norrell and יער דנקטון still one copy each). Prompt rule
+   (6) rewritten: identical adjacent spines = one entry PER SPINE; markers
+   are small, at the spine ENDS — check both ends before concluding none.
+   Still unverified until the next run.
+
+fixtures/spotchecks/run18.json (10 checks) joins run16 (19) and run17 (9);
+all pass, replay sweep at baseline (AUTO F1 +0.003 over it), tests
+**52 + 24 = 76**. Live sweep for the retrieval-affecting parts: ledger 20260806-173544:
+AUTO mean P 0.98 R 0.81 F1 0.88, A+R P 0.97 R 0.90 F1 0.93 — the run-17
+live means held exactly (8134 AUTO F1 +0.02), so removing the three
+wrong-AUTO patterns cost no recall.

@@ -141,13 +141,14 @@ class Pipeline:
                 score=round(b.confidence * 100),
                 engine=getattr(self.page_reader, "engine_name",
                                "google_vision_page")))
-        from .match import (match_spine, match_second_pass, resolve_duplicates,
-                            resolve_near_duplicates, suppress_author_fragments,
-                            suppress_fragment_reads)
+        from .match import (match_spine, apply_second_pass,
+                            postprocess_matches)
         # matching is the second long phase (catalog lookups per block, each
         # rate-limited) — report per-block progress rather than stalling
+        texts = [o.text for o in ocrs]
         if self.cfg.match.use_assignment:
-            matches = self.match_all(ocrs)
+            matches = postprocess_matches(texts, self.match_all(ocrs),
+                                          self.cfg.match)
         else:
             matches = []
             for i, o in enumerate(ocrs):
@@ -155,24 +156,13 @@ class Pipeline:
                 if progress:
                     progress({"stage": "matching", "image": str(image_path),
                               "done": i + 1, "total": len(ocrs)})
-            # unmatched reads get a second chance through retrieval VARIANTS
-            # (the literal source search chokes on one misread/split token);
-            # runs before dedup/suppression so its claims obey the same rules
+            # whole-shelf cleanup (dedup + near-dup + fragment/author
+            # suppression), THEN the variant-retrieval rescue for whatever is
+            # still unmatched, then cleanup again over the rescued claims
+            matches = postprocess_matches(texts, matches, self.cfg.match)
             if self.cfg.match.second_pass_retrieval:
-                for i, (o, m) in enumerate(zip(ocrs, matches)):
-                    if m is None and o.text:
-                        matches[i] = match_second_pass(
-                            o.text, self.catalog, self.cfg.match)
-            matches = resolve_duplicates(matches, self.cfg.match)
-        # page-mode extras (tile overlap + block fragmentation, see match.py):
-        # a weaker claim naming the same book via a different catalog edition
-        # is dropped; a partial re-read of an already-matched spine can't
-        # claim its own record; a read that is purely another book's author
-        # name cannot claim a title of its own.
-        texts = [o.text for o in ocrs]
-        matches = resolve_near_duplicates(matches)
-        matches = suppress_fragment_reads(texts, matches)
-        matches = suppress_author_fragments(texts, matches)
+                matches = apply_second_pass(ocrs, matches, self.catalog,
+                                            self.cfg.match)
         for spine, ocr, match in zip(spines, ocrs, matches):
             # A read the model itself marked as cut off ("כל הדברים... נבונים
             # כמופ...") is real evidence but partial evidence: on the E2

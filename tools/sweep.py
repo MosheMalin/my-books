@@ -84,11 +84,8 @@ for _line in ((REPO / ".env").read_text(encoding="utf-8").splitlines()
         os.environ.setdefault(_k.strip(), _v.strip())
 
 from booksnap.config import CONFIG                                # noqa: E402
-from booksnap.match import (match_spine, match_second_pass,        # noqa: E402
-                            resolve_duplicates,
-                            resolve_near_duplicates,
-                            suppress_author_fragments,
-                            suppress_fragment_reads)
+from booksnap.match import (match_spine, apply_second_pass,        # noqa: E402
+                            postprocess_matches)
 from booksnap.pipeline import _is_truncated                        # noqa: E402
 from booksnap.replay import RecordingCatalog, ReplayCatalog        # noqa: E402
 from booksnap.scoring import load_ground_truth, score_predictions  # noqa: E402
@@ -240,22 +237,17 @@ def build_live_catalog(sources: list[str]):
 def match_shelf(ocrs: list[OcrResult], catalog) -> list:
     """Exactly the post-match path of Pipeline.run_page — sweeping a different
     flow than the one that ships would measure the wrong system."""
+    texts = [o.text for o in ocrs]
     if CONFIG.match.use_assignment:
         from booksnap.match import candidates_for_spine, resolve_assignment
-        matches = resolve_assignment(
+        matches = postprocess_matches(texts, resolve_assignment(
             [candidates_for_spine(o, catalog, CONFIG.match) for o in ocrs],
-            CONFIG.match)
+            CONFIG.match), CONFIG.match)
     else:
         matches = [match_spine(o, catalog, CONFIG.match) for o in ocrs]
+        matches = postprocess_matches(texts, matches, CONFIG.match)
         if CONFIG.match.second_pass_retrieval:
-            for i, (o, m) in enumerate(zip(ocrs, matches)):
-                if m is None and o.text:
-                    matches[i] = match_second_pass(o.text, catalog, CONFIG.match)
-        matches = resolve_duplicates(matches, CONFIG.match)
-    texts = [o.text for o in ocrs]
-    matches = resolve_near_duplicates(matches)
-    matches = suppress_fragment_reads(texts, matches)
-    matches = suppress_author_fragments(texts, matches)
+            matches = apply_second_pass(ocrs, matches, catalog, CONFIG.match)
     for o, m in zip(ocrs, matches):
         if m and m.tier == "AUTO" and _is_truncated(o.text):
             m.tier = "REVIEW"

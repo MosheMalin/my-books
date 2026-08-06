@@ -1,0 +1,52 @@
+{
+  "_comment": [
+    "Owner-visible run 18 findings (2026-08-06), offline-checkable subset.",
+    "NOT encoded: המוסד האחר via the reordered second pass (its variant queries",
+    "are not in run 18's recording — verified live instead), the second",
+    "Strange & Norrell / יער דנקטון copies (reader still did not transcribe",
+    "volume markers; prompt strengthened again), מערות הפלדה / ג'ם / העולם",
+    "כיער / מוקינגברד (spines unread or hopelessly misread this run)."
+  ],
+  "run": "8725965a7509",
+  "shelves": {
+    "IMG_8141": {
+      "image_id": "2ccdd9d5d1f4",
+      "checks": [
+        {"name": "snow-crash found via second pass",
+         "want": ["sim977074"]},
+        {"name": "unicorn-spine not bruegel-biography",
+         "forbid": ["990019256360205171"],
+         "why": "the read ההחזק פיטר ס. ביגל is the החדקרן האחרון spine; its title evidence (פיטר+ביגל) is entirely the true book's AUTHOR name"},
+        {"name": "lost-lands is the willis book",
+         "forbid": ["990024705580205171"],
+         "why": "the NLI conference booklet ארץ לא נודעת outscored the library's Connie Willis book only via its junk author repeating the title word ארץ"},
+        {"name": "strange-norrell kept",
+         "want": ["sim214620", "sim978072"]}
+      ]
+    },
+    "IMG_8140": {
+      "image_id": "6056b05d8214",
+      "checks": [
+        {"name": "duncton kept",
+         "want": ["lib:יער דנקטונ|ויליאמ הורווד", "sim623436", "990008465080205171"]},
+        {"name": "keats-end kept",
+         "want": ["lib:קצ כלזמנ|אסימוב אייזיק", "990013178540205171"]}
+      ]
+    },
+    "IMG_8139": {
+      "image_id": "8411124d8630",
+      "checks": [
+        {"name": "barely-visible cloud spine not genet",
+         "forbid": ["sim322629"],
+         "why": "the read השחור (one word, off by a letter) went AUTO on ז'נה's השחורים via the truncated-prefix rule; a one-word read needs an exact hit"},
+        {"name": "snow-queen found",
+         "want": ["lib:מלכת השלג|גואנ ד וינג", "sim18295"],
+         "why": "the fragment read לכת השלג was rejected as a lone-title subset; the near-miss token לכת~מלכת (86) must count as explained"},
+        {"name": "satans-hammer kept",
+         "want": ["sim12924", "sim457355"]},
+        {"name": "series-converges kept",
+         "want": ["sim41670"]}
+      ]
+    }
+  }
+}

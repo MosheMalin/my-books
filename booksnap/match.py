@@ -154,6 +154,11 @@ def _evaluate(query_tokens: list[str], entry: CatalogEntry,
                 or any(_token_hit(x, c, cfg) for x in query_tokens)]
 
     mt, ma = matched(tt), matched(at)
+    # An author token that also appears in the TITLE is double-counting, not
+    # corroboration: the NLI record 'ארץ לא נודעת' by 'מטה ארץ ישראל. כנס
+    # מסבירים' outscored the true Connie Willis book on run 18 purely
+    # because its junk author repeats the title word ארץ.
+    ma = [a for a in ma if a not in tt]
     tt_content, mt_content = _content(tt, cfg), _content(mt, cfg)
     tcov = len(mt) / len(tt) if tt else 0.0
     acov = len(ma) / len(at) if at else 0.0
@@ -182,9 +187,17 @@ def _evaluate(query_tokens: list[str], entry: CatalogEntry,
     # short title can score perfect coverage while explaining almost none of
     # the spine; this is the signal that catches that.
     q_content = _content(list(dict.fromkeys(query_tokens)), cfg)
+    # "explained" is deliberately SOFTER than a scoring hit: a read token a
+    # letter away from a catalog token (לכת ~ מלכת at 86, under the 90
+    # short-token bar) is still explained BY this entry — run 18's fragment
+    # read "לכת השלג" was thrown away as a lone-title subset because its
+    # near-miss token counted as unexplained. Soft hits never add evidence
+    # or score; they only stop the rejection rules from misreading coverage.
     explained = sum(1 for x in q_content
                     if any(_token_hit(x, c, cfg) for c in tt + at)
-                    or any(x in c for c in fused))
+                    or any(x in c for c in fused)
+                    or any(fuzz.ratio(x, c) >= cfg.soft_author_ratio
+                           for c in tt + at))
     qcov = explained / len(q_content) if q_content else 0.0
 
     info = {
@@ -248,6 +261,14 @@ def _evaluate(query_tokens: list[str], entry: CatalogEntry,
     # distinctive), making the book unmatchable however well it was read.
     # Whole-string equality of the full normalized read is strong evidence.
     verbatim_title = bool(entry.norm_title) and q == entry.norm_title
+    # ...or one OCR letter away from it: the fragment read "לכת השלג" (run
+    # 18) is plainly the title מלכת השלג, but its only hit השלג sits under
+    # the distinctive bar and no author was read. Whole-string fuzz.ratio is
+    # length-sensitive — unlike token_set_ratio, a SUBSET title scores low
+    # (השחור vs השחורים is 86) — so a 92 floor admits one-letter reads
+    # without reopening the subset pathology.
+    near_verbatim = (bool(entry.norm_title)
+                     and fuzz.ratio(q, entry.norm_title) >= 92)
     # A FULLY-matched multi-token author plus at least half the title is real
     # evidence even when every matched title token is short or fuzzy: the
     # read "שרך, אלי לאה סאקס" (misread שלך) carries the author לאה סאקס in
@@ -258,10 +279,20 @@ def _evaluate(query_tokens: list[str], entry: CatalogEntry,
     author_backed = (len(ma) >= 2 and acov >= 1.0 and tt and tcov >= 0.5
                      and len(own_hits) >= 1)
     if not (len(own_hits) >= 2 or has_distinct_title or full_title_with_author
-            or verbatim_title or author_backed or tiny_title):
+            or verbatim_title or near_verbatim or author_backed or tiny_title):
         info["rejected"] = "no title evidence beyond the author's own name " \
                            "(needs 2 title tokens, or 1 of " \
                            f"{cfg.distinctive_len}+ chars)"
+        return info
+    # A ONE-word read is inherently ambiguous between every title containing
+    # that word, so its single hit must be EXACT: the barely-visible spine of
+    # הענן השחור was read as just "השחור" and went AUTO on ז'נה's השחורים
+    # via the truncated-prefix rule (run 18). An exact one-word hit still
+    # matches (המחזורית, שוגון) and the tier guards keep it honest.
+    if (len(q_content) <= 1 and not verbatim_title
+            and not any(x == c for x in query_tokens for c in own_hits)):
+        info["rejected"] = ("a one-word read needs an exact title-word hit "
+                            "(fuzzy/truncated is ambiguous across titles)")
         return info
     if title_sim < cfg.min_title_sim:
         info["rejected"] = f"title similarity {title_sim} < {cfg.min_title_sim}"
@@ -703,16 +734,77 @@ def suppress_author_fragments(texts: list[str],
                        or (len(a) >= 3 and (t in a or a in t))
                        for a in a_toks) for t in core)
 
+    def name_like(t: str, a_toks: list[str]) -> bool:
+        # stricter than name_only's correspondence: a SHORT contributing
+        # token that merely sits inside a longer author name is not that
+        # name (אלי ⊂ אליצור almost erased שלך, אלי) — substring only
+        # counts for tokens long enough to BE a name.
+        return any(fuzz.ratio(t, a) >= 85
+                   or (len(t) >= 5 and len(a) >= 3 and (t in a or a in t))
+                   for a in a_toks)
+
+    cfg = CONFIG.match
     for i, (text, m) in enumerate(zip(texts, matches)):
         if not m:
             continue
         q_toks = normalize(text).split()
+        # which read tokens actually SUPPLIED title evidence for this claim?
+        title_toks = [t for t in normalize(m.title).split()
+                      if len(t) >= cfg.token_min_len]
+        contributing = [t for t in q_toks if len(t) >= 3
+                        and any(_token_hit(t, c, cfg) for c in title_toks)]
         for other in matches:
             if other is None or other is m or not other.author:
                 continue
-            if name_only(q_toks, normalize(other.author).split()):
+            a_toks = normalize(other.author).split()
+            if name_only(q_toks, a_toks):
                 matches[i] = None
                 break
+            # Evidence-level variant: even when the read carries extra junk,
+            # a claim whose EVERY contributing title token is another matched
+            # book's author name was built from a person, not a title — the
+            # read "ההחזק פיטר ס. ביגל" (the החדקרן האחרון spine) went AUTO
+            # on the Bruegel BIOGRAPHY 'פיטר ברויגל' because פיטר+ביגל, the
+            # true book's AUTHOR, fully covered that title (run 18). A claim
+            # with any title evidence of its own (אקסלרנדו) is untouched.
+            if (contributing and other.catalog_id != m.catalog_id
+                    and all(name_like(t, a_toks) for t in contributing)):
+                matches[i] = None
+                break
+    return matches
+
+
+def postprocess_matches(texts: list[str], matches: list[Match | None],
+                        cfg: MatchConfig = CONFIG.match) -> list[Match | None]:
+    """The whole-shelf cleanup that follows per-spine matching, in its one
+    canonical order (run_page and the sweep must stay identical)."""
+    matches = resolve_duplicates(matches, cfg)
+    matches = resolve_near_duplicates(matches)
+    matches = suppress_fragment_reads(texts, matches)
+    matches = suppress_author_fragments(texts, matches)
+    return matches
+
+
+def apply_second_pass(ocrs, matches: list[Match | None], catalog: Catalog,
+                      cfg: MatchConfig = CONFIG.match) -> list[Match | None]:
+    """Variant-retrieval rescue for spines that are STILL unmatched after the
+    shelf cleanup, followed by a re-run of that cleanup over the new claims.
+
+    Order matters and was measured (run 18): the second pass originally ran
+    before dedup/suppression, so a spine whose weak first-pass claim was
+    LATER dropped (המוסד האחד matched the shelf-mate's המוסד השמימי, then
+    lost the dedup) never got its variant queries — and the true המוסד האחר
+    stayed unfound. Rescue after cleanup, then clean up again so second-pass
+    claims obey every duplicate/fragment rule.
+    """
+    texts = [o.text for o in ocrs]
+    added = False
+    for i, (o, m) in enumerate(zip(ocrs, matches)):
+        if m is None and o.text:
+            matches[i] = match_second_pass(o.text, catalog, cfg)
+            added = added or matches[i] is not None
+    if added:
+        matches = postprocess_matches(texts, matches, cfg)
     return matches
 
 

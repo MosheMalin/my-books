@@ -386,7 +386,7 @@ BOOKSNAP_TESSDATA_FAST, BOOKSNAP_WORK.
 
 ## Tests
 
-`python tests/test_core.py` (47, matcher/normalize/gates) and
+`python tests/test_core.py` (52, matcher/normalize/gates) and
 `python tests/test_integrations.py` (24, catalog+fallback adapters, fully
 mocked/offline — no key, no network, no cloud SDK needed). Keep these green.
 Counts grow with each run's fixes; SESSION_NOTES.md tracks the history.

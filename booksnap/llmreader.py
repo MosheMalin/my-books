@@ -38,12 +38,14 @@ PROMPT = (
     "author is not visible, use an empty string; (3) publisher names and series "
     "names are not titles; (4) stylised or decorative lettering still counts if "
     "you can read it; (5) one entry per physical book; (6) multi-volume sets "
-    "sit side by side with near-identical spines — if a spine shows a volume "
-    "or part marker (a number, a Roman numeral like I/II, asterisks like * "
-    "or **, or כרך/חלק followed by a letter or number), transcribe the marker "
-    "at the end of that book's title exactly as printed; two neighbouring "
-    "spines differing only in such a marker are two different books and get "
-    "one entry each."
+    "sit side by side with near-identical spines. When you see two or more "
+    "adjacent spines with the same title, they are separate physical volumes: "
+    "output one entry PER SPINE, and hunt for the volume marker that tells "
+    "them apart — a number, a Roman numeral (I/II), asterisks (* / **), or "
+    "כרך/חלק with a letter or number. These markers are usually SMALL and "
+    "printed near the top or bottom end of the spine, away from the title — "
+    "check both ends of each such spine before concluding there is none, and "
+    "append the marker to that entry's title exactly as printed."
 )
 
 SCHEMA = {
