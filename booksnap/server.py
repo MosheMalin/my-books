@@ -791,6 +791,10 @@ def review(payload: dict = Body(...)) -> dict:
         raise HTTPException(400, f"{action} needs a title")
 
     decision = {"action": action, "title": title, "author": author}
+    if action == "manual_add" and payload.get("image"):
+        # which shelf the hand-added book belongs to, so the review UI can
+        # render it as a row on that shelf instead of a silent library bump
+        decision["image"] = payload["image"]
     if action == "approve":
         add_book(title, author, "approved",
                  {"run_id": run_id, "spine_id": spine_id})

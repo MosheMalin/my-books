@@ -107,6 +107,7 @@
   .b-REVIEW { color: var(--review); background: var(--review-bg); }
   .b-none   { color: var(--none);   background: var(--none-bg); }
   .b-WRONG  { color: var(--danger); background: var(--danger-bg); }
+  .b-MANUAL { color: var(--accent); background: rgba(47,111,237,.12); }
   .row.rejected img { filter: grayscale(1); opacity: .55; }
   .row.rejected .title { color: var(--muted); text-decoration: line-through; }
 
@@ -680,20 +681,23 @@ async function renderResults() {
         <button class="linkish rv" data-a="clear" data-spine="${sp}"
                 title="mis-click? return to undecided (does not re-add to library)">undo</button>`;
     }
-    const auto = f.tier === 'AUTO';
-    return `${auto ? '<span class="badge b-AUTO" title="added automatically on new runs; ✗ removes">auto ✓</span>' : ''}
+    // no "auto ✓" chip here: the tier badge right above already says AUTO,
+    // and a second green chip next to ✓/✗ read as a third state (owner
+    // feedback). AUTO rows are library-absorbed silently; ✗ removes.
+    return `
       <button class="linkish rv" data-a="approve" data-spine="${sp}">✓ approve</button>
       <button class="linkish rv" data-a="reject_ignore" data-spine="${sp}">✗ wrong</button>
       <button class="linkish rv" data-a="alts" data-spine="${sp}">⟳ find better</button>
       <button class="linkish rv" data-a="edit" data-spine="${sp}">✎ fix details</button>`;
   };
 
-  // a claim the owner marked wrong must READ as wrong: red badge in place
-  // of the tier, no green "auto" anywhere — a rejected row still wearing
-  // its AUTO badge looked like a confirmed book (owner feedback, run 18)
+  // a claim the owner marked wrong must READ as wrong: the tier badge keeps
+  // its text (you still see it WAS an AUTO) but turns red, and no green
+  // appears anywhere on the row — a rejected row wearing a green badge
+  // looked like a confirmed book (owner feedback, run 18)
   const isRejected = f => (decisions[f.spine_id] || {}).action === 'reject_ignore';
   const tierBadge = f => isRejected(f)
-    ? `<span class="badge b-WRONG" title="marked wrong (was ${f.tier || 'none'})">✗ wrong</span>`
+    ? `<span class="badge b-WRONG" title="marked wrong">${f.tier || 'none'}</span>`
     : `<span class="badge b-${f.tier || 'none'}">${f.tier || 'none'}</span>`;
 
   const rowHtml = f => `
@@ -731,22 +735,48 @@ async function renderResults() {
     if (!g || g.name !== f.image_name) groups.push({ name: f.image_name, rows: [f] });
     else g.rows.push(f);
   }
-  const groupFooter = g => {
-    const autos = g.rows.filter(f => f.tier === 'AUTO' && f.title && !decisions[f.spine_id]);
+  // bulk-approve eligibility: AUTO rows the owner has NOT decided on — a
+  // claim marked wrong must never ride along with an approve-all, and the
+  // button's count is exactly the set the click will approve
+  const bulkable = g => g.rows.filter(
+    f => f.tier === 'AUTO' && f.title && !decisions[f.spine_id]);
+
+  // books added by hand for this shelf render as their own rows, so the
+  // addition is visible in place instead of only in the library count
+  const manualRows = g => Object.entries(decisions)
+    .filter(([, d]) => d.action === 'manual_add' && d.image === g.name)
+    .map(([sid, d]) => `
+    <div class="row">
+      <div style="flex:1;min-width:0">
+        <div class="title rtl">${escapeHtml(d.title)}</div>
+        <div class="ocr rtl">${escapeHtml(d.author || '')}</div>
+        <div class="ocr">added by hand — no spine crop</div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex:none;max-width:170px">
+        <span class="badge b-MANUAL" title="added manually to this shelf">+ manual</span>
+        <span class="badge b-AUTO" title="confirmed in library">✓ library</span>
+        <button class="linkish man-rm" data-sid="${escapeHtml(sid)}"
+                data-t="${escapeHtml(d.title)}" data-a="${escapeHtml(d.author || '')}">✕ remove</button>
+      </div>
+    </div>`).join('');
+
+  const groupFooter = (g, gi) => {
+    const autos = bulkable(g);
     return `
     <div class="row" style="align-items:center;gap:8px">
       <div style="flex:1;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
         <span class="img-sub" style="flex-basis:100%">${escapeHtml(g.name)}</span>
         <input type="text" class="rtl miss-t" placeholder="add a missing book — title" style="flex:2;min-width:130px">
         <input type="text" class="rtl miss-a" list="libAuthors" placeholder="author (optional)" style="flex:1;min-width:100px">
-        <button class="miss-add">+ add to library</button>
-        ${autos.length ? `<button class="bulk-ok">✓ approve all auto (${autos.length})</button>` : ''}
+        <button class="miss-add" data-img="${escapeHtml(g.name)}">+ add to library</button>
+        ${autos.length ? `<button class="bulk-ok" data-g="${gi}">✓ approve all auto (${autos.length})</button>` : ''}
       </div>
     </div>`;
   };
   box.innerHTML =
     `<datalist id="libAuthors">${libAuthors.map(a => `<option value="${escapeHtml(a)}">`).join('')}</datalist>` +
-    (groups.map(g => g.rows.map(rowHtml).join('') + groupFooter(g)).join('')
+    (groups.map((g, gi) => g.rows.map(rowHtml).join('') + manualRows(g)
+                           + groupFooter(g, gi)).join('')
      || '<div class="empty">Nothing to show with this filter.</div>');
 
   box.querySelectorAll('button.miss-add').forEach(b => {
@@ -756,21 +786,32 @@ async function renderResults() {
       if (!title) return;
       await api('/api/review', jsonReq('POST', {
         run_id: run.run_id, spine_id: `manual-${Date.now()}`,
-        action: 'manual_add', title,
+        action: 'manual_add', title, image: b.dataset.img,
         author: wrap.querySelector('.miss-a').value.trim() }));
       await renderResults();
     };
   });
-  box.querySelectorAll('button.bulk-ok').forEach((b, gi) => {
+  // removing a hand-added book = reject it (deletes the library entry and
+  // overwrites the manual_add decision, so the row disappears)
+  box.querySelectorAll('button.man-rm').forEach(b => {
+    b.onclick = async () => {
+      await api('/api/review', jsonReq('POST', {
+        run_id: run.run_id, spine_id: b.dataset.sid, action: 'reject_ignore',
+        old: { title: b.dataset.t, author: b.dataset.a } }));
+      await renderResults();
+    };
+  });
+  box.querySelectorAll('button.bulk-ok').forEach(b => {
     b.onclick = async () => {
       b.disabled = true;
-      const g = groups[gi];
-      for (const f of g.rows) {
-        if (f.tier === 'AUTO' && f.title && !decisions[f.spine_id]) {
-          await api('/api/review', jsonReq('POST', {
-            run_id: run.run_id, spine_id: f.spine_id, action: 'approve',
-            title: f.title, author: f.author || '' }));
-        }
+      // group looked up by the button's own index, not DOM position: a
+      // shelf with nothing to approve renders no button, and positional
+      // matching then approved the WRONG shelf's rows
+      const g = groups[Number(b.dataset.g)];
+      for (const f of bulkable(g)) {
+        await api('/api/review', jsonReq('POST', {
+          run_id: run.run_id, spine_id: f.spine_id, action: 'approve',
+          title: f.title, author: f.author || '' }));
       }
       await renderResults();
     };
