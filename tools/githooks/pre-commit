@@ -45,4 +45,22 @@ if [ $rc -ne 0 ]; then
     echo "and commit again."
     exit $rc
 fi
+
+# Owner-feedback spotchecks are part of the gate: the GT sweep never sees the
+# shelves the owner reviewed by hand, and a rule change that un-fixes one of
+# those complaints is a regression exactly like a sweep drop. Fixtures whose
+# run data isn't on this machine skip themselves.
+for fx in fixtures/spotchecks/*.json; do
+    [ -e "$fx" ] || continue
+    name=$(basename "$fx" .json)
+    echo "pre-commit: spotcheck $name"
+    python tools/spotcheck.py "$name"
+    rc=$?
+    if [ $rc -ne 0 ]; then
+        echo ""
+        echo "COMMIT BLOCKED: this change un-fixes owner feedback ($name)."
+        echo "See fixtures/spotchecks/$name.json for the expectation that broke."
+        exit $rc
+    fi
+done
 exit 0

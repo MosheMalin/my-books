@@ -201,8 +201,9 @@ owner review feedback on a run (wrong books, missing books, must-stay-REVIEW)
 is encoded in `fixtures/spotchecks/<name>.json` as forbid/want/not_auto
 expectations and replayed offline against that run's own candidates
 recording. A rule change must pass BOTH `sweep --check` and the spotchecks
-(`python tools/spotcheck.py run16`). This is how one-off feedback becomes a
-permanent measurement.
+(`python tools/spotcheck.py run16`); the pre-commit hook enforces both
+(spotchecks self-skip on machines without the run data). This is how one-off
+feedback becomes a permanent measurement.
 
 **The sweep is ENFORCED, not advisory** (owner request, 2026-08-06): a git
 pre-commit hook (`tools/githooks/pre-commit`, installed via

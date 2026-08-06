@@ -59,6 +59,11 @@ def main() -> None:
 
     fx = json.loads((FIXDIR / f"{args.name}.json").read_text(encoding="utf-8"))
     run_id = fx["run"]
+    if not (WORK / "runs" / run_id).exists():
+        # fresh clone / another machine: the run's reads+recording aren't
+        # committed, so there is nothing to measure — skip, don't block
+        print(f"spotcheck {args.name}: skipped (run {run_id} not on this machine)")
+        return
     passed = failed = 0
 
     for shelf, spec in fx["shelves"].items():
