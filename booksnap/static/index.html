@@ -9,14 +9,14 @@
     --bg: #f6f7f9; --panel: #fff; --ink: #12161c; --muted: #6b7480;
     --line: #e3e6ea; --accent: #2f6fed; --auto: #12864b; --auto-bg: #e6f5ec;
     --review: #a3690a; --review-bg: #fdf3e0; --none: #8a9099; --none-bg: #f0f1f3;
-    --danger: #c0392b; --up: #12864b; --down: #c0392b;
+    --danger: #c0392b; --danger-bg: #fdeae7; --up: #12864b; --down: #c0392b;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #14171c; --panel: #1b1f26; --ink: #e8ebef; --muted: #98a1ad;
       --line: #2b313a; --accent: #6b9bff; --auto: #59d795; --auto-bg: #17331f;
       --review: #e8b45c; --review-bg: #352a15; --none: #8c95a1; --none-bg: #242a32;
-      --danger: #ef7a6d; --up: #59d795; --down: #ef7a6d;
+      --danger: #ef7a6d; --danger-bg: #3a1f1b; --up: #59d795; --down: #ef7a6d;
     }
   }
   * { box-sizing: border-box; }
@@ -106,6 +106,9 @@
   .b-AUTO   { color: var(--auto);   background: var(--auto-bg); }
   .b-REVIEW { color: var(--review); background: var(--review-bg); }
   .b-none   { color: var(--none);   background: var(--none-bg); }
+  .b-WRONG  { color: var(--danger); background: var(--danger-bg); }
+  .row.rejected img { filter: grayscale(1); opacity: .55; }
+  .row.rejected .title { color: var(--muted); text-decoration: line-through; }
 
   .mode-opt {
     flex: 1; display: flex; gap: 7px; align-items: flex-start; cursor: pointer;
@@ -672,8 +675,10 @@ async function renderResults() {
         <button class="linkish rv" data-a="reject_ignore" data-spine="${sp}">undo</button>`;
     }
     if (d && d.action === 'reject_ignore') {
-      return `<span class="badge b-none">✗ rejected</span>
-        <button class="linkish rv" data-a="alts" data-spine="${sp}">find better</button>`;
+      return `<span class="badge b-WRONG">✗ marked wrong</span>
+        <button class="linkish rv" data-a="alts" data-spine="${sp}">find better</button>
+        <button class="linkish rv" data-a="clear" data-spine="${sp}"
+                title="mis-click? return to undecided (does not re-add to library)">undo</button>`;
     }
     const auto = f.tier === 'AUTO';
     return `${auto ? '<span class="badge b-AUTO" title="added automatically on new runs; ✗ removes">auto ✓</span>' : ''}
@@ -683,8 +688,16 @@ async function renderResults() {
       <button class="linkish rv" data-a="edit" data-spine="${sp}">✎ fix details</button>`;
   };
 
+  // a claim the owner marked wrong must READ as wrong: red badge in place
+  // of the tier, no green "auto" anywhere — a rejected row still wearing
+  // its AUTO badge looked like a confirmed book (owner feedback, run 18)
+  const isRejected = f => (decisions[f.spine_id] || {}).action === 'reject_ignore';
+  const tierBadge = f => isRejected(f)
+    ? `<span class="badge b-WRONG" title="marked wrong (was ${f.tier || 'none'})">✗ wrong</span>`
+    : `<span class="badge b-${f.tier || 'none'}">${f.tier || 'none'}</span>`;
+
   const rowHtml = f => `
-    <div class="row">
+    <div class="row${isRejected(f) ? ' rejected' : ''}">
       <img src="${cropUrl(f)}" alt="" loading="lazy"
            onerror="this.style.visibility='hidden'"
            onclick="showViewer('${cropUrl(f)}')" style="cursor:zoom-in">
@@ -702,7 +715,7 @@ async function renderResults() {
           tab === 'all' ? ` · ${escapeHtml(f.image_name)}` : ''}</div>
       </div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex:none;max-width:170px">
-        <span class="badge b-${f.tier || 'none'}">${f.tier || 'none'}</span>
+        ${tierBadge(f)}
         <button class="linkish why" data-spine="${escapeHtml(f.spine_id)}">why?</button>
         ${reviewCell(f)}
       </div>

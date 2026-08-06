@@ -99,6 +99,17 @@ def record_decision(run_id: str, spine_id: str, decision: dict) -> None:
         _write(_dec_path(), d)
 
 
+def clear_decision(run_id: str, spine_id: str) -> Optional[dict]:
+    """Remove a stored decision (the 'undo' of a mis-click): the row returns
+    to undecided. Deliberately does NOT touch the library — re-adding a book
+    a rejection removed is what a fresh approve is for."""
+    with _LOCK:
+        d = _read(_dec_path())
+        gone = d.get(run_id, {}).pop(spine_id, None)
+        _write(_dec_path(), d)
+        return gone
+
+
 def absorb_auto_claims(run_id: str, records: list[dict]) -> int:
     """Run completed: AUTO claims become library entries (status 'auto').
 

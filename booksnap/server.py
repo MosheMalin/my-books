@@ -771,8 +771,10 @@ def get_decisions(run_id: str) -> dict:
 
 @app.post("/api/review")
 def review(payload: dict = Body(...)) -> dict:
-    """One review decision: approve / reject_ignore / replace / manual_add."""
-    from .library import add_book, record_decision, remove_book
+    """One review decision: approve / reject_ignore / replace / manual_add /
+    clear (undo a stored decision without touching the library)."""
+    from .library import (add_book, clear_decision, record_decision,
+                          remove_book)
     run_id = payload.get("run_id") or ""
     spine_id = payload.get("spine_id") or ""
     action = payload.get("action")
@@ -780,8 +782,11 @@ def review(payload: dict = Body(...)) -> dict:
     author = (payload.get("author") or "").strip()
     old = payload.get("old") or {}
 
-    if action not in ("approve", "reject_ignore", "replace", "manual_add"):
+    if action not in ("approve", "reject_ignore", "replace", "manual_add",
+                      "clear"):
         raise HTTPException(400, f"unknown action {action!r}")
+    if action == "clear":
+        return {"ok": True, "cleared": clear_decision(run_id, spine_id)}
     if action in ("approve", "replace", "manual_add") and not title:
         raise HTTPException(400, f"{action} needs a title")
 
