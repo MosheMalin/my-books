@@ -660,8 +660,14 @@ async function renderResults() {
     const d = decisions[f.spine_id];
     const sp = escapeHtml(f.spine_id);
     if (d && (d.action === 'approve' || d.action === 'replace' || d.action === 'manual_add')) {
-      const repl = d.action === 'replace' && d.title !== f.title
-        ? `<div class="ocr rtl">→ ${escapeHtml(d.title)}</div>` : '';
+      // the row above shows the RUN's original claim (immutable record);
+      // when the decision changed title OR author, say what the library
+      // actually holds — a same-title different-author replace (שהות:
+      // Stiefvater -> Salvatore) was invisible otherwise
+      const changed = d.title !== f.title || (d.author || '') !== (f.author || '');
+      const repl = changed
+        ? `<div class="ocr rtl" title="what the library holds">→ ${escapeHtml(d.title)}${
+            d.author ? ` — ${escapeHtml(d.author)}` : ''}</div>` : '';
       return `<span class="badge b-AUTO" title="confirmed in library">✓ library</span>${repl}
         <button class="linkish rv" data-a="reject_ignore" data-spine="${sp}">undo</button>`;
     }
