@@ -4,8 +4,12 @@
     {
       "name": "booksnap-ui",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "uvicorn", "booksnap.server:app", "--port", "8756", "--host", "0.0.0.0"],
+      "runtimeArgs": [
+        "-c",
+        "import os, uvicorn; uvicorn.run('booksnap.server:app', host='0.0.0.0', port=int(os.environ.get('PORT', '8756')))"
+      ],
       "port": 8756,
+      "autoPort": false,
       "env": {
         "BOOKSNAP_CATALOG_BACKEND": "simania",
         "BOOKSNAP_FALLBACK": "google_vision"

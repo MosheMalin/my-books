@@ -84,7 +84,8 @@ for _line in ((REPO / ".env").read_text(encoding="utf-8").splitlines()
         os.environ.setdefault(_k.strip(), _v.strip())
 
 from booksnap.config import CONFIG                                # noqa: E402
-from booksnap.match import (match_spine, resolve_duplicates,       # noqa: E402
+from booksnap.match import (match_spine, match_second_pass,        # noqa: E402
+                            resolve_duplicates,
                             resolve_near_duplicates,
                             suppress_author_fragments,
                             suppress_fragment_reads)
@@ -245,8 +246,12 @@ def match_shelf(ocrs: list[OcrResult], catalog) -> list:
             [candidates_for_spine(o, catalog, CONFIG.match) for o in ocrs],
             CONFIG.match)
     else:
-        matches = resolve_duplicates(
-            [match_spine(o, catalog, CONFIG.match) for o in ocrs], CONFIG.match)
+        matches = [match_spine(o, catalog, CONFIG.match) for o in ocrs]
+        if CONFIG.match.second_pass_retrieval:
+            for i, (o, m) in enumerate(zip(ocrs, matches)):
+                if m is None and o.text:
+                    matches[i] = match_second_pass(o.text, catalog, CONFIG.match)
+        matches = resolve_duplicates(matches, CONFIG.match)
     texts = [o.text for o in ocrs]
     matches = resolve_near_duplicates(matches)
     matches = suppress_fragment_reads(texts, matches)

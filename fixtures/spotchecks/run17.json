@@ -1,0 +1,52 @@
+{
+  "_comment": [
+    "Owner feedback on run 17 (2026-08-06). Only the offline-fixable parts are",
+    "encoded: the סוזנה self-echo claim, plus regression guards for the books",
+    "correctly found on these shelves. NOT encoded (documented in SESSION_NOTES):",
+    "סנוקראש (in simania as sim977074 but only retrieved by the query that",
+    "cannot evidence it - retrieval-side), המוסד האחר (misread האחד broke the",
+    "search; the fragment read המו is too short to match), second copies of",
+    "Strange & Norrell I/II and יער דנקטון */** (reads carry no volume marker -",
+    "addressed by the reader-prompt change, measurable only on a future run),",
+    "מערות הפלדה / ג'ם / הענן השחור / העולם כיער / מוקינגברד / פטיש השטן",
+    "(reader-side or catalog-coverage; see coverage probe)."
+  ],
+  "run": "327dea0bf15a",
+  "shelves": {
+    "IMG_8141": {
+      "image_id": "2ccdd9d5d1f4",
+      "checks": [
+        {"name": "strange-norrell not susanna",
+         "forbid": ["990011574310205171", "997012715976205171", "990017997340205171"],
+         "why": "s09 read 'סוזנה ג'ונתן סטריו' is Susanna Clarke's book; the entry titled סוזנה by סוזנה דוד is a self-echo (title==author) that one read token satisfied twice"},
+        {"name": "strange-norrell found",
+         "want": ["sim214620", "sim978072"]},
+        {"name": "snow-crash still-missing marker",
+         "want": [],
+         "why": "sim977074 exists in simania; needs the collapsed-query retrieval variant, not a matching change"}
+      ]
+    },
+    "IMG_8140": {
+      "image_id": "6056b05d8214",
+      "checks": [
+        {"name": "duncton found",
+         "want": ["sim623436", "990008465080205171"]},
+        {"name": "flight-of-dragon kept",
+         "want": ["sim38323"]},
+        {"name": "salamander-war kept",
+         "want": ["sim99016"]}
+      ]
+    },
+    "IMG_8139": {
+      "image_id": "8411124d8630",
+      "checks": [
+        {"name": "picnic kept",
+         "want": ["sim16453", "990018483750205171"]},
+        {"name": "ringworld kept",
+         "want": ["sim64764"]},
+        {"name": "war-of-the-worlds kept",
+         "want": ["990018052150205171"]}
+      ]
+    }
+  }
+}

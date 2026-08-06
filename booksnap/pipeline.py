@@ -141,7 +141,7 @@ class Pipeline:
                 score=round(b.confidence * 100),
                 engine=getattr(self.page_reader, "engine_name",
                                "google_vision_page")))
-        from .match import (match_spine, resolve_duplicates,
+        from .match import (match_spine, match_second_pass, resolve_duplicates,
                             resolve_near_duplicates, suppress_author_fragments,
                             suppress_fragment_reads)
         # matching is the second long phase (catalog lookups per block, each
@@ -155,6 +155,14 @@ class Pipeline:
                 if progress:
                     progress({"stage": "matching", "image": str(image_path),
                               "done": i + 1, "total": len(ocrs)})
+            # unmatched reads get a second chance through retrieval VARIANTS
+            # (the literal source search chokes on one misread/split token);
+            # runs before dedup/suppression so its claims obey the same rules
+            if self.cfg.match.second_pass_retrieval:
+                for i, (o, m) in enumerate(zip(ocrs, matches)):
+                    if m is None and o.text:
+                        matches[i] = match_second_pass(
+                            o.text, self.catalog, self.cfg.match)
             matches = resolve_duplicates(matches, self.cfg.match)
         # page-mode extras (tile overlap + block fragmentation, see match.py):
         # a weaker claim naming the same book via a different catalog edition

@@ -6,6 +6,7 @@ a match needs real content-token overlap, not mere string similarity, which
 is what kept garbage OCR from resolving to spurious titles.
 """
 from __future__ import annotations
+import re
 from functools import lru_cache
 
 from rapidfuzz import fuzz
@@ -138,9 +139,19 @@ def _evaluate(query_tokens: list[str], entry: CatalogEntry,
           if len(t) >= cfg.token_min_len or (t.isdigit() and len(t) >= 2)]
     at = [t for t in entry.norm_author.split() if len(t) >= cfg.token_min_len]
 
+    # The read side of word-fusion: a spine printed סנוקראש was read as the
+    # two words "סנו קראש", so no single query token could hit the catalog
+    # token. A long catalog token found verbatim in the SPACELESS read is
+    # present — the mirror of the embedded-token rule, which handles fusion
+    # on the catalog side.
+    qcat = "".join(query_tokens)
+    fused = {c for c in tt + at
+             if len(c) >= cfg.embedded_token_len and c in qcat}
+
     def matched(catalog_tokens):
         return [c for c in catalog_tokens
-                if any(_token_hit(x, c, cfg) for x in query_tokens)]
+                if c in fused
+                or any(_token_hit(x, c, cfg) for x in query_tokens)]
 
     mt, ma = matched(tt), matched(at)
     tt_content, mt_content = _content(tt, cfg), _content(mt, cfg)
@@ -172,7 +183,8 @@ def _evaluate(query_tokens: list[str], entry: CatalogEntry,
     # the spine; this is the signal that catches that.
     q_content = _content(list(dict.fromkeys(query_tokens)), cfg)
     explained = sum(1 for x in q_content
-                    if any(_token_hit(x, c, cfg) for c in tt + at))
+                    if any(_token_hit(x, c, cfg) for c in tt + at)
+                    or any(x in c for c in fused))
     qcov = explained / len(q_content) if q_content else 0.0
 
     info = {
@@ -194,10 +206,22 @@ def _evaluate(query_tokens: list[str], entry: CatalogEntry,
         "score": 0.0, "rejected": None,
     }
 
+    # ULTRA-SHORT titles (ג'ם normalizes to גם, 2 chars) have no token above
+    # the length floor at all: tt is empty, so such a book is structurally
+    # unmatchable — junk-gated — no matter how well it was read (run 17,
+    # ג'ם by פרדריק פול, present in three catalogs). When the whole
+    # normalized title appears verbatim as a word of the read AND a
+    # non-echoing author corroborates at >=50%, that IS the book.
+    _tiny_ma = [a for a in ma if a != entry.norm_title]
+    tiny_title = bool(
+        not tt and entry.norm_title and at
+        and len(_tiny_ma) / len(at) >= 0.5
+        and re.search(rf"(?:^| ){re.escape(entry.norm_title)}(?: |$)", q))
+
     # A catalog title made only of volume/part words is not identifying: a
     # spine printed "ספר שלישי" would otherwise resolve to a book literally
     # titled "השלישי". Same for imprint boilerplate ("ספרית פועלים").
-    if _is_junk_title(tt_content or tt, cfg):
+    if _is_junk_title(tt_content or tt, cfg) and not tiny_title:
         info["rejected"] = "catalog title is only volume/publisher boilerplate"
         return info
 
@@ -209,8 +233,16 @@ def _evaluate(query_tokens: list[str], entry: CatalogEntry,
     # unmatchable. When the ENTIRE title is matched and the author strongly
     # corroborates, that is real evidence — this is not author-alone (the
     # full title must still match), so the original bug can't return.
+    # Author hits that are themselves title echoes cannot corroborate: the
+    # entry "סוזנה" by "סוזנה, דוד" is a SELF-ECHO — the single read token
+    # סוזנה (actually Susanna Clarke's first name) scored tcov=1.0 AND
+    # acov=0.5 at once and invented the book on run 17. Corroboration must
+    # come from a read token that is not the same word as the title hit.
+    ma_own = [a for a in ma
+              if not any(a == c or fuzz.ratio(a, c) >= 90 for c in mt)]
+    acov_own = len(ma_own) / len(at) if at else 0.0
     full_title_with_author = (tt and tcov == 1.0 and n_title_hits >= 1
-                              and acov >= 0.5)
+                              and acov_own >= 0.5)
     # ...and a read that IS the title, verbatim: "צל אפל" read cleanly still
     # had zero usable tokens (צל under the length floor, אפל short of
     # distinctive), making the book unmatchable however well it was read.
@@ -226,7 +258,7 @@ def _evaluate(query_tokens: list[str], entry: CatalogEntry,
     author_backed = (len(ma) >= 2 and acov >= 1.0 and tt and tcov >= 0.5
                      and len(own_hits) >= 1)
     if not (len(own_hits) >= 2 or has_distinct_title or full_title_with_author
-            or verbatim_title or author_backed):
+            or verbatim_title or author_backed or tiny_title):
         info["rejected"] = "no title evidence beyond the author's own name " \
                            "(needs 2 title tokens, or 1 of " \
                            f"{cfg.distinctive_len}+ chars)"
@@ -381,6 +413,60 @@ def match_candidate(text: str, catalog: Catalog,
                  catalog_id=entry.id, qcov=round(qcov, 3))
 
 
+def retrieval_variants(text: str, cfg: MatchConfig = CONFIG.match) -> list[str]:
+    """Alternative retrieval queries for a read that matched nothing.
+
+    The sources' search engines are LITERAL: probed live (2026-08-06), a
+    split word returns junk while the fused form is indexed (simania has
+    סנוקראש; the read "סנו קראש" returns 0 results), and one misread token
+    poisons the whole query (המוסד האחד found none of the 8 מוסד books that
+    המוסד אסימוב returns). Variants: (a) space-collapsed, for short reads;
+    (b) leave-one-out over content tokens. The ORIGINAL read remains the
+    only evidence — variants are retrieval keys, never matching input.
+    """
+    qt = normalize(text).split()
+    out: list[str] = []
+    if 2 <= len(qt) <= 3:
+        out.append("".join(qt))
+    if 3 <= len(qt) <= 6:
+        for i, t in enumerate(qt):
+            if len(t) < 3:
+                continue                  # dropping a particle changes nothing
+            out.append(" ".join(qt[:i] + qt[i + 1:]))
+    return out
+
+
+def match_second_pass(text: str, catalog: Catalog,
+                      cfg: MatchConfig = CONFIG.match) -> Match | None:
+    """Re-retrieve an unmatched read through query VARIANTS and match the
+    results against the original read. Only ever called for spines the first
+    pass left unmatched, so the extra source queries stay proportional to
+    what actually failed."""
+    qt = _tokens(text, cfg)
+    if not qt:
+        return None
+    best = None
+    seen: set[str] = set()
+    for v in retrieval_variants(text, cfg):
+        for entry in catalog.candidates(v):
+            if entry.id in seen:
+                continue
+            seen.add(entry.id)
+            res = _score_entry(qt, entry, cfg, text)
+            if res is None:
+                continue
+            if best is None or res[0] > best[0][0]:
+                best = (res, entry)
+    if best is None:
+        return None
+    (score, tcov, tcov_c, acov, ev, nth, hdt, qcov, ntc, nqc), entry = best
+    return Match(title=entry.title, author=entry.author,
+                 tier=_tier(tcov, tcov_c, acov, ev, nth, hdt, cfg, qcov,
+                            ntc, nqc),
+                 score=round(score, 1), matched_text=text,
+                 catalog_id=entry.id, qcov=round(qcov, 3))
+
+
 def match_spine(ocr: OcrResult, catalog: Catalog,
                 cfg: MatchConfig = CONFIG.match) -> Match | None:
     """Match the best of all OCR candidates (full text + each line)."""
@@ -507,7 +593,7 @@ def resolve_near_duplicates(matches: list[Match | None],
             a_ok = (not m.author or not w.author
                     or fuzz.token_set_ratio(normalize(m.author),
                                             normalize(w.author)) >= author_thresh)
-            if t_same and a_ok:
+            if t_same and a_ok and not _distinct_volumes(m, w):
                 matches[i] = None
                 break
         else:
@@ -630,6 +716,42 @@ def suppress_author_fragments(texts: list[str],
     return matches
 
 
+_MARKER_ROMAN = re.compile(r"^[ivxIVX]{1,4}$")
+_MARKER_STARS = re.compile(r"[*★]+")
+_MARKER_DIGIT = re.compile(r"^\d{1,2}$")
+_MARKER_PART = re.compile(r"(?:כרך|חלק|ספר)\s+([א-ת]|\d{1,2})\b")
+
+
+def volume_marker(text: str) -> str:
+    """Extract a volume/part marker from a RAW read string ('', if none).
+
+    Two spines of a multi-volume set read identically except for this marker
+    (Strange & Norrell I / II, יער דנקטון * / **), and the duplicate-
+    resolution passes must not collapse them into one book. Works on the raw
+    text because normalize() strips asterisks entirely."""
+    m = _MARKER_PART.search(text)
+    if m:
+        return m.group(1)
+    stars = _MARKER_STARS.findall(text)
+    if stars:
+        return "*" * max(len(s) for s in stars)
+    for tok in text.split():
+        if _MARKER_ROMAN.match(tok):
+            return tok.lower()
+    for tok in text.replace("-", " ").split():
+        if _MARKER_DIGIT.match(tok):
+            return tok
+    return ""
+
+
+def _distinct_volumes(a: Match, b: Match) -> bool:
+    """True when both claims' reads carry volume markers that DIFFER — two
+    volumes of one set, not two reads of one spine. Requires both sides to
+    show a marker: a marker missing on one side is just a partial read."""
+    ma, mb = volume_marker(a.matched_text), volume_marker(b.matched_text)
+    return bool(ma) and bool(mb) and ma != mb
+
+
 def resolve_duplicates(matches: list[Match | None],
                        cfg: MatchConfig = CONFIG.match) -> list[Match | None]:
     """Within one shelf, the same catalog entry shouldn't win twice.
@@ -652,6 +774,12 @@ def resolve_duplicates(matches: list[Match | None],
         cutoff = matches[winner].score * cfg.dup_drop_frac
         for i in idxs:
             if i == winner:
+                continue
+            # reads carrying DIFFERENT volume markers are different volumes
+            # of one set matched to the same series record — a genuine
+            # second book, never a mis-assignment. Keep it for review.
+            if _distinct_volumes(matches[i], matches[winner]):
+                matches[i].tier = "REVIEW"
                 continue
             if matches[i].score < cutoff:
                 matches[i] = None

@@ -656,3 +656,56 @@ not retrieved), לעזאזל (diagonal, misread לשדאזל), זאבי ציון
 absent from every source — library-add candidate), טקסי הזריחה + כל דבר בא
 בחשבון (now honestly unmatched instead of wrong; the latter's read shows only
 the generic fragment + publisher אריה ניר). Tests: **43 + 24 = 67.**
+
+## Run 17 (IMG_8139-8141) — the gap was the QUERY, not the catalogs
+
+Owner flagged: one of two Strange & Norrell copies (I/II), סוזנה wrong,
+סנוקראש missing (8141); ג'ם, המוסד האחר, מערות הפלדה missing, יער דנקטון
+*/** copies (8140); הענן השחור, העולם כיער, מוקינגברד, פטיש השטן missing
+(8139) — and asked whether more catalogs (booksefer/rebooks/bookpod) are
+needed.
+
+**Coverage probe (live, all four sources, correct spellings): NO — every
+flagged book except זאבי ציון and טקסי הזריחה is ALREADY in the connected
+sources**, including 1000 זמר חלק ב+ג (rebooks), ג'ם (simania sim64529),
+סנוקראש (simania+NLI+rebooks). The misses were query-side: the sources'
+search is literal, so one misread token (המוסד האחד for האחר) or a split
+word (סנו קראש for סנוקראש) returns junk while the book sits in the index.
+bookpod deferred — no measured need yet (shelves skew old; probe shows
+coverage isn't the bottleneck).
+
+1. **Second-pass retrieval** (`second_pass_retrieval`): spines the first
+   pass leaves unmatched re-query the sources with variants — space-
+   collapsed (<=3 tokens) and leave-one-out (3-6 tokens) — and the results
+   are matched against the ORIGINAL read only. Verified live end-to-end:
+   "סנו קראש" -> AUTO סנוקראש; "המוסד האחד י.אסימוב" -> AUTO המוסד האחר.
+   Replay sweeps count these as unrecorded queries by design; judged with
+   sweep --live (exp 20260806-160905): AUTO mean P 0.94->0.98 R 0.78->0.81
+   F1 0.85->0.88, A+R P 0.94->0.97 R 0.84->0.90 F1 0.88->0.93. Promoted.
+2. **Fused-token matching**: a catalog token >=5 chars found verbatim in the
+   SPACELESS read counts as present (mirror of the embedded-token rule) —
+   without it the retrieved סנוקראש still couldn't match "סנו קראש".
+3. **Tiny-title path**: ג'ם normalizes to גם (2 chars) — no token survives
+   the length floor, so the book was structurally unmatchable (junk-gated)
+   forever. When the whole normalized title appears verbatim as a word of
+   the read AND a non-echoing author corroborates >=50%, it matches (REVIEW).
+4. **Self-echo existence fix**: the entry 'סוזנה' by 'סוזנה, דוד' let ONE
+   read token (Susanna Clarke's first name) satisfy tcov=1.0 and acov=0.5
+   simultaneously via full_title_with_author. Author corroboration must now
+   come from a read word that is not the title hit itself (ma_own).
+5. **Volume markers**: reader prompt rule (6) — transcribe I/II, */**, כרך/
+   חלק markers at the end of the title. resolve_duplicates/near_duplicates
+   keep claims whose reads carry DIFFERING markers (volume_marker()): two
+   volumes of a set are two books, not tile re-reads. Inert on current data
+   (no markers in stored reads); the Strange&Norrell/דנקטון second copies
+   become measurable on the next photographed run. Geometry was examined
+   and rejected: stored block boxes are tile-coarse, so box overlap cannot
+   separate copies from re-reads.
+
+fixtures/spotchecks/run17.json guards the offline-checkable parts (9/9;
+run16 19/19 unchanged). Replay gate unchanged (166 unrecorded-query warning
+is the second pass, expected). Honest residue: זאבי ציון + טקסי הזריחה in
+no source (library-add candidates); מערות הפלדה/הענן השחור/העולם כיער/
+פטיש השטן/מוקינגברד/ג'ם need the next RUN (their spines were misread or
+unread; sources have them, and the second pass + prompt changes give them a
+real path in). Tests: **47 + 24 = 71.**

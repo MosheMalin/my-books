@@ -386,7 +386,7 @@ BOOKSNAP_TESSDATA_FAST, BOOKSNAP_WORK.
 
 ## Tests
 
-`python tests/test_core.py` (43, matcher/normalize/gates) and
+`python tests/test_core.py` (47, matcher/normalize/gates) and
 `python tests/test_integrations.py` (24, catalog+fallback adapters, fully
 mocked/offline — no key, no network, no cloud SDK needed). Keep these green.
 Counts grow with each run's fixes; SESSION_NOTES.md tracks the history.
@@ -402,7 +402,13 @@ Counts grow with each run's fixes; SESSION_NOTES.md tracks the history.
    baseline only after a measured win on the fixture.
 3. Remaining recall losses on the labelled shelves are mostly READER-side
    (misreads like עיר הזמן→עיד, thin/unread spines), not matching — a
-   second-pass read of unmatched regions is the unexplored lever.
+   second-pass READ of unmatched regions is the unexplored lever. (The
+   retrieval-side twin is DONE, run 17: `second_pass_retrieval` re-queries
+   sources with collapsed/leave-one-out variants for unmatched reads —
+   measured live +0.03 AUTO F1 / +0.05 A+R F1 with precision UP. Probe
+   before adding catalogs: run-16/17's "missing" books were almost all IN
+   the sources already, unreachable only through the literal search;
+   bookpod deferred until a measured coverage gap appears.)
 4. Longer term, multi-user: revisit the confirmed library as a retrieval
    source (today it is an outcome of runs only, never a sweep/test source).
 5. Legacy spines mode (Tesseract) still costs ~20s/spine from the 2 rot × 2

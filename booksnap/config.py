@@ -139,6 +139,13 @@ class MatchConfig:
     # (הקומקום, שפירא, המבוך, הזריחה, סטארט, בא בחשבון) displacing the true
     # book, which was present in the same candidate list.
     reject_lone_title_partial: bool = True
+    # Second retrieval pass for spines the first pass left unmatched: re-query
+    # the sources with variants (space-collapsed, leave-one-out) and match the
+    # results against the ORIGINAL read. Probed live: the missing books of
+    # runs 16-17 were overwhelmingly IN the sources, unreachable only because
+    # the literal search choked on one misread/split token. Replay sweeps
+    # report these as unrecorded queries — judge with --live.
+    second_pass_retrieval: bool = True
     # Relaxed per-token author bar used ONLY as a keep-alive signal by the
     # lone-title rejection above (never to create evidence): מארי~מרי is 86,
     # under the short-token bar of 90, but is real author agreement; רינה~אריה

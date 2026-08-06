@@ -552,6 +552,62 @@ def test_author_initials_cannot_absorb_title_words():
     assert out[1] is other, "eaten as a false author fragment"
 
 
+# --- run-17 fixes (owner review feedback, 2026-08-06) -----------------------
+
+
+def test_self_echo_title_author_entry_cannot_match():
+    """Run 17: the entry 'סוזנה' by 'סוזנה, דוד' is a SELF-ECHO — one read
+    token (Susanna Clarke's first name) satisfied tcov=1.0 and acov=0.5 at
+    once via the full-title-with-author exception and invented the book."""
+    cat = LocalCatalog([CatalogEntry("0", "סוזנה", "סוזנה, דוד")])
+    assert match_candidate("סוזנה ג'ונתן סטריו", cat) is None
+    # a legit one-word title corroborated by a DIFFERENT word still matches
+    cat2 = LocalCatalog([CatalogEntry("0", "עיר", "קליפורד סימאק")])
+    m = match_candidate("עיר קליפורד סימאק", cat2)
+    assert m is not None and m.title == "עיר", m
+
+
+def test_volume_marker_extraction():
+    from booksnap.match import volume_marker
+    assert volume_marker("ג'ונתן סטריינג' & מר נורל II") == "ii"
+    assert volume_marker("יער דנקטון **") == "**"
+    assert volume_marker("1000 זמר ועוד זמר חלק ב") == "ב"
+    assert volume_marker("יומני רובורצח כרך 2") == "2"
+    assert volume_marker("יער דנקטון ויליאם הורווד") == ""
+
+
+def test_distinct_volume_markers_survive_near_dup():
+    """Run 17: two copies of a multi-volume set (I / II) collapse to one book
+    in near-dup resolution because their reads are otherwise identical. When
+    both reads show DIFFERING volume markers, both claims must survive."""
+    from booksnap.match import resolve_near_duplicates
+    v1 = Match("יער דנקטון", "ויליאם הורווד", "AUTO", 130.0, catalog_id="a",
+               matched_text="יער דנקטון * ויליאם הורווד")
+    v2 = Match("יער דנקטון", "ויליאם הורווד", "AUTO", 125.0, catalog_id="b",
+               matched_text="יער דנקטון ** ויליאם הורווד")
+    out = resolve_near_duplicates([v1, v2])
+    assert out[0] is v1 and out[1] is v2
+    # without markers the collapse still happens (tile re-reads of one spine)
+    p1 = Match("יער דנקטון", "ויליאם הורווד", "AUTO", 130.0, catalog_id="a",
+               matched_text="יער דנקטון ויליאם הורווד")
+    p2 = Match("יער דנקטון", "ויליאם הורווד", "AUTO", 125.0, catalog_id="b",
+               matched_text="וויליאם הורוד יער דנקטון")
+    out2 = resolve_near_duplicates([p1, p2])
+    assert out2[0] is p1 and out2[1] is None
+
+
+def test_distinct_volumes_same_entry_demoted_not_dropped():
+    """Two volumes matched to the SAME series record: the weaker claim is a
+    genuine second book, so it is kept at REVIEW rather than dropped."""
+    v1 = Match("מחזור שער המוות", "מרגרט וייס", "AUTO", 130.0, catalog_id="s",
+               matched_text="שער המוות I מרגרט וייס")
+    v2 = Match("מחזור שער המוות", "מרגרט וייס", "AUTO", 80.0, catalog_id="s",
+               matched_text="שער המוות II מרגרט וייס")
+    out = resolve_duplicates([v1, v2])
+    assert out[0].tier == "AUTO"
+    assert out[1] is not None and out[1].tier == "REVIEW"
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     passed = 0

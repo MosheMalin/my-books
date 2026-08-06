@@ -37,7 +37,13 @@ PROMPT = (
     "complete a title from your knowledge of what book it might be; (2) if the "
     "author is not visible, use an empty string; (3) publisher names and series "
     "names are not titles; (4) stylised or decorative lettering still counts if "
-    "you can read it; (5) one entry per physical book."
+    "you can read it; (5) one entry per physical book; (6) multi-volume sets "
+    "sit side by side with near-identical spines — if a spine shows a volume "
+    "or part marker (a number, a Roman numeral like I/II, asterisks like * "
+    "or **, or כרך/חלק followed by a letter or number), transcribe the marker "
+    "at the end of that book's title exactly as printed; two neighbouring "
+    "spines differing only in such a marker are two different books and get "
+    "one entry each."
 )
 
 SCHEMA = {
