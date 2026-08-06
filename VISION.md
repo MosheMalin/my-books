@@ -2,7 +2,7 @@
 
 **Status:** living document, first drafted 2026-08-06, revised same day
 (book copies, copy resolution, shared-DB deduplication, sampled correction
-corpus, clients confirmed, runs demoted from the UX).
+corpus, clients confirmed, runs demoted from the UX, shelf depth).
 **Purpose:** capture where this is going, so day-to-day accuracy work doesn't
 paint the architecture into a corner. `CLAUDE.md` describes *what exists and
 why it works that way*; this file describes *what it is meant to become*.
@@ -74,6 +74,7 @@ is measurable at all. Web/tenancy code depends on the core, never the reverse.
 | Correction data | **[DECIDED]** **Sampled** user corrections as an ever-growing rule anchor, later phase; owner's manual labelling continues near-term | Not all shelves — cost and gate speed forbid it. §9.2 |
 | Book identity | **[DECIDED]** One book record per title+author; **user-created copies**, no ISBN/edition modelling | Lending is per copy. §5.1 |
 | Duplicate resolution | **[DECIDED]** A known book detected on another shelf asks: *another copy* / *already-listed copy* / *wrong book* | At review time, with the crop visible. Default = already-listed. §5.4 |
+| Shelf depth | **[DECIDED]** A shelf may hold 2–3 rows of books front-to-back; depth is a declared attribute of location | Photographed one row at a time. Scopes the diff, the dedup and the "not seen" rule. §5.7 |
 | Runs in the UX | **[DECIDED]** Runs stay first-class **internally**, but are **not a user-facing concept**. No global run list | Users see books and shelves; a shelf has a read history. Full run detail lives in an audit view. §5.5 |
 | Re-reading a shelf | **[DECIDED]** Reconciles the shelf's book list; never re-adds, never auto-removes | A shelf's books are durable state, not a run's output. §5.6 |
 | Physical map | **[DECIDED]** Freehand sketch **and** bookcase-photo detection; **POC both** | Sketch must be straightened into a clean schematic. Users have **multiple physical libraries** |
@@ -228,8 +229,11 @@ third shelf"). A **Capture** is one photo of part of it. Requirements:
 - one shelf may have several captures **[DECIDED — called out explicitly]**;
   they are *ordered* (left-to-right / right-to-left per the shelf's reading
   direction) so a shelf's book list has a sensible order;
+- a shelf may also be **several rows deep** (§5.7), photographed one row at a
+  time; captures are therefore keyed by `(shelf, depth, order)`;
 - overlapping captures will produce the same book twice — de-duplication
-  across captures of one shelf is a required feature, not a nicety;
+  across captures of one shelf **at the same depth** is a required feature,
+  not a nicety;
 - re-photographing a shelf later produces a *new* run against the *same*
   shelf: the UI must show "shelf as of run N", and a diff ("3 books added, 1
   gone") is a natural and valuable view;
@@ -264,9 +268,9 @@ genuine ambiguity:
 | Situation | Behaviour |
 |---|---|
 | Two spines, same shelf, same run | **Never ask.** This is a mis-assignment, and `dup_drop_frac` already drops it. Unchanged. |
-| Same shelf re-photographed in a later run | **Never ask.** Same copy: append provenance, update last-seen. |
-| Overlapping captures of one shelf (§5.3) | **Never ask.** Resolved by capture-overlap dedup. |
-| A different shelf, or a different physical library | **Ask.** This is the real case. |
+| Same shelf **and same depth**, re-photographed in a later run | **Never ask.** Same copy: append provenance, update last-seen. |
+| Overlapping captures of one shelf at the same depth (§5.3) | **Never ask.** Resolved by capture-overlap dedup. |
+| A different shelf, **a different row of the same shelf** (§5.7), or a different physical library | **Ask.** This is the real case. |
 
 **Default when the question is skipped or the run is never reviewed:
 "already listed copy"** — one copy, relinked. The asymmetry is the same one
@@ -359,6 +363,75 @@ whether it leaves the library or just the shelf — is still open).
 **What the user sees after a re-read** is therefore a *diff*, not a new result
 set: what was added, what changed, what's unchanged, what wasn't seen this
 time. That view is also the natural home for the shelf history in §5.5.
+(Scoped by depth — see §5.7.)
+
+### 5.7 Shelf depth: double- and triple-stacked shelves **[DECIDED]**
+
+A shelf commonly holds **more than one row of books front-to-back**. The
+capture flow is necessarily physical: photograph the front row, take those
+books off the shelf, photograph the row behind, and so on.
+
+**Model: depth is an attribute of location, not a new kind of shelf.**
+
+```
+Shelf
+  depth_count: 1 | 2 | 3 | ...        ← user-declared
+Capture   → { shelf_id, depth, order }
+Copy      → located at { shelf_id, depth }
+```
+
+The alternative — making "shelf 3, back row" its own Shelf record — is
+tempting because it needs no new concept, but it doubles or triples the shelf
+list, breaks the map (two shelves occupying one physical slot), and loses the
+fact that they are one piece of furniture. Depth as an attribute keeps the
+physical truth.
+
+**Depth cannot be detected; it must be declared.** Nothing in the image says
+"this is the row behind" — the front books are simply absent. The UI needs an
+explicit *"add a row behind this one"* action on the shelf, and the capture
+flow must ask which row is being photographed. Most users won't know the
+feature exists, so the shelf view should surface it rather than hide it in a
+menu.
+
+**Zero impact on the recognition core.** Depth is location metadata;
+`segment`/`ocr`/`match` never see it. The core stays pure (§2).
+
+⚠️ **Naming collision to avoid:** `segment.py` already uses **band** for the
+horizontal shelf rows detected *within one photo*, and `Spine.band` is in the
+stored record format. That is a vertical concept. This one is front-to-back.
+Call it **depth** — never "row" or "band" in code — or the two will be
+conflated by someone reading `spine_id = IMG_1234_b0_s07` and reasonably
+guessing wrong.
+
+**Three interactions that are bugs if left implicit:**
+
+1. **The "not seen in this read" rule (§5.6) must be scoped to the depth that
+   was read.** If a shelf has three rows and the user re-reads only the front
+   one, the middle and back rows were not photographed at all. Comparing the
+   read against the whole shelf would flag two-thirds of its books as possibly
+   missing on every single re-read. Same for the diff view: a diff is
+   per-depth, or it is nonsense.
+2. **Capture-overlap dedup (§5.3) must not merge across depths.** Two captures
+   of one shelf at different depths are not two views of the same scene — the
+   scene physically changed between them. Overlap dedup applies *within* a
+   depth only.
+3. **§5.4's copy-resolution prompt should fire across depths.** Same shelf,
+   different row is a different physical location, so the same title appearing
+   at depth 1 and depth 2 is exactly the *another copy / already-listed /
+   wrong book* question. Added to the firing table there.
+
+**Two things this buys, beyond correctness:**
+
+- *"Where is my book"* gets materially more useful: **"living room, case 2,
+  shelf 3, back row"** tells you that retrieving it means moving the front row
+  first. That is the difference between an answer and a useful answer;
+- the system can notice **stale rows** — *"this shelf has 3 rows; the back two
+  haven't been read since March"* — which is honest prompting rather than a
+  silently incomplete catalog.
+
+**[OPEN]** Whether a partially-read shelf should be visibly marked incomplete
+in the library ("2 of 3 rows read") or left quiet. Marking is more honest;
+it also nags.
 
 ---
 
@@ -375,9 +448,10 @@ This is what turns runs into a product. Scope for the first pass:
 - book detail: the spine crop, which shelf it's on, when it was last seen, and
   a "why?" explanation (the existing `explain()`). Tier, score, run and config
   detail belong in the audit view (§5.5), not here;
-- shelf view: books on this shelf in physical order, with the photo, plus
-  **read history and diffs** (§5.6) — what each re-read added, changed, or
-  didn't see. This replaces the run list as the way history is exposed;
+- shelf view: books on this shelf in physical order, with the photo, **split
+  by row where the shelf is stacked front-to-back** (§5.7), plus **read
+  history and diffs** (§5.6) — what each re-read added, changed, or didn't
+  see. This replaces the run list as the way history is exposed;
 - edit: fix title/author by hand, or replace from ranked alternatives;
 - filter by status (auto / approved / manual) and by shelf.
 
@@ -431,7 +505,10 @@ Requirements common to both:
 - **multiple physical libraries per Library** **[DECIDED — explicit]**;
 - each Shelf in the map binds to zero or more Captures;
 - given a book, the UI can answer "where is it" by highlighting the shelf on
-  the map;
+  the map — **including which row front-to-back** (§5.7), since a back-row
+  book means moving the front row to reach it;
+- a shelf on the map carries its declared depth, so "3 rows, back two not read
+  since March" is answerable from the map;
 - the map must be editable after the fact (furniture moves);
 - a user who never draws a map still gets a fully working catalog — the map is
   an enhancement layer, never a prerequisite.
