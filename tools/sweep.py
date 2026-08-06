@@ -53,6 +53,11 @@ aggregate means is blocked until the owner either fixes it or explicitly
 accepts the new numbers. The gate compares MEANS (auto P, auto F1, A+R F1,
 tolerance 0.01) — per-shelf trade-offs are printed but don't block, because
 accepted changes routinely trade a point on one shelf for gains elsewhere.
+
+`--export` copies the sweep's inputs (reads + candidates, ~1MB JSON) into
+fixtures/sweep/ for committing, so a fresh clone with no work/ directory
+still runs the gate and reproduces the baseline. --accept-baseline
+re-exports automatically to keep inputs and numbers in lockstep.
 """
 from __future__ import annotations
 
@@ -94,6 +99,7 @@ LLM_PROBE = WORK / "llm_probe"
 EXP_DIR = WORK / "experiments"
 LEDGER = WORK / "experiments.jsonl"
 BASELINE = REPO / "tools" / "sweep_baseline.json"
+FIXTURES = REPO / "fixtures" / "sweep"     # committed export of the inputs
 
 ALL_SOURCES = ("simania", "nli", "rebooks", "booksefer")
 
@@ -113,7 +119,9 @@ def find_fixtures() -> dict[str, dict]:
     Prefers the LATEST llmpage run containing the image (reads improve as the
     reader is tuned; the newest run is the reference input). Falls back to the
     E2 probe files in work/llm_probe for the two original fixture shelves,
-    which never had an llmpage run in the store.
+    which never had an llmpage run in the store; and finally to the COMMITTED
+    export in fixtures/sweep (see --export), which is what makes the
+    pre-commit gate work on a machine that has no work/ data at all.
     """
     gt = load_ground_truth()
     fixtures: dict[str, dict] = {}
@@ -144,7 +152,51 @@ def find_fixtures() -> dict[str, dict]:
         if recs.exists() and cands.exists():
             fixtures[name] = {"records": recs, "candidates": cands,
                               "origin": "e2-probe"}
+
+    manifest_path = FIXTURES / "manifest.json"
+    if manifest_path.exists():
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        for name in gt:
+            if name in fixtures:
+                continue
+            recs = FIXTURES / f"{name}.records.json"
+            cands = FIXTURES / f"{name}.candidates.json"
+            if recs.exists() and cands.exists():
+                src = (manifest.get("shelves", {}).get(name) or {}).get("origin", "?")
+                fixtures[name] = {"records": recs, "candidates": cands,
+                                  "origin": f"exp({src})"}
     return fixtures
+
+
+def export_fixtures() -> None:
+    """Copy each shelf's resolved reads + candidates into fixtures/sweep so
+    the repo carries the sweep's inputs: a fresh clone (no work/) can then run
+    the pre-commit gate and reproduce the baseline exactly. ~1MB of JSON.
+
+    Refreshed automatically by --accept-baseline: the committed inputs and the
+    committed baseline must describe the same experiment, or a new machine
+    would 'regress' against numbers its data can't produce.
+    """
+    import shutil
+    fixtures = find_fixtures()
+    FIXTURES.mkdir(parents=True, exist_ok=True)
+    manifest = {"exported": datetime.now().isoformat(timespec="seconds"),
+                "code": code_version(), "shelves": {}}
+    for name, fx in sorted(fixtures.items()):
+        for key, dest in (("records", FIXTURES / f"{name}.records.json"),
+                          ("candidates", FIXTURES / f"{name}.candidates.json")):
+            if fx[key].resolve() != dest.resolve():   # already the export
+                shutil.copyfile(fx[key], dest)
+        manifest["shelves"][name] = {
+            "origin": fx["origin"],
+            "records_sha": hashlib.sha256(
+                fx["records"].read_bytes()).hexdigest()[:12],
+            "candidates_sha": hashlib.sha256(
+                fx["candidates"].read_bytes()).hexdigest()[:12]}
+    (FIXTURES / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8")
+    print(f"exported {len(fixtures)} shelves -> {FIXTURES.relative_to(REPO)} "
+          f"(commit this directory)")
 
 
 def load_reads(path: Path) -> list[OcrResult]:
@@ -330,10 +382,16 @@ def main() -> None:
                          "sweep_baseline.json; exit 1 on regression, no ledger")
     ap.add_argument("--accept-baseline", action="store_true",
                     help="bless this sweep's numbers as the committed baseline")
+    ap.add_argument("--export", action="store_true",
+                    help="copy the sweep inputs into fixtures/sweep so a "
+                         "machine without work/ can run the gate")
     args = ap.parse_args()
 
     if args.list:
         show_history()
+        return
+    if args.export:
+        export_fixtures()
         return
     if args.check and (args.live or args.replay_exp or args.images):
         raise SystemExit("--check is the deterministic full replay sweep; "
@@ -471,6 +529,9 @@ def main() -> None:
           f"sha {ledger_row['code']['sha']}{'*' if ledger_row['code']['dirty'] else ''})")
     if args.accept_baseline:
         write_baseline(exp_id, args.note, aggregate, per_shelf)
+        # keep the committed inputs in lockstep with the committed numbers
+        if FIXTURES.exists():
+            export_fixtures()
 
 
 if __name__ == "__main__":

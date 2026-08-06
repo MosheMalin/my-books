@@ -1,0 +1,1409 @@
+[
+ {
+  "spine_id": "45516a826910_b0_s00",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 0,
+   "box": [
+    0,
+    1821,
+    3284,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s00.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s00",
+   "text": "האנשים של הקוג'ון",
+   "lines": [
+    "האנשים של הקוג'ון"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "45516a826910_b0_s01",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 1,
+   "box": [
+    0,
+    1821,
+    3284,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s01.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s01",
+   "text": "גבירה ועורפל גולדמן",
+   "lines": [
+    "גבירה ועורפל גולדמן"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "גבירה וערפל",
+   "author": "גולדמן, אודליה מחבר",
+   "tier": "AUTO",
+   "score": 112.0,
+   "matched_text": "גבירה ועורפל גולדמן",
+   "catalog_id": "997012128528405171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45516a826910_b0_s02",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 2,
+   "box": [
+    0,
+    1821,
+    3284,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s02.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s02",
+   "text": "אגם הצללים",
+   "lines": [
+    "אגם הצללים"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "אגם הצללים",
+   "author": "רוני גלבפיש",
+   "tier": "AUTO",
+   "score": 115.0,
+   "matched_text": "אגם הצללים",
+   "catalog_id": "sim976967"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45516a826910_b0_s03",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 3,
+   "box": [
+    0,
+    1821,
+    3284,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s03.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s03",
+   "text": "משקפת העגבר פולמן",
+   "lines": [
+    "משקפת העגבר פולמן"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "משקפת הענבר",
+   "author": "פולמן, פיליפ",
+   "tier": "AUTO",
+   "score": 113.9,
+   "matched_text": "משקפת העגבר פולמן",
+   "catalog_id": "990024685830205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45516a826910_b0_s04",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 4,
+   "box": [
+    0,
+    1821,
+    3284,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s04.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s04",
+   "text": "הסכין המעונדן פולמן",
+   "lines": [
+    "הסכין המעונדן פולמן"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "הסכין המעודן",
+   "author": "פולמן, פיליפ",
+   "tier": "AUTO",
+   "score": 115.7,
+   "matched_text": "הסכין המעונדן פולמן",
+   "catalog_id": "990023617200205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45516a826910_b0_s05",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 5,
+   "box": [
+    0,
+    1821,
+    3284,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s05.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s05",
+   "text": "המצפן הזהוב פולמן",
+   "lines": [
+    "המצפן הזהוב פולמן"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "המצפן הזהוב",
+   "author": "פיליפ פולמן",
+   "tier": "AUTO",
+   "score": 122.5,
+   "matched_text": "המצפן הזהוב פולמן",
+   "catalog_id": "sim41289"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45516a826910_b0_s06",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 6,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s06.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s06",
+   "text": "חרמש ניל שוסטרמן",
+   "lines": [
+    "חרמש ניל שוסטרמן"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "חרמש",
+   "author": "ניל שוסטרמן",
+   "tier": "REVIEW",
+   "score": 130.0,
+   "matched_text": "חרמש ניל שוסטרמן",
+   "catalog_id": "sim997752"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45516a826910_b0_s07",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 7,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s07.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s07",
+   "text": "הצלצול ניל שוסטרמן",
+   "lines": [
+    "הצלצול ניל שוסטרמן"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "הצלצול",
+   "author": "ניל שוסטרמן",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "הצלצול ניל שוסטרמן",
+   "catalog_id": "sim1004474"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45516a826910_b0_s08",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 8,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s08.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s08",
+   "text": "עונה ניל שוסטרמן",
+   "lines": [
+    "עונה ניל שוסטרמן"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "45516a826910_b0_s09",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 9,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s09.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s09",
+   "text": "הרצחה יובל אטיאס",
+   "lines": [
+    "הרצחה יובל אטיאס"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "45516a826910_b0_s10",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 10,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s10.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s10",
+   "text": "האנשים של הקוג יעל שרר",
+   "lines": [
+    "האנשים של הקוג יעל שרר"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "האנשים של הקוג'ון",
+   "author": "יעל שרר",
+   "tier": "AUTO",
+   "score": 127.1,
+   "matched_text": "האנשים של הקוג יעל שרר",
+   "catalog_id": "sim1024459"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45516a826910_b0_s11",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 11,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s11.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s11",
+   "text": "השדים יהודית קגן",
+   "lines": [
+    "השדים יהודית קגן"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "יהודית",
+   "author": "",
+   "tier": "REVIEW",
+   "score": 115.0,
+   "matched_text": "השדים יהודית קגן",
+   "catalog_id": "990012653180205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45516a826910_b0_s12",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 12,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s12.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s12",
+   "text": "גבירה אודליה גולדמן",
+   "lines": [
+    "גבירה אודליה גולדמן"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "45516a826910_b0_s13",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 13,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s13.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s13",
+   "text": "אגם הצל רוני גלבפיש",
+   "lines": [
+    "אגם הצל רוני גלבפיש"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "45516a826910_b0_s14",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 14,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s14.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s14",
+   "text": "משקפת ה פיליפ פולמן",
+   "lines": [
+    "משקפת ה פיליפ פולמן"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "45516a826910_b0_s15",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 15,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s15.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s15",
+   "text": "הסכין ה פיליפ פולמן",
+   "lines": [
+    "הסכין ה פיליפ פולמן"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "הסכין",
+   "author": "תדהר ניר",
+   "tier": "REVIEW",
+   "score": 115.0,
+   "matched_text": "הסכין ה פיליפ פולמן",
+   "catalog_id": "sim999321"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45516a826910_b0_s16",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 16,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s16.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s16",
+   "text": "המצפן ה פיליפ פולמן",
+   "lines": [
+    "המצפן ה פיליפ פולמן"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "המצפן",
+   "author": "ג'ון ספנסר אליס",
+   "tier": "REVIEW",
+   "score": 115.0,
+   "matched_text": "המצפן ה פיליפ פולמן",
+   "catalog_id": "sim404089"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45516a826910_b0_s17",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 17,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s17.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s17",
+   "text": "סבריאל גארת' ניקס",
+   "lines": [
+    "סבריאל גארת' ניקס"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "סבריאל",
+   "author": "גארת' ניקס",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "סבריאל גארת' ניקס",
+   "catalog_id": "sim137808"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45516a826910_b0_s18",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 18,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s18.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s18",
+   "text": "קלגן הכיסף",
+   "lines": [
+    "קלגן הכיסף"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "45516a826910_b0_s19",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 19,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s19.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s19",
+   "text": "צל אפל",
+   "lines": [
+    "צל אפל"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "45516a826910_b0_s20",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 20,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s20.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s20",
+   "text": "קסמי קמל",
+   "lines": [
+    "קסמי קמל"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "45516a826910_b0_s21",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 21,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s21.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s21",
+   "text": "כובל הנשמות",
+   "lines": [
+    "כובל הנשמות"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "כובל הנשמות",
+   "author": "סבסטיאן דה קסטל",
+   "tier": "AUTO",
+   "score": 115.0,
+   "matched_text": "כובל הנשמות",
+   "catalog_id": "sim998816"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45516a826910_b0_s22",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 22,
+   "box": [
+    2428,
+    1821,
+    5712,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s22.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s22",
+   "text": "סבסטיאן דה קסטל",
+   "lines": [
+    "סבסטיאן דה קסטל"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "45516a826910_b0_s23",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 23,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s23.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s23",
+   "text": "סינדר מאריסה מאייר",
+   "lines": [
+    "סינדר מאריסה מאייר"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "סינדר",
+   "author": "מאריסה מאייר",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "סינדר מאריסה מאייר",
+   "catalog_id": "sim978260"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45516a826910_b0_s24",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 24,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s24.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s24",
+   "text": "סקרלט מאריסה מאייר",
+   "lines": [
+    "סקרלט מאריסה מאייר"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "סקרלט",
+   "author": "מאריסה מאייר",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "סקרלט מאריסה מאייר",
+   "catalog_id": "sim985873"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45516a826910_b0_s25",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 25,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s25.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s25",
+   "text": "קרס מאריסה מאייר",
+   "lines": [
+    "קרס מאריסה מאייר"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "קרס",
+   "author": "מאריסה מאייר",
+   "tier": "REVIEW",
+   "score": 130.0,
+   "matched_text": "קרס מאריסה מאייר",
+   "catalog_id": "sim991820"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45516a826910_b0_s26",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 26,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s26.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s26",
+   "text": "וורקרוס מארי לו",
+   "lines": [
+    "וורקרוס מארי לו"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "וורקרוס",
+   "author": "לו, מרי, 1984- מחבר",
+   "tier": "REVIEW",
+   "score": 115.0,
+   "matched_text": "וורקרוס מארי לו",
+   "catalog_id": "990050280620205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45516a826910_b0_s27",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 27,
+   "box": [
+    2428,
+    1821,
+    5712,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s27.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s27",
+   "text": "משחק אחרון",
+   "lines": [
+    "משחק אחרון"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "משחק אחרון",
+   "author": "מרי לו",
+   "tier": "AUTO",
+   "score": 115.0,
+   "matched_text": "משחק אחרון",
+   "catalog_id": "sim996108"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45516a826910_b0_s28",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 28,
+   "box": [
+    2428,
+    1821,
+    5712,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s28.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s28",
+   "text": "זריחה על האסיף סוזן קולינס",
+   "lines": [
+    "זריחה על האסיף סוזן קולינס"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "זריחה על האסיף",
+   "author": "סוזן קולינס",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "זריחה על האסיף סוזן קולינס",
+   "catalog_id": "sim1014073"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45516a826910_b0_s29",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 29,
+   "box": [
+    2428,
+    1821,
+    5712,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s29.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s29",
+   "text": "בלדה לנחשים ולציפורי שיר סוזן קולינס",
+   "lines": [
+    "בלדה לנחשים ולציפורי שיר סוזן קולינס"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "בלדה לנחשים וציפורי שיר",
+   "author": "סוזן קולינס",
+   "tier": "AUTO",
+   "score": 123.7,
+   "matched_text": "בלדה לנחשים ולציפורי שיר סוזן קולינס",
+   "catalog_id": "sim998308"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45516a826910_b0_s30",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 30,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s30.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s30",
+   "text": "התלקחות סוזן קולינס",
+   "lines": [
+    "התלקחות סוזן קולינס"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "התלקחות",
+   "author": "סוזן קולינס",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "התלקחות סוזן קולינס",
+   "catalog_id": "sim937027"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45516a826910_b0_s31",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 31,
+   "box": [
+    2428,
+    1821,
+    5712,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s31.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s31",
+   "text": "עורבני חקיין קולינס",
+   "lines": [
+    "עורבני חקיין קולינס"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "עורבני חקיין",
+   "author": "סוזן קולינס",
+   "tier": "AUTO",
+   "score": 122.5,
+   "matched_text": "עורבני חקיין קולינס",
+   "catalog_id": "sim956820"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45516a826910_b0_s32",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 32,
+   "box": [
+    2428,
+    1821,
+    5712,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s32.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s32",
+   "text": "הקוסם האחרון",
+   "lines": [
+    "הקוסם האחרון"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "הקוסם האחרון",
+   "author": "ליסה מקסוול",
+   "tier": "AUTO",
+   "score": 115.0,
+   "matched_text": "הקוסם האחרון",
+   "catalog_id": "sim994650"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45516a826910_b0_s33",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 33,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s33.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s33",
+   "text": "קלמן הכשף",
+   "lines": [
+    "קלמן הכשף"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "45516a826910_b0_s34",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 34,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s34.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s34",
+   "text": "קסמי קמע",
+   "lines": [
+    "קסמי קמע"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "קסמי קמע",
+   "author": "סבסטיאן דה קסטל",
+   "tier": "AUTO",
+   "score": 115.0,
+   "matched_text": "קסמי קמע",
+   "catalog_id": "sim995129"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45516a826910_b0_s35",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 35,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s35.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s35",
+   "text": "הצעקה האדומה",
+   "lines": [
+    "הצעקה האדומה"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "הצעקה האדומה",
+   "author": "סבסטיאן דה קסטל",
+   "tier": "AUTO",
+   "score": 115.0,
+   "matched_text": "הצעקה האדומה",
+   "catalog_id": "sim1006457"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45516a826910_b0_s36",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 36,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s36.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s36",
+   "text": "ספינת הכסף",
+   "lines": [
+    "ספינת הכסף"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "ספינת קסם",
+   "author": "הוב, רובין",
+   "tier": "REVIEW",
+   "score": 64.6,
+   "matched_text": "ספינת הכסף",
+   "catalog_id": "990023785520205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45516a826910_b0_s37",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 37,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s37.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s37",
+   "text": "משחק א מארי לו",
+   "lines": [
+    "משחק א מארי לו"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "45516a826910_b0_s38",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 38,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s38.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s38",
+   "text": "זריחה עלי סוזן קולינס",
+   "lines": [
+    "זריחה עלי סוזן קולינס"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "זריחה",
+   "author": "תומס, רוזי",
+   "tier": "REVIEW",
+   "score": 115.0,
+   "matched_text": "זריחה עלי סוזן קולינס",
+   "catalog_id": "990010690760205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45516a826910_b0_s39",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 39,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s39.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s39",
+   "text": "בלדה לנר סוזן קולינס",
+   "lines": [
+    "בלדה לנר סוזן קולינס"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "45516a826910_b0_s40",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 40,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s40.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s40",
+   "text": "עורבני חקיי סוזן קולינס",
+   "lines": [
+    "עורבני חקיי סוזן קולינס"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "45516a826910_b0_s41",
+  "location": {
+   "image": "45516a826910.jpeg",
+   "band": 0,
+   "index": 41,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\77cbcc9fb886\\crops\\45516a826910_b0_s41.jpg",
+  "ocr": {
+   "spine_id": "45516a826910_b0_s41",
+   "text": "ליסה מקסוול",
+   "lines": [
+    "ליסה מקסוול"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ }
+]

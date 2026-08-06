@@ -1,0 +1,478 @@
+[
+ {
+  "spine_id": "2a5873507212_b0_s00",
+  "location": {
+   "image": "2a5873507212.jpeg",
+   "band": 0,
+   "index": 0,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\2a5873507212_b0_s00.jpg",
+  "ocr": {
+   "spine_id": "2a5873507212_b0_s00",
+   "text": "לימודי אש מריה וי. סניידר",
+   "lines": [
+    "לימודי אש מריה וי. סניידר"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "2a5873507212_b0_s01",
+  "location": {
+   "image": "2a5873507212.jpeg",
+   "band": 0,
+   "index": 1,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\2a5873507212_b0_s01.jpg",
+  "ocr": {
+   "spine_id": "2a5873507212_b0_s01",
+   "text": "לימודי קסם מריה וי. סניידר",
+   "lines": [
+    "לימודי קסם מריה וי. סניידר"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "לימודי קסם",
+   "author": "מריה וי. סניידר",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "לימודי קסם מריה וי. סניידר",
+   "catalog_id": "sim1026345"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "2a5873507212_b0_s02",
+  "location": {
+   "image": "2a5873507212.jpeg",
+   "band": 0,
+   "index": 2,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\2a5873507212_b0_s02.jpg",
+  "ocr": {
+   "spine_id": "2a5873507212_b0_s02",
+   "text": "לימודי רעל מריה וי. סניידר",
+   "lines": [
+    "לימודי רעל מריה וי. סניידר"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "לימודי רעל",
+   "author": "מריה וי. סניידר",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "לימודי רעל מריה וי. סניידר",
+   "catalog_id": "sim1023619"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "2a5873507212_b0_s03",
+  "location": {
+   "image": "2a5873507212.jpeg",
+   "band": 0,
+   "index": 3,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\2a5873507212_b0_s03.jpg",
+  "ocr": {
+   "spine_id": "2a5873507212_b0_s03",
+   "text": "ירח מים סמנתה סוטו ימבאו",
+   "lines": [
+    "ירח מים סמנתה סוטו ימבאו"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "ירח מים",
+   "author": "סמנתה סוטו ימבאו",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "ירח מים סמנתה סוטו ימבאו",
+   "catalog_id": "sim1026859"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "2a5873507212_b0_s04",
+  "location": {
+   "image": "2a5873507212.jpeg",
+   "band": 0,
+   "index": 4,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\2a5873507212_b0_s04.jpg",
+  "ocr": {
+   "spine_id": "2a5873507212_b0_s04",
+   "text": "שני כתרים מפותלים רייצ'ל גיליג",
+   "lines": [
+    "שני כתרים מפותלים רייצ'ל גיליג"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "שני כתרים מפותלים",
+   "author": "רייצ'ל גיליג",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "שני כתרים מפותלים רייצ'ל גיליג",
+   "catalog_id": "sim1011897"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "2a5873507212_b0_s05",
+  "location": {
+   "image": "2a5873507212.jpeg",
+   "band": 0,
+   "index": 5,
+   "box": [
+    2428,
+    1821,
+    5712,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\2a5873507212_b0_s05.jpg",
+  "ocr": {
+   "spine_id": "2a5873507212_b0_s05",
+   "text": "לנקסטר ג'יי",
+   "lines": [
+    "לנקסטר ג'יי"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "2a5873507212_b0_s06",
+  "location": {
+   "image": "2a5873507212.jpeg",
+   "band": 0,
+   "index": 6,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\2a5873507212_b0_s06.jpg",
+  "ocr": {
+   "spine_id": "2a5873507212_b0_s06",
+   "text": "לימהדרעל מריה וי. סניידר",
+   "lines": [
+    "לימהדרעל מריה וי. סניידר"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "2a5873507212_b0_s07",
+  "location": {
+   "image": "2a5873507212.jpeg",
+   "band": 0,
+   "index": 7,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\2a5873507212_b0_s07.jpg",
+  "ocr": {
+   "spine_id": "2a5873507212_b0_s07",
+   "text": "חלון אחד חשור רייצ'ל גיליג",
+   "lines": [
+    "חלון אחד חשור רייצ'ל גיליג"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "חלון אחד חשוך",
+   "author": "רייצ'ל גיליג",
+   "tier": "AUTO",
+   "score": 94.5,
+   "matched_text": "חלון אחד חשור רייצ'ל גיליג",
+   "catalog_id": "sim1011896"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "2a5873507212_b0_s08",
+  "location": {
+   "image": "2a5873507212.jpeg",
+   "band": 0,
+   "index": 8,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\2a5873507212_b0_s08.jpg",
+  "ocr": {
+   "spine_id": "2a5873507212_b0_s08",
+   "text": "על דם ואור קמילה מונק",
+   "lines": [
+    "על דם ואור קמילה מונק"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "2a5873507212_b0_s09",
+  "location": {
+   "image": "2a5873507212.jpeg",
+   "band": 0,
+   "index": 9,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\2a5873507212_b0_s09.jpg",
+  "ocr": {
+   "spine_id": "2a5873507212_b0_s09",
+   "text": "נסיך הסודות איי. ג'יי. לנקסטר",
+   "lines": [
+    "נסיך הסודות איי. ג'יי. לנקסטר"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "נסיך הסודות",
+   "author": "איי.ג'יי לנקסטר",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "נסיך הסודות איי. ג'יי. לנקסטר",
+   "catalog_id": "sim1027238"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "2a5873507212_b0_s10",
+  "location": {
+   "image": "2a5873507212.jpeg",
+   "band": 0,
+   "index": 10,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\2a5873507212_b0_s10.jpg",
+  "ocr": {
+   "spine_id": "2a5873507212_b0_s10",
+   "text": "הלורד של סטאריאל איי. ג'יי. לנקסטר",
+   "lines": [
+    "הלורד של סטאריאל איי. ג'יי. לנקסטר"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "הלורד של סטאריאל",
+   "author": "איי.ג'יי לנקסטר",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "הלורד של סטאריאל איי. ג'יי. לנקסטר",
+   "catalog_id": "sim1026157"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "2a5873507212_b0_s11",
+  "location": {
+   "image": "2a5873507212.jpeg",
+   "band": 0,
+   "index": 11,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\2a5873507212_b0_s11.jpg",
+  "ocr": {
+   "spine_id": "2a5873507212_b0_s11",
+   "text": "מכשפה ידוענית הלן הרפר",
+   "lines": [
+    "מכשפה ידוענית הלן הרפר"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "מכשפה ידוענית",
+   "author": "הלן הרפר",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "מכשפה ידוענית הלן הרפר",
+   "catalog_id": "sim1004342"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "2a5873507212_b0_s12",
+  "location": {
+   "image": "2a5873507212.jpeg",
+   "band": 0,
+   "index": 12,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\2a5873507212_b0_s12.jpg",
+  "ocr": {
+   "spine_id": "2a5873507212_b0_s12",
+   "text": "מכשפה רוחנית הלן הרפר",
+   "lines": [
+    "מכשפה רוחנית הלן הרפר"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "מכשפה רוחנית",
+   "author": "הלן הרפר",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "מכשפה רוחנית הלן הרפר",
+   "catalog_id": "sim1004343"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "2a5873507212_b0_s13",
+  "location": {
+   "image": "2a5873507212.jpeg",
+   "band": 0,
+   "index": 13,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\2a5873507212_b0_s13.jpg",
+  "ocr": {
+   "spine_id": "2a5873507212_b0_s13",
+   "text": "מכשפה עצלנית הלן הרפר",
+   "lines": [
+    "מכשפה עצלנית הלן הרפר"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "מכשפה עצלנית",
+   "author": "הלן הרפר",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "מכשפה עצלנית הלן הרפר",
+   "catalog_id": "sim1004341"
+  },
+  "needs_fallback": false
+ }
+]

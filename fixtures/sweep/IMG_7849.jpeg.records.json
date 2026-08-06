@@ -1,0 +1,911 @@
+[
+ {
+  "spine_id": "IMG_7849_b0_s00",
+  "location": {
+   "image": "IMG_7849.jpeg",
+   "band": 0,
+   "index": 0,
+   "box": [
+    0,
+    1285,
+    2318,
+    3024
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_7849_b0_s00.jpg",
+  "ocr": {
+   "spine_id": "IMG_7849_b0_s00",
+   "text": "האגם של דם בריאן מקללן",
+   "lines": [
+    "האגם של דם בריאן מקללן"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "IMG_7849_b0_s01",
+  "location": {
+   "image": "IMG_7849.jpeg",
+   "band": 0,
+   "index": 1,
+   "box": [
+    0,
+    1285,
+    2318,
+    3024
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_7849_b0_s01.jpg",
+  "ocr": {
+   "spine_id": "IMG_7849_b0_s01",
+   "text": "ד הגנבים מרי א' פירסון",
+   "lines": [
+    "ד הגנבים מרי א' פירסון"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "נשף הגנבים",
+   "author": "אנוי, ז'ן",
+   "tier": "REVIEW",
+   "score": 65.0,
+   "matched_text": "ד הגנבים מרי א' פירסון",
+   "catalog_id": "990009817350205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_7849_b0_s02",
+  "location": {
+   "image": "IMG_7849.jpeg",
+   "band": 0,
+   "index": 2,
+   "box": [
+    0,
+    1285,
+    2318,
+    3024
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_7849_b0_s02.jpg",
+  "ocr": {
+   "spine_id": "IMG_7849_b0_s02",
+   "text": "ועם הוורים מרי א' פירסון",
+   "lines": [
+    "ועם הוורים מרי א' פירסון"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "IMG_7849_b0_s03",
+  "location": {
+   "image": "IMG_7849.jpeg",
+   "band": 0,
+   "index": 3,
+   "box": [
+    0,
+    0,
+    2318,
+    1739
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_7849_b0_s03.jpg",
+  "ocr": {
+   "spine_id": "IMG_7849_b0_s03",
+   "text": "קרב הארגמן בריאן מקללן",
+   "lines": [
+    "קרב הארגמן בריאן מקללן"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "קרב הארגמן",
+   "author": "מקללן, בריאן מחבר",
+   "tier": "AUTO",
+   "score": 125.0,
+   "matched_text": "קרב הארגמן בריאן מקללן",
+   "catalog_id": "990040551210205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_7849_b0_s04",
+  "location": {
+   "image": "IMG_7849.jpeg",
+   "band": 0,
+   "index": 4,
+   "box": [
+    0,
+    0,
+    2318,
+    1739
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_7849_b0_s04.jpg",
+  "ocr": {
+   "spine_id": "IMG_7849_b0_s04",
+   "text": "הבטחה בריאן מקללן",
+   "lines": [
+    "הבטחה בריאן מקללן"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "IMG_7849_b0_s05",
+  "location": {
+   "image": "IMG_7849.jpeg",
+   "band": 0,
+   "index": 5,
+   "box": [
+    0,
+    0,
+    2318,
+    1739
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_7849_b0_s05.jpg",
+  "ocr": {
+   "spine_id": "IMG_7849_b0_s05",
+   "text": "לימודי אש מריה וי. סניידר",
+   "lines": [
+    "לימודי אש מריה וי. סניידר"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "לימודי ה'",
+   "author": "",
+   "tier": "REVIEW",
+   "score": 110.7,
+   "matched_text": "לימודי אש מריה וי. סניידר",
+   "catalog_id": "990040843020205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_7849_b0_s06",
+  "location": {
+   "image": "IMG_7849.jpeg",
+   "band": 0,
+   "index": 6,
+   "box": [
+    0,
+    0,
+    2318,
+    1739
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_7849_b0_s06.jpg",
+  "ocr": {
+   "spine_id": "IMG_7849_b0_s06",
+   "text": "לימודי קסם מריה וי. סניידר",
+   "lines": [
+    "לימודי קסם מריה וי. סניידר"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "לימודי ה'",
+   "author": "",
+   "tier": "REVIEW",
+   "score": 110.7,
+   "matched_text": "לימודי קסם מריה וי. סניידר",
+   "catalog_id": "990040843020205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_7849_b0_s07",
+  "location": {
+   "image": "IMG_7849.jpeg",
+   "band": 0,
+   "index": 7,
+   "box": [
+    0,
+    0,
+    2318,
+    1739
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_7849_b0_s07.jpg",
+  "ocr": {
+   "spine_id": "IMG_7849_b0_s07",
+   "text": "לימודי רעל מריה וי. סניידר",
+   "lines": [
+    "לימודי רעל מריה וי. סניידר"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "לימודי ה'",
+   "author": "",
+   "tier": "REVIEW",
+   "score": 110.7,
+   "matched_text": "לימודי רעל מריה וי. סניידר",
+   "catalog_id": "990040843020205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_7849_b0_s08",
+  "location": {
+   "image": "IMG_7849.jpeg",
+   "band": 0,
+   "index": 8,
+   "box": [
+    0,
+    0,
+    2318,
+    1739
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_7849_b0_s08.jpg",
+  "ocr": {
+   "spine_id": "IMG_7849_b0_s08",
+   "text": "אנטומיה: סיפור אהבה",
+   "lines": [
+    "אנטומיה: סיפור אהבה"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "אנטומיה - סיפור אהבה",
+   "author": "שורץ, דנה מחבר",
+   "tier": "AUTO",
+   "score": 115.0,
+   "matched_text": "אנטומיה: סיפור אהבה",
+   "catalog_id": "997011336882805171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_7849_b0_s09",
+  "location": {
+   "image": "IMG_7849.jpeg",
+   "band": 0,
+   "index": 9,
+   "box": [
+    0,
+    0,
+    2318,
+    1739
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_7849_b0_s09.jpg",
+  "ocr": {
+   "spine_id": "IMG_7849_b0_s09",
+   "text": "ריקוד הגנבים",
+   "lines": [
+    "ריקוד הגנבים"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "ריקוד הגנבים",
+   "author": "פירסון, מרי א. מחבר",
+   "tier": "AUTO",
+   "score": 115.0,
+   "matched_text": "ריקוד הגנבים",
+   "catalog_id": "997013430669305171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_7849_b0_s10",
+  "location": {
+   "image": "IMG_7849.jpeg",
+   "band": 0,
+   "index": 10,
+   "box": [
+    0,
+    0,
+    2318,
+    1739
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_7849_b0_s10.jpg",
+  "ocr": {
+   "spine_id": "IMG_7849_b0_s10",
+   "text": "נשרעם הגורים",
+   "lines": [
+    "נשרעם הגורים"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "גבעת הגורים",
+   "author": "דורפלד, קורי מחבר מאייר",
+   "tier": "REVIEW",
+   "score": 63.7,
+   "matched_text": "נשרעם הגורים",
+   "catalog_id": "997011436012805171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_7849_b0_s11",
+  "location": {
+   "image": "IMG_7849.jpeg",
+   "band": 0,
+   "index": 11,
+   "box": [
+    1714,
+    1285,
+    4032,
+    3024
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_7849_b0_s11.jpg",
+  "ocr": {
+   "spine_id": "IMG_7849_b0_s11",
+   "text": "סיפור אהבה דיינה שוורץ",
+   "lines": [
+    "סיפור אהבה דיינה שוורץ"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "סיפור אהבה",
+   "author": "סגל, אריק",
+   "tier": "AUTO",
+   "score": 115.0,
+   "matched_text": "סיפור אהבה דיינה שוורץ",
+   "catalog_id": "990010576940205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_7849_b0_s12",
+  "location": {
+   "image": "IMG_7849.jpeg",
+   "band": 0,
+   "index": 12,
+   "box": [
+    1714,
+    1285,
+    4032,
+    3024
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_7849_b0_s12.jpg",
+  "ocr": {
+   "spine_id": "IMG_7849_b0_s12",
+   "text": "הגנבים מרי א' פירסון",
+   "lines": [
+    "הגנבים מרי א' פירסון"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "נשף הגנבים",
+   "author": "אנוי, ז'ן",
+   "tier": "REVIEW",
+   "score": 65.0,
+   "matched_text": "הגנבים מרי א' פירסון",
+   "catalog_id": "990009817350205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_7849_b0_s13",
+  "location": {
+   "image": "IMG_7849.jpeg",
+   "band": 0,
+   "index": 13,
+   "box": [
+    1714,
+    1285,
+    4032,
+    3024
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_7849_b0_s13.jpg",
+  "ocr": {
+   "spine_id": "IMG_7849_b0_s13",
+   "text": "מועת הגנבים מרי א' פירסון",
+   "lines": [
+    "מועת הגנבים מרי א' פירסון"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "IMG_7849_b0_s14",
+  "location": {
+   "image": "IMG_7849.jpeg",
+   "band": 0,
+   "index": 14,
+   "box": [
+    1714,
+    1285,
+    4032,
+    3024
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_7849_b0_s14.jpg",
+  "ocr": {
+   "spine_id": "IMG_7849_b0_s14",
+   "text": "המסע של הוקוד",
+   "lines": [
+    "המסע של הוקוד"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "המסע של הוקווד",
+   "author": "קרני, פול",
+   "tier": "AUTO",
+   "score": 110.0,
+   "matched_text": "המסע של הוקוד",
+   "catalog_id": "990023145140205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_7849_b0_s15",
+  "location": {
+   "image": "IMG_7849.jpeg",
+   "band": 0,
+   "index": 15,
+   "box": [
+    1714,
+    1285,
+    4032,
+    3024
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_7849_b0_s15.jpg",
+  "ocr": {
+   "spine_id": "IMG_7849_b0_s15",
+   "text": "ספינות מן המערב",
+   "lines": [
+    "ספינות מן המערב"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "ספינות מן המערב",
+   "author": "קרני, פול",
+   "tier": "AUTO",
+   "score": 115.0,
+   "matched_text": "ספינות מן המערב",
+   "catalog_id": "990023897550205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_7849_b0_s16",
+  "location": {
+   "image": "IMG_7849.jpeg",
+   "band": 0,
+   "index": 16,
+   "box": [
+    1714,
+    1285,
+    4032,
+    3024
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_7849_b0_s16.jpg",
+  "ocr": {
+   "spine_id": "IMG_7849_b0_s16",
+   "text": "המלכים הכיפרים",
+   "lines": [
+    "המלכים הכיפרים"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "המלכים הכופרים",
+   "author": "קרני, פול",
+   "tier": "AUTO",
+   "score": 112.9,
+   "matched_text": "המלכים הכיפרים",
+   "catalog_id": "990023263040205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_7849_b0_s17",
+  "location": {
+   "image": "IMG_7849.jpeg",
+   "band": 0,
+   "index": 17,
+   "box": [
+    1714,
+    1285,
+    4032,
+    3024
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_7849_b0_s17.jpg",
+  "ocr": {
+   "spine_id": "IMG_7849_b0_s17",
+   "text": "מלחמות הברזל",
+   "lines": [
+    "מלחמות הברזל"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "מלחמות הברזל",
+   "author": "קרני, פול",
+   "tier": "AUTO",
+   "score": 115.0,
+   "matched_text": "מלחמות הברזל",
+   "catalog_id": "990023761810205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_7849_b0_s18",
+  "location": {
+   "image": "IMG_7849.jpeg",
+   "band": 0,
+   "index": 18,
+   "box": [
+    1714,
+    1285,
+    4032,
+    3024
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_7849_b0_s18.jpg",
+  "ocr": {
+   "spine_id": "IMG_7849_b0_s18",
+   "text": "האימפריה השנייה",
+   "lines": [
+    "האימפריה השנייה"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "האימפריה השנייה",
+   "author": "קרני, פול",
+   "tier": "AUTO",
+   "score": 115.0,
+   "matched_text": "האימפריה השנייה",
+   "catalog_id": "990023897610205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_7849_b0_s19",
+  "location": {
+   "image": "IMG_7849.jpeg",
+   "band": 0,
+   "index": 19,
+   "box": [
+    1714,
+    1285,
+    4032,
+    3024
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_7849_b0_s19.jpg",
+  "ocr": {
+   "spine_id": "IMG_7849_b0_s19",
+   "text": "משחקי הכס",
+   "lines": [
+    "משחקי הכס"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "משחקי הכס",
+   "author": "מרטין, ג'ורג' ר. ר",
+   "tier": "AUTO",
+   "score": 115.0,
+   "matched_text": "משחקי הכס",
+   "catalog_id": "990034438270205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_7849_b0_s20",
+  "location": {
+   "image": "IMG_7849.jpeg",
+   "band": 0,
+   "index": 20,
+   "box": [
+    1714,
+    0,
+    4032,
+    1739
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_7849_b0_s20.jpg",
+  "ocr": {
+   "spine_id": "IMG_7849_b0_s20",
+   "text": "שבועת הגנבים",
+   "lines": [
+    "שבועת הגנבים"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "שבועת הגנבים",
+   "author": "פירסון, מרי א. מחבר",
+   "tier": "AUTO",
+   "score": 115.0,
+   "matched_text": "שבועת הגנבים",
+   "catalog_id": "997013778505105171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_7849_b0_s21",
+  "location": {
+   "image": "IMG_7849.jpeg",
+   "band": 0,
+   "index": 21,
+   "box": [
+    1714,
+    0,
+    4032,
+    1739
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_7849_b0_s21.jpg",
+  "ocr": {
+   "spine_id": "IMG_7849_b0_s21",
+   "text": "המס... פול קארני",
+   "lines": [
+    "המס... פול קארני"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "IMG_7849_b0_s22",
+  "location": {
+   "image": "IMG_7849.jpeg",
+   "band": 0,
+   "index": 22,
+   "box": [
+    1714,
+    0,
+    4032,
+    1739
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_7849_b0_s22.jpg",
+  "ocr": {
+   "spine_id": "IMG_7849_b0_s22",
+   "text": "ספינ... פול קארני",
+   "lines": [
+    "ספינ... פול קארני"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "IMG_7849_b0_s23",
+  "location": {
+   "image": "IMG_7849.jpeg",
+   "band": 0,
+   "index": 23,
+   "box": [
+    1714,
+    0,
+    4032,
+    1739
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_7849_b0_s23.jpg",
+  "ocr": {
+   "spine_id": "IMG_7849_b0_s23",
+   "text": "המלכ... פול קארני",
+   "lines": [
+    "המלכ... פול קארני"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "IMG_7849_b0_s24",
+  "location": {
+   "image": "IMG_7849.jpeg",
+   "band": 0,
+   "index": 24,
+   "box": [
+    1714,
+    0,
+    4032,
+    1739
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_7849_b0_s24.jpg",
+  "ocr": {
+   "spine_id": "IMG_7849_b0_s24",
+   "text": "מלח... פול קארני",
+   "lines": [
+    "מלח... פול קארני"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "IMG_7849_b0_s25",
+  "location": {
+   "image": "IMG_7849.jpeg",
+   "band": 0,
+   "index": 25,
+   "box": [
+    1714,
+    0,
+    4032,
+    1739
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_7849_b0_s25.jpg",
+  "ocr": {
+   "spine_id": "IMG_7849_b0_s25",
+   "text": "האיזמ... פול קארני",
+   "lines": [
+    "האיזמ... פול קארני"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "IMG_7849_b0_s26",
+  "location": {
+   "image": "IMG_7849.jpeg",
+   "band": 0,
+   "index": 26,
+   "box": [
+    1714,
+    0,
+    4032,
+    1739
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_7849_b0_s26.jpg",
+  "ocr": {
+   "spine_id": "IMG_7849_b0_s26",
+   "text": "שיר של אש ושל קרח",
+   "lines": [
+    "שיר של אש ושל קרח"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "שיר של אש ושל קרח",
+   "author": "מרטין, ג'ורג' ר. ר",
+   "tier": "AUTO",
+   "score": 115.0,
+   "matched_text": "שיר של אש ושל קרח",
+   "catalog_id": "990019992550205171"
+  },
+  "needs_fallback": false
+ }
+]

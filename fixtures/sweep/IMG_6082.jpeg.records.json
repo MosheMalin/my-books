@@ -1,0 +1,1358 @@
+[
+ {
+  "spine_id": "IMG_6082_b0_s00",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 0,
+   "box": [
+    0,
+    1285,
+    2318,
+    3024
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s00.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s00",
+   "text": "...פורי ישראל והמזרח התיכון",
+   "lines": [
+    "...פורי ישראל והמזרח התיכון"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "ישראל וארצות המזרח התיכון",
+   "author": "כרטא - החברה הישראלית למפות ולהוצאה לאור",
+   "tier": "AUTO",
+   "score": 89.5,
+   "matched_text": "...פורי ישראל והמזרח התיכון",
+   "catalog_id": "990008425320205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_6082_b0_s01",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 1,
+   "box": [
+    0,
+    1285,
+    2318,
+    3024
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s01.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s01",
+   "text": "The Elephant",
+   "lines": [
+    "The Elephant"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "The Elephant",
+   "author": "",
+   "tier": "AUTO",
+   "score": 115.0,
+   "matched_text": "The Elephant",
+   "catalog_id": "990012966710205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_6082_b0_s02",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 2,
+   "box": [
+    0,
+    0,
+    2318,
+    1739
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s02.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s02",
+   "text": "היער השיכור ג'ראלד דארל",
+   "lines": [
+    "היער השיכור ג'ראלד דארל"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "היער השיכור",
+   "author": "דארל, ג'ראלד",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "היער השיכור ג'ראלד דארל",
+   "catalog_id": "990018751130205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_6082_b0_s03",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 3,
+   "box": [
+    0,
+    1285,
+    2318,
+    3024
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s03.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s03",
+   "text": "חברברי הסנה דאהל",
+   "lines": [
+    "חברברי הסנה דאהל"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "חברברי הסונה",
+   "author": "דארל, ג'ראלד",
+   "tier": "AUTO",
+   "score": 108.6,
+   "matched_text": "חברברי הסנה דאהל",
+   "catalog_id": "990010470600205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_6082_b0_s04",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 4,
+   "box": [
+    0,
+    1285,
+    2318,
+    3024
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s04.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s04",
+   "text": "...מברה אפריקה ניקולאס פרייסון",
+   "lines": [
+    "...מברה אפריקה ניקולאס פרייסון"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "אפריקה",
+   "author": "פוירשטין, אמיל",
+   "tier": "REVIEW",
+   "score": 115.0,
+   "matched_text": "...מברה אפריקה ניקולאס פרייסון",
+   "catalog_id": "990018349100205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_6082_b0_s05",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 5,
+   "box": [
+    0,
+    1285,
+    2318,
+    3024
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s05.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s05",
+   "text": "...רונה לראות דגלס אדמס ומארק קרוואנדריין",
+   "lines": [
+    "...רונה לראות דגלס אדמס ומארק קרוואנדריין"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "IMG_6082_b0_s06",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 6,
+   "box": [
+    0,
+    0,
+    2318,
+    1739
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s06.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s06",
+   "text": "ציפור הלעג ג'ראלד דארל",
+   "lines": [
+    "ציפור הלעג ג'ראלד דארל"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "ציפור הלעג",
+   "author": "דארל, ג'ראלד",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "ציפור הלעג ג'ראלד דארל",
+   "catalog_id": "990004065980205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_6082_b0_s07",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 7,
+   "box": [
+    0,
+    1285,
+    2318,
+    3024
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s07.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s07",
+   "text": "...יובתי רוזי",
+   "lines": [
+    "...יובתי רוזי"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "IMG_6082_b0_s08",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 8,
+   "box": [
+    0,
+    1285,
+    2318,
+    3024
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s08.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s08",
+   "text": "הפיקניק וכהוכמות אחרות",
+   "lines": [
+    "הפיקניק וכהוכמות אחרות"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "אחרות",
+   "author": "",
+   "tier": "REVIEW",
+   "score": 115.0,
+   "matched_text": "הפיקניק וכהוכמות אחרות",
+   "catalog_id": "997012126032805171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_6082_b0_s09",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 9,
+   "box": [
+    0,
+    1285,
+    2318,
+    3024
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s09.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s09",
+   "text": "ציפורים וקרובים",
+   "lines": [
+    "ציפורים וקרובים"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "ציפורים",
+   "author": "בן ישראל, אוריה",
+   "tier": "AUTO",
+   "score": 115.0,
+   "matched_text": "ציפורים וקרובים",
+   "catalog_id": "990003530860205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_6082_b0_s10",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 10,
+   "box": [
+    0,
+    1285,
+    2318,
+    3024
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s10.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s10",
+   "text": "לחתן את אמא",
+   "lines": [
+    "לחתן את אמא"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "לחתן את אמא",
+   "author": "דארל, ג'ראלד",
+   "tier": "AUTO",
+   "score": 115.0,
+   "matched_text": "לחתן את אמא",
+   "catalog_id": "990012615630205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_6082_b0_s11",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 11,
+   "box": [
+    0,
+    1285,
+    2318,
+    3024
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s11.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s11",
+   "text": "גנדחיות במזוודה",
+   "lines": [
+    "גנדחיות במזוודה"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "המזוודה",
+   "author": "דובלטוב, סרגי",
+   "tier": "REVIEW",
+   "score": 101.4,
+   "matched_text": "גנדחיות במזוודה",
+   "catalog_id": "990027118270205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_6082_b0_s12",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 12,
+   "box": [
+    0,
+    1285,
+    2318,
+    3024
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s12.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s12",
+   "text": "...ל וכל השאר",
+   "lines": [
+    "...ל וכל השאר"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "את ואני וכל השאר",
+   "author": "סלה, חיים",
+   "tier": "AUTO",
+   "score": 86.7,
+   "matched_text": "...ל וכל השאר",
+   "catalog_id": "990008839780205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_6082_b0_s13",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 13,
+   "box": [
+    0,
+    0,
+    2318,
+    1739
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s13.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s13",
+   "text": "ציפורי ישראל",
+   "lines": [
+    "ציפורי ישראל"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "ציפורי ישראל",
+   "author": "",
+   "tier": "AUTO",
+   "score": 115.0,
+   "matched_text": "ציפורי ישראל",
+   "catalog_id": "990040930530205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_6082_b0_s14",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 14,
+   "box": [
+    0,
+    0,
+    2318,
+    1739
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s14.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s14",
+   "text": "חברפרי הס... ג'ראלד דארל",
+   "lines": [
+    "חברפרי הס... ג'ראלד דארל"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "IMG_6082_b0_s15",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 15,
+   "box": [
+    0,
+    0,
+    2318,
+    1739
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s15.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s15",
+   "text": "הזדמנות אחרונה לראות דגלס אד...",
+   "lines": [
+    "הזדמנות אחרונה לראות דגלס אד..."
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "הזדמנות אחרונה לראות",
+   "author": "אדמס, דאגלס",
+   "tier": "AUTO",
+   "score": 122.5,
+   "matched_text": "הזדמנות אחרונה לראות דגלס אד...",
+   "catalog_id": "990023909250205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_6082_b0_s16",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 16,
+   "box": [
+    0,
+    0,
+    2318,
+    1739
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s16.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s16",
+   "text": "קרובתי רוזי ג'ראלד דארל",
+   "lines": [
+    "קרובתי רוזי ג'ראלד דארל"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "קרובתי רוזי",
+   "author": "דארל, ג'ראלד",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "קרובתי רוזי ג'ראלד דארל",
+   "catalog_id": "990010378840205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_6082_b0_s17",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 17,
+   "box": [
+    0,
+    0,
+    2318,
+    1739
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s17.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s17",
+   "text": "הפיקניק וכוהו... ג'ראלד דארל",
+   "lines": [
+    "הפיקניק וכוהו... ג'ראלד דארל"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "IMG_6082_b0_s18",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 18,
+   "box": [
+    0,
+    0,
+    2318,
+    1739
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s18.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s18",
+   "text": "פגישות עם בעלי-חיים ג'ראלד דארל",
+   "lines": [
+    "פגישות עם בעלי-חיים ג'ראלד דארל"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "פגישות עם בעלי-חיים",
+   "author": "דארל, ג'ראלד",
+   "tier": "AUTO",
+   "score": 127.4,
+   "matched_text": "פגישות עם בעלי-חיים ג'ראלד דארל",
+   "catalog_id": "990003473810205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_6082_b0_s19",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 19,
+   "box": [
+    0,
+    0,
+    2318,
+    1739
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s19.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s19",
+   "text": "חיות, ציפורים וקרובים ג'ראלד דארל",
+   "lines": [
+    "חיות, ציפורים וקרובים ג'ראלד דארל"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "חיות, ציפורים וקרובים",
+   "author": "דארל, ג'ראלד",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "חיות, ציפורים וקרובים ג'ראלד דארל",
+   "catalog_id": "990010759670205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_6082_b0_s20",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 20,
+   "box": [
+    0,
+    0,
+    2318,
+    1739
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s20.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s20",
+   "text": "לחתן את א... ג'ראלד דארל",
+   "lines": [
+    "לחתן את א... ג'ראלד דארל"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "IMG_6082_b0_s21",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 21,
+   "box": [
+    0,
+    0,
+    2318,
+    1739
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s21.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s21",
+   "text": "גן-חיות במ... ג'ראלד דארל",
+   "lines": [
+    "גן-חיות במ... ג'ראלד דארל"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "IMG_6082_b0_s22",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 22,
+   "box": [
+    0,
+    0,
+    2318,
+    1739
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s22.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s22",
+   "text": "סנדל וכל השאר ג'ראלד דארל",
+   "lines": [
+    "סנדל וכל השאר ג'ראלד דארל"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "סנדל וכל השאר",
+   "author": "דארל, ג'ראלד",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "סנדל וכל השאר ג'ראלד דארל",
+   "catalog_id": "990011737920205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_6082_b0_s23",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 23,
+   "box": [
+    1714,
+    1285,
+    4032,
+    3024
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s23.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s23",
+   "text": "לחתן אני אמא",
+   "lines": [
+    "לחתן אני אמא"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "לחתן את אמא",
+   "author": "דארל, ג'ראלד",
+   "tier": "REVIEW",
+   "score": 111.1,
+   "matched_text": "לחתן אני אמא",
+   "catalog_id": "990012615630205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_6082_b0_s24",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 24,
+   "box": [
+    1714,
+    1285,
+    4032,
+    3024
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s24.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s24",
+   "text": "גניחות במזוודה",
+   "lines": [
+    "גניחות במזוודה"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "המזוודה",
+   "author": "דובלטוב, סרגי",
+   "tier": "AUTO",
+   "score": 102.1,
+   "matched_text": "גניחות במזוודה",
+   "catalog_id": "990027118270205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_6082_b0_s25",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 25,
+   "box": [
+    1714,
+    1285,
+    4032,
+    3024
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s25.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s25",
+   "text": "וכל השאר",
+   "lines": [
+    "וכל השאר"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "את ואני וכל השאר",
+   "author": "סלה, חיים",
+   "tier": "REVIEW",
+   "score": 86.7,
+   "matched_text": "וכל השאר",
+   "catalog_id": "990008839780205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_6082_b0_s26",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 26,
+   "box": [
+    1714,
+    1285,
+    4032,
+    3024
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s26.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s26",
+   "text": "אלים",
+   "lines": [
+    "אלים"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "IMG_6082_b0_s27",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 27,
+   "box": [
+    1714,
+    1285,
+    4032,
+    3024
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s27.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s27",
+   "text": "עלות סם אי-אי",
+   "lines": [
+    "עלות סם אי-אי"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "IMG_6082_b0_s28",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 28,
+   "box": [
+    1714,
+    1285,
+    4032,
+    3024
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s28.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s28",
+   "text": "כולם ברא אלוהיו",
+   "lines": [
+    "כולם ברא אלוהיו"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "את כולם ברא אלוהים",
+   "author": "הריוט, ג'מס",
+   "tier": "AUTO",
+   "score": 110.5,
+   "matched_text": "כולם ברא אלוהיו",
+   "catalog_id": "990003768850205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_6082_b0_s29",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 29,
+   "box": [
+    1714,
+    1285,
+    4032,
+    3024
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s29.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s29",
+   "text": "נבונים כמופלאים",
+   "lines": [
+    "נבונים כמופלאים"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "כל הדברים, נבונים כמופלאים",
+   "author": "הריוט, ג'מס",
+   "tier": "AUTO",
+   "score": 86.7,
+   "matched_text": "נבונים כמופלאים",
+   "catalog_id": "990018924360205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_6082_b0_s30",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 30,
+   "box": [
+    1714,
+    1285,
+    4032,
+    3024
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s30.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s30",
+   "text": "גדולים כקטנים",
+   "lines": [
+    "גדולים כקטנים"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "כל היצורים גדולים כקטנים",
+   "author": "הריוט, ג'מס, 1916-1995 מחבר",
+   "tier": "AUTO",
+   "score": 86.7,
+   "matched_text": "גדולים כקטנים",
+   "catalog_id": "990008609780205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_6082_b0_s31",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 31,
+   "box": [
+    1714,
+    1285,
+    4032,
+    3024
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s31.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s31",
+   "text": "כרים מבהיקים רייפוס",
+   "lines": [
+    "כרים מבהיקים רייפוס"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "IMG_6082_b0_s32",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 32,
+   "box": [
+    1714,
+    0,
+    4032,
+    1739
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s32.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s32",
+   "text": "לחזור אל הונ... ג'ראלד דארל",
+   "lines": [
+    "לחזור אל הונ... ג'ראלד דארל"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "IMG_6082_b0_s33",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 33,
+   "box": [
+    1714,
+    0,
+    4032,
+    1739
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s33.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s33",
+   "text": "גן־חיות במ... ג'ראלד דארל",
+   "lines": [
+    "גן־חיות במ... ג'ראלד דארל"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "IMG_6082_b0_s34",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 34,
+   "box": [
+    1714,
+    0,
+    4032,
+    1739
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s34.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s34",
+   "text": "גן האלים ג'ראלד דארל",
+   "lines": [
+    "גן האלים ג'ראלד דארל"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "גן האלים",
+   "author": "דארל, ג'ראלד",
+   "tier": "AUTO",
+   "score": 123.1,
+   "matched_text": "גן האלים ג'ראלד דארל",
+   "catalog_id": "990013015110205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_6082_b0_s35",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 35,
+   "box": [
+    1714,
+    0,
+    4032,
+    1739
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s35.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s35",
+   "text": "הרפתקאות פס ואי-... ג'ראלד דארל",
+   "lines": [
+    "הרפתקאות פס ואי-... ג'ראלד דארל"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "הרפתקאות עם סבא!",
+   "author": "הנטלי, טקס מחבר",
+   "tier": "REVIEW",
+   "score": 63.4,
+   "matched_text": "הרפתקאות פס ואי-... ג'ראלד דארל",
+   "catalog_id": "997011555289305171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_6082_b0_s36",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 36,
+   "box": [
+    1714,
+    0,
+    4032,
+    1739
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s36.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s36",
+   "text": "את כולם ב... ג'יימס הריוט",
+   "lines": [
+    "את כולם ב... ג'יימס הריוט"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "IMG_6082_b0_s37",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 37,
+   "box": [
+    1714,
+    0,
+    4032,
+    1739
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s37.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s37",
+   "text": "כל הדברים... נבונים כמופ... ג'יימס הריוט",
+   "lines": [
+    "כל הדברים... נבונים כמופ... ג'יימס הריוט"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "הדברים",
+   "author": "פרק, ז'ורז'",
+   "tier": "REVIEW",
+   "score": 115.0,
+   "matched_text": "כל הדברים... נבונים כמופ... ג'יימס הריוט",
+   "catalog_id": "990017835100205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_6082_b0_s38",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 38,
+   "box": [
+    1714,
+    0,
+    4032,
+    1739
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s38.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s38",
+   "text": "כל היצורים גדולים ו... ג'יימס הריוט",
+   "lines": [
+    "כל היצורים גדולים ו... ג'יימס הריוט"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "כל היצורים גדולים כקטנים",
+   "author": "הריוט, ג'מס, 1916-1995 מחבר",
+   "tier": "REVIEW",
+   "score": 82.5,
+   "matched_text": "כל היצורים גדולים ו... ג'יימס הריוט",
+   "catalog_id": "990008609780205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "IMG_6082_b0_s39",
+  "location": {
+   "image": "IMG_6082.jpeg",
+   "band": 0,
+   "index": 39,
+   "box": [
+    1714,
+    0,
+    4032,
+    1739
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\llm_probe\\e2_crops\\IMG_6082_b0_s39.jpg",
+  "ocr": {
+   "spine_id": "IMG_6082_b0_s39",
+   "text": "כל הדברים מבהיקים ג'יימס הריוט",
+   "lines": [
+    "כל הדברים מבהיקים ג'יימס הריוט"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "הדברים",
+   "author": "פרק, ז'ורז'",
+   "tier": "REVIEW",
+   "score": 115.0,
+   "matched_text": "כל הדברים מבהיקים ג'יימס הריוט",
+   "catalog_id": "990017835100205171"
+  },
+  "needs_fallback": false
+ }
+]

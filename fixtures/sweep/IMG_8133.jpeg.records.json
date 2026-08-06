@@ -1,0 +1,1359 @@
+[
+ {
+  "spine_id": "45ecdce7302d_b0_s00",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 0,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s00.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s00",
+   "text": "הילד של המכשפה מייקל גרובר",
+   "lines": [
+    "הילד של המכשפה מייקל גרובר"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "הילד של המכשפה",
+   "author": "מייקל גרובר",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "הילד של המכשפה מייקל גרובר",
+   "catalog_id": "sim930154"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s01",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 1,
+   "box": [
+    0,
+    1821,
+    3284,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s01.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s01",
+   "text": "קוסם הנחש מרגרט וויז וטרייסי היקמן",
+   "lines": [
+    "קוסם הנחש מרגרט וויז וטרייסי היקמן"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "קוסם הנחש",
+   "author": "מרגרט וייס",
+   "tier": "AUTO",
+   "score": 122.5,
+   "matched_text": "קוסם הנחש מרגרט וויז וטרייסי היקמן",
+   "catalog_id": "sim14878"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s02",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 2,
+   "box": [
+    0,
+    1821,
+    3284,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s02.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s02",
+   "text": "ים האש מרגרט וויז וטרייסי היקמן",
+   "lines": [
+    "ים האש מרגרט וויז וטרייסי היקמן"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s03",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 3,
+   "box": [
+    0,
+    1821,
+    3284,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s03.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s03",
+   "text": "כוכב הרפאים מרגרט וויז וטרייסי היקמן",
+   "lines": [
+    "כוכב הרפאים מרגרט וויז וטרייסי היקמן"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "כוכב הרפאים",
+   "author": "מרגרט וייס",
+   "tier": "AUTO",
+   "score": 122.5,
+   "matched_text": "כוכב הרפאים מרגרט וויז וטרייסי היקמן",
+   "catalog_id": "sim14875"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s04",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 4,
+   "box": [
+    0,
+    1821,
+    3284,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s04.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s04",
+   "text": "יד הכאוס מרגרט וויז וטרייסי היקמן",
+   "lines": [
+    "יד הכאוס מרגרט וויז וטרייסי היקמן"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s05",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 5,
+   "box": [
+    0,
+    1821,
+    3284,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s05.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s05",
+   "text": "אל תוך המבוך מרגרט וויז וטרייסי היקמן",
+   "lines": [
+    "אל תוך המבוך מרגרט וויז וטרייסי היקמן"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "אל תוך המבוך",
+   "author": "מרגרט וייס",
+   "tier": "AUTO",
+   "score": 122.5,
+   "matched_text": "אל תוך המבוך מרגרט וויז וטרייסי היקמן",
+   "catalog_id": "sim14893"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s06",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 6,
+   "box": [
+    0,
+    1821,
+    3284,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s06.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s06",
+   "text": "כנף הדרקון מרגרט וויז וטרייסי היקמן",
+   "lines": [
+    "כנף הדרקון מרגרט וויז וטרייסי היקמן"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "כנף הדרקון",
+   "author": "מרגרט וייס",
+   "tier": "AUTO",
+   "score": 122.5,
+   "matched_text": "כנף הדרקון מרגרט וויז וטרייסי היקמן",
+   "catalog_id": "sim14876"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s07",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 7,
+   "box": [
+    0,
+    1821,
+    3284,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s07.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s07",
+   "text": "השער השביעי מרגרט וויז וטרייסי היקמן",
+   "lines": [
+    "השער השביעי מרגרט וויז וטרייסי היקמן"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s08",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 8,
+   "box": [
+    0,
+    1821,
+    3284,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s08.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s08",
+   "text": "מולדת",
+   "lines": [
+    "מולדת"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "מולדת",
+   "author": "ר.א. סלבטורה",
+   "tier": "AUTO",
+   "score": 115.0,
+   "matched_text": "מולדת",
+   "catalog_id": "sim120582"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s09",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 9,
+   "box": [
+    0,
+    1821,
+    3284,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s09.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s09",
+   "text": "שהות",
+   "lines": [
+    "שהות"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "שהות",
+   "author": "מגי סטיווטר",
+   "tier": "REVIEW",
+   "score": 115.0,
+   "matched_text": "שהות",
+   "catalog_id": "sim956043"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s10",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 10,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s10.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s10",
+   "text": "גלות ר.א. סלבטורה",
+   "lines": [
+    "גלות ר.א. סלבטורה"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "גלות",
+   "author": "ר.א. סלבטורה",
+   "tier": "REVIEW",
+   "score": 130.0,
+   "matched_text": "גלות ר.א. סלבטורה",
+   "catalog_id": "sim84567"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s11",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 11,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s11.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s11",
+   "text": "המורשת ר.א. סלבטורה",
+   "lines": [
+    "המורשת ר.א. סלבטורה"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s12",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 12,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s12.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s12",
+   "text": "ספינת המתים ריק ריירדן",
+   "lines": [
+    "ספינת המתים ריק ריירדן"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "ספינת המתים",
+   "author": "ריירדן, ריק",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "ספינת המתים ריק ריירדן",
+   "catalog_id": "990043770610205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s13",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 13,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s13.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s13",
+   "text": "שלדון פיקס דריק לנדי",
+   "lines": [
+    "שלדון פיקס דריק לנדי"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "שלדון פוקס",
+   "author": "לנדי, דרק",
+   "tier": "AUTO",
+   "score": 70.0,
+   "matched_text": "שלדון פיקס דריק לנדי",
+   "catalog_id": "990029153590205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s14",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 14,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s14.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s14",
+   "text": "קוסם הנחש - מחזור שער המוות חלק 4 מרגרט וויז וטרייסי היקמן",
+   "lines": [
+    "קוסם הנחש - מחזור שער המוות חלק 4 מרגרט וויז וטרייסי היקמן"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s15",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 15,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s15.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s15",
+   "text": "ים האש - מחזור שער המוות חלק 3 מרגרט וויז וטרייסי היקמן",
+   "lines": [
+    "ים האש - מחזור שער המוות חלק 3 מרגרט וויז וטרייסי היקמן"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "מחזור שער המוות 3 - ים האש",
+   "author": "טרייסי היקמן",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "ים האש - מחזור שער המוות חלק 3 מרגרט וויז וטרייסי היקמן",
+   "catalog_id": "sim1016774"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s16",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 16,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s16.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s16",
+   "text": "כוכב הרפאים - מחזור שער המוות חלק 2 מרגרט וויז וטרייסי היקמן",
+   "lines": [
+    "כוכב הרפאים - מחזור שער המוות חלק 2 מרגרט וויז וטרייסי היקמן"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s17",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 17,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s17.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s17",
+   "text": "יד הכאוס - מחזור שער המוות חלק 5 מרגרט וויז וטרייסי היקמן",
+   "lines": [
+    "יד הכאוס - מחזור שער המוות חלק 5 מרגרט וויז וטרייסי היקמן"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "מחזור שער המוות",
+   "author": "וייס, מרגרט",
+   "tier": "AUTO",
+   "score": 122.5,
+   "matched_text": "יד הכאוס - מחזור שער המוות חלק 5 מרגרט וויז וטרייסי היקמן",
+   "catalog_id": "990013054910205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s18",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 18,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s18.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s18",
+   "text": "אל תוך המבוך - מחזור שער המוות חלק 6 מרגרט וויז וטרייסי היקמן",
+   "lines": [
+    "אל תוך המבוך - מחזור שער המוות חלק 6 מרגרט וויז וטרייסי היקמן"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s19",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 19,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s19.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s19",
+   "text": "כנף הדרקון - מחזור שער המוות חלק 1 מרגרט וויז וטרייסי היקמן",
+   "lines": [
+    "כנף הדרקון - מחזור שער המוות חלק 1 מרגרט וויז וטרייסי היקמן"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s20",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 20,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s20.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s20",
+   "text": "השער השביעי - מחזור שער המוות חלק 7 מרגרט וויז וטרייסי היקמן",
+   "lines": [
+    "השער השביעי - מחזור שער המוות חלק 7 מרגרט וויז וטרייסי היקמן"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "מחזור שער המוות 7 - השער השביעי",
+   "author": "טרייסי היקמן",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "השער השביעי - מחזור שער המוות חלק 7 מרגרט וויז וטרייסי היקמן",
+   "catalog_id": "sim1016775"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s21",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 21,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s21.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s21",
+   "text": "הטירה הנעה דיאנה ווין ג'ונס",
+   "lines": [
+    "הטירה הנעה דיאנה ווין ג'ונס"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "הטירה הנעה",
+   "author": "דיאנה ווין ג'ונס",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "הטירה הנעה דיאנה ווין ג'ונס",
+   "catalog_id": "sim44774"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s22",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 22,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s22.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s22",
+   "text": "עיד הזמן דיאנה ווין ג'ונס",
+   "lines": [
+    "עיד הזמן דיאנה ווין ג'ונס"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s23",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 23,
+   "box": [
+    2428,
+    1821,
+    5712,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s23.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s23",
+   "text": "אירה הנעה ג'נה וונין ג'ונס",
+   "lines": [
+    "אירה הנעה ג'נה וונין ג'ונס"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s24",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 24,
+   "box": [
+    2428,
+    1821,
+    5712,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s24.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s24",
+   "text": "דיאה ווין ג'נס",
+   "lines": [
+    "דיאה ווין ג'נס"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s25",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 25,
+   "box": [
+    2428,
+    1821,
+    5712,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s25.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s25",
+   "text": "לדת ההרפתקנים",
+   "lines": [
+    "לדת ההרפתקנים"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s26",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 26,
+   "box": [
+    2428,
+    1821,
+    5712,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s26.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s26",
+   "text": "ברנדון סנדרסון",
+   "lines": [
+    "ברנדון סנדרסון"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s27",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 27,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s27.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s27",
+   "text": "מבחן הברזל הולי בלק | קסנדרה קלייר",
+   "lines": [
+    "מבחן הברזל הולי בלק | קסנדרה קלייר"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "מבחן הברזל",
+   "author": "הולי בלק",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "מבחן הברזל הולי בלק | קסנדרה קלייר",
+   "catalog_id": "sim975531"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s28",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 28,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s28.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s28",
+   "text": "יד הנחושת הולי בלק | קסנדרה קלייר",
+   "lines": [
+    "יד הנחושת הולי בלק | קסנדרה קלייר"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "יד הנחושת",
+   "author": "הולי בלק",
+   "tier": "REVIEW",
+   "score": 130.0,
+   "matched_text": "יד הנחושת הולי בלק | קסנדרה קלייר",
+   "catalog_id": "sim983946"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s29",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 29,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s29.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s29",
+   "text": "מפתח הארד הולי בלק | קסנדרה קלייר",
+   "lines": [
+    "מפתח הארד הולי בלק | קסנדרה קלייר"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "מפתח הארד",
+   "author": "הולי בלק",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "מפתח הארד הולי בלק | קסנדרה קלייר",
+   "catalog_id": "sim987321"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s30",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 30,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s30.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s30",
+   "text": "מסכת הכסף הולי בלק | קסנדרה קלייר",
+   "lines": [
+    "מסכת הכסף הולי בלק | קסנדרה קלייר"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "מסכת הכסף",
+   "author": "הולי בלק",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "מסכת הכסף הולי בלק | קסנדרה קלייר",
+   "catalog_id": "sim991351"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s31",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 31,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s31.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s31",
+   "text": "מגדל הזהב הולי בלק | קסנדרה קלייר",
+   "lines": [
+    "מגדל הזהב הולי בלק | קסנדרה קלייר"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "מגדל הזהב",
+   "author": "הולי בלק",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "מגדל הזהב הולי בלק | קסנדרה קלייר",
+   "catalog_id": "sim994693"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s32",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 32,
+   "box": [
+    2428,
+    1821,
+    5712,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s32.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s32",
+   "text": "נדק ניל גיימן",
+   "lines": [
+    "נדק ניל גיימן"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s33",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 33,
+   "box": [
+    2428,
+    1821,
+    5712,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s33.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s33",
+   "text": "קסמים",
+   "lines": [
+    "קסמים"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s34",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 34,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s34.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s34",
+   "text": "גילדת הארפתקנים אליופולוס",
+   "lines": [
+    "גילדת הארפתקנים אליופולוס"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "גילדת ההרפתקנים",
+   "author": "קלארק, זאק לוראן",
+   "tier": "AUTO",
+   "score": 106.0,
+   "matched_text": "גילדת הארפתקנים אליופולוס",
+   "catalog_id": "990052811660205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s35",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 35,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s35.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s35",
+   "text": "אלקטרז נגד ספרני הרשע 1",
+   "lines": [
+    "אלקטרז נגד ספרני הרשע 1"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "אלקטרז נגד ספרני הרשע 1",
+   "author": "ברנדון סנדרסון",
+   "tier": "AUTO",
+   "score": 115.0,
+   "matched_text": "אלקטרז נגד ספרני הרשע 1",
+   "catalog_id": "sim1009672"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s36",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 36,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s36.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s36",
+   "text": "אלקטרז נגד ספרני הרשע 2 - עצמות הלבלר",
+   "lines": [
+    "אלקטרז נגד ספרני הרשע 2 - עצמות הלבלר"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s37",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 37,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s37.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s37",
+   "text": "סטמפי קיץ פאן הלרון",
+   "lines": [
+    "סטמפי קיץ פאן הלרון"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s38",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 38,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s38.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s38",
+   "text": "מיתולוגיה נורדית ניל גיימן",
+   "lines": [
+    "מיתולוגיה נורדית ניל גיימן"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "מיתולוגיה נורדית",
+   "author": "ניל גיימן",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "מיתולוגיה נורדית ניל גיימן",
+   "catalog_id": "sim993764"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s39",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 39,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s39.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s39",
+   "text": "מפתח הקסמים טוני אלמייל",
+   "lines": [
+    "מפתח הקסמים טוני אלמייל"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "מפתח הקסמים",
+   "author": "טוני אלמייל",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "מפתח הקסמים טוני אלמייל",
+   "catalog_id": "sim983713"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "45ecdce7302d_b0_s40",
+  "location": {
+   "image": "45ecdce7302d.jpeg",
+   "band": 0,
+   "index": 40,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\4b9fa6bea8c8\\crops\\45ecdce7302d_b0_s40.jpg",
+  "ocr": {
+   "spine_id": "45ecdce7302d_b0_s40",
+   "text": "שומרת הדרקונים קרול ווילקינסון",
+   "lines": [
+    "שומרת הדרקונים קרול ווילקינסון"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "שומרת הדרקונים",
+   "author": "קרול וילקינסון",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "שומרת הדרקונים קרול ווילקינסון",
+   "catalog_id": "sim960338"
+  },
+  "needs_fallback": false
+ }
+]

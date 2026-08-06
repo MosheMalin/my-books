@@ -202,8 +202,16 @@ updated baseline file. Rehearsed end-to-end: min_title_sim 47→95 was blocked
 sweep identical (other gates absorb it) — the hook proves non-regression,
 not that a change did anything. server.py changes only get a printed
 reminder: `_build_catalog`'s retrieval chain is invisible to the offline
-replay and needs a manual `--live` judgment. On a machine without `work/`
-the check skips rather than blocks (nothing to measure there).
+replay and needs a manual `--live` judgment.
+
+The sweep's inputs are COMMITTED in `fixtures/sweep/` (~1MB JSON: each GT
+shelf's reads + candidates recording + provenance manifest, written by
+`sweep.py --export`): a fresh clone with no `work/` runs the gate and
+reproduces the baseline exactly (verified with an empty BOOKSNAP_WORK).
+`--accept-baseline` re-exports automatically so the committed inputs and the
+committed numbers can't drift apart; `find_fixtures` prefers local `work/`
+data and falls back to the export. If neither exists the check skips rather
+than blocks.
 
 Two hard-won rules:
 

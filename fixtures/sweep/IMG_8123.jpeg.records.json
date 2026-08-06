@@ -1,0 +1,659 @@
+[
+ {
+  "spine_id": "7894e7592159_b0_s00",
+  "location": {
+   "image": "7894e7592159.jpeg",
+   "band": 0,
+   "index": 0,
+   "box": [
+    0,
+    1821,
+    3284,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\f48e68d0804b\\crops\\7894e7592159_b0_s00.jpg",
+  "ocr": {
+   "spine_id": "7894e7592159_b0_s00",
+   "text": "החייל האמיץ שוויק",
+   "lines": [
+    "החייל האמיץ שוויק"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "החייל האמיץ שוויק",
+   "author": "ירוסלב האשק",
+   "tier": "AUTO",
+   "score": 115.0,
+   "matched_text": "החייל האמיץ שוויק",
+   "catalog_id": "sim48762"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "7894e7592159_b0_s01",
+  "location": {
+   "image": "7894e7592159.jpeg",
+   "band": 0,
+   "index": 1,
+   "box": [
+    0,
+    1821,
+    3284,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\f48e68d0804b\\crops\\7894e7592159_b0_s01.jpg",
+  "ocr": {
+   "spine_id": "7894e7592159_b0_s01",
+   "text": "שק' החייל האמיץ שווייק",
+   "lines": [
+    "שק' החייל האמיץ שווייק"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "החייל האמיץ שווייק: 2 הכרכים",
+   "author": "ירוסלב האשק",
+   "tier": "AUTO",
+   "score": 93.8,
+   "matched_text": "שק' החייל האמיץ שווייק",
+   "catalog_id": "sim18523"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "7894e7592159_b0_s02",
+  "location": {
+   "image": "7894e7592159.jpeg",
+   "band": 0,
+   "index": 2,
+   "box": [
+    0,
+    1821,
+    3284,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\f48e68d0804b\\crops\\7894e7592159_b0_s02.jpg",
+  "ocr": {
+   "spine_id": "7894e7592159_b0_s02",
+   "text": "שוגון",
+   "lines": [
+    "שוגון"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "שוגון",
+   "author": "ג'יימס קלאוול",
+   "tier": "REVIEW",
+   "score": 115.0,
+   "matched_text": "שוגון",
+   "catalog_id": "sim995712"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "7894e7592159_b0_s03",
+  "location": {
+   "image": "7894e7592159.jpeg",
+   "band": 0,
+   "index": 3,
+   "box": [
+    0,
+    1821,
+    3284,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\f48e68d0804b\\crops\\7894e7592159_b0_s03.jpg",
+  "ocr": {
+   "spine_id": "7894e7592159_b0_s03",
+   "text": "מחתרת המסילה",
+   "lines": [
+    "מחתרת המסילה"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "מחתרת המסילה",
+   "author": "קולסון וייטהד",
+   "tier": "AUTO",
+   "score": 115.0,
+   "matched_text": "מחתרת המסילה",
+   "catalog_id": "sim989856"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "7894e7592159_b0_s04",
+  "location": {
+   "image": "7894e7592159.jpeg",
+   "band": 0,
+   "index": 4,
+   "box": [
+    0,
+    1821,
+    3284,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\f48e68d0804b\\crops\\7894e7592159_b0_s04.jpg",
+  "ocr": {
+   "spine_id": "7894e7592159_b0_s04",
+   "text": "קמצ'טקה",
+   "lines": [
+    "קמצ'טקה"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "קמצ'טקה",
+   "author": "מרסלו פיגרס",
+   "tier": "AUTO",
+   "score": 115.0,
+   "matched_text": "קמצ'טקה",
+   "catalog_id": "sim958341"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "7894e7592159_b0_s05",
+  "location": {
+   "image": "7894e7592159.jpeg",
+   "band": 0,
+   "index": 5,
+   "box": [
+    0,
+    1821,
+    3284,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\f48e68d0804b\\crops\\7894e7592159_b0_s05.jpg",
+  "ocr": {
+   "spine_id": "7894e7592159_b0_s05",
+   "text": "מלכוד 22 ג'וזף הלר",
+   "lines": [
+    "מלכוד 22 ג'וזף הלר"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "7894e7592159_b0_s06",
+  "location": {
+   "image": "7894e7592159.jpeg",
+   "band": 0,
+   "index": 6,
+   "box": [
+    0,
+    1821,
+    3284,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\f48e68d0804b\\crops\\7894e7592159_b0_s06.jpg",
+  "ocr": {
+   "spine_id": "7894e7592159_b0_s06",
+   "text": "אפלה בצהריים קסטלר",
+   "lines": [
+    "אפלה בצהריים קסטלר"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "אפלה בצהריים",
+   "author": "ארתור קסטלר",
+   "tier": "AUTO",
+   "score": 122.5,
+   "matched_text": "אפלה בצהריים קסטלר",
+   "catalog_id": "sim18212"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "7894e7592159_b0_s07",
+  "location": {
+   "image": "7894e7592159.jpeg",
+   "band": 0,
+   "index": 7,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\f48e68d0804b\\crops\\7894e7592159_b0_s07.jpg",
+  "ocr": {
+   "spine_id": "7894e7592159_b0_s07",
+   "text": "החייל האשק ירוסלב",
+   "lines": [
+    "החייל האשק ירוסלב"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "7894e7592159_b0_s08",
+  "location": {
+   "image": "7894e7592159.jpeg",
+   "band": 0,
+   "index": 8,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\f48e68d0804b\\crops\\7894e7592159_b0_s08.jpg",
+  "ocr": {
+   "spine_id": "7894e7592159_b0_s08",
+   "text": "שוגון | ג'יימס קלאוול ג'יימס קלאוול",
+   "lines": [
+    "שוגון | ג'יימס קלאוול ג'יימס קלאוול"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "שוגון",
+   "author": "ג'יימס קלאוול",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "שוגון | ג'יימס קלאוול ג'יימס קלאוול",
+   "catalog_id": "sim995712"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "7894e7592159_b0_s09",
+  "location": {
+   "image": "7894e7592159.jpeg",
+   "band": 0,
+   "index": 9,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\f48e68d0804b\\crops\\7894e7592159_b0_s09.jpg",
+  "ocr": {
+   "spine_id": "7894e7592159_b0_s09",
+   "text": "מחתרת קולסון וייטהד קולסון וייטהד",
+   "lines": [
+    "מחתרת קולסון וייטהד קולסון וייטהד"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "7894e7592159_b0_s10",
+  "location": {
+   "image": "7894e7592159.jpeg",
+   "band": 0,
+   "index": 10,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\f48e68d0804b\\crops\\7894e7592159_b0_s10.jpg",
+  "ocr": {
+   "spine_id": "7894e7592159_b0_s10",
+   "text": "קמצ'ה מרסלו פיגרס",
+   "lines": [
+    "קמצ'ה מרסלו פיגרס"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "7894e7592159_b0_s11",
+  "location": {
+   "image": "7894e7592159.jpeg",
+   "band": 0,
+   "index": 11,
+   "box": [
+    2428,
+    1821,
+    5712,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\f48e68d0804b\\crops\\7894e7592159_b0_s11.jpg",
+  "ocr": {
+   "spine_id": "7894e7592159_b0_s11",
+   "text": "חצי שמש צהובה צ'יממנדה נגוזי אדיצי'ה",
+   "lines": [
+    "חצי שמש צהובה צ'יממנדה נגוזי אדיצי'ה"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "חצי שמש צהובה",
+   "author": "צ'יממנדה נגוזי אדיצ'יה",
+   "tier": "AUTO",
+   "score": 125.0,
+   "matched_text": "חצי שמש צהובה צ'יממנדה נגוזי אדיצי'ה",
+   "catalog_id": "sim608427"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "7894e7592159_b0_s12",
+  "location": {
+   "image": "7894e7592159.jpeg",
+   "band": 0,
+   "index": 12,
+   "box": [
+    2428,
+    1821,
+    5712,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\f48e68d0804b\\crops\\7894e7592159_b0_s12.jpg",
+  "ocr": {
+   "spine_id": "7894e7592159_b0_s12",
+   "text": "איגוד השוטרים היידישים מייקל שייבון",
+   "lines": [
+    "איגוד השוטרים היידישים מייקל שייבון"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "איגוד השוטרים היידים",
+   "author": "שייבון, מייקל",
+   "tier": "AUTO",
+   "score": 123.6,
+   "matched_text": "איגוד השוטרים היידישים מייקל שייבון",
+   "catalog_id": "990025861030205171"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "7894e7592159_b0_s13",
+  "location": {
+   "image": "7894e7592159.jpeg",
+   "band": 0,
+   "index": 13,
+   "box": [
+    2428,
+    1821,
+    5712,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\f48e68d0804b\\crops\\7894e7592159_b0_s13.jpg",
+  "ocr": {
+   "spine_id": "7894e7592159_b0_s13",
+   "text": "עמודי תבל",
+   "lines": [
+    "עמודי תבל"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "עמודי תבל",
+   "author": "קן פולט",
+   "tier": "AUTO",
+   "score": 115.0,
+   "matched_text": "עמודי תבל",
+   "catalog_id": "sim19663"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "7894e7592159_b0_s14",
+  "location": {
+   "image": "7894e7592159.jpeg",
+   "band": 0,
+   "index": 14,
+   "box": [
+    2428,
+    1821,
+    5712,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\f48e68d0804b\\crops\\7894e7592159_b0_s14.jpg",
+  "ocr": {
+   "spine_id": "7894e7592159_b0_s14",
+   "text": "הסיפור השלושה-עשר דיאן סטרפילד",
+   "lines": [
+    "הסיפור השלושה-עשר דיאן סטרפילד"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "הסיפור השלושה-עשר",
+   "author": "דיאן סטרפילד",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "הסיפור השלושה-עשר דיאן סטרפילד",
+   "catalog_id": "sim214387"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "7894e7592159_b0_s15",
+  "location": {
+   "image": "7894e7592159.jpeg",
+   "band": 0,
+   "index": 15,
+   "box": [
+    2428,
+    1821,
+    5712,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\f48e68d0804b\\crops\\7894e7592159_b0_s15.jpg",
+  "ocr": {
+   "spine_id": "7894e7592159_b0_s15",
+   "text": "הספר הכתן",
+   "lines": [
+    "הספר הכתן"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "7894e7592159_b0_s16",
+  "location": {
+   "image": "7894e7592159.jpeg",
+   "band": 0,
+   "index": 16,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\f48e68d0804b\\crops\\7894e7592159_b0_s16.jpg",
+  "ocr": {
+   "spine_id": "7894e7592159_b0_s16",
+   "text": "צ'יממנדה נגוזי אדיצ'יה",
+   "lines": [
+    "צ'יממנדה נגוזי אדיצ'יה"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "7894e7592159_b0_s17",
+  "location": {
+   "image": "7894e7592159.jpeg",
+   "band": 0,
+   "index": 17,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\f48e68d0804b\\crops\\7894e7592159_b0_s17.jpg",
+  "ocr": {
+   "spine_id": "7894e7592159_b0_s17",
+   "text": "מייקל שייבון איגוד",
+   "lines": [
+    "מייקל שייבון איגוד"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "7894e7592159_b0_s18",
+  "location": {
+   "image": "7894e7592159.jpeg",
+   "band": 0,
+   "index": 18,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\f48e68d0804b\\crops\\7894e7592159_b0_s18.jpg",
+  "ocr": {
+   "spine_id": "7894e7592159_b0_s18",
+   "text": "קן פולט",
+   "lines": [
+    "קן פולט"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "7894e7592159_b0_s19",
+  "location": {
+   "image": "7894e7592159.jpeg",
+   "band": 0,
+   "index": 19,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\f48e68d0804b\\crops\\7894e7592159_b0_s19.jpg",
+  "ocr": {
+   "spine_id": "7894e7592159_b0_s19",
+   "text": "סלדן אדוארדס",
+   "lines": [
+    "סלדן אדוארדס"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ }
+]

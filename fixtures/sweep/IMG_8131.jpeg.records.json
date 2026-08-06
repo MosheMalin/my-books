@@ -1,0 +1,1150 @@
+[
+ {
+  "spine_id": "56b1710d5c3c_b0_s00",
+  "location": {
+   "image": "56b1710d5c3c.jpeg",
+   "band": 0,
+   "index": 0,
+   "box": [
+    0,
+    1821,
+    3284,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\54bd7aa4ed7e\\crops\\56b1710d5c3c_b0_s00.jpg",
+  "ocr": {
+   "spine_id": "56b1710d5c3c_b0_s00",
+   "text": "העסק המשפחתי צ'רלס סטרוס",
+   "lines": [
+    "העסק המשפחתי צ'רלס סטרוס"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "העסק המשפחתי",
+   "author": "צ'רלס סטרוס",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "העסק המשפחתי צ'רלס סטרוס",
+   "catalog_id": "sim973020"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "56b1710d5c3c_b0_s01",
+  "location": {
+   "image": "56b1710d5c3c.jpeg",
+   "band": 0,
+   "index": 1,
+   "box": [
+    0,
+    1821,
+    3284,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\54bd7aa4ed7e\\crops\\56b1710d5c3c_b0_s01.jpg",
+  "ocr": {
+   "spine_id": "56b1710d5c3c_b0_s01",
+   "text": "המשפחה הנסתרת צ'רלס סטרוס",
+   "lines": [
+    "המשפחה הנסתרת צ'רלס סטרוס"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "המשפחה הנסתרת",
+   "author": "צ'רלס סטרוס",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "המשפחה הנסתרת צ'רלס סטרוס",
+   "catalog_id": "sim981649"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "56b1710d5c3c_b0_s02",
+  "location": {
+   "image": "56b1710d5c3c.jpeg",
+   "band": 0,
+   "index": 2,
+   "box": [
+    0,
+    1821,
+    3284,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\54bd7aa4ed7e\\crops\\56b1710d5c3c_b0_s02.jpg",
+  "ocr": {
+   "spine_id": "56b1710d5c3c_b0_s02",
+   "text": "הצי האבוד: תעוזה ג'ק קמפבל",
+   "lines": [
+    "הצי האבוד: תעוזה ג'ק קמפבל"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "הצי האבוד: תעוזה",
+   "author": "ג'ק קמפבל",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "הצי האבוד: תעוזה ג'ק קמפבל",
+   "catalog_id": "sim982199"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "56b1710d5c3c_b0_s03",
+  "location": {
+   "image": "56b1710d5c3c.jpeg",
+   "band": 0,
+   "index": 3,
+   "box": [
+    0,
+    1821,
+    3284,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\54bd7aa4ed7e\\crops\\56b1710d5c3c_b0_s03.jpg",
+  "ocr": {
+   "spine_id": "56b1710d5c3c_b0_s03",
+   "text": "הצי האבוד: אומץ ג'ק קמפבל",
+   "lines": [
+    "הצי האבוד: אומץ ג'ק קמפבל"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "הצי האבוד :אומץ",
+   "author": "ג'ק קמפבל",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "הצי האבוד: אומץ ג'ק קמפבל",
+   "catalog_id": "sim980855"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "56b1710d5c3c_b0_s04",
+  "location": {
+   "image": "56b1710d5c3c.jpeg",
+   "band": 0,
+   "index": 4,
+   "box": [
+    0,
+    1821,
+    3284,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\54bd7aa4ed7e\\crops\\56b1710d5c3c_b0_s04.jpg",
+  "ocr": {
+   "spine_id": "56b1710d5c3c_b0_s04",
+   "text": "הצי האבוד: ניצחון ג'ק קמפבל",
+   "lines": [
+    "הצי האבוד: ניצחון ג'ק קמפבל"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "הצי האבוד :ניצחון",
+   "author": "ג'ק קמפבל",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "הצי האבוד: ניצחון ג'ק קמפבל",
+   "catalog_id": "sim990612"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "56b1710d5c3c_b0_s05",
+  "location": {
+   "image": "56b1710d5c3c.jpeg",
+   "band": 0,
+   "index": 5,
+   "box": [
+    0,
+    1821,
+    3284,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\54bd7aa4ed7e\\crops\\56b1710d5c3c_b0_s05.jpg",
+  "ocr": {
+   "spine_id": "56b1710d5c3c_b0_s05",
+   "text": "הצי האבוד: נחישות ג'ק קמפבל",
+   "lines": [
+    "הצי האבוד: נחישות ג'ק קמפבל"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "הצי האבוד :נחישות",
+   "author": "ג'ק קמפבל",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "הצי האבוד: נחישות ג'ק קמפבל",
+   "catalog_id": "sim987580"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "56b1710d5c3c_b0_s06",
+  "location": {
+   "image": "56b1710d5c3c.jpeg",
+   "band": 0,
+   "index": 6,
+   "box": [
+    0,
+    1821,
+    3284,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\54bd7aa4ed7e\\crops\\56b1710d5c3c_b0_s06.jpg",
+  "ocr": {
+   "spine_id": "56b1710d5c3c_b0_s06",
+   "text": "גנב הקוונטים האנו רג'ניאמי",
+   "lines": [
+    "גנב הקוונטים האנו רג'ניאמי"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "56b1710d5c3c_b0_s07",
+  "location": {
+   "image": "56b1710d5c3c.jpeg",
+   "band": 0,
+   "index": 7,
+   "box": [
+    0,
+    1821,
+    3284,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\54bd7aa4ed7e\\crops\\56b1710d5c3c_b0_s07.jpg",
+  "ocr": {
+   "spine_id": "56b1710d5c3c_b0_s07",
+   "text": "ארכיון הזוועות צ'רלס סטרוס",
+   "lines": [
+    "ארכיון הזוועות צ'רלס סטרוס"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "ארכיון הזוועות",
+   "author": "צ'רלס סטרוס",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "ארכיון הזוועות צ'רלס סטרוס",
+   "catalog_id": "sim984729"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "56b1710d5c3c_b0_s08",
+  "location": {
+   "image": "56b1710d5c3c.jpeg",
+   "band": 0,
+   "index": 8,
+   "box": [
+    0,
+    1821,
+    3284,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\54bd7aa4ed7e\\crops\\56b1710d5c3c_b0_s08.jpg",
+  "ocr": {
+   "spine_id": "56b1710d5c3c_b0_s08",
+   "text": "הנערה עם כל המתנות מ.ר. קרי",
+   "lines": [
+    "הנערה עם כל המתנות מ.ר. קרי"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "הנערה עם כל המתנות",
+   "author": "מ.ר. קרי",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "הנערה עם כל המתנות מ.ר. קרי",
+   "catalog_id": "sim982193"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "56b1710d5c3c_b0_s09",
+  "location": {
+   "image": "56b1710d5c3c.jpeg",
+   "band": 0,
+   "index": 9,
+   "box": [
+    0,
+    1821,
+    3284,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\54bd7aa4ed7e\\crops\\56b1710d5c3c_b0_s09.jpg",
+  "ocr": {
+   "spine_id": "56b1710d5c3c_b0_s09",
+   "text": "14 פיטר קליינס",
+   "lines": [
+    "14 פיטר קליינס"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "56b1710d5c3c_b0_s10",
+  "location": {
+   "image": "56b1710d5c3c.jpeg",
+   "band": 0,
+   "index": 10,
+   "box": [
+    0,
+    1821,
+    3284,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\54bd7aa4ed7e\\crops\\56b1710d5c3c_b0_s10.jpg",
+  "ocr": {
+   "spine_id": "56b1710d5c3c_b0_s10",
+   "text": "נוסעים בזמן אינם מתים ג'ק מקדוויט",
+   "lines": [
+    "נוסעים בזמן אינם מתים ג'ק מקדוויט"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "נוסעים בזמן אינם מתים",
+   "author": "ג'ק מקדוויט",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "נוסעים בזמן אינם מתים ג'ק מקדוויט",
+   "catalog_id": "sim972886"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "56b1710d5c3c_b0_s11",
+  "location": {
+   "image": "56b1710d5c3c.jpeg",
+   "band": 0,
+   "index": 11,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\54bd7aa4ed7e\\crops\\56b1710d5c3c_b0_s11.jpg",
+  "ocr": {
+   "spine_id": "56b1710d5c3c_b0_s11",
+   "text": "הצי האבוד: תע",
+   "lines": [
+    "הצי האבוד: תע"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "56b1710d5c3c_b0_s12",
+  "location": {
+   "image": "56b1710d5c3c.jpeg",
+   "band": 0,
+   "index": 12,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\54bd7aa4ed7e\\crops\\56b1710d5c3c_b0_s12.jpg",
+  "ocr": {
+   "spine_id": "56b1710d5c3c_b0_s12",
+   "text": "הצי האבוד: אנ",
+   "lines": [
+    "הצי האבוד: אנ"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "הצי האבוד :גבורה",
+   "author": "ג'ק קמפבל",
+   "tier": "AUTO",
+   "score": 82.4,
+   "matched_text": "הצי האבוד: אנ",
+   "catalog_id": "sim973019"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "56b1710d5c3c_b0_s13",
+  "location": {
+   "image": "56b1710d5c3c.jpeg",
+   "band": 0,
+   "index": 13,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\54bd7aa4ed7e\\crops\\56b1710d5c3c_b0_s13.jpg",
+  "ocr": {
+   "spine_id": "56b1710d5c3c_b0_s13",
+   "text": "הצי האבוד: ניצ",
+   "lines": [
+    "הצי האבוד: ניצ"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "56b1710d5c3c_b0_s14",
+  "location": {
+   "image": "56b1710d5c3c.jpeg",
+   "band": 0,
+   "index": 14,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\54bd7aa4ed7e\\crops\\56b1710d5c3c_b0_s14.jpg",
+  "ocr": {
+   "spine_id": "56b1710d5c3c_b0_s14",
+   "text": "הצי האבוד: נחי",
+   "lines": [
+    "הצי האבוד: נחי"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "56b1710d5c3c_b0_s15",
+  "location": {
+   "image": "56b1710d5c3c.jpeg",
+   "band": 0,
+   "index": 15,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\54bd7aa4ed7e\\crops\\56b1710d5c3c_b0_s15.jpg",
+  "ocr": {
+   "spine_id": "56b1710d5c3c_b0_s15",
+   "text": "גנב הקווננטס",
+   "lines": [
+    "גנב הקווננטס"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "56b1710d5c3c_b0_s16",
+  "location": {
+   "image": "56b1710d5c3c.jpeg",
+   "band": 0,
+   "index": 16,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\54bd7aa4ed7e\\crops\\56b1710d5c3c_b0_s16.jpg",
+  "ocr": {
+   "spine_id": "56b1710d5c3c_b0_s16",
+   "text": "הנערה עם כל",
+   "lines": [
+    "הנערה עם כל"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "56b1710d5c3c_b0_s17",
+  "location": {
+   "image": "56b1710d5c3c.jpeg",
+   "band": 0,
+   "index": 17,
+   "box": [
+    0,
+    0,
+    3284,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\54bd7aa4ed7e\\crops\\56b1710d5c3c_b0_s17.jpg",
+  "ocr": {
+   "spine_id": "56b1710d5c3c_b0_s17",
+   "text": "נוסעים בזמן אינס",
+   "lines": [
+    "נוסעים בזמן אינס"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "56b1710d5c3c_b0_s18",
+  "location": {
+   "image": "56b1710d5c3c.jpeg",
+   "band": 0,
+   "index": 18,
+   "box": [
+    2428,
+    1821,
+    5712,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\54bd7aa4ed7e\\crops\\56b1710d5c3c_b0_s18.jpg",
+  "ocr": {
+   "spine_id": "56b1710d5c3c_b0_s18",
+   "text": "הפנטזיות של היינליין רוברט א. היינליין",
+   "lines": [
+    "הפנטזיות של היינליין רוברט א. היינליין"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "הפנטזיות של היינליין",
+   "author": "רוברט היינליין",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "הפנטזיות של היינליין רוברט א. היינליין",
+   "catalog_id": "sim968039"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "56b1710d5c3c_b0_s19",
+  "location": {
+   "image": "56b1710d5c3c.jpeg",
+   "band": 0,
+   "index": 19,
+   "box": [
+    2428,
+    1821,
+    5712,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\54bd7aa4ed7e\\crops\\56b1710d5c3c_b0_s19.jpg",
+  "ocr": {
+   "spine_id": "56b1710d5c3c_b0_s19",
+   "text": "אקסלרנדו צ'רלס סטרוס",
+   "lines": [
+    "אקסלרנדו צ'רלס סטרוס"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "56b1710d5c3c_b0_s20",
+  "location": {
+   "image": "56b1710d5c3c.jpeg",
+   "band": 0,
+   "index": 20,
+   "box": [
+    2428,
+    1821,
+    5712,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\54bd7aa4ed7e\\crops\\56b1710d5c3c_b0_s20.jpg",
+  "ocr": {
+   "spine_id": "56b1710d5c3c_b0_s20",
+   "text": "רוח הרפאים: סיפור אהבה ג'ונתן קרול",
+   "lines": [
+    "רוח הרפאים: סיפור אהבה ג'ונתן קרול"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "רוח הרפאים: סיפור אהבה",
+   "author": "ג'ונתן קרול",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "רוח הרפאים: סיפור אהבה ג'ונתן קרול",
+   "catalog_id": "sim958354"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "56b1710d5c3c_b0_s21",
+  "location": {
+   "image": "56b1710d5c3c.jpeg",
+   "band": 0,
+   "index": 21,
+   "box": [
+    2428,
+    1821,
+    5712,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\54bd7aa4ed7e\\crops\\56b1710d5c3c_b0_s21.jpg",
+  "ocr": {
+   "spine_id": "56b1710d5c3c_b0_s21",
+   "text": "מכונת הזמן המקרית ג'ו הלדמן",
+   "lines": [
+    "מכונת הזמן המקרית ג'ו הלדמן"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "מכונת הזמן המקרית",
+   "author": "ג'ו הלדמן",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "מכונת הזמן המקרית ג'ו הלדמן",
+   "catalog_id": "sim960309"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "56b1710d5c3c_b0_s22",
+  "location": {
+   "image": "56b1710d5c3c.jpeg",
+   "band": 0,
+   "index": 22,
+   "box": [
+    2428,
+    1821,
+    5712,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\54bd7aa4ed7e\\crops\\56b1710d5c3c_b0_s22.jpg",
+  "ocr": {
+   "spine_id": "56b1710d5c3c_b0_s22",
+   "text": "אבן ירח ורד טוכטרמן",
+   "lines": [
+    "אבן ירח ורד טוכטרמן"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "אבן ירח",
+   "author": "ורד טוכטרמן",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "אבן ירח ורד טוכטרמן",
+   "catalog_id": "sim987600"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "56b1710d5c3c_b0_s23",
+  "location": {
+   "image": "56b1710d5c3c.jpeg",
+   "band": 0,
+   "index": 23,
+   "box": [
+    2428,
+    1821,
+    5712,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\54bd7aa4ed7e\\crops\\56b1710d5c3c_b0_s23.jpg",
+  "ocr": {
+   "spine_id": "56b1710d5c3c_b0_s23",
+   "text": "דם כחול ורד טוכטרמן",
+   "lines": [
+    "דם כחול ורד טוכטרמן"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "דם כחול",
+   "author": "ורד טוכטרמן",
+   "tier": "REVIEW",
+   "score": 130.0,
+   "matched_text": "דם כחול ורד טוכטרמן",
+   "catalog_id": "sim957134"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "56b1710d5c3c_b0_s24",
+  "location": {
+   "image": "56b1710d5c3c.jpeg",
+   "band": 0,
+   "index": 24,
+   "box": [
+    2428,
+    1821,
+    5712,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\54bd7aa4ed7e\\crops\\56b1710d5c3c_b0_s24.jpg",
+  "ocr": {
+   "spine_id": "56b1710d5c3c_b0_s24",
+   "text": "שלושה ימים בספטמבר רון יניב",
+   "lines": [
+    "שלושה ימים בספטמבר רון יניב"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "שלושה ימים",
+   "author": "אנדרס רוסלנד",
+   "tier": "AUTO",
+   "score": 115.0,
+   "matched_text": "שלושה ימים בספטמבר רון יניב",
+   "catalog_id": "sim1002268"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "56b1710d5c3c_b0_s25",
+  "location": {
+   "image": "56b1710d5c3c.jpeg",
+   "band": 0,
+   "index": 25,
+   "box": [
+    2428,
+    1821,
+    5712,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\54bd7aa4ed7e\\crops\\56b1710d5c3c_b0_s25.jpg",
+  "ocr": {
+   "spine_id": "56b1710d5c3c_b0_s25",
+   "text": "מלך ירושלים ניר יניב",
+   "lines": [
+    "מלך ירושלים ניר יניב"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "מלך ירושלים",
+   "author": "ניר יניב",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "מלך ירושלים ניר יניב",
+   "catalog_id": "sim1001094"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "56b1710d5c3c_b0_s26",
+  "location": {
+   "image": "56b1710d5c3c.jpeg",
+   "band": 0,
+   "index": 26,
+   "box": [
+    2428,
+    1821,
+    5712,
+    4284
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\54bd7aa4ed7e\\crops\\56b1710d5c3c_b0_s26.jpg",
+  "ocr": {
+   "spine_id": "56b1710d5c3c_b0_s26",
+   "text": "לדגדג פרפרים גיא חסון",
+   "lines": [
+    "לדגדג פרפרים גיא חסון"
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "לדגדג פרפרים",
+   "author": "גיא חסון",
+   "tier": "AUTO",
+   "score": 130.0,
+   "matched_text": "לדגדג פרפרים גיא חסון",
+   "catalog_id": "sim985624"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "56b1710d5c3c_b0_s27",
+  "location": {
+   "image": "56b1710d5c3c.jpeg",
+   "band": 0,
+   "index": 27,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\54bd7aa4ed7e\\crops\\56b1710d5c3c_b0_s27.jpg",
+  "ocr": {
+   "spine_id": "56b1710d5c3c_b0_s27",
+   "text": "הנערה עם כ...",
+   "lines": [
+    "הנערה עם כ..."
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "56b1710d5c3c_b0_s28",
+  "location": {
+   "image": "56b1710d5c3c.jpeg",
+   "band": 0,
+   "index": 28,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\54bd7aa4ed7e\\crops\\56b1710d5c3c_b0_s28.jpg",
+  "ocr": {
+   "spine_id": "56b1710d5c3c_b0_s28",
+   "text": "נוסעים בזמן אינ...",
+   "lines": [
+    "נוסעים בזמן אינ..."
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "56b1710d5c3c_b0_s29",
+  "location": {
+   "image": "56b1710d5c3c.jpeg",
+   "band": 0,
+   "index": 29,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\54bd7aa4ed7e\\crops\\56b1710d5c3c_b0_s29.jpg",
+  "ocr": {
+   "spine_id": "56b1710d5c3c_b0_s29",
+   "text": "הפנטזיות של היינ...",
+   "lines": [
+    "הפנטזיות של היינ..."
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "56b1710d5c3c_b0_s30",
+  "location": {
+   "image": "56b1710d5c3c.jpeg",
+   "band": 0,
+   "index": 30,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\54bd7aa4ed7e\\crops\\56b1710d5c3c_b0_s30.jpg",
+  "ocr": {
+   "spine_id": "56b1710d5c3c_b0_s30",
+   "text": "רוח הרפאים: סיפ...",
+   "lines": [
+    "רוח הרפאים: סיפ..."
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "56b1710d5c3c_b0_s31",
+  "location": {
+   "image": "56b1710d5c3c.jpeg",
+   "band": 0,
+   "index": 31,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\54bd7aa4ed7e\\crops\\56b1710d5c3c_b0_s31.jpg",
+  "ocr": {
+   "spine_id": "56b1710d5c3c_b0_s31",
+   "text": "מכונת הזמן ה...",
+   "lines": [
+    "מכונת הזמן ה..."
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": {
+   "title": "מכונת הזמן",
+   "author": "ה.ג'. וולס",
+   "tier": "REVIEW",
+   "score": 115.0,
+   "matched_text": "מכונת הזמן ה...",
+   "catalog_id": "sim36586"
+  },
+  "needs_fallback": false
+ },
+ {
+  "spine_id": "56b1710d5c3c_b0_s32",
+  "location": {
+   "image": "56b1710d5c3c.jpeg",
+   "band": 0,
+   "index": 32,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\54bd7aa4ed7e\\crops\\56b1710d5c3c_b0_s32.jpg",
+  "ocr": {
+   "spine_id": "56b1710d5c3c_b0_s32",
+   "text": "שלושה ימים בספ...",
+   "lines": [
+    "שלושה ימים בספ..."
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "56b1710d5c3c_b0_s33",
+  "location": {
+   "image": "56b1710d5c3c.jpeg",
+   "band": 0,
+   "index": 33,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\54bd7aa4ed7e\\crops\\56b1710d5c3c_b0_s33.jpg",
+  "ocr": {
+   "spine_id": "56b1710d5c3c_b0_s33",
+   "text": "מלך ירוש...",
+   "lines": [
+    "מלך ירוש..."
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ },
+ {
+  "spine_id": "56b1710d5c3c_b0_s34",
+  "location": {
+   "image": "56b1710d5c3c.jpeg",
+   "band": 0,
+   "index": 34,
+   "box": [
+    2428,
+    0,
+    5712,
+    2463
+   ]
+  },
+  "crop_path": "D:\\Moshe\\git\\my-books\\work\\runs\\54bd7aa4ed7e\\crops\\56b1710d5c3c_b0_s34.jpg",
+  "ocr": {
+   "spine_id": "56b1710d5c3c_b0_s34",
+   "text": "לדגדג פר...",
+   "lines": [
+    "לדגדג פר..."
+   ],
+   "score": 90,
+   "rotation": null,
+   "engine": "claude_page",
+   "words": [],
+   "ms": 0
+  },
+  "match": null,
+  "needs_fallback": true
+ }
+]

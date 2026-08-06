@@ -1,0 +1,49 @@
+{
+ "exported": "2026-08-06T13:37:28",
+ "code": {
+  "sha": "8727b92",
+  "dirty": true
+ },
+ "shelves": {
+  "IMG_6082.jpeg": {
+   "origin": "e2-probe",
+   "records_sha": "fe43f7a1aca9",
+   "candidates_sha": "7825949a9d9c"
+  },
+  "IMG_7849.jpeg": {
+   "origin": "e2-probe",
+   "records_sha": "67c012a6c11e",
+   "candidates_sha": "44c43289659c"
+  },
+  "IMG_8123.jpeg": {
+   "origin": "run#8",
+   "records_sha": "892d14f0610f",
+   "candidates_sha": "6a1abc1417ac"
+  },
+  "IMG_8125.jpeg": {
+   "origin": "run#9",
+   "records_sha": "1d631776ddc9",
+   "candidates_sha": "567cd12b3a09"
+  },
+  "IMG_8131.jpeg": {
+   "origin": "run#13",
+   "records_sha": "4be002cd1687",
+   "candidates_sha": "50005ffa452d"
+  },
+  "IMG_8132.jpeg": {
+   "origin": "run#15",
+   "records_sha": "8e8679002a2e",
+   "candidates_sha": "cca451eadd48"
+  },
+  "IMG_8133.jpeg": {
+   "origin": "run#15",
+   "records_sha": "114770cdc2d9",
+   "candidates_sha": "f28a543e4cdf"
+  },
+  "IMG_8134.jpeg": {
+   "origin": "run#14",
+   "records_sha": "97c15da5c371",
+   "candidates_sha": "5b2bb0f557ac"
+  }
+ }
+}
