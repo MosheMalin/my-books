@@ -152,11 +152,39 @@ init arg for this; all optional, so the CLI path is unchanged.
 
 ## Measuring accuracy (do this before believing any change)
 
-`ground_truth.json` holds the owner's hand-labelled shelves (IMG_6082: 21
-books, IMG_7849: 14). `booksnap/scoring.py` reports precision/recall over the
+`ground_truth.json` holds the owner's hand-labelled shelves (8 as of
+2026-08-06). **GT coverage is CURATED, not automatic** (owner decision): a
+processed shelf joins the fixture only when the owner chooses to label it —
+do not treat unlabelled shelves (e.g. run 16's IMG_8135-8138) as a backlog
+or nag about them. Shelves without GT simply don't take part in sweeps.
+`booksnap/scoring.py` reports precision/recall over the
 DISTINCT set of books a run claims; `GET /api/runs/{id}/score` and
 `tools/rescore.py` expose it. **Precision is the expensive metric here** — a
 missing book is noticed, a phantom one silently rots in the catalog.
+
+**`tools/sweep.py` is the standard rule-tuning harness** (built 2026-08-06):
+it replays every GT shelf's STORED LLM reads + STORED candidates recording
+through the current match pipeline (the same post-match path as
+`Pipeline.run_page`, including fragment suppression and truncation demotion),
+scores each shelf, and appends the result to `work/experiments.jsonl`
+(full detail incl. config snapshot + phantom/missed lists in
+`work/experiments/<id>.json`). So a rules/threshold change is measured across
+the whole labelled collection in seconds, offline, without one Sonnet or
+catalog call. Rules of use:
+  - default replay mode is only valid for MATCHING changes. If the sweep
+    prints "N unrecorded queries", the change altered retrieval — re-measure
+    with `--live` (real sources, per-query disk caches, so repeats are ~free);
+  - `--live --sources simania,nli,...` selects which sources take part
+    (testing a new source = add it here first, promote to `_build_catalog`'s
+    baseline only after a measured win). Each live sweep records its
+    retrieval per shelf; `--replay-exp <id>` replays that snapshot, giving a
+    fixed retrieval context to compare rule variants against;
+  - the confirmed library is NEVER in a sweep catalog — owner decision: it is
+    an *outcome* of runs, not a source (revisit if the system ever has many
+    users). Caveat: recordings from runs 13+ were captured with the library
+    head in the chain, so its influence is frozen inside those recordings;
+  - baseline row 20260806-131823: AUTO mean P 0.94 R 0.73 F1 0.81, A+R
+    P 0.92 R 0.81 F1 0.86 over 8 shelves. `--list` shows history.
 
 Two hard-won rules:
 
@@ -313,23 +341,28 @@ BOOKSNAP_TESSDATA_FAST, BOOKSNAP_WORK.
 
 ## Tests
 
-`python tests/test_core.py` (7, matcher/normalize) and
-`python tests/test_integrations.py` (6, NLI+fallback adapters, fully mocked/
-offline — no key, no network, no cloud SDK needed). Keep these green.
+`python tests/test_core.py` (33, matcher/normalize/gates) and
+`python tests/test_integrations.py` (24, catalog+fallback adapters, fully
+mocked/offline — no key, no network, no cloud SDK needed). Keep these green.
+Counts grow with each run's fixes; SESSION_NOTES.md tracks the history.
 
-## Known constraints / next steps (roughly prioritised)
+## Known constraints / next steps (roughly prioritised, updated 2026-08-06)
 
-1. FIRST live NLI call: verify the `_parse` field mapping (see ⚠️ above).
-2. Wire ONE real fallback provider; measure the true combined match rate on the
-   4 sample photos (prototyping could only measure the deterministic ~76%).
-3. OCR is ~20s/spine single-threaded because of the 2 rot × 2 height × 2
-   binarize × 2 model search. Parallelise across cores; ALSO prune the variant
-   search (measure which combos actually produce winning reads) — directly
-   serves the "don't waste compute" goal.
-4. Segmentation occasionally over/under-splits adjacent same-colour spines; a
-   small YOLOv8 spine model would be more robust and handle tilted/horizontal
-   books. Only pursue if classical detector proves insufficient at scale.
-5. Wrap the core in FastAPI; build the PWA capture + review-screen front-end.
+1. **Any rules/threshold change goes through `tools/sweep.py` first** (see
+   "Measuring accuracy"): replay sweep for matching changes, `--live` when
+   retrieval is affected, note in the ledger. This supersedes ad-hoc
+   rescoring as the tune-and-measure loop.
+2. Candidate new retrieval sources (e.g. additional used-book shops): trial
+   via `sweep --live --sources ...`; promote into `server._build_catalog`'s
+   baseline only after a measured win on the fixture.
+3. Remaining recall losses on the labelled shelves are mostly READER-side
+   (misreads like עיר הזמן→עיד, thin/unread spines), not matching — a
+   second-pass read of unmatched regions is the unexplored lever.
+4. Longer term, multi-user: revisit the confirmed library as a retrieval
+   source (today it is an outcome of runs only, never a sweep/test source).
+5. Legacy spines mode (Tesseract) still costs ~20s/spine from the 2 rot × 2
+   height × 2 binarize × 2 model search; only worth pruning if that path is
+   ever needed again — llmpage is the default mode.
 
 ## Working style notes
 
