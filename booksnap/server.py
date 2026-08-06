@@ -78,6 +78,13 @@ STORE = WORK / "store.json"
 THUMB_WIDTH = 480
 ALLOWED_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
 
+# "is this book already here?" lookup (see /api/runs/{id}/lookup). These are
+# HUMAN-facing thresholds, not matcher gates: over-showing a near miss costs
+# a glance, missing one costs a duplicate hand-added book.
+STRONG_SIM = 88        # call it the same book
+NEAR_SIM = 65          # worth showing as "similar"
+READ_SIM = 78          # raw-read match; higher, reads carry author noise too
+
 app = FastAPI(title="booksnap")
 
 
@@ -673,6 +680,79 @@ def results(run_id: Optional[str] = None, image_id: Optional[str] = None) -> dic
         },
         "unique_titles": [{"title": t, "author": a} for t, a in unique],
     }
+
+
+@app.get("/api/runs/{run_id}/lookup")
+def lookup(run_id: str, q: str, limit: int = 3) -> dict:
+    """Is this book already accounted for? Three places it could hide.
+
+    The review flow's expensive human error is adding a book by hand that the
+    run DID find and the eye simply skipped (a 40-row shelf in a language
+    read right-to-left). This answers, for a typed title:
+
+      claims  — already matched in this run (possibly on another shelf);
+      reads   — a spine whose RAW READ looks like this title but matched
+                nothing: the fix there is 'find better' on that spine, not a
+                manual add, because that keeps the book tied to its crop;
+      library — already confirmed, from this run or any earlier one.
+
+    Deliberately server-side: it reuses catalog.normalize (geresh deletion,
+    final-letter folding) and rapidfuzz, so the search behaves like the
+    matcher rather than like a second, subtly different JS implementation.
+    """
+    from rapidfuzz import fuzz
+    from .catalog import normalize
+    from .library import load_library
+
+    data = _load()
+    run = data["runs"].get(run_id)
+    if not run:
+        raise HTTPException(404, "no such run")
+    nq = normalize(q)
+    if len(nq) < 2:
+        return {"query": q, "claims": [], "reads": [], "library": []}
+
+    def sim(text: str) -> float:
+        nt = normalize(text)
+        if not nt:
+            return 0.0
+        return max(fuzz.ratio(nq, nt), fuzz.token_set_ratio(nq, nt))
+
+    claims, reads = [], []
+    for iid in run.get("images", {}):
+        p = _records_path(run_id, iid)
+        if not p.exists():
+            continue
+        name = (data["images"].get(iid) or {}).get("name") or ""
+        for r in json.loads(p.read_text(encoding="utf-8")):
+            m = r.get("match") or {}
+            loc = r.get("location") or {}
+            where = {"spine_id": r["spine_id"], "image_name": name,
+                     "band": loc.get("band"), "index": loc.get("index")}
+            if m.get("title"):
+                s = sim(m["title"])
+                if s >= NEAR_SIM:
+                    claims.append({**where, "title": m["title"],
+                                   "author": m.get("author") or "",
+                                   "tier": m.get("tier"), "sim": round(s)})
+            else:
+                text = ((r.get("ocr") or {}).get("text") or "").strip()
+                # a read is title+author, so the title is a PART of it
+                s = max(sim(text), fuzz.partial_ratio(nq, normalize(text))) \
+                    if text else 0.0
+                if s >= READ_SIM:
+                    reads.append({**where, "ocr_text": text, "sim": round(s)})
+
+    lib = []
+    for b in (load_library().get("books") or {}).values():
+        s = sim(b.get("title", ""))
+        if s >= NEAR_SIM:
+            lib.append({"title": b["title"], "author": b.get("author") or "",
+                        "status": b.get("status"), "sim": round(s)})
+
+    top = lambda rows: sorted(rows, key=lambda r: -r["sim"])[:limit]
+    return {"query": q, "strong": STRONG_SIM,
+            "claims": top(claims), "reads": top(reads), "library": top(lib)}
 
 
 @app.get("/api/runs/{run_id}/score")
