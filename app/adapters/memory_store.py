@@ -71,6 +71,7 @@ class MemoryBookStore:
         ascending: bool = True,
         status: Status | None = None,
         author_key: str | None = None,
+        lent_out: bool | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> BookPage:
@@ -79,6 +80,8 @@ class MemoryBookStore:
             rows = [b for b in rows if b.status is status]
         if author_key is not None:
             rows = [b for b in rows if b.normalized_author == author_key]
+        if lent_out is not None:
+            rows = [b for b in rows if _any_copy_out(b) == lent_out]
 
         rows.sort(key=lambda b: _sort_key(b, sort), reverse=not ascending)
         total = len(rows)
@@ -108,6 +111,10 @@ class MemoryBookStore:
         return len(self._shelf(library))
 
 
+def _any_copy_out(book: Book) -> bool:
+    return any(c.lending is not None and c.lending.is_out for c in book.copies)
+
+
 def _sort_key(book: Book, sort: BookSort) -> tuple:
     """Mirror of the SQL ORDER BY in the sqlite adapter.
 
@@ -116,7 +123,7 @@ def _sort_key(book: Book, sort: BookSort) -> tuple:
     one twice and another never. The contract suite asserts it.
     """
     if sort is BookSort.AUTHOR:
-        return (book.normalized_author, book.normalized_title, book.id)
+        return (book.author_sort, book.normalized_title, book.id)
     if sort is BookSort.RECENTLY_ADDED:
         return (book.added_at or "", book.id)
     return (book.normalized_title, book.id)

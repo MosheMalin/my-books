@@ -25,6 +25,8 @@ sys.path.insert(0, str(REPO_ROOT))
 from app.domain import (
     AmbiguousCopy,
     Book,
+    CopyAlreadyLentOut,
+    CopyNotLentOut,
     DomainError,
     Provenance,
     Status,
@@ -33,9 +35,12 @@ from app.domain import (
     approve,
     book_key,
     edit,
+    edit_copy,
+    lend,
     new_book,
     observe,
     remove_from_shelf,
+    return_copy,
     set_work_fields,
 )
 
@@ -248,6 +253,82 @@ def test_editing_the_title_marks_every_copy_manual():
     assert all(c.status is Status.MANUAL for c in out.copies)
 
 
+# --- H5: lending is per copy, never per book (§5.2, P1.7) -----------------
+#
+# The structural half — Book has no lending attribute, only Copy does — is
+# `test_user_fields_land_on_the_right_side_of_the_split` above. These are the
+# behavioural half: lending one copy of a multi-copy book must not touch the
+# others, and the state machine (out / not out) must refuse a double-lend or
+# a return with nothing open.
+
+def test_lending_one_copy_leaves_its_sibling_untouched():
+    b = add_copy(_book(), copy_id="c2")
+    out = lend(b, "c1", lent_to="דנה", lent_at="2026-08-01", due_at="2026-09-01")
+    assert out.copy("c1").lending.lent_to == "דנה"
+    assert out.copy("c1").lending.is_out
+    assert out.copy("c2").lending is None, "lending leaked onto a sibling copy"
+
+
+def test_a_copy_already_out_must_be_returned_before_lending_again():
+    """Otherwise the earlier borrower's name is silently overwritten — exactly
+    the fact "who has my books" (§5.2) exists to answer correctly."""
+    b = lend(_book(), "c1", lent_to="דנה", lent_at="2026-08-01")
+    exc = _raises(CopyAlreadyLentOut, lend, b, "c1",
+                  lent_to="יוסי", lent_at="2026-08-05")
+    assert "דנה" in str(exc), "the error should name who has it"
+
+
+def test_returning_keeps_the_lending_record_as_history():
+    """Not cleared to None — same reasoning as provenance being append-only:
+    who last borrowed a copy is part of its history, not a transient flag."""
+    b = lend(_book(), "c1", lent_to="דנה", lent_at="2026-08-01")
+    out = return_copy(b, "c1", returned_at="2026-08-20")
+    lending = out.copy("c1").lending
+    assert lending is not None and lending.lent_to == "דנה"
+    assert lending.returned_at == "2026-08-20"
+    assert not lending.is_out
+
+
+def test_cannot_return_a_copy_that_was_never_lent():
+    _raises(CopyNotLentOut, return_copy, _book(), "c1", returned_at="2026-08-20")
+
+
+def test_cannot_return_a_copy_already_returned():
+    b = lend(_book(), "c1", lent_to="דנה", lent_at="2026-08-01")
+    b = return_copy(b, "c1", returned_at="2026-08-20")
+    _raises(CopyNotLentOut, return_copy, b, "c1", returned_at="2026-08-21")
+
+
+def test_a_copy_can_be_lent_again_once_returned():
+    b = lend(_book(), "c1", lent_to="דנה", lent_at="2026-08-01")
+    b = return_copy(b, "c1", returned_at="2026-08-20")
+    out = lend(b, "c1", lent_to="יוסי", lent_at="2026-08-21")
+    assert out.copy("c1").lending.lent_to == "יוסי"
+
+
+def test_lending_an_unknown_copy_id_raises():
+    _raises(UnknownCopy, lend, _book(), "nope", lent_to="דנה", lent_at="x")
+
+
+def test_edit_copy_changes_label_and_fields_but_not_status():
+    """Object-level metadata is not a claim about the book's IDENTITY, unlike
+    editing title/author — so unlike `edit()`, this must not touch status."""
+    b = _book()  # c1 is auto
+    out = edit_copy(b, "c1", label="כריכה רכה", tags=("מתנה",), condition="טוב")
+    assert out.copy("c1").label == "כריכה רכה"
+    assert out.copy("c1").fields.tags == ("מתנה",)
+    assert out.copy("c1").fields.condition == "טוב"
+    assert out.copy("c1").status is Status.AUTO, "a metadata edit must not raise status"
+
+
+def test_edit_copy_only_touches_fields_that_were_passed():
+    b = edit_copy(_book(), "c1", label="כריכה רכה", tags=("מתנה",), condition="טוב")
+    out = edit_copy(b, "c1", condition="קרוע")
+    assert out.copy("c1").label == "כריכה רכה", "an omitted field was cleared"
+    assert out.copy("c1").fields.tags == ("מתנה",), "an omitted field was cleared"
+    assert out.copy("c1").fields.condition == "קרוע"
+
+
 # --- search keys and the P1.3 migration contract --------------------------
 
 def test_book_key_is_byte_identical_to_the_legacy_library_key():
@@ -270,6 +351,36 @@ def test_search_keys_fold_what_the_matcher_folds():
     assert _book(title="שָׁלוֹם").normalized_title == "שלומ"
     # geresh DELETED in-word, not space-split — the run-16 lesson.
     assert _book(title="הצ'ופצ'יק").normalized_title == "הצופציק"
+
+
+def test_author_sorts_by_surname_in_both_shapes_the_real_data_uses():
+    """§6's "sort by author" means the shelf order. Sorting the stored string
+    files everyone under their GIVEN name, which makes the sort useless for
+    finding an author. Both shapes in the owner's 251 books are covered: 232
+    are `given surname`, 19 are `surname, given`."""
+    from app.domain import author_sort_key
+
+    assert author_sort_key("גרג הורביץ").startswith("הורביצ")
+    assert author_sort_key("אסימוב, אייזיק").startswith("אסימוב")
+    # A trailing parenthetical is part of "the rest", never the surname.
+    assert author_sort_key("מאירי, יואב (אדריכל)").startswith("מאירי")
+    # Same surname, different given names: the rest of the name is kept so
+    # they order by it instead of falling through to an unrelated tiebreak.
+    assert author_sort_key("אבשלום אליצור") > author_sort_key("אברהם אליצור")
+    # One-word and empty names must not crash or produce a leading space,
+    # which would sort before every real key.
+    assert author_sort_key("הומרוס") == "הומרוס"
+    assert author_sort_key("") == ""
+    assert not author_sort_key("ניל גיימן").startswith(" ")
+
+
+def test_author_sort_key_is_not_the_author_identity_key():
+    """`normalized_author` is what the author FILTER matches on and half the
+    search haystack. Reordering it to sort nicely would silently change which
+    books an author chip returns, so the two keys are separate on purpose."""
+    b = _book(author="גרג הורביץ")
+    assert b.normalized_author == "גרג הורביצ"
+    assert b.author_sort == "הורביצ גרג"
 
 
 def test_normalize_is_not_reimplemented_in_the_domain():

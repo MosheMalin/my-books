@@ -66,6 +66,39 @@ describe('Books tab', () => {
     expect(sort).toBeEnabled()
     await userEvent.type(screen.getByRole('searchbox'), 'Sap')
     await waitFor(() => expect(sort).toBeDisabled())
+    // Relevance has no direction to reverse either.
+    expect(screen.getByRole('button', { name: 'סדר עולה' })).toBeDisabled()
+  })
+
+  it('asks the server to reverse the order, and says which way it is', async () => {
+    const server = fakeServer([DURRELL, SAPIENS])
+    renderApp(<App />)
+    await screen.findByText('היער השיכור')
+    expect(server.calls.some((c) => c.includes('ascending=true'))).toBe(true)
+
+    await userEvent.click(screen.getByRole('button', { name: 'סדר עולה' }))
+    await waitFor(() =>
+      expect(server.calls.some((c) => c.includes('ascending=false'))).toBe(true))
+    // The direction is only "indicated" if the control changes with it.
+    expect(await screen.findByRole('button', { name: 'סדר יורד' }))
+      .toBeInTheDocument()
+  })
+
+  it('gives a new sort key its own natural direction', async () => {
+    // Carrying A-Z's "ascending" onto a date key answers a question nobody
+    // asked: recently added, oldest first.
+    const server = fakeServer([DURRELL, SAPIENS])
+    renderApp(<App />)
+    await screen.findByText('היער השיכור')
+
+    await userEvent.selectOptions(screen.getByRole('combobox'), 'recently_added')
+    await waitFor(() =>
+      expect(server.calls.some(
+        (c) => c.includes('sort=recently_added') && c.includes('ascending=false'),
+      )).toBe(true))
+    expect(server.calls.some(
+      (c) => c.includes('sort=recently_added') && c.includes('ascending=true'),
+    )).toBe(false)
   })
 
   it('drops a response that arrives after its query was superseded', async () => {
@@ -101,6 +134,27 @@ describe('Books tab', () => {
 
     // A single-select filter with no way back to "all" is a trap.
     await userEvent.click(chip)
+    expect(await screen.findByText('היער השיכור')).toBeInTheDocument()
+  })
+
+  it('filters to "who has my books" and back, same as any other chip', async () => {
+    const lent = book({ id: 'b4', title: 'מושאל כרגע', author: 'מחבר' })
+    lent.copies[0]!.lending = {
+      lent_to: 'דנה', lent_at: '2026-08-01T00:00:00Z',
+      due_at: null, returned_at: null, is_out: true,
+    }
+    const server = fakeServer([DURRELL, lent])
+    renderApp(<App />)
+    await screen.findByText('היער השיכור')
+
+    await userEvent.click(screen.getByRole('button', { name: 'מושאלים בלבד' }))
+    await waitFor(() =>
+      expect(server.calls.some((c) => c.includes('lent_out=true'))).toBe(true))
+    await waitFor(() =>
+      expect(screen.queryByText('היער השיכור')).not.toBeInTheDocument())
+    expect(screen.getByText('מושאל כרגע')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'מושאלים בלבד' }))
     expect(await screen.findByText('היער השיכור')).toBeInTheDocument()
   })
 

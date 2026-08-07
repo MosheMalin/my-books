@@ -159,7 +159,7 @@
         "type": "object"
       },
       "BookSort": {
-        "description": "Sort orders §6 lists as \"Must\". ``TITLE``/``AUTHOR`` sort by the\nNORMALIZED forms, so Hebrew orders sensibly regardless of nikud, geresh or\na leading particle in the stored string.",
+        "description": "Sort orders §6 lists as \"Must\". ``TITLE``/``AUTHOR`` sort by NORMALIZED\nforms, so Hebrew orders sensibly regardless of nikud, geresh or a leading\nparticle in the stored string.\n\n``AUTHOR`` orders by SURNAME (``app.domain.text.author_sort_key``), the way\na shelf is filed — not by the stored string, which would put every author\nunder their given name. Every implementation must agree; the contract\nsuite asserts it against each one.",
         "enum": [
           "title",
           "author",
@@ -167,6 +167,30 @@
         ],
         "title": "BookSort",
         "type": "string"
+      },
+      "CopyCreate": {
+        "description": "*\"I have another copy\"* (§5.1) — the only path that creates a second\nphysical object. No ``shelf_id`` here: shelves don't exist until P2.1, so\nevery copy today is unlocated regardless of how it was created.",
+        "properties": {
+          "condition": {
+            "default": "",
+            "title": "Condition",
+            "type": "string"
+          },
+          "label": {
+            "default": "",
+            "title": "Label",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          }
+        },
+        "title": "CopyCreate",
+        "type": "object"
       },
       "CopyDTO": {
         "description": "One physical object. Created only by a human action (§5.1).",
@@ -253,6 +277,49 @@
         "title": "CopyDTO",
         "type": "object"
       },
+      "CopyPatch": {
+        "description": "Fix a copy's own label/tags/condition. Object-level, unlike\n:class:`BookPatch` — describing \"paperback, torn cover\" is not a claim\nabout the book's identity, so unlike a title/author edit this does not\nchange the copy's status.",
+        "properties": {
+          "condition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Condition"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
+          }
+        },
+        "title": "CopyPatch",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -264,6 +331,32 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "LendRequest": {
+        "description": "*\"Lend it out\"*. ``lent_at`` is server time (the ``Clock``, like\n``added_at``), never client-supplied — a borrow date is a fact about when\nthe server recorded the action, not something the caller should be able\nto backdate.",
+        "properties": {
+          "due_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At"
+          },
+          "lent_to": {
+            "minLength": 1,
+            "title": "Lent To",
+            "type": "string"
+          }
+        },
+        "required": [
+          "lent_to"
+        ],
+        "title": "LendRequest",
         "type": "object"
       },
       "LendingDTO": {
@@ -579,6 +672,24 @@
             }
           },
           {
+            "description": "True for the \"who has my books\" view: books with at least one copy currently lent out.",
+            "in": "query",
+            "name": "lent_out",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "True for the \"who has my books\" view: books with at least one copy currently lent out.",
+              "title": "Lent Out"
+            }
+          },
+          {
             "in": "query",
             "name": "limit",
             "required": false,
@@ -835,6 +946,235 @@
           }
         },
         "summary": "Fix the title or author",
+        "tags": [
+          "books"
+        ]
+      }
+    },
+    "/api/v1/books/{book_id}/copies": {
+      "post": {
+        "description": "§5.1: the ONLY path that creates a second copy. Lands ``manual`` — a\nperson declaring a duplicate is the strongest evidence the system gets;\nno re-read can produce this (`app.domain.book.add_copy`).",
+        "operationId": "create_copy_api_v1_books__book_id__copies_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "book_id",
+            "required": true,
+            "schema": {
+              "title": "Book Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CopyCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "\"I have another copy\"",
+        "tags": [
+          "books"
+        ]
+      }
+    },
+    "/api/v1/books/{book_id}/copies/{copy_id}": {
+      "patch": {
+        "description": "Object-level metadata, not identity — unlike :func:`patch_book` this\nnever changes the copy's status (`app.domain.book.edit_copy`).",
+        "operationId": "patch_copy_api_v1_books__book_id__copies__copy_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "book_id",
+            "required": true,
+            "schema": {
+              "title": "Book Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "copy_id",
+            "required": true,
+            "schema": {
+              "title": "Copy Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CopyPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Fix a copy's label, tags or condition",
+        "tags": [
+          "books"
+        ]
+      }
+    },
+    "/api/v1/books/{book_id}/copies/{copy_id}/lend": {
+      "post": {
+        "description": "409 if the copy is already out — return it first (§5.2: one borrower\nper copy, or the earlier one is silently lost from \"who has my books\").",
+        "operationId": "lend_copy_api_v1_books__book_id__copies__copy_id__lend_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "book_id",
+            "required": true,
+            "schema": {
+              "title": "Book Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "copy_id",
+            "required": true,
+            "schema": {
+              "title": "Copy Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LendRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Lend a copy out",
+        "tags": [
+          "books"
+        ]
+      }
+    },
+    "/api/v1/books/{book_id}/copies/{copy_id}/return": {
+      "post": {
+        "description": "409 if the copy was never lent, or already marked returned — there is\nno open loan to close (`app.domain.book.return_copy`).",
+        "operationId": "return_copy_route_api_v1_books__book_id__copies__copy_id__return_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "book_id",
+            "required": true,
+            "schema": {
+              "title": "Book Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "copy_id",
+            "required": true,
+            "schema": {
+              "title": "Copy Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Mark a lent copy returned",
         "tags": [
           "books"
         ]

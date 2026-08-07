@@ -492,14 +492,16 @@ names to run a subset (`python tests/run_all.py test_api`).
 |---|---|---|
 | `test_core.py` | 52 | matcher / normalize / evidence gates |
 | `test_integrations.py` | 24 | catalog + fallback adapters, fully mocked/offline |
-| `test_domain.py` | 22 | the VISION rules that can be silently reversed |
-| `test_store_contract.py` | 75 | one store spec × every implementation + isolation |
+| `test_domain.py` | 33 | the VISION rules that can be silently reversed |
+| `test_store_contract.py` | 81 | one store spec × every implementation + isolation |
 | `test_legacy_import.py` | 21 | `work/*.json` → entities, against a committed fixture |
 | `test_search.py` | 15 | Hebrew search, against 24 real queries on the real 251 books |
 | `test_layering.py` | 9 | the one-way import rules (plan H1) |
-| `test_api.py` | 28 | `/api/v1` shapes + the versioning/tenancy meta-tests |
+| `test_api.py` | 38 | `/api/v1` shapes + the versioning/tenancy meta-tests |
 
-246 python tests as of P1.6 (unchanged by it — P1.6 is client-only). No pytest dependency, deliberately — the repo has never
+273 python tests as of P1.7 (the +19 since P1.6.1 are copies & lending: `lend`/
+`return_copy`/`edit_copy`, the `lent_out` store filter and its schema v4, and
+the copy-mutation routes). No pytest dependency, deliberately — the repo has never
 had one and the accuracy gate runs on bare python. Counts grow with each run's
 fixes; SESSION_NOTES.md tracks the history.
 
@@ -559,13 +561,43 @@ Rules that are load-bearing and easy to "simplify" later:
 - **the drawer mirrors via a custom property** (`--slide`), not a duplicated
   transform. Verified live: `x 501..961` in LTR, `0..460` in RTL — both the
   inline-end;
-- **absent, not disabled.** Shelf/wishlist/duplicates/lent-out filters, the
-  spine crop, location, copies, Mine, "where it was seen" and *remove from
-  shelf* all need P1.7/P2.1/P2.4/P2.5/P3.5/P6. A greyed-out control that never
-  becomes clickable reads as a bug; absence reads as a product that has not
-  grown that far.
+- **absent, not disabled.** Shelf/wishlist/duplicates filters, the spine crop,
+  location, Mine, and "where it was seen" all need P2.1/P2.4/P2.5/P3.5/P6. A
+  greyed-out control that never becomes clickable reads as a bug; absence
+  reads as a product that has not grown that far. Copies/lending/lent-out
+  graduated out of this list at P1.7 — see below.
 
-Two traps found while verifying in the browser, both worth knowing:
+- **the sort control carries its own direction.** The select names the KEY,
+  a toggle overlaid at the box's inline-start edge names the DIRECTION —
+  one control, one question, and it mirrors with the language. Changing the
+  key RESETS the direction to that key's natural one (`naturalAscending`):
+  carrying A-Z's "ascending" onto a date key silently answers a question
+  nobody asked (recently added, oldest first). The API already took
+  `ascending`; only the client hard-coded it.
+
+Traps found while verifying in the browser, all worth knowing:
+
+⚠ **A span is not a div — and CSS ported from the mock will not say so.**
+Three of the mock's rules stopped applying when its `<div>`s became `<span>`s
+inside a `<button>`: the feed's title/author rendered glued on ONE line, and
+`text-align` is a no-op on an inline box, so §7.2's per-container alignment
+was silently OFF for the entire feed. The book hero was worse — `.bhero` is a
+flex ROW (it seats a cover image), and the head lost the mock's
+`flex:1;min-width:0` wrapper, so title, author, badge and buttons splayed
+side by side. Both were invisible in the test ring: jsdom computes no
+cascade, so only a browser catches them.
+
+⚠ **A later rule at equal specificity wins.** `.dangerzone .btn { color:
+var(--danger) }` sits after `.btn.danger` in the same file, so the filled
+delete button got red text on its red background and rendered as a blank red
+rectangle. It needs `:not(.danger)`.
+
+⚠ **Chrome pins the native `<select>` chevron** a fixed distance from the
+border and ignores `padding-inline-end`. The only way to control the gap is
+`appearance: none` plus a chevron of our own — drawn from two borders on
+`.sortwrap::after` rather than a background-image data URI, because a drawn
+one can read `var(--muted)` and so follows dark mode.
+
 
 ⚠ **FastAPI silently ignores unknown query params.** A `product-api` started
 before P1.5 answered `?q=…` with the whole 251-book library and a 200. The
@@ -577,6 +609,107 @@ No frames composited means no animation progress, so `getComputedStyle`
 returns the transition's START value and the element looks mis-positioned.
 `el.getAnimations().forEach(a => a.finish())` before measuring, or the reading
 is a lie. Cost half an hour of chasing a drawer bug that did not exist.
+
+## Copies & lending (P1.7)
+
+The last Pillar 1 item: "I have another copy", per-copy label/tags/condition,
+lend/mark-returned, and "who has my books" (VISION §5.2). Domain ops added to
+`app/domain/book.py`: `lend`/`return_copy` (a copy is out or it isn't —
+lending an already-out copy raises `CopyAlreadyLentOut` naming the current
+borrower, rather than silently overwriting who has it; returning a copy that
+isn't out raises `CopyNotLentOut`) and `edit_copy` (label/tags/condition —
+object-level metadata, so unlike `edit()` it must NOT touch status; a person
+noting "torn cover" has not vouched for the book's identity). `add_copy`
+gained a `fields:` param so the API can create a copy with its metadata in
+one domain call instead of two.
+
+Store-side: `list(..., lent_out: bool | None)` — a book qualifies if AT LEAST
+ONE copy is currently out. SQLite gained schema **v4**: a materialized
+`copies.lent_out` column rather than filtering the `lending` JSON blob at
+query time (SQLite's json1 extension isn't guaranteed present, and even where
+it is, deriving `is_out` on every row of every query is exactly the cost
+`search_text`/`sort_author` were added to avoid). v4 is pure SQL, unlike v3 —
+every row at v3 predates lending, so `DEFAULT 0` is already correct for all of
+them; there is nothing to backfill.
+
+API: `POST/PATCH .../copies[/{id}]`, `POST .../copies/{id}/lend`, `POST
+.../copies/{id}/return`. Every one returns the whole `BookDTO`, never a bare
+`CopyDTO` — same reasoning as `patch_book`: the client replaces one record by
+id, and a partial response would force it to reassemble the book itself,
+which is exactly the logic H3 keeps out of the client. `lend_at`/`returned_at`
+are server time (the injected `Clock`), never client-supplied, same as
+`added_at`.
+
+Client: the sort control's "own its result" pattern repeats here — the
+lending badge is drawn in BOTH the feed row and the drawer hero (VISION §5.2:
+"visible in list and detail", not detail alone), via one shared `CopyBadges`
+component so the two cannot drift. The copy's lend/edit forms replace the
+read view in place (the same idiom as the title/author edit), not a modal —
+lending a copy should cost no more UI than editing one. Tag parsing
+(comma-split, trim, drop blanks) happens in the CLIENT — the server takes an
+array — and is mutation-checked: the first version of the test only asserted
+the form closed, which passed even with unparsed tags, because the UI had no
+read-view display of a copy's metadata to check against. Fixed by adding one
+(`.kv` row, `t.copy_details`) — a lesson on its own: **a test that never reads
+back what it wrote isn't testing the parsing, only that the request didn't
+crash.**
+
+⚠ **The generic `t.edit` label collides with a copy-level edit button on the
+same screen.** Screen readers announce both as "Edit" with nothing to tell
+them apart, and `getByRole('button', {name: 'עריכה'})` in the existing edit
+tests started matching two elements the moment the copies section shipped.
+Fixed with a distinct string (`t.copy_edit`, "Edit copy details") — any new
+per-copy action button needs its own label for the same reason, not a reuse
+of a book-level one.
+
+⚠ **Verifying this one mutated the real `work/product.db`.** Live browser
+testing (lend, return, add copy) went through the real dev API against the
+real file, same as any other live verification here — but unlike a read-only
+check, these are writes. Restored from a `cp work/product.db` snapshot taken
+before the live pass; **take that snapshot BEFORE driving mutations through
+the browser against `work/product.db`**, not after.
+
+## Author sort, and why it needed a schema version
+
+"Sort by author" means the SHELF order — by surname. Sorting the stored string
+files גרג הורביץ under ג and דיוויד באלדאצ'י under ד, i.e. everyone under
+their given name, which makes the sort useless for finding an author. The rule
+is `app/domain/text.py:author_sort_key`, and it handles both shapes that exist
+in the owner's 251 books: `אסימוב, אייזיק` (19 — everything before the first
+comma is the surname, which also absorbs the `(אדריכל)` parentheticals) and
+`גרג הורביץ` (232 — the last whitespace-separated token). Measured on the real
+data before it was written, not guessed at.
+
+Things worth knowing:
+
+- **it is a SECOND key, not a re-ordered `normalized_author`.** That one is
+  identity: the author chip filters on it and it is half the search haystack.
+  Making it sort nicely would silently change which books an author filter
+  returns;
+- **no particle list.** `סבסטיאן דה קסטל` files under קסטל, not דה — 2 books
+  of 251, and which is "right" depends on the cataloguing convention. A list
+  containing `ד` would file `ג'ואן ד. וינג'` under ד, which is the kind of
+  improvement that costs more than it buys. `ארתור סי.קלארק` files under ס
+  because the source string is missing a space; that is a data fix;
+- **sqlite needed schema v3** (`sort_author` + its index): ORDER BY has to see
+  the key, and Python-side sorting would break LIMIT/OFFSET. Same reasoning as
+  P1.5's `search_text` column;
+- ⚠ **v3 is the first migration step that is a CALLABLE, not SQL.** "the last
+  word, unless there is a comma" is not expressible in SQLite without a user
+  function, and writing one there would put a second copy of the rule in
+  `migrations.py`. The runner now accepts either, and the rule is reached for
+  only when the column is DERIVED by domain logic. The migration test asserts
+  a v1 database backfills AND that a book saved afterwards interleaves with
+  the migrated ones — a backfill using a different rule from the write path
+  looks fine until the two groups sort apart.
+
+**Export downloads are named `books-<library>-<YYYY-MM-DD>.<ext>`.** The file
+lands in a Downloads folder next to everyone else's, and it is a snapshot — a
+second `booksnap-library.csv` becomes `booksnap-library (1).csv` and neither
+one says what it holds or when. Both halves of RFC 6266 are sent, because the
+library name may be Hebrew: `filename*=UTF-8''…` carries the real name and the
+ASCII `filename=` fallback keeps the date rather than degrading to something
+generic.
 
 ## Hebrew search (P1.5)
 
@@ -667,15 +800,20 @@ arrive in P2.1. The importer reports them loudly rather than dropping them —
 until P2.3 lands, a re-read could re-add those books.
 
 Client ring (needs `npm install --prefix app/web` once):
-`npm --prefix app/web run test` (vitest + React Testing Library, **25 tests**
-as of P1.6) and `npm --prefix app/web run typecheck`. Test what encodes a
+`npm --prefix app/web run test` (vitest + React Testing Library, **33 tests**
+as of P1.7) and `npm --prefix app/web run typecheck`. Test what encodes a
 *decision*, not layout and not DTO plumbing — same standard as the Python
 rings. The suite mocks `fetch`, never `useBooks`: the store, the request-id
 race guard and the paging arithmetic are exactly what needs exercising.
-Mutation-checked — seven reversed decisions (dropped race guard, missing
+Mutation-checked — nine reversed decisions (dropped race guard, missing
 `.rtl-safe`, edit not abandoned on book change, delete without confirmation,
-409 clearing the form, focus not restored, drawer left open on promote) each
+409 clearing the form, focus not restored, drawer left open on promote,
+sort direction surviving a key change, tags not trimmed/blanks-dropped) each
 fail a named test.
+
+⚠ **This ring cannot see CSS.** jsdom computes no cascade, so every finding
+in the "traps" list above was invisible here and had to be caught in a real
+browser. Do not read a green client ring as "the screen is right".
 
 ⚠ jsdom keeps `localStorage` across tests in a file, and the language choice
 persists deliberately — so `afterEach` must clear it, or every test after the

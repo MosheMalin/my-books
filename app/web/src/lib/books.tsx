@@ -25,12 +25,19 @@ import {
   type ReactNode,
 } from 'react'
 import {
+  addCopy as apiAddCopy,
   ApiError,
   createBook as apiCreate,
   deleteBook as apiDelete,
+  lendCopy as apiLendCopy,
   listBooks,
   patchBook as apiPatch,
+  patchCopy as apiPatchCopy,
+  returnCopy as apiReturnCopy,
   type Book,
+  type CopyCreate,
+  type CopyPatch,
+  type LendRequest,
 } from '../api/client'
 
 export type SortKey = 'title' | 'author' | 'recently_added'
@@ -39,15 +46,29 @@ export type StatusFilter = 'auto' | 'approved' | 'manual' | null
 export interface BooksQuery {
   q: string
   sort: SortKey
+  ascending: boolean
   status: StatusFilter
   authorKey: string | null
+  /** "Who has my books" (§5.2) — books with at least one copy out. */
+  lentOut: boolean
+}
+
+/**
+ * The direction a sort key means when you pick it. A-Z for text, newest-first
+ * for a date — "recently added, oldest first" is a thing nobody chooses, and
+ * it is what you would get if direction simply survived a key change.
+ */
+export function naturalAscending(sort: SortKey): boolean {
+  return sort !== 'recently_added'
 }
 
 export const EMPTY_QUERY: BooksQuery = {
   q: '',
   sort: 'title',
+  ascending: true,
   status: null,
   authorKey: null,
+  lentOut: false,
 }
 
 /** 30 matches the mock's feel; the API caps a page at 200. */
@@ -77,6 +98,10 @@ export interface BooksApi extends BooksState {
   edit: (id: string, patch: { title?: string; author?: string }) => Promise<Book>
   add: (payload: { title: string; author: string }) => Promise<Book>
   remove: (id: string) => Promise<void>
+  addCopy: (bookId: string, payload: CopyCreate) => Promise<Book>
+  patchCopy: (bookId: string, copyId: string, payload: CopyPatch) => Promise<Book>
+  lendCopy: (bookId: string, copyId: string, payload: LendRequest) => Promise<Book>
+  returnCopy: (bookId: string, copyId: string) => Promise<Book>
 }
 
 const Ctx = createContext<BooksApi | null>(null)
@@ -94,9 +119,10 @@ function toParams(query: BooksQuery, offset: number) {
     offset,
     ...(searching ? { q: query.q.trim() } : {}),
     // Sending a sort alongside q would be a lie; the server ignores it.
-    ...(searching ? {} : { sort: query.sort, ascending: query.sort !== 'recently_added' }),
+    ...(searching ? {} : { sort: query.sort, ascending: query.ascending }),
     ...(query.status ? { status: query.status } : {}),
     ...(query.authorKey ? { author_key: query.authorKey } : {}),
+    ...(query.lentOut ? { lent_out: true } : {}),
   }
 }
 
@@ -169,7 +195,19 @@ export function BooksProvider({ children }: { children: ReactNode }) {
 
   const setQuery = useCallback((patch: Partial<BooksQuery>) => {
     setQueryState((prev) => {
-      const next = { ...prev, ...patch }
+      // Changing the KEY resets the direction to that key's natural one,
+      // unless the caller asked for a direction in the same breath. Carrying
+      // "ascending" from title onto recently_added would silently answer a
+      // question nobody asked (oldest books first).
+      const reset =
+        patch.sort !== undefined &&
+        patch.sort !== prev.sort &&
+        patch.ascending === undefined
+      const next = {
+        ...prev,
+        ...patch,
+        ...(reset ? { ascending: naturalAscending(patch.sort as SortKey) } : {}),
+      }
       // Same values in, same object out: avoids a refetch when a debounced
       // search box re-emits the text the user already typed.
       const same = (Object.keys(next) as (keyof BooksQuery)[]).every(
@@ -234,6 +272,43 @@ export function BooksProvider({ children }: { children: ReactNode }) {
     [query, run],
   )
 
+  // Every copy mutation returns the whole updated Book (server-side, so the
+  // client never reassembles one from a partial response) and goes through
+  // the same `replace()` the book-level `edit` uses — one book record, every
+  // surface showing it repaints.
+  const addCopy = useCallback(
+    async (bookId: string, payload: CopyCreate) => {
+      const updated = await apiAddCopy(bookId, payload)
+      replace(updated)
+      return updated
+    },
+    [replace],
+  )
+  const patchCopy = useCallback(
+    async (bookId: string, copyId: string, payload: CopyPatch) => {
+      const updated = await apiPatchCopy(bookId, copyId, payload)
+      replace(updated)
+      return updated
+    },
+    [replace],
+  )
+  const lendCopy = useCallback(
+    async (bookId: string, copyId: string, payload: LendRequest) => {
+      const updated = await apiLendCopy(bookId, copyId, payload)
+      replace(updated)
+      return updated
+    },
+    [replace],
+  )
+  const returnCopy = useCallback(
+    async (bookId: string, copyId: string) => {
+      const updated = await apiReturnCopy(bookId, copyId)
+      replace(updated)
+      return updated
+    },
+    [replace],
+  )
+
   const get = useCallback(
     (id: string) => state.items.find((b) => b.id === id),
     [state.items],
@@ -251,13 +326,20 @@ export function BooksProvider({ children }: { children: ReactNode }) {
         query.q.trim() !== '' ||
         query.status !== null ||
         query.authorKey !== null ||
-        query.sort !== EMPTY_QUERY.sort,
+        query.lentOut ||
+        query.sort !== EMPTY_QUERY.sort ||
+        query.ascending !== naturalAscending(query.sort),
       get,
       edit,
       add,
       remove,
+      addCopy,
+      patchCopy,
+      lendCopy,
+      returnCopy,
     }),
-    [state, query, setQuery, resetQuery, loadMore, get, edit, add, remove],
+    [state, query, setQuery, resetQuery, loadMore, get, edit, add, remove,
+     addCopy, patchCopy, lendCopy, returnCopy],
   )
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>

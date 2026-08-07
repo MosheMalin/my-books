@@ -11,6 +11,7 @@ import { vi } from 'vitest'
 import type { ReactElement } from 'react'
 import { BooksProvider } from '../lib/books'
 import { I18nProvider } from '../lib/i18n'
+import type { Book, Copy } from '../api/client'
 
 export interface FakeBook {
   id: string
@@ -20,9 +21,27 @@ export interface FakeBook {
   added_at?: string | null
 }
 
-export type FakeBookRecord = ReturnType<typeof book>
+// Typed against the GENERATED `Book`/`Copy`, not a hand-written shape — the
+// same reasoning as `client.ts` itself: a DTO field rename becomes a fixture
+// compile error here too, instead of the fake server quietly drifting from
+// what the real one sends.
+export type FakeBookRecord = Book
 
-export function book(b: FakeBook) {
+export function book(b: FakeBook): FakeBookRecord {
+  const copies: Copy[] = [
+    {
+      id: `${b.id}c1`,
+      status: b.status ?? 'auto',
+      label: '',
+      shelf_id: null,
+      tags: [],
+      condition: '',
+      acquired_at: null,
+      lending: null,
+      last_seen: null,
+      sighting_count: 0,
+    },
+  ]
   return {
     id: b.id,
     title: b.title,
@@ -33,20 +52,7 @@ export function book(b: FakeBook) {
     added_at: (b.added_at ?? '2026-01-01T00:00:00+00:00') as string | null,
     shared_book_id: null,
     work: { rating: null, notes: '', read_status: null },
-    copies: [
-      {
-        id: `${b.id}c1`,
-        status: b.status ?? 'auto',
-        label: '',
-        shelf_id: null,
-        tags: [],
-        condition: '',
-        acquired_at: null,
-        lending: null,
-        last_seen: null,
-        sighting_count: 0,
-      },
-    ],
+    copies,
   }
 }
 
@@ -111,6 +117,78 @@ export function fakeServer(initial: FakeBookRecord[] = []): FakeServer {
       return respond(created, 201)
     }
 
+    // Copy routes are checked BEFORE the generic book PATCH/GET below: they
+    // also start with `/api/v1/books/`, and the generic handlers would take
+    // the copy id for a book id (`.../b1/copies/c1` -> `pop()` gives `c1`).
+    const copyMatch = u.pathname.match(
+      /^\/api\/v1\/books\/([^/]+)\/copies(?:\/([^/]+)(?:\/(lend|return))?)?$/,
+    )
+    if (copyMatch) {
+      const [, bookId, copyId, action] = copyMatch
+      const idx = server.books.findIndex((b) => b.id === bookId)
+      if (idx === -1) return respond({ detail: 'no such book' }, 404)
+      const found = server.books[idx]!
+
+      if (!copyId && method === 'POST') {
+        const payload = JSON.parse(String(init?.body)) as
+          { label: string; tags: string[]; condition: string }
+        const newCopy: Copy = {
+          id: `${bookId}c${found.copies.length + 1}`,
+          status: 'manual',
+          label: payload.label, tags: payload.tags, condition: payload.condition,
+          shelf_id: null, acquired_at: null, lending: null,
+          last_seen: null, sighting_count: 0,
+        }
+        const updated = { ...found, copies: [...found.copies, newCopy],
+                          copy_count: found.copies.length + 1 }
+        server.books[idx] = updated
+        return respond(updated, 201)
+      }
+
+      const cidx = found.copies.findIndex((c) => c.id === copyId)
+      if (cidx === -1) return respond({ detail: 'no such copy' }, 404)
+      const copy = found.copies[cidx]!
+
+      if (!action && method === 'PATCH') {
+        const patch = JSON.parse(String(init?.body)) as Partial<typeof copy>
+        const copies = [...found.copies]
+        copies[cidx] = { ...copy, ...patch }
+        const updated = { ...found, copies }
+        server.books[idx] = updated
+        return respond(updated)
+      }
+      if (action === 'lend' && method === 'POST') {
+        const payload = JSON.parse(String(init?.body)) as
+          { lent_to: string; due_at: string | null }
+        if (copy.lending?.is_out) {
+          return respond({ detail: `already lent to ${copy.lending.lent_to}` }, 409)
+        }
+        const copies = [...found.copies]
+        copies[cidx] = {
+          ...copy,
+          lending: { lent_to: payload.lent_to, lent_at: '2026-08-07T12:00:00Z',
+                    due_at: payload.due_at, returned_at: null, is_out: true },
+        }
+        const updated = { ...found, copies }
+        server.books[idx] = updated
+        return respond(updated)
+      }
+      if (action === 'return' && method === 'POST') {
+        if (!copy.lending?.is_out) {
+          return respond({ detail: 'not currently lent out' }, 409)
+        }
+        const copies = [...found.copies]
+        copies[cidx] = {
+          ...copy,
+          lending: { ...copy.lending, returned_at: '2026-08-07T12:00:00Z',
+                    is_out: false },
+        }
+        const updated = { ...found, copies }
+        server.books[idx] = updated
+        return respond(updated)
+      }
+    }
+
     if (u.pathname.startsWith('/api/v1/books/') && method === 'PATCH') {
       if (server.failNextWith) {
         const status = server.failNextWith
@@ -145,6 +223,7 @@ export function fakeServer(initial: FakeBookRecord[] = []): FakeServer {
     const q = u.searchParams.get('q')?.trim() ?? ''
     const status = u.searchParams.get('status')
     const authorKey = u.searchParams.get('author_key')
+    const lentOut = u.searchParams.get('lent_out')
     const limit = Number(u.searchParams.get('limit') ?? 50)
     const offset = Number(u.searchParams.get('offset') ?? 0)
 
@@ -152,6 +231,11 @@ export function fakeServer(initial: FakeBookRecord[] = []): FakeServer {
     if (q) items = items.filter((b) => (b.title + ' ' + b.author).includes(q))
     if (status) items = items.filter((b) => b.status === status)
     if (authorKey) items = items.filter((b) => b.author_key === authorKey)
+    if (lentOut !== null) {
+      const want = lentOut === 'true'
+      items = items.filter((b) =>
+        b.copies.some((c) => c.lending?.is_out) === want)
+    }
 
     const body = {
       items: items.slice(offset, offset + limit),

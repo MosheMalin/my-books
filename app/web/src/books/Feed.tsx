@@ -34,6 +34,25 @@ function subtitle(book: Book, t: Strings): string {
   return book.author || `— ${t.author_label} —`
 }
 
+/** The borrower of whichever copy is currently out, or null. VISION §5.2:
+ *  lending state is "visible in list and detail" — not detail alone. */
+function lentTo(book: Book): string | null {
+  return book.copies.find((c) => c.lending?.is_out)?.lending?.lent_to ?? null
+}
+
+export function CopyBadges({ book }: { book: Book }) {
+  const { t } = useI18n()
+  const borrower = lentTo(book)
+  return (
+    <>
+      {borrower && <span className="badge b-lent">{t.lent_to(borrower)}</span>}
+      {book.copy_count > 1 && (
+        <span className="badge b-copies">×{book.copy_count}</span>
+      )}
+    </>
+  )
+}
+
 function BookRow({ book, onOpen }: { book: Book; onOpen: (id: string) => void }) {
   const { t } = useI18n()
   return (
@@ -44,6 +63,7 @@ function BookRow({ book, onOpen }: { book: Book; onOpen: (id: string) => void })
       </span>
       <span className="chiprow">
         <StatusBadge status={book.status} />
+        <CopyBadges book={book} />
       </span>
     </button>
   )
@@ -58,6 +78,7 @@ function BookCard({ book, onOpen }: { book: Book; onOpen: (id: string) => void }
         <span className="a rtl-safe">{subtitle(book, t)}</span>
         <span className="foot">
           <StatusBadge status={book.status} />
+          <CopyBadges book={book} />
         </span>
       </span>
     </button>

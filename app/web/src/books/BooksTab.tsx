@@ -31,10 +31,12 @@ export function BooksTab({ onOpen }: { onOpen: (id: string) => void }) {
       <Toolbar
         q={books.query.q}
         sort={books.query.sort}
+        ascending={books.query.ascending}
         sortApplies={books.sortApplies}
         view={view}
         onSearch={(q) => books.setQuery({ q })}
         onSort={(sort: SortKey) => books.setQuery({ sort })}
+        onAscending={(ascending: boolean) => books.setQuery({ ascending })}
         onView={setView}
         onAdd={() => setAdding(true)}
       />
@@ -43,9 +45,11 @@ export function BooksTab({ onOpen }: { onOpen: (id: string) => void }) {
         status={books.query.status}
         authorKey={books.query.authorKey}
         authorLabel={authorLabel}
+        lentOut={books.query.lentOut}
         active={books.filtersActive}
         onStatus={(status: StatusFilter) => books.setQuery({ status })}
         onClearAuthor={() => books.setQuery({ authorKey: null })}
+        onLentOut={(lentOut: boolean) => books.setQuery({ lentOut })}
         onClearAll={books.resetQuery}
       />
 

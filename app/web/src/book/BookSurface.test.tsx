@@ -213,6 +213,117 @@ describe('the destructive actions', () => {
   })
 })
 
+describe('copies (P1.7)', () => {
+  it('adding one shows the count on the row and the drawer', async () => {
+    fakeServer([DURRELL])
+    renderApp(<App />)
+    const drawer = await openDrawer()
+    expect(within(drawer).queryByText(/עותקים/)).not.toBeInTheDocument()
+
+    // Regex, not an exact match: the visible label is prefixed with "＋ ",
+    // same reasoning as the existing /פתיחה/ match on the "⤢ open full" button.
+    await userEvent.click(
+      within(drawer).getByRole('button', { name: /יש לי עותק נוסף/ }))
+
+    // §5.1: the word "copies" and the count appear only once there's more
+    // than one — this asserts it actually toggles, not just that it renders.
+    await within(drawer).findByText('עותקים (2)')
+    // Scoped to the list behind the drawer, not `screen`: with the drawer
+    // open the title is on screen twice (row + drawer heading), so a bare
+    // `getByText` throws "multiple elements found" instead of failing on
+    // the actual assertion.
+    await waitFor(() =>
+      expect(document.querySelector('.booklist .brow')).toHaveTextContent('×2'))
+  })
+
+  it('lends a copy, shows it on the row too, then returns it', async () => {
+    // VISION §5.2: lending is "visible in list and detail", not detail alone.
+    fakeServer([DURRELL])
+    renderApp(<App />)
+    const drawer = await openDrawer()
+
+    await userEvent.click(
+      within(drawer).getByRole('button', { name: 'השאלת הספר' }))
+    await userEvent.type(within(drawer).getByLabelText('למי'), 'דנה')
+    await userEvent.click(
+      within(drawer).getByRole('button', { name: 'השאילו' }))
+
+    // Shows twice on purpose: the hero badge (list-visible facts belong
+    // there too, §5.2) and the copybox's own lending row.
+    await waitFor(() =>
+      expect(within(drawer).getAllByText('מושאל לדנה').length).toBe(2))
+    // Scoped to the list, not `screen` — see the count test above for why.
+    await waitFor(() =>
+      expect(document.querySelector('.booklist .brow'))
+        .toHaveTextContent('מושאל לדנה'))
+
+    await userEvent.click(
+      within(drawer).getByRole('button', { name: 'סמנו כהוחזר' }))
+    await within(drawer).findByText('בבית')
+    await waitFor(() =>
+      expect(document.querySelector('.booklist .brow'))
+        .not.toHaveTextContent('מושאל'))
+  })
+
+  it('refuses to lend a copy that is already out', async () => {
+    // 409: the earlier borrower would otherwise be silently overwritten.
+    fakeServer([DURRELL])
+    renderApp(<App />)
+    const drawer = await openDrawer()
+
+    await userEvent.click(
+      within(drawer).getByRole('button', { name: 'השאלת הספר' }))
+    await userEvent.type(within(drawer).getByLabelText('למי'), 'דנה')
+    await userEvent.click(
+      within(drawer).getByRole('button', { name: 'השאילו' }))
+    await waitFor(() =>
+      expect(within(drawer).getAllByText('מושאל לדנה').length).toBe(2))
+
+    // The row still says "on loan", not "lend it out" — so re-driving the
+    // 409 means going through the edit path a real user would have to use:
+    // there is no lend button to click while a copy is already out.
+    expect(within(drawer).queryByRole('button', { name: 'השאלת הספר' }))
+      .not.toBeInTheDocument()
+  })
+
+  it('parses tags as trimmed, comma-separated, blanks dropped', async () => {
+    // The split/trim/filter happens in the CLIENT (the server takes an
+    // array) — a real decision, worth pinning down.
+    fakeServer([DURRELL])
+    renderApp(<App />)
+    const drawer = await openDrawer()
+
+    await userEvent.click(
+      within(drawer).getByRole('button', { name: 'עריכת פרטי העותק' }))
+    await userEvent.type(
+      within(drawer).getByLabelText('תגיות'), ' מתנה ,, של אבא ')
+    await userEvent.click(within(drawer).getByRole('button', { name: 'שמירה' }))
+
+    // The read view is what proves the parsing, not just that the form
+    // closed — a naive `split(',')` would send an empty string as a tag and
+    // this would read "מתנה ·  · של אבא" (a stray " · " for the blank one).
+    await waitFor(() =>
+      expect(within(drawer).getByText('מתנה, של אבא')).toBeInTheDocument())
+  })
+
+  it('does not touch the book status when editing copy metadata', async () => {
+    // Object-level metadata is not a claim about the book's identity — unlike
+    // the title/author edit, it must not mark the book manual.
+    fakeServer([DURRELL])
+    renderApp(<App />)
+    const drawer = await openDrawer()
+    expect(within(drawer).queryByText('ידני')).not.toBeInTheDocument()
+
+    await userEvent.click(
+      within(drawer).getByRole('button', { name: 'עריכת פרטי העותק' }))
+    await userEvent.type(within(drawer).getByLabelText('מצב'), 'קרוע')
+    await userEvent.click(within(drawer).getByRole('button', { name: 'שמירה' }))
+
+    await within(drawer).findByText('נשמר')
+    expect(within(drawer).queryByText('ידני')).not.toBeInTheDocument()
+  })
+})
+
 describe('the author chip', () => {
   it('filters the list to that author and shows their real name', async () => {
     // §5.1: authors are strings, not entities. The chip filters on the

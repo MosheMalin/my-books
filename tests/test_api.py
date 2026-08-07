@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from urllib.parse import quote
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -286,6 +287,113 @@ def test_delete_removes_from_the_library_and_is_not_idempotent_about_it():
     assert store.count(TEST_LIBRARY) == 0
 
 
+# --- copies (P1.7) ---------------------------------------------------------
+
+def test_add_copy_creates_a_second_manual_copy():
+    store = MemoryBookStore()
+    _seed(store, TEST_LIBRARY, "אבן")
+    with TestClient(_app(store=store)) as client:
+        r = client.post(f"{API_PREFIX}/books/b1/copies",
+                        json={"label": "כריכה רכה", "tags": [" מתנה ", ""],
+                             "condition": " טוב "})
+    assert r.status_code == 201
+    body = r.json()
+    assert body["copy_count"] == 2
+    new = next(c for c in body["copies"] if c["label"] == "כריכה רכה")
+    assert new["status"] == "manual"
+    assert new["tags"] == ["מתנה"], "blank tags should be dropped, others trimmed"
+    assert new["condition"] == "טוב"
+    original = next(c for c in body["copies"] if c["id"] != new["id"])
+    assert original["status"] == "auto", "the original copy must be untouched"
+
+
+def test_patch_copy_edits_metadata_without_touching_status():
+    store = MemoryBookStore()
+    _seed(store, TEST_LIBRARY, "אבן")
+    with TestClient(_app(store=store)) as client:
+        r = client.patch(f"{API_PREFIX}/books/b1/copies/c1",
+                         json={"condition": "קרוע"})
+    assert r.status_code == 200
+    copy = r.json()["copies"][0]
+    assert copy["condition"] == "קרוע"
+    assert copy["status"] == "auto", "metadata edit must not mark it manual"
+
+
+def test_lend_then_return_a_copy():
+    store = MemoryBookStore()
+    _seed(store, TEST_LIBRARY, "אבן")
+    with TestClient(_app(store=store)) as client:
+        lent = client.post(f"{API_PREFIX}/books/b1/copies/c1/lend",
+                           json={"lent_to": "דנה", "due_at": "2026-09-01"})
+        assert lent.status_code == 200
+        lending = lent.json()["copies"][0]["lending"]
+        assert lending == {"lent_to": "דנה", "lent_at": "2026-08-07T12:00:00+00:00",
+                           "due_at": "2026-09-01", "returned_at": None,
+                           "is_out": True}
+
+        returned = client.post(f"{API_PREFIX}/books/b1/copies/c1/return")
+    assert returned.status_code == 200
+    lending = returned.json()["copies"][0]["lending"]
+    assert lending["is_out"] is False
+    assert lending["returned_at"] == "2026-08-07T12:00:00+00:00"
+    assert lending["lent_to"] == "דנה", "the loan history must not be cleared"
+
+
+def test_lending_an_already_out_copy_is_a_409_naming_the_borrower():
+    store = MemoryBookStore()
+    _seed(store, TEST_LIBRARY, "אבן")
+    with TestClient(_app(store=store)) as client:
+        client.post(f"{API_PREFIX}/books/b1/copies/c1/lend",
+                    json={"lent_to": "דנה"})
+        r = client.post(f"{API_PREFIX}/books/b1/copies/c1/lend",
+                        json={"lent_to": "יוסי"})
+    assert r.status_code == 409
+    assert "דנה" in r.json()["detail"]
+
+
+def test_returning_a_copy_that_was_never_lent_is_a_409():
+    store = MemoryBookStore()
+    _seed(store, TEST_LIBRARY, "אבן")
+    with TestClient(_app(store=store)) as client:
+        r = client.post(f"{API_PREFIX}/books/b1/copies/c1/return")
+    assert r.status_code == 409
+
+
+def test_a_copy_action_on_an_unknown_copy_id_is_404():
+    store = MemoryBookStore()
+    _seed(store, TEST_LIBRARY, "אבן")
+    with TestClient(_app(store=store)) as client:
+        assert client.patch(f"{API_PREFIX}/books/b1/copies/nope",
+                            json={"condition": "x"}).status_code == 404
+        assert client.post(f"{API_PREFIX}/books/b1/copies/nope/lend",
+                           json={"lent_to": "דנה"}).status_code == 404
+        assert client.post(
+            f"{API_PREFIX}/books/b1/copies/nope/return").status_code == 404
+
+
+def test_a_copy_action_on_a_book_in_another_library_is_404():
+    """§4.2, same as every other book route: foreign reads as absent."""
+    other = LibraryRef("lib-other", "Other")
+    store = MemoryBookStore()
+    store.save(other, new_book(id="b9", library_id=other.id, title="סוד",
+                               copy_id="c9"))
+    with TestClient(_app(store=store)) as client:
+        assert client.post(f"{API_PREFIX}/books/b9/copies",
+                           json={}).status_code == 404
+        assert client.post(f"{API_PREFIX}/books/b9/copies/c9/lend",
+                           json={"lent_to": "דנה"}).status_code == 404
+
+
+def test_list_filters_by_lent_out():
+    store = MemoryBookStore()
+    _seed(store, TEST_LIBRARY, "אבן", "בית")
+    with TestClient(_app(store=store)) as client:
+        client.post(f"{API_PREFIX}/books/b1/copies/c1/lend",
+                    json={"lent_to": "דנה"})
+        r = client.get(f"{API_PREFIX}/books?lent_out=true")
+    assert [b["id"] for b in r.json()["items"]] == ["b1"]
+
+
 def test_export_is_reachable_and_not_swallowed_by_the_id_route():
     """/books/export is declared BEFORE /books/{book_id}. Registered the other
     way round, "export" arrives as a book id and 404s — invisible until
@@ -322,6 +430,35 @@ def test_export_is_the_whole_library_not_a_page():
         data = client.get(f"{API_PREFIX}/books/export?format=json").json()
     assert len(rows) == 121, "header + 120 books"
     assert len(data["books"]) == 120
+
+
+def test_the_download_is_named_for_the_library_and_the_day():
+    """An export lands in a Downloads folder next to everyone else's files,
+    and it is a SNAPSHOT — the same generic name twice becomes
+    "booksnap-library (1).csv" and neither file says what it holds or when."""
+    store = MemoryBookStore()
+    _seed(store, TEST_LIBRARY, "אבן")
+    with TestClient(_app(store=store)) as client:
+        for fmt in ("csv", "json"):
+            cd = client.get(f"{API_PREFIX}/books/export?format={fmt}") \
+                .headers["content-disposition"]
+            assert f"books-Test-library-2026-08-07.{fmt}" in cd, cd
+
+
+def test_a_hebrew_library_name_survives_the_download_header():
+    """A bare `filename=` is ASCII-only, so a Hebrew library name would arrive
+    mangled or be dropped. RFC 6266's `filename*` carries the real one; the
+    ASCII fallback keeps the DATE rather than degrading to a generic name."""
+    hebrew = LibraryRef(id="lib-he", label="הספרייה שלי")
+    store = MemoryBookStore()
+    _seed(store, hebrew, "אבן")
+    with TestClient(_app(principal=StubPrincipal(library=hebrew),
+                         store=store)) as client:
+        cd = client.get(f"{API_PREFIX}/books/export").headers[
+            "content-disposition"]
+    assert "filename*=UTF-8''" in cd
+    assert quote("הספרייה-שלי") in cd, cd
+    assert 'filename="books-2026-08-07.csv"' in cd, cd
 
 
 def test_export_rejects_an_unknown_format():

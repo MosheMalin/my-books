@@ -25,7 +25,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from enum import Enum
 
-from app.domain.text import book_key, normalize
+from app.domain.text import author_sort_key, book_key, normalize
 
 
 class DomainError(Exception):
@@ -44,6 +44,19 @@ class AmbiguousCopy(DomainError):
     moves a book that didn't move, and silently creating invents a phantom.
     P2.4 owns the UI that answers it; the default answer is "already listed".
     """
+
+
+class CopyAlreadyLentOut(DomainError):
+    """Lending an object that is already out. You lend a copy to ONE person
+    at a time — a second `lend` on top of the first would silently overwrite
+    who has it, which is exactly the record "who has my books" (§5.2) exists
+    to answer correctly. Return it first."""
+
+
+class CopyNotLentOut(DomainError):
+    """Marking returned a copy that was never lent, or already is. There is
+    nothing to close, and closing it anyway would fabricate a `returned_at`
+    for a loan that does not exist."""
 
 
 # --- status ladder --------------------------------------------------------
@@ -209,6 +222,16 @@ class Book:
         return normalize(self.author)
 
     @property
+    def author_sort(self) -> str:
+        """Surname-first key — what "sort by author" actually means (§6).
+
+        Separate from :attr:`normalized_author`, which is IDENTITY: it is the
+        author filter's key and half of the search haystack, so reordering it
+        would silently change which books an author chip matches.
+        """
+        return author_sort_key(self.author)
+
+    @property
     def key(self) -> str:
         """Identity within the library. Changes when the title is edited —
         which is why re-keying is the store's job, not the entity's."""
@@ -283,6 +306,7 @@ def add_copy(
     label: str = "",
     shelf_id: str | None = None,
     status: Status = Status.MANUAL,
+    fields: CopyFields = CopyFields(),
 ) -> Book:
     """*"I have another copy"* — THE ONLY path that creates a second copy.
 
@@ -295,6 +319,7 @@ def add_copy(
         status=status,
         label=label,
         shelf_id=shelf_id,
+        fields=fields,
     )
     return replace(book, copies=book.copies + (extra,))
 
@@ -380,6 +405,62 @@ def remove_from_shelf(book: Book, copy_id: str) -> Book:
     a row rather than changing one.
     """
     return _with_copy(book, replace(book.copy(copy_id), shelf_id=None))
+
+
+def edit_copy(
+    book: Book,
+    copy_id: str,
+    *,
+    label: str | None = None,
+    tags: tuple[str, ...] | None = None,
+    condition: str | None = None,
+) -> Book:
+    """Fix a copy's own label/tags/condition (§5.2 — object-level, unlike
+    :func:`set_work_fields`). Unlike :func:`edit`, this does NOT touch status:
+    describing the physical object ("paperback", "torn cover") is not a claim
+    about the book's identity, so it must not read as confirming one."""
+    copy = book.copy(copy_id)
+    new_label = copy.label if label is None else label
+    new_fields = copy.fields
+    if tags is not None:
+        new_fields = replace(new_fields, tags=tags)
+    if condition is not None:
+        new_fields = replace(new_fields, condition=condition)
+    return _with_copy(book, replace(copy, label=new_label, fields=new_fields))
+
+
+def lend(
+    book: Book,
+    copy_id: str,
+    *,
+    lent_to: str,
+    lent_at: str,
+    due_at: str | None = None,
+) -> Book:
+    """*"Lend it out"* (UI_PLAN §5). One borrower at a time per copy — a copy
+    already out must be returned before it can be lent again, or the earlier
+    borrower's name is silently lost from "who has my books" (§5.2)."""
+    copy = book.copy(copy_id)
+    if copy.lending is not None and copy.lending.is_out:
+        raise CopyAlreadyLentOut(
+            f"copy {copy_id} is already lent to {copy.lending.lent_to!r}; "
+            "mark it returned first"
+        )
+    return _with_copy(book, replace(
+        copy, lending=Lending(lent_to=lent_to, lent_at=lent_at, due_at=due_at),
+    ))
+
+
+def return_copy(book: Book, copy_id: str, *, returned_at: str) -> Book:
+    """*"Mark returned"*. The lending record is kept, not cleared — it is the
+    copy's history of who has borrowed it, same reasoning as provenance being
+    append-only rather than overwritten."""
+    copy = book.copy(copy_id)
+    if copy.lending is None or not copy.lending.is_out:
+        raise CopyNotLentOut(f"copy {copy_id} is not currently lent out")
+    return _with_copy(book, replace(
+        copy, lending=replace(copy.lending, returned_at=returned_at),
+    ))
 
 
 def set_work_fields(book: Book, **changes: object) -> Book:

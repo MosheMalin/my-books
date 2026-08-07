@@ -14,11 +14,17 @@ Rules for adding a step:
     owner's file and will never run again;
   - each step is idempotent-by-version, not idempotent-by-SQL — the runner
     guarantees once-only, so ``CREATE TABLE`` needs no ``IF NOT EXISTS``
-    (and shouldn't have it: it would hide a real ordering bug).
+    (and shouldn't have it: it would hide a real ordering bug);
+  - a step is SQL text OR a callable taking the connection. Reach for a
+    callable only when the data being written is DERIVED by a rule that lives
+    in the domain — restating that rule in SQL is how the two copies drift.
 """
 from __future__ import annotations
 
 import sqlite3
+from typing import Callable
+
+Step = Callable[[sqlite3.Connection], None]
 
 # --- v1: books, copies, provenance ---------------------------------------
 #
@@ -106,9 +112,57 @@ ALTER TABLE books ADD COLUMN search_text TEXT NOT NULL DEFAULT '';
 UPDATE books SET search_text = norm_title || ' | ' || norm_author;
 """
 
-MIGRATIONS: tuple[tuple[int, str], ...] = (
+# --- v3: the surname sort key (§6 "sort by author") ----------------------
+#
+# Stored, like search_text, and for the same reason: the rule lives in exactly
+# one place (`app.domain.text.author_sort_key`), written at insert time, so
+# Python and SQL cannot disagree. Unlike search_text it CANNOT be backfilled
+# in SQL — "the last word, unless there is a comma" is not expressible in
+# SQLite without a user function, and defining one here would put a second
+# copy of the rule in this file. So this step is a CALLABLE.
+#
+# The index mirrors books_by_author: every read index leads with library_id.
+def _v3(conn: sqlite3.Connection) -> None:
+    from app.domain.text import author_sort_key
+
+    conn.execute("ALTER TABLE books ADD COLUMN sort_author TEXT NOT NULL"
+                 " DEFAULT ''")
+    rows = conn.execute("SELECT id, author FROM books").fetchall()
+    conn.executemany(
+        "UPDATE books SET sort_author = ? WHERE id = ?",
+        [(author_sort_key(author), book_id) for book_id, author in rows],
+    )
+    conn.execute("CREATE INDEX books_by_sort_author ON books"
+                 " (library_id, sort_author, norm_title, id)")
+
+
+# --- v4: "who has my books" (P1.7, §5.2) ----------------------------------
+#
+# A materialized `lent_out` flag rather than filtering on the `lending` JSON
+# blob at query time. SQLite's json1 extension is not guaranteed present in
+# every Python build, and even where it is, computing `is_out` (`lending IS
+# NOT NULL AND json_extract(lending,'$.returned_at') IS NULL`) on every row of
+# every query is the same class of cost search_text/sort_author were added to
+# avoid — pay it once, at write time.
+#
+# Pure SQL, unlike v3: no backfill needed. Every row at v3 predates lending
+# (P1.7 is the feature that introduces it), so `DEFAULT 0` is already the
+# correct value for all of them — there is nothing to compute from existing
+# data.
+_V4 = """
+ALTER TABLE copies ADD COLUMN lent_out INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX copies_lent_out ON copies (library_id, lent_out);
+"""
+
+# A step is either SQL to execute or a callable to run — both inside the same
+# once-only transaction. Callables exist because a derived column whose rule
+# lives in the domain must be backfilled BY that rule, not by a re-statement
+# of it in SQL.
+MIGRATIONS: tuple[tuple[int, str | Step], ...] = (
     (1, _V1),
     (2, _V2),
+    (3, _v3),
+    (4, _V4),
 )
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]
@@ -126,11 +180,14 @@ def migrate(conn: sqlite3.Connection) -> int:
     someone can forget to run.
     """
     version = current_version(conn)
-    for target, sql in MIGRATIONS:
+    for target, step in MIGRATIONS:
         if target <= version:
             continue
         with conn:  # one transaction per step
-            conn.executescript(sql)
+            if isinstance(step, str):
+                conn.executescript(step)
+            else:
+                step(conn)
             # PRAGMA does not take bound parameters; `target` is an int from
             # this module's own tuple, never from input.
             conn.execute(f"PRAGMA user_version = {int(target)}")

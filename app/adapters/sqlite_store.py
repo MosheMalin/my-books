@@ -49,7 +49,10 @@ from app.ports.store import (
 
 _ORDER_BY = {
     BookSort.TITLE: "norm_title {dir}, id {dir}",
-    BookSort.AUTHOR: "norm_author {dir}, norm_title {dir}, id {dir}",
+    # sort_author, not norm_author: §6's "sort by author" means the shelf
+    # order — by SURNAME. norm_author is identity (the author filter's key),
+    # and it files everyone under their given name.
+    BookSort.AUTHOR: "sort_author {dir}, norm_title {dir}, id {dir}",
     # COALESCE so books with no added_at (P1.3 imports 251 of them) sort
     # together at one end rather than scattering by NULL-ordering rules.
     BookSort.RECENTLY_ADDED: "COALESCE(added_at, '') {dir}, id {dir}",
@@ -149,6 +152,7 @@ class SqliteBookStore:
         ascending: bool = True,
         status: Status | None = None,
         author_key: str | None = None,
+        lent_out: bool | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> BookPage:
@@ -169,6 +173,15 @@ class SqliteBookStore:
                 " WHERE copies.book_id = books.id) = ?"
             )
             params.append(status.rank)
+
+        # "at least one copy lent out" — unlike status this is a plain stored
+        # column (the v4 comment explains why), so EXISTS is enough; no
+        # per-row derivation to keep in sync with the entity.
+        if lent_out is not None:
+            clause += (
+                f" AND {'' if lent_out else 'NOT '}EXISTS (SELECT 1 FROM copies"
+                " WHERE copies.book_id = books.id AND copies.lent_out = 1)"
+            )
 
         order = _ORDER_BY[sort].format(dir="ASC" if ascending else "DESC")
         with self._connect() as conn:
@@ -239,10 +252,16 @@ class SqliteBookStore:
 def _insert_book(conn: sqlite3.Connection, library: LibraryRef, book: Book) -> None:
     conn.execute(
         "INSERT INTO books (id, library_id, title, author, norm_title,"
-        " norm_author, book_key, shared_book_id, rating, notes, read_status,"
-        " added_at, search_text) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        " norm_author, sort_author, book_key, shared_book_id, rating, notes,"
+        " read_status, added_at, search_text)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (book.id, library.id, book.title, book.author, book.normalized_title,
-         book.normalized_author, book.key, book.shared_book_id,
+         book.normalized_author,
+         # Surname-first, by the SAME domain rule the v3 backfill used — a
+         # book saved after the migration must sort with the ones migrated
+         # before it.
+         book.author_sort,
+         book.key, book.shared_book_id,
          book.work.rating, book.work.notes, book.work.read_status,
          book.added_at,
          # Written by the SAME function the matcher uses at query time, so the
@@ -252,12 +271,17 @@ def _insert_book(conn: sqlite3.Connection, library: LibraryRef, book: Book) -> N
     for position, copy in enumerate(book.copies):
         conn.execute(
             "INSERT INTO copies (id, book_id, library_id, position, status,"
-            " label, shelf_id, tags, condition, acquired_at, lending)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            " label, shelf_id, tags, condition, acquired_at, lending,"
+            " lent_out) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (copy.id, book.id, library.id, position, copy.status.value,
              copy.label, copy.shelf_id, json.dumps(list(copy.fields.tags)),
              copy.fields.condition, copy.fields.acquired_at,
-             json.dumps(asdict(copy.lending)) if copy.lending else None),
+             json.dumps(asdict(copy.lending)) if copy.lending else None,
+             # The SAME predicate `Lending.is_out` uses, kept in a comment
+             # rather than a shared function because it is one boolean
+             # expression — a helper here would be more indirection than the
+             # rule it guards.
+             int(copy.lending is not None and copy.lending.returned_at is None)),
         )
         for seq, p in enumerate(copy.provenance):
             conn.execute(

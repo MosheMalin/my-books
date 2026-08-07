@@ -186,3 +186,34 @@ class BookCreate(BaseModel):
 
     title: str = Field(min_length=1)
     author: str = ""
+
+
+class CopyCreate(BaseModel):
+    """*"I have another copy"* (§5.1) — the only path that creates a second
+    physical object. No ``shelf_id`` here: shelves don't exist until P2.1, so
+    every copy today is unlocated regardless of how it was created."""
+
+    label: str = ""
+    tags: list[str] = Field(default_factory=list)
+    condition: str = ""
+
+
+class CopyPatch(BaseModel):
+    """Fix a copy's own label/tags/condition. Object-level, unlike
+    :class:`BookPatch` — describing "paperback, torn cover" is not a claim
+    about the book's identity, so unlike a title/author edit this does not
+    change the copy's status."""
+
+    label: str | None = None
+    tags: list[str] | None = None
+    condition: str | None = None
+
+
+class LendRequest(BaseModel):
+    """*"Lend it out"*. ``lent_at`` is server time (the ``Clock``, like
+    ``added_at``), never client-supplied — a borrow date is a fact about when
+    the server recorded the action, not something the caller should be able
+    to backdate."""
+
+    lent_to: str = Field(min_length=1)
+    due_at: str | None = None

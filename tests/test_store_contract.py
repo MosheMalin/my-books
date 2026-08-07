@@ -41,9 +41,11 @@ from app.domain import (
     add_copy,
     approve,
     edit,
+    lend,
     new_book,
     observe,
     remove_from_shelf,
+    return_copy,
 )
 from app.ports.store import (
     BookPage,
@@ -286,6 +288,35 @@ def sorts_by_author_then_title(store):
 
 
 @contract
+def sorts_authors_by_surname_not_by_the_stored_string(store):
+    """§6's "by author" is the shelf order. Sorted as stored, גרג הורביץ files
+    under ג and דיוויד באלדאצ'י under ד — every author under their given name.
+    Both shapes in the real data are here, mixed, because a store that only
+    handled one would pass a single-shape test and still order wrongly."""
+    store.save(LIB, _book(1, title="א", author="גרג הורביץ"))      # -> הורביצ
+    store.save(LIB, _book(2, title="א", author="דיוויד באלדאצ'י"))  # -> באלדאצי
+    store.save(LIB, _book(3, title="א", author="אסימוב, אייזיק"))   # -> אסימוב
+    ids = [b.id for b in store.list(LIB, sort=BookSort.AUTHOR).items]
+    assert ids == ["b3", "b2", "b1"], ids
+    assert [b.id for b in store.list(LIB, sort=BookSort.AUTHOR,
+                                     ascending=False).items] == ["b1", "b2", "b3"]
+
+
+@contract
+def a_renamed_author_re_sorts(store):
+    """The surname key is DERIVED, so a store that computes it once at insert
+    and never again would keep the old position after an edit — invisible
+    until someone fixes a misread name and it stays filed under the typo."""
+    store.save(LIB, _book(1, title="א", author="ורד טוכטרמן"))    # -> טוכטרמנ
+    store.save(LIB, _book(2, title="א", author="גרג הורביץ"))     # -> הורביצ
+    assert [b.id for b in store.list(LIB, sort=BookSort.AUTHOR).items] == \
+        ["b2", "b1"]
+    store.save(LIB, _book(1, title="א", author="ורד אבן"))        # -> אבנ
+    assert [b.id for b in store.list(LIB, sort=BookSort.AUTHOR).items] == \
+        ["b1", "b2"]
+
+
+@contract
 def sorts_by_recently_added_and_tolerates_missing_dates(store):
     """P1.3 imports 251 books with no added_at. They must sort together at one
     end rather than scattering by NULL-ordering rules."""
@@ -325,6 +356,31 @@ def filters_by_normalized_author(store):
     key = store.get(LIB, "b2").normalized_author
     got = sorted(b.id for b in store.list(LIB, author_key=key).items)
     assert got == ["b1", "b2"], got
+
+
+@contract
+def filters_by_lent_out(store):
+    """"Who has my books" (§5.2): a book qualifies if AT LEAST ONE of its
+    copies is currently out — a book-level filter over a copy-level fact,
+    exercised with a multi-copy book so a store cannot pass by checking only
+    a book's first copy."""
+    lent = lend(_book(1), "c1", lent_to="דנה", lent_at="2026-08-01")
+    store.save(LIB, lent)
+    returned = return_copy(lend(_book(2), "c2", lent_to="יוסי",
+                                lent_at="2026-07-01"), "c2",
+                           returned_at="2026-07-20")
+    store.save(LIB, returned)
+    store.save(LIB, _book(3))  # never lent
+    multi = add_copy(_book(4), copy_id="c4b")
+    multi = lend(multi, "c4b", lent_to="עידו", lent_at="2026-08-01")
+    store.save(LIB, multi)     # c4 untouched, c4b out — the book must qualify
+
+    out = sorted(b.id for b in store.list(LIB, lent_out=True).items)
+    assert out == ["b1", "b4"], out
+    home = sorted(b.id for b in store.list(LIB, lent_out=False).items)
+    assert home == ["b2", "b3"], home
+    # Omitted entirely: no filter, same as every other `list` param.
+    assert store.list(LIB).total == 4
 
 
 # --- search (P1.5) --------------------------------------------------------
@@ -553,11 +609,12 @@ def test_migrating_an_already_current_database_is_a_no_op():
         assert reopened.count(LIB) == 1, "re-opening lost data"
 
 
-def test_a_v1_database_upgrades_to_v2_and_backfills_the_search_column():
+def test_a_v1_database_upgrades_and_backfills_its_derived_columns():
     """H6, the case that actually matters: an EXISTING database with data in
     it, not a fresh one. The owner's work/product.db was written at v1 with
-    251 books; if the v2 backfill were wrong, search would silently return
-    nothing for every book that predates the upgrade.
+    251 books; if a backfill were wrong, the books that predate the upgrade
+    would silently drop out of search (v2) or file under the wrong letter
+    (v3) while everything saved afterwards looked fine.
     """
     import sqlite3
 
@@ -588,13 +645,40 @@ def test_a_v1_database_upgrades_to_v2_and_backfills_the_search_column():
         store = SqliteBookStore(path)          # migrates on construction
         conn = sqlite3.connect(str(path))
         try:
-            assert current_version(conn) == 2
+            assert current_version(conn) == SCHEMA_VERSION
+            # v3's backfill runs the DOMAIN rule over the old rows, so the
+            # migrated book files under its surname like any newly saved one.
+            assert conn.execute(
+                "SELECT sort_author FROM books WHERE id = 'b1'"
+            ).fetchone()[0] == "קארני פול"
+            # v4 needs no backfill (P1.7 is the feature that introduces
+            # lending, so no v1 row could have any) — but the column and its
+            # DEFAULT must exist, or the pre-existing copy 404s out of every
+            # `lent_out` query instead of correctly reading as "not out".
+            assert conn.execute(
+                "SELECT lent_out FROM copies WHERE id = 'c1'"
+            ).fetchone()[0] == 0
         finally:
             conn.close()
 
         # The pre-existing row is searchable, which is the whole point.
         assert [b.id for b in store.search(LIB, "כופרים").items] == ["b1"]
         assert store.get(LIB, "b1").title == "מלכי הכופרים"
+        assert store.list(LIB, lent_out=False).total == 1
+
+        # A book saved AFTER the upgrade must interleave with the migrated
+        # ones, not sort into its own group — the failure mode of a backfill
+        # that used a different rule from the write path.
+        store.save(LIB, _book(2, title="א", author="ורד אבן"))
+        assert [b.id for b in store.list(LIB, sort=BookSort.AUTHOR).items] == \
+            ["b2", "b1"]
+
+        # And the pre-existing copy can be lent, exercising the write path
+        # that maintains `lent_out` on a row that predates the column.
+        migrated = lend(store.get(LIB, "b1"), "c1", lent_to="דנה",
+                        lent_at="2026-08-01")
+        store.save(LIB, migrated)
+        assert store.list(LIB, lent_out=True).total == 1
 
 
 def test_deleting_a_book_leaves_no_orphan_rows():

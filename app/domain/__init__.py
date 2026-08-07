@@ -11,6 +11,7 @@ never be silently reversed (plan H5):
   - the matcher never auto-creates a copy .............. §5.1  book.observe
   - an approved book is never demoted by a worse re-read  §5.6  Status.merge
   - *remove from shelf* != *delete from library* ....... UI §5  remove_from_shelf
+  - lending is per copy, never per book ................ §5.2  Lending, lend
 """
 from __future__ import annotations
 
@@ -18,7 +19,9 @@ from app.domain.book import (
     AmbiguousCopy,
     Book,
     Copy,
+    CopyAlreadyLentOut,
     CopyFields,
+    CopyNotLentOut,
     DomainError,
     Lending,
     Provenance,
@@ -28,19 +31,24 @@ from app.domain.book import (
     add_copy,
     approve,
     edit,
+    edit_copy,
+    lend,
     new_book,
     observe,
     remove_from_shelf,
+    return_copy,
     set_work_fields,
 )
 from app.domain.library import LibraryRef
-from app.domain.text import book_key, normalize
+from app.domain.text import author_sort_key, book_key, normalize
 
 __all__ = [
     "AmbiguousCopy",
     "Book",
     "Copy",
+    "CopyAlreadyLentOut",
     "CopyFields",
+    "CopyNotLentOut",
     "DomainError",
     "Lending",
     "LibraryRef",
@@ -50,11 +58,15 @@ __all__ = [
     "WorkFields",
     "add_copy",
     "approve",
+    "author_sort_key",
     "book_key",
     "edit",
+    "edit_copy",
+    "lend",
     "new_book",
     "normalize",
     "observe",
     "remove_from_shelf",
+    "return_copy",
     "set_work_fields",
 ]

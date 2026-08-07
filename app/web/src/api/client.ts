@@ -36,6 +36,7 @@ export type GetResponse<P extends ApiPath> = paths[P] extends {
 export type Meta = GetResponse<'/api/v1/meta'>
 export type BookPage = GetResponse<'/api/v1/books'>
 export type Book = BookPage['items'][number]
+export type Copy = Book['copies'][number]
 
 /**
  * A library reference travels with every request (§1.3), even though there is
@@ -172,6 +173,52 @@ export const patchBook = (id: string, payload: BookPatch, opts?: ApiOptions) =>
 export const deleteBook = (id: string, opts?: ApiOptions) =>
   send('DELETE', `/api/v1/books/${encodeURIComponent(id)}`, undefined,
        opts) as Promise<void>
+
+// --- copies (P1.7) ---------------------------------------------------------
+//
+// Every one of these returns the whole Book, not a copy — same reasoning as
+// `patchBook`: the store replaces one record by id, and every surface
+// showing that book (row, drawer, full page) reads from the same map, so a
+// response carrying only the changed copy would leave the rest stale.
+
+export type CopyCreate =
+  paths['/api/v1/books/{book_id}/copies']['post'] extends {
+    requestBody: { content: { 'application/json': infer T } }
+  }
+    ? T
+    : never
+export type CopyPatch =
+  paths['/api/v1/books/{book_id}/copies/{copy_id}']['patch'] extends {
+    requestBody: { content: { 'application/json': infer T } }
+  }
+    ? T
+    : never
+export type LendRequest =
+  paths['/api/v1/books/{book_id}/copies/{copy_id}/lend']['post'] extends {
+    requestBody: { content: { 'application/json': infer T } }
+  }
+    ? T
+    : never
+
+const bookPath = (id: string, copyId?: string, tail = '') =>
+  `/api/v1/books/${encodeURIComponent(id)}/copies` +
+  (copyId ? `/${encodeURIComponent(copyId)}${tail}` : '')
+
+export const addCopy = (bookId: string, payload: CopyCreate, opts?: ApiOptions) =>
+  send('POST', bookPath(bookId), payload, opts) as Promise<Book>
+
+export const patchCopy = (
+  bookId: string, copyId: string, payload: CopyPatch, opts?: ApiOptions,
+) => send('PATCH', bookPath(bookId, copyId), payload, opts) as Promise<Book>
+
+export const lendCopy = (
+  bookId: string, copyId: string, payload: LendRequest, opts?: ApiOptions,
+) => send('POST', bookPath(bookId, copyId, '/lend'), payload,
+         opts) as Promise<Book>
+
+export const returnCopy = (bookId: string, copyId: string, opts?: ApiOptions) =>
+  send('POST', bookPath(bookId, copyId, '/return'), undefined,
+       opts) as Promise<Book>
 
 /** Export is a file download, so it is a URL rather than a fetch — letting the
  *  browser handle Content-Disposition is what makes "Save as…" work. */

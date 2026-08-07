@@ -50,9 +50,15 @@ class WrongLibrary(StoreError):
 
 
 class BookSort(str, Enum):
-    """Sort orders §6 lists as "Must". ``TITLE``/``AUTHOR`` sort by the
-    NORMALIZED forms, so Hebrew orders sensibly regardless of nikud, geresh or
-    a leading particle in the stored string."""
+    """Sort orders §6 lists as "Must". ``TITLE``/``AUTHOR`` sort by NORMALIZED
+    forms, so Hebrew orders sensibly regardless of nikud, geresh or a leading
+    particle in the stored string.
+
+    ``AUTHOR`` orders by SURNAME (``app.domain.text.author_sort_key``), the way
+    a shelf is filed — not by the stored string, which would put every author
+    under their given name. Every implementation must agree; the contract
+    suite asserts it against each one.
+    """
 
     TITLE = "title"
     AUTHOR = "author"
@@ -105,6 +111,7 @@ class BookStore(Protocol):
         ascending: bool = True,
         status: Status | None = None,
         author_key: str | None = None,
+        lent_out: bool | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> BookPage:
@@ -112,6 +119,10 @@ class BookStore(Protocol):
 
         ``author_key`` is a NORMALIZED author string — the author chip is a
         grouping over normalized strings, not an entity (§5.1).
+
+        ``lent_out`` matches a book with AT LEAST ONE copy currently lent out
+        (``Lending.is_out``) — the "who has my books" view (§5.2). It is a
+        book-level filter over a copy-level fact, same shape as ``status``.
         """
 
     def search(

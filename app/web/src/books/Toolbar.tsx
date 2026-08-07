@@ -20,10 +20,12 @@ const SEARCH_DEBOUNCE_MS = 200
 export interface ToolbarProps {
   q: string
   sort: SortKey
+  ascending: boolean
   sortApplies: boolean
   view: View
   onSearch: (q: string) => void
   onSort: (sort: SortKey) => void
+  onAscending: (ascending: boolean) => void
   onView: (view: View) => void
   onAdd: () => void
 }
@@ -31,10 +33,12 @@ export interface ToolbarProps {
 export function Toolbar({
   q,
   sort,
+  ascending,
   sortApplies,
   view,
   onSearch,
   onSort,
+  onAscending,
   onView,
   onAdd,
 }: ToolbarProps) {
@@ -65,9 +69,34 @@ export function Toolbar({
         />
       </div>
 
-      <label className="sortwrap">
-        <span className="visually-hidden">{t.sort}</span>
+      {/* Not a <label>: the direction toggle sits INSIDE the box, and a click
+          on a button inside a label would also be forwarded to the select. */}
+      <div className="sortwrap">
+        {/* Direction lives on the sort control, not beside it — one control,
+            one question. It sits at the box's inline-START edge (the right in
+            Hebrew, the left in English), which is also the edge the native
+            dropdown chevron is NOT on. */}
+        <button
+          type="button"
+          className={`sortdir${ascending ? '' : ' desc'}`}
+          disabled={!sortApplies}
+          aria-label={ascending ? t.sort_asc : t.sort_desc}
+          title={sortApplies ? (ascending ? t.sort_asc : t.sort_desc) : t.sort_ignored}
+          onClick={() => onAscending(!ascending)}
+        >
+          <svg viewBox="0 0 12 14" width="12" height="14" aria-hidden="true">
+            <path
+              d="M6 12.5V2.2M1.8 6.4 6 2.2l4.2 4.2"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
         <select
+          aria-label={t.sort}
           value={sortApplies ? sort : 'relevance'}
           disabled={!sortApplies}
           // Ignored by the server while searching — relevance IS the order —
@@ -80,7 +109,7 @@ export function Toolbar({
           <option value="author">{t.sort_author}</option>
           <option value="recently_added">{t.sort_recent}</option>
         </select>
-      </label>
+      </div>
 
       <div className="seg" role="group" aria-label={`${t.view_list} / ${t.view_grid}`}>
         <button

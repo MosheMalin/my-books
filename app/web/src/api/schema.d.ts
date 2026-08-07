@@ -86,6 +86,91 @@ export interface paths {
         patch: operations["patch_book_api_v1_books__book_id__patch"];
         trace?: never;
     };
+    "/api/v1/books/{book_id}/copies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * "I have another copy"
+         * @description §5.1: the ONLY path that creates a second copy. Lands ``manual`` — a
+         *     person declaring a duplicate is the strongest evidence the system gets;
+         *     no re-read can produce this (`app.domain.book.add_copy`).
+         */
+        post: operations["create_copy_api_v1_books__book_id__copies_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/books/{book_id}/copies/{copy_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Fix a copy's label, tags or condition
+         * @description Object-level metadata, not identity — unlike :func:`patch_book` this
+         *     never changes the copy's status (`app.domain.book.edit_copy`).
+         */
+        patch: operations["patch_copy_api_v1_books__book_id__copies__copy_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/books/{book_id}/copies/{copy_id}/lend": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Lend a copy out
+         * @description 409 if the copy is already out — return it first (§5.2: one borrower
+         *     per copy, or the earlier one is silently lost from "who has my books").
+         */
+        post: operations["lend_copy_api_v1_books__book_id__copies__copy_id__lend_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/books/{book_id}/copies/{copy_id}/return": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark a lent copy returned
+         * @description 409 if the copy was never lent, or already marked returned — there is
+         *     no open loan to close (`app.domain.book.return_copy`).
+         */
+        post: operations["return_copy_route_api_v1_books__book_id__copies__copy_id__return_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/meta": {
         parameters: {
             query?: never;
@@ -189,12 +274,37 @@ export interface components {
         };
         /**
          * BookSort
-         * @description Sort orders §6 lists as "Must". ``TITLE``/``AUTHOR`` sort by the
-         *     NORMALIZED forms, so Hebrew orders sensibly regardless of nikud, geresh or
-         *     a leading particle in the stored string.
+         * @description Sort orders §6 lists as "Must". ``TITLE``/``AUTHOR`` sort by NORMALIZED
+         *     forms, so Hebrew orders sensibly regardless of nikud, geresh or a leading
+         *     particle in the stored string.
+         *
+         *     ``AUTHOR`` orders by SURNAME (``app.domain.text.author_sort_key``), the way
+         *     a shelf is filed — not by the stored string, which would put every author
+         *     under their given name. Every implementation must agree; the contract
+         *     suite asserts it against each one.
          * @enum {string}
          */
         BookSort: "title" | "author" | "recently_added";
+        /**
+         * CopyCreate
+         * @description *"I have another copy"* (§5.1) — the only path that creates a second
+         *     physical object. No ``shelf_id`` here: shelves don't exist until P2.1, so
+         *     every copy today is unlocated regardless of how it was created.
+         */
+        CopyCreate: {
+            /**
+             * Condition
+             * @default
+             */
+            condition: string;
+            /**
+             * Label
+             * @default
+             */
+            label: string;
+            /** Tags */
+            tags?: string[];
+        };
         /**
          * CopyDTO
          * @description One physical object. Created only by a human action (§5.1).
@@ -229,10 +339,38 @@ export interface components {
             /** Tags */
             tags?: string[];
         };
+        /**
+         * CopyPatch
+         * @description Fix a copy's own label/tags/condition. Object-level, unlike
+         *     :class:`BookPatch` — describing "paperback, torn cover" is not a claim
+         *     about the book's identity, so unlike a title/author edit this does not
+         *     change the copy's status.
+         */
+        CopyPatch: {
+            /** Condition */
+            condition?: string | null;
+            /** Label */
+            label?: string | null;
+            /** Tags */
+            tags?: string[] | null;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /**
+         * LendRequest
+         * @description *"Lend it out"*. ``lent_at`` is server time (the ``Clock``, like
+         *     ``added_at``), never client-supplied — a borrow date is a fact about when
+         *     the server recorded the action, not something the caller should be able
+         *     to backdate.
+         */
+        LendRequest: {
+            /** Due At */
+            due_at?: string | null;
+            /** Lent To */
+            lent_to: string;
         };
         /**
          * LendingDTO
@@ -374,6 +512,8 @@ export interface operations {
                 status?: components["schemas"]["Status"] | null;
                 /** @description Normalized author, from a book's author_key. */
                 author_key?: string | null;
+                /** @description True for the "who has my books" view: books with at least one copy currently lent out. */
+                lent_out?: boolean | null;
                 limit?: number;
                 offset?: number;
             };
@@ -541,6 +681,145 @@ export interface operations {
                 "application/json": components["schemas"]["BookPatch"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_copy_api_v1_books__book_id__copies_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                book_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CopyCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_copy_api_v1_books__book_id__copies__copy_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                book_id: string;
+                copy_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CopyPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    lend_copy_api_v1_books__book_id__copies__copy_id__lend_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                book_id: string;
+                copy_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LendRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    return_copy_route_api_v1_books__book_id__copies__copy_id__return_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                book_id: string;
+                copy_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

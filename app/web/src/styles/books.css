@@ -223,7 +223,13 @@
 .brow {
   display: flex;
   gap: 12px;
-  align-items: center;
+  /* Not `center`: with two badges wrapping onto two lines (status + lending,
+     P1.7), centering the whole chiprow against the whole meta block only
+     matches their TOTAL heights, not each badge to its neighbouring text
+     line — the badges end up visibly floating off the title/author baseline.
+     Top-aligning both columns means the first badge always starts level with
+     the title, however many badges wrap under it. */
+  align-items: flex-start;
   padding: 9px 12px;
   border-bottom: 1px solid var(--line);
   cursor: pointer;
@@ -238,12 +244,23 @@
   flex: 1;
   min-width: 0;
 }
+/* The mock's title/author are DIVs; the React markup uses spans inside a
+   <button>, so both of the mock's rules silently stopped applying: inline
+   boxes don't stack (title and author rendered glued on one line) and
+   `text-align` is a no-op on an inline box, which turned OFF §7.2's
+   per-container alignment for the whole feed. `display: block` restores both.
+   Same trap in `.card` below — check it whenever a span replaces a div. */
+.brow .t,
+.brow .a {
+  display: block;
+}
 .brow .t {
   font-weight: 550;
 }
 .brow .a {
   font-size: var(--fs-sm);
   color: var(--muted);
+  margin-top: 2px;
 }
 /* alignment/direction handling for .brow .side lives in base.css, next to
    the rest of the .rtl-safe rule set it's an exception to */
@@ -289,6 +306,10 @@
 .card .meta {
   min-width: 0;
   flex: 1;
+}
+.card .t,
+.card .a {
+  display: block;
 }
 .card .t {
   font-weight: 600;
@@ -394,6 +415,20 @@
 }
 .b-none {
   color: var(--none);
+  background: var(--none-bg);
+}
+/* Lending, not a status-ladder tier — the mock's `--review`/`--review-bg`
+   idiom ("needs attention"), reused here because a book out on loan is
+   exactly that: nothing is wrong with the RECORD, but it needs following up.
+   `.b-copies` is deliberately its own class rather than reusing `.b-manual`
+   (P1.7): a ×2 count and a MANUAL status are unrelated facts, and giving them
+   the same colour would read as one. */
+.b-lent {
+  color: var(--review);
+  background: var(--review-bg);
+}
+.b-copies {
+  color: var(--muted);
   background: var(--none-bg);
 }
 
@@ -518,10 +553,17 @@
   color: var(--muted);
   font-size: var(--fs-base);
 }
+/* mock: an inline `style="margin-top:9px"` on the same row. */
+.herobody .chiprow {
+  margin-top: 9px;
+}
 
-/* Wraps the title/author edit fields in the drawer head (mock: an inline
-   `style="flex:1"` div — named here so it isn't invented per-use). */
-.editform {
+/* The column inside `.bhero` (mock: an inline `style="flex:1;min-width:0"`
+   div — named here so it isn't invented per-use). BOTH branches of the head
+   need it: `.bhero` is a flex ROW so it can seat a cover/spine image beside
+   the text, and an unwrapped head puts the title, the author, the badge and
+   the buttons side by side in that row instead of stacked. */
+.herobody {
   flex: 1;
   min-width: 0;
 }
@@ -537,10 +579,63 @@
   margin-bottom: 4px;
 }
 
-/* No wrapping class in the mock (it applies `.dangertext` straight to the
-   delete button). Invented as a section wrapper in the same idiom as the
-   rest of the book surface's .sect-style spacing, so the destructive action
-   reads as its own zone rather than sitting flush against the row above. */
+/* ================= book surface: sections (P1.7) ================= */
+/* Ported from the mock verbatim (it never got the Copies section built in
+   React until P1.7, so these rules sat unused in books.css until now). */
+.sect {
+  margin-top: 18px;
+}
+.sect > h4 {
+  margin: 0 0 8px;
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--muted);
+  font-weight: 650;
+}
+.kv {
+  display: flex;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13.5px;
+}
+.kv:last-child {
+  border-bottom: none;
+}
+.kv .k {
+  color: var(--muted);
+  min-width: 92px;
+  flex: none;
+}
+.copybox {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 10px;
+  margin-bottom: 8px;
+}
+/* Not in the mock (its lend flow was a native `prompt()`, a placeholder
+   worth replacing rather than porting — see the mock-reference rule in
+   CLAUDE.md/UI_PLAN §7). The inline form follows the same idiom as the
+   title/author edit above: a `.field`-built form replaces the read view
+   rather than opening a modal, so lending a copy costs no more UI than
+   editing one. */
+.copyhead {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+.copyactions {
+  margin-top: 8px;
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+/* Invented as a section wrapper in the same idiom as the rest of the book
+   surface's `.sect` spacing, so the destructive action reads as its own zone
+   rather than sitting flush against the row above (the mock applies
+   `.dangertext` straight to the delete button with no wrapper at all). */
 .dangerzone {
   margin-top: var(--sp-4);
   padding-top: var(--sp-4);
@@ -550,7 +645,10 @@
   flex-wrap: wrap;
   align-items: center;
 }
-.dangerzone .btn {
+/* `:not(.danger)` is load-bearing: this rule comes AFTER `.btn.danger` at
+   equal specificity, so without it the filled delete button gets red text on
+   its red background and renders as a blank red rectangle. */
+.dangerzone .btn:not(.danger) {
   color: var(--danger);
 }
 .dangerzone .btn:hover:not(:disabled) {
@@ -671,7 +769,65 @@
 
 .toolbar .spacer { flex: 1 1 auto; }
 
-.sortwrap { display: inline-flex; align-items: center; }
+/* The sort key and its direction are ONE control: the toggle is overlaid
+   inside the select's own box at the inline-start edge (the same idiom as
+   `.searchwrap .mag`), and the select is padded on both sides to make room —
+   inline-start for the toggle, inline-end so the native dropdown chevron
+   isn't jammed against the border. */
+.sortwrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+}
+.sortwrap select {
+  /* The UA chevron ignores padding-inline-end — Chrome pins it a fixed
+     distance from the border — so it is replaced by the ::after below, which
+     can be positioned (and, unlike a background-image data URI, can read
+     var(--muted) and so follows dark mode). */
+  appearance: none;
+  padding-inline-start: 32px;
+  padding-inline-end: 30px;
+  width: auto;
+}
+/* A chevron drawn from two borders. The SHAPE is direction-independent (a
+   downward v), so the borders are physical on purpose; only its POSITION is
+   logical, which is what mirrors it with the language. */
+.sortwrap::after {
+  content: '';
+  position: absolute;
+  inset-inline-end: 12px;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: translateY(-2px) rotate(45deg);
+  pointer-events: none;
+}
+.sortdir {
+  position: absolute;
+  inset-inline-start: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: var(--accent);
+  z-index: 1;
+}
+.sortdir:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+.sortdir:disabled {
+  color: var(--muted);
+  opacity: .5;
+}
+/* One glyph, flipped — so ascending and descending can never drift into two
+   differently-weighted icons. */
+.sortdir.desc svg {
+  transform: rotate(180deg);
+}
 
 /* An author is a LINK, not a label: clicking one filters the list to that
    author (UI_PLAN §5). It has to read as clickable without becoming a button
@@ -681,7 +837,11 @@
   background: none;
   border: 0;
   padding: 0;
-  margin-block-start: 2px;
+  /* Collapses against the h2's own 3px, so this IS the gap, not an addition
+     to it. 6px rather than the mock's 3: the author is underlined here (it is
+     a link, not a label) and the underline sitting 3px under a 20px title
+     read as one crowded block. */
+  margin-block-start: 6px;
   font: inherit;
   color: var(--accent);
   cursor: pointer;

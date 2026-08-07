@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from booksnap.catalog import normalize
 
-__all__ = ["normalize", "book_key"]
+__all__ = ["normalize", "book_key", "author_sort_key"]
 
 
 def book_key(title: str, author: str) -> str:
@@ -38,3 +38,46 @@ def book_key(title: str, author: str) -> str:
     exercise — and it is also the key §8.4 will use at global scale.
     """
     return f"{normalize(title)}|{normalize(author)}"
+
+
+def author_sort_key(author: str) -> str:
+    """Surname first, then the rest — how a shelf of books is actually filed.
+
+    A person's name is not a sortable string. Sorting the stored form files
+    ``גרג הורביץ`` under ג and ``דיוויד באלדאצ'י`` under ד, which puts every
+    author under their GIVEN name and makes "sort by author" useless for
+    finding one.
+
+    Two shapes exist in the owner's 251 real books, and both are handled:
+      - ``אסימוב, אייזיק`` (19 of them) — a comma already says which half is
+        the surname, so everything before the FIRST comma wins. This also
+        absorbs the trailing parentheticals the legacy data carries
+        (``מאירי, יואב (אדריכל)``);
+      - ``גרג הורביץ`` (the other 232) — no comma, so the LAST whitespace-
+        separated token is the surname.
+
+    Known limits, measured on that data rather than guessed at:
+      - a multi-word surname with a particle (``סבסטיאן דה קסטל``) files under
+        the last word, קסטל, not דה. Two books of 251, and which one is
+        "right" genuinely depends on the cataloguing convention — so this
+        stays simple rather than carrying a speculative particle list. A list
+        with ``ד`` in it would file ``ג'ואן ד. וינג'`` under ד, which is
+        exactly the kind of "improvement" that costs more than it buys;
+      - ``ארתור סי.קלארק`` files under ס because the source string is missing
+        a space. That is a data fix, not a sorting rule.
+
+    The rest of the name is kept in the key so that same-surname authors order
+    by given name instead of falling through to an unrelated tiebreak.
+    """
+    text = author.strip()
+    if not text:
+        return ""
+    if "," in text:
+        surname, rest = text.split(",", 1)
+    else:
+        words = text.split()
+        surname, rest = words[-1], " ".join(words[:-1])
+    # ONE normalize() over the reassembled name, not two joined: normalize
+    # collapses whitespace, so this cannot emit a double space that would sort
+    # before every single-spaced key.
+    return normalize(f"{surname} {rest}")
