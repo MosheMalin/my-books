@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>booksnap — UI mock</title>
+<link rel="stylesheet" href="css/mock.css">
+</head>
+<body>
+
+<!-- Clickable mock of the proposed product UI. No backend, no real data.
+     The working app lives in booksnap/static/ and is untouched. -->
+
+<header class="appbar" id="appbar"></header>
+
+<main class="page" id="viewhost">
+  <div id="view" data-page=""></div>
+</main>
+
+<nav class="botnav" id="botnav"></nav>
+
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" data-book=""></aside>
+
+<div class="mocknote">mockup — nothing is wired to a backend</div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
