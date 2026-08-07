@@ -35,6 +35,8 @@ from app.domain import (
     ClaimTier,
     Copy,
     CopyFields,
+    Decision,
+    DecisionKind,
     Lending,
     LibraryRef,
     Provenance,
@@ -512,6 +514,84 @@ class SqliteReadStore(_SqliteStore):
                 params,
             ).fetchall()
             return tuple(_load_read(conn, r) for r in rows)
+
+
+class SqliteDecisionStore(_SqliteStore):
+    """Implements ``app.ports.decisions.DecisionStore`` (P2.5).
+
+    Shares the file with the other stores, same reasoning as
+    :class:`SqliteReadStore` — a decision made about a claim from a specific
+    read must never end up in a different database from the read itself.
+    """
+
+    def __init__(self, path: str | Path) -> None:
+        super().__init__(path, kind="SqliteDecisionStore")
+
+    def save_decision(self, library: LibraryRef, decision: Decision) -> None:
+        if decision.library_id != library.id:
+            raise WrongLibrary(
+                f"decision for {decision.book_key!r} belongs to "
+                f"{decision.library_id!r}, not {library.id!r}"
+            )
+        with self._connect() as conn:
+            with conn:
+                # A human changing their mind (§5.4's queue makes this
+                # possible) overwrites the row for this (shelf, depth,
+                # book_key) rather than accumulating a history nobody reads —
+                # the composite PRIMARY KEY is what makes this a plain upsert.
+                conn.execute(
+                    "INSERT INTO decisions (library_id, shelf_id, depth,"
+                    " book_key, kind, copy_id, decided_at) VALUES (?,?,?,?,?,?,?)"
+                    " ON CONFLICT(library_id, shelf_id, depth, book_key)"
+                    " DO UPDATE SET kind=excluded.kind,"
+                    " copy_id=excluded.copy_id, decided_at=excluded.decided_at",
+                    (library.id, decision.shelf_id, decision.depth,
+                     decision.book_key, decision.kind.value, decision.copy_id,
+                     decision.decided_at),
+                )
+
+    def get_decision(
+        self, library: LibraryRef, shelf_id: str, depth: int, book_key: str,
+    ) -> Decision | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM decisions WHERE library_id = ? AND shelf_id = ?"
+                " AND depth = ? AND book_key = ?",
+                (library.id, shelf_id, depth, book_key),
+            ).fetchone()
+        return _load_decision(row) if row else None
+
+    def list_decisions(
+        self, library: LibraryRef, shelf_id: str, depth: int,
+    ) -> tuple[Decision, ...]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM decisions WHERE library_id = ? AND shelf_id = ?"
+                " AND depth = ? ORDER BY book_key",
+                (library.id, shelf_id, depth),
+            ).fetchall()
+        return tuple(_load_decision(r) for r in rows)
+
+    def delete_decision(
+        self, library: LibraryRef, shelf_id: str, depth: int, book_key: str,
+    ) -> bool:
+        with self._connect() as conn:
+            with conn:
+                cur = conn.execute(
+                    "DELETE FROM decisions WHERE library_id = ? AND shelf_id = ?"
+                    " AND depth = ? AND book_key = ?",
+                    (library.id, shelf_id, depth, book_key),
+                )
+            return cur.rowcount > 0
+
+
+def _load_decision(row: sqlite3.Row) -> Decision:
+    return Decision(
+        library_id=row["library_id"], shelf_id=row["shelf_id"],
+        depth=row["depth"], book_key=row["book_key"],
+        kind=DecisionKind(row["kind"]), copy_id=row["copy_id"],
+        decided_at=row["decided_at"],
+    )
 
 
 # --- row <-> entity -------------------------------------------------------

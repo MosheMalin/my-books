@@ -485,3 +485,124 @@ class ReadCreate(BaseModel):
                     "straight through to booksnap.Pipeline.run — modes are "
                     "the engine's own, not redefined here.",
     )
+
+
+# --- reconciliation (P2.5) --------------------------------------------------
+#
+# Deliberately plain `str` fields for every classification (`kind`, `reason`),
+# not the domain's `OutcomeKind`/`AnswerKind` enums — same convention as
+# `ClaimDTO.tier` and `BookDTO.status` above (H3): a DTO is the API's own
+# contract, so it must not change shape just because a domain enum grows a
+# value the client has no use for yet.
+
+class NotSeenEntryDTO(BaseModel):
+    """A copy that stood here before this read and was not reconfirmed by it.
+    NEVER a removal — see `app.domain.reconcile.NotSeenEntry`."""
+
+    book: BookDTO
+    copy_id: str
+
+    @classmethod
+    def of(cls, entry) -> "NotSeenEntryDTO":
+        return cls(book=BookDTO.of(entry.book), copy_id=entry.copy_id)
+
+
+class ClaimOutcomeDTO(BaseModel):
+    """One claim, classified by `app.domain.reconcile.reconcile`."""
+
+    claim: ClaimDTO
+    kind: str = Field(
+        description="added | unchanged | corrected | needs_decision | "
+                    "rejected | ignored",
+    )
+    book_key: str = ""
+    existing_book: BookDTO | None = Field(
+        default=None,
+        description="The book this claim resolves against, unmodified — "
+                    "present for unchanged/corrected/needs_decision, null "
+                    "for added (no book exists yet).",
+    )
+    existing_copy_id: str | None = None
+    reason: str = Field(
+        default="",
+        description="Machine reason: same_location | new_book_auto | "
+                    "review_tier_new_book | ambiguous_location | "
+                    "relinked_by_decision | new_copy_by_decision | "
+                    "duplicate_within_depth | no_identity | rejected | "
+                    "wrong_book.",
+    )
+
+    @classmethod
+    def of(cls, outcome) -> "ClaimOutcomeDTO":
+        return cls(
+            claim=ClaimDTO.of(outcome.claim), kind=outcome.kind.value,
+            book_key=outcome.book_key,
+            existing_book=BookDTO.of(outcome.existing_book)
+                if outcome.existing_book is not None else None,
+            existing_copy_id=outcome.existing_copy_id, reason=outcome.reason,
+        )
+
+
+class DiffDTO(BaseModel):
+    """A read reconciled against the shelf's durable state (§5.6) — what the
+    owner sees after re-photographing a shelf: a DIFF, never a new result set.
+    """
+
+    shelf_id: str
+    depth: int
+    read_id: str
+    added: list[ClaimOutcomeDTO]
+    corrected: list[ClaimOutcomeDTO]
+    unchanged: list[ClaimOutcomeDTO]
+    needs_decision: list[ClaimOutcomeDTO] = Field(
+        description="Still open — §5.4's ask, or a REVIEW-tier new-book "
+                    "claim awaiting confirm/reject. POST .../apply with an "
+                    "answer for each claim_id to resolve one.",
+    )
+    not_seen: list[NotSeenEntryDTO]
+    rejected: list[ClaimOutcomeDTO] = Field(
+        description="Excluded on purpose — a standing decision said so. Not "
+                    "one of the plan's four headline counts; kept for "
+                    "transparency so a suppressed book has a visible reason.",
+    )
+    ignored: list[ClaimOutcomeDTO] = Field(
+        description="No book identity, or a within-read duplicate of "
+                    "another claim (§5.7 #2 overlap dedup).",
+    )
+
+    @classmethod
+    def of(cls, diff) -> "DiffDTO":
+        return cls(
+            shelf_id=diff.shelf_id, depth=diff.depth, read_id=diff.read_id,
+            added=[ClaimOutcomeDTO.of(o) for o in diff.added],
+            corrected=[ClaimOutcomeDTO.of(o) for o in diff.corrected],
+            unchanged=[ClaimOutcomeDTO.of(o) for o in diff.unchanged],
+            needs_decision=[ClaimOutcomeDTO.of(o) for o in diff.needs_decision],
+            not_seen=[NotSeenEntryDTO.of(n) for n in diff.not_seen],
+            rejected=[ClaimOutcomeDTO.of(o) for o in diff.rejected],
+            ignored=[ClaimOutcomeDTO.of(o) for o in diff.ignored],
+        )
+
+
+class AnswerIn(BaseModel):
+    """One human response to one still-open (``needs_decision``) claim."""
+
+    claim_id: str = Field(min_length=1)
+    kind: str = Field(
+        description="confirm | reject | already_listed | another_copy | "
+                    "wrong_book — see app.reconcile_apply.AnswerKind for "
+                    "which claims each fits.",
+    )
+    copy_id: str | None = Field(
+        default=None,
+        description="Which existing copy, for 'already_listed' when the "
+                    "book has more than one (§5.4).",
+    )
+
+
+class ApplyDiffRequest(BaseModel):
+    """Apply a read's diff: everything `reconcile()` already decided persists
+    unconditionally; ``answers`` resolves whichever ``needs_decision`` claims
+    the caller is answering right now. Omitted ones simply stay open."""
+
+    answers: list[AnswerIn] = Field(default_factory=list)

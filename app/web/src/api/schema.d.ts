@@ -494,6 +494,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/shelves/{shelf_id}/reads/{read_id}/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply Read Diff
+         * @description Persist a read's diff (§5.6): every ``added``/``unchanged``/
+         *     ``corrected`` claim writes through unconditionally — those are rules
+         *     `reconcile()` already settled, not questions — and ``body.answers``
+         *     resolves whichever ``needs_decision`` claims the caller is answering now.
+         *     An unanswered one simply stays open; nothing is lost, it just shows up
+         *     again next time the diff is asked for (P2.6 owns making that durable
+         *     across sessions rather than per-call).
+         *
+         *     Returns the diff RECOMPUTED after writing, so a resolved claim moves out
+         *     of ``needs_decision`` in the same response that resolved it.
+         */
+        post: operations["apply_read_diff_api_v1_shelves__shelf_id__reads__read_id__apply_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/shelves/{shelf_id}/reads/{read_id}/diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Diff
+         * @description What this read changes on the shelf's durable book list (§5.6): added
+         *     / corrected / unchanged / not-seen, plus whatever §5.4 asks are still
+         *     open. Read-only — nothing here is written until ``POST .../apply``.
+         */
+        get: operations["get_diff_api_v1_shelves__shelf_id__reads__read_id__diff_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/shelves/{shelf_id}/reads/{read_id}/stop": {
         parameters: {
             query?: never;
@@ -523,6 +574,34 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AnswerIn
+         * @description One human response to one still-open (``needs_decision``) claim.
+         */
+        AnswerIn: {
+            /** Claim Id */
+            claim_id: string;
+            /**
+             * Copy Id
+             * @description Which existing copy, for 'already_listed' when the book has more than one (§5.4).
+             */
+            copy_id?: string | null;
+            /**
+             * Kind
+             * @description confirm | reject | already_listed | another_copy | wrong_book — see app.reconcile_apply.AnswerKind for which claims each fits.
+             */
+            kind: string;
+        };
+        /**
+         * ApplyDiffRequest
+         * @description Apply a read's diff: everything `reconcile()` already decided persists
+         *     unconditionally; ``answers`` resolves whichever ``needs_decision`` claims
+         *     the caller is answering right now. Omitted ones simply stay open.
+         */
+        ApplyDiffRequest: {
+            /** Answers */
+            answers?: components["schemas"]["AnswerIn"][];
+        };
         /** Body_upload_image_api_v1_images_post */
         Body_upload_image_api_v1_images_post: {
             /**
@@ -764,6 +843,33 @@ export interface components {
             title: string;
         };
         /**
+         * ClaimOutcomeDTO
+         * @description One claim, classified by `app.domain.reconcile.reconcile`.
+         */
+        ClaimOutcomeDTO: {
+            /**
+             * Book Key
+             * @default
+             */
+            book_key: string;
+            claim: components["schemas"]["ClaimDTO"];
+            /** @description The book this claim resolves against, unmodified — present for unchanged/corrected/needs_decision, null for added (no book exists yet). */
+            existing_book?: components["schemas"]["BookDTO"] | null;
+            /** Existing Copy Id */
+            existing_copy_id?: string | null;
+            /**
+             * Kind
+             * @description added | unchanged | corrected | needs_decision | rejected | ignored
+             */
+            kind: string;
+            /**
+             * Reason
+             * @description Machine reason: same_location | new_book_auto | review_tier_new_book | ambiguous_location | relinked_by_decision | new_copy_by_decision | duplicate_within_depth | no_identity | rejected | wrong_book.
+             * @default
+             */
+            reason: string;
+        };
+        /**
          * CopyCreate
          * @description *"I have another copy"* (§5.1) — the only path that creates a second
          *     physical object. No ``shelf_id`` here: shelves don't exist until P2.1, so
@@ -836,6 +942,42 @@ export interface components {
             label?: string | null;
             /** Tags */
             tags?: string[] | null;
+        };
+        /**
+         * DiffDTO
+         * @description A read reconciled against the shelf's durable state (§5.6) — what the
+         *     owner sees after re-photographing a shelf: a DIFF, never a new result set.
+         */
+        DiffDTO: {
+            /** Added */
+            added: components["schemas"]["ClaimOutcomeDTO"][];
+            /** Corrected */
+            corrected: components["schemas"]["ClaimOutcomeDTO"][];
+            /** Depth */
+            depth: number;
+            /**
+             * Ignored
+             * @description No book identity, or a within-read duplicate of another claim (§5.7 #2 overlap dedup).
+             */
+            ignored: components["schemas"]["ClaimOutcomeDTO"][];
+            /**
+             * Needs Decision
+             * @description Still open — §5.4's ask, or a REVIEW-tier new-book claim awaiting confirm/reject. POST .../apply with an answer for each claim_id to resolve one.
+             */
+            needs_decision: components["schemas"]["ClaimOutcomeDTO"][];
+            /** Not Seen */
+            not_seen: components["schemas"]["NotSeenEntryDTO"][];
+            /** Read Id */
+            read_id: string;
+            /**
+             * Rejected
+             * @description Excluded on purpose — a standing decision said so. Not one of the plan's four headline counts; kept for transparency so a suppressed book has a visible reason.
+             */
+            rejected: components["schemas"]["ClaimOutcomeDTO"][];
+            /** Shelf Id */
+            shelf_id: string;
+            /** Unchanged */
+            unchanged: components["schemas"]["ClaimOutcomeDTO"][];
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -953,6 +1095,16 @@ export interface components {
              * @description Server package version.
              */
             version: string;
+        };
+        /**
+         * NotSeenEntryDTO
+         * @description A copy that stood here before this read and was not reconfirmed by it.
+         *     NEVER a removal — see `app.domain.reconcile.NotSeenEntry`.
+         */
+        NotSeenEntryDTO: {
+            book: components["schemas"]["BookDTO"];
+            /** Copy Id */
+            copy_id: string;
         };
         /**
          * ReadCreate
@@ -2128,6 +2280,74 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReadDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    apply_read_diff_api_v1_shelves__shelf_id__reads__read_id__apply_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shelf_id: string;
+                read_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApplyDiffRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiffDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_diff_api_v1_shelves__shelf_id__reads__read_id__diff_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shelf_id: string;
+                read_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiffDTO"];
                 };
             };
             /** @description Validation Error */

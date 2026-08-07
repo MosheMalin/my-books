@@ -26,36 +26,51 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from app.api.deps import (
     current_library,
     get_blob_store,
+    get_book_store,
     get_clock,
+    get_decision_store,
     get_id_gen,
     get_job_runner,
     get_read_store,
     get_reader,
     get_shelf_store,
 )
-from app.api.dto import ReadCreate, ReadDTO, ReadSummaryDTO
+from app.api.dto import ApplyDiffRequest, DiffDTO, ReadCreate, ReadDTO, ReadSummaryDTO
 from app.domain import (
     Capture,
     Claim,
     ClaimTier,
     LibraryRef,
     Read,
+    ReadStatus,
     Shelf,
     append_claim,
     fail_read,
     finish_read,
     new_read,
+    reconcile,
     stop_read,
 )
 from app.domain.book import DomainError
 from app.domain.shelf import UnknownDepth
 from app.ports import Clock, IdGen
 from app.ports.blobs import BlobStore
+from app.ports.decisions import DecisionStore
 from app.ports.jobs import JobHandle, JobRunner
 from app.ports.reader import Reader, ReadRequest
-from app.ports.store import ReadStore, ShelfStore
+from app.ports.store import BookStore, ReadStore, ShelfStore
+from app.reconcile_apply import Answer, AnswerKind, UnresolvedAnswer, apply_diff
 
 router = APIRouter(prefix="/shelves/{shelf_id}/reads", tags=["reads"])
+
+# A `reconcile()` call needs to know about a matching book anywhere in the
+# library (§5.4 — the ask fires on a match on ANOTHER shelf), not only this
+# depth's occupants, so the diff endpoints load the whole library rather than
+# a filtered slice. `BookStore.list` has no shelf/depth filter to narrow with
+# (P2.5 did not add one — see `app.domain.reconcile`'s own module docstring
+# for the honest O(library) trade this accepts, same one `books.py`'s
+# `EXPORT_MAX` already makes for the export route).
+_FULL_LIBRARY_SCAN_LIMIT = 100_000
 
 
 def _load_shelf(store: ShelfStore, library: LibraryRef, shelf_id: str) -> Shelf:
@@ -186,6 +201,110 @@ def stop(
     read = _load_read(reads, library, shelf_id, read_id)
     jobs.stop(read_id)
     return ReadDTO.of(read)
+
+
+# --- reconciliation (P2.5) --------------------------------------------------
+
+def _diff_for(
+    shelf_id: str,
+    read_id: str,
+    library: LibraryRef,
+    shelves: ShelfStore,
+    reads: ReadStore,
+    books: BookStore,
+    decisions: DecisionStore,
+):
+    """Load a read and reconcile its claims against the library's CURRENT
+    state — recomputed fresh on every call (never cached), so GET and POST
+    .../apply always see the same reality the store holds right now, and so
+    "would this claim resolve differently now" is a real, answerable question
+    rather than a stale snapshot."""
+    shelf = _load_shelf(shelves, library, shelf_id)
+    read = _load_read(reads, library, shelf_id, read_id)
+    if read.status is ReadStatus.RUNNING:
+        # Applying (or even just diffing) a read that might still append
+        # claims would be comparing against a moving target, and an APPLY
+        # here would write provenance for a read the job could still be
+        # mutating underneath it (H2/§1.3's concurrency concern, one layer
+        # up). Poll GET .../reads/{id} until it settles first.
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            f"read {read_id} is still running")
+    library_books = {b.key: b for b in
+                     books.list(library, limit=_FULL_LIBRARY_SCAN_LIMIT).items}
+    decision_rows = decisions.list_decisions(library, shelf_id, read.depth)
+    diff = reconcile(shelf, read.depth, read.claims, library_books,
+                     decision_rows, read_id=read.id)
+    return read, diff
+
+
+@router.get("/{read_id}/diff", response_model=DiffDTO)
+def get_diff(
+    shelf_id: str,
+    read_id: str,
+    library: LibraryRef = Depends(current_library),
+    shelves: ShelfStore = Depends(get_shelf_store),
+    reads: ReadStore = Depends(get_read_store),
+    books: BookStore = Depends(get_book_store),
+    decisions: DecisionStore = Depends(get_decision_store),
+) -> DiffDTO:
+    """What this read changes on the shelf's durable book list (§5.6): added
+    / corrected / unchanged / not-seen, plus whatever §5.4 asks are still
+    open. Read-only — nothing here is written until ``POST .../apply``."""
+    _, diff = _diff_for(shelf_id, read_id, library, shelves, reads, books,
+                        decisions)
+    return DiffDTO.of(diff)
+
+
+_ANSWER_KINDS = {k.value: k for k in AnswerKind}
+
+
+@router.post("/{read_id}/apply", response_model=DiffDTO)
+def apply_read_diff(
+    shelf_id: str,
+    read_id: str,
+    body: ApplyDiffRequest,
+    library: LibraryRef = Depends(current_library),
+    shelves: ShelfStore = Depends(get_shelf_store),
+    reads: ReadStore = Depends(get_read_store),
+    books: BookStore = Depends(get_book_store),
+    decisions: DecisionStore = Depends(get_decision_store),
+    clock: Clock = Depends(get_clock),
+    ids: IdGen = Depends(get_id_gen),
+) -> DiffDTO:
+    """Persist a read's diff (§5.6): every ``added``/``unchanged``/
+    ``corrected`` claim writes through unconditionally — those are rules
+    `reconcile()` already settled, not questions — and ``body.answers``
+    resolves whichever ``needs_decision`` claims the caller is answering now.
+    An unanswered one simply stays open; nothing is lost, it just shows up
+    again next time the diff is asked for (P2.6 owns making that durable
+    across sessions rather than per-call).
+
+    Returns the diff RECOMPUTED after writing, so a resolved claim moves out
+    of ``needs_decision`` in the same response that resolved it.
+    """
+    read, diff = _diff_for(shelf_id, read_id, library, shelves, reads, books,
+                           decisions)
+    answers = []
+    for a in body.answers:
+        kind = _ANSWER_KINDS.get(a.kind)
+        if kind is None:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"unknown answer kind {a.kind!r}; expected one of "
+                f"{sorted(_ANSWER_KINDS)}",
+            )
+        answers.append(Answer(claim_id=a.claim_id, kind=kind,
+                              copy_id=a.copy_id))
+    try:
+        apply_diff(diff, library=library, books=books, shelves=shelves,
+                  decisions=decisions, clock=clock, ids=ids,
+                  captured_at=read.finished_at, answers=tuple(answers))
+    except UnresolvedAnswer as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+    _, fresh = _diff_for(shelf_id, read_id, library, shelves, reads, books,
+                         decisions)
+    return DiffDTO.of(fresh)
 
 
 # --- the job --------------------------------------------------------------

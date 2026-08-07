@@ -3,7 +3,7 @@
 
 The one import that leaves this package is ``normalize()`` from the
 recognition core — see ``app/domain/text.py`` for why duplicating it would be
-the worse choice. Reconciliation arrives in P2.3.
+the worse choice.
 
 Rules that live here because they must be testable in milliseconds and must
 never be silently reversed (plan H5):
@@ -15,6 +15,9 @@ never be silently reversed (plan H5):
   - depth is declared, never detected ................. §5.7  shelf.new_capture
   - a different row is a different location ........... §5.7  book._resolve_copy
   - the wishlist is not furniture ..................... §5.7  counts_toward_library
+  - a shelf's list is reconciled, never replaced ....... §5.6  reconcile.reconcile
+  - a rejected/wrong-book claim is never re-added ...... §5.6  reconcile.reconcile
+  - "not seen" never auto-removes a book ............... §5.6  reconcile._not_seen_here
 """
 from __future__ import annotations
 
@@ -38,11 +41,21 @@ from app.domain.book import (
     lend,
     new_book,
     observe,
+    relink_copy,
     remove_from_shelf,
     return_copy,
     set_work_fields,
 )
 from app.domain.library import LibraryRef
+from app.domain.reconcile import (
+    ClaimOutcome,
+    Decision,
+    DecisionKind,
+    Diff,
+    NotSeenEntry,
+    OutcomeKind,
+    reconcile,
+)
 from app.domain.read import (
     Claim,
     ClaimTier,
@@ -74,14 +87,20 @@ __all__ = [
     "Book",
     "Capture",
     "Claim",
+    "ClaimOutcome",
     "ClaimTier",
     "Copy",
     "CopyAlreadyLentOut",
     "CopyFields",
     "CopyNotLentOut",
+    "Decision",
+    "DecisionKind",
+    "Diff",
     "DomainError",
     "Lending",
     "LibraryRef",
+    "NotSeenEntry",
+    "OutcomeKind",
     "Provenance",
     "Read",
     "ReadAlreadyFinished",
@@ -111,6 +130,8 @@ __all__ = [
     "new_shelf",
     "normalize",
     "observe",
+    "reconcile",
+    "relink_copy",
     "remove_from_shelf",
     "rename_shelf",
     "return_copy",

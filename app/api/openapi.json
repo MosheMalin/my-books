@@ -1,6 +1,53 @@
 {
   "components": {
     "schemas": {
+      "AnswerIn": {
+        "description": "One human response to one still-open (``needs_decision``) claim.",
+        "properties": {
+          "claim_id": {
+            "minLength": 1,
+            "title": "Claim Id",
+            "type": "string"
+          },
+          "copy_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Which existing copy, for 'already_listed' when the book has more than one (§5.4).",
+            "title": "Copy Id"
+          },
+          "kind": {
+            "description": "confirm | reject | already_listed | another_copy | wrong_book — see app.reconcile_apply.AnswerKind for which claims each fits.",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "claim_id",
+          "kind"
+        ],
+        "title": "AnswerIn",
+        "type": "object"
+      },
+      "ApplyDiffRequest": {
+        "description": "Apply a read's diff: everything `reconcile()` already decided persists\nunconditionally; ``answers`` resolves whichever ``needs_decision`` claims\nthe caller is answering right now. Omitted ones simply stay open.",
+        "properties": {
+          "answers": {
+            "items": {
+              "$ref": "#/components/schemas/AnswerIn"
+            },
+            "title": "Answers",
+            "type": "array"
+          }
+        },
+        "title": "ApplyDiffRequest",
+        "type": "object"
+      },
       "Body_upload_image_api_v1_images_post": {
         "properties": {
           "file": {
@@ -444,6 +491,58 @@
         "title": "ClaimDTO",
         "type": "object"
       },
+      "ClaimOutcomeDTO": {
+        "description": "One claim, classified by `app.domain.reconcile.reconcile`.",
+        "properties": {
+          "book_key": {
+            "default": "",
+            "title": "Book Key",
+            "type": "string"
+          },
+          "claim": {
+            "$ref": "#/components/schemas/ClaimDTO"
+          },
+          "existing_book": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BookDTO"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The book this claim resolves against, unmodified — present for unchanged/corrected/needs_decision, null for added (no book exists yet)."
+          },
+          "existing_copy_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Existing Copy Id"
+          },
+          "kind": {
+            "description": "added | unchanged | corrected | needs_decision | rejected | ignored",
+            "title": "Kind",
+            "type": "string"
+          },
+          "reason": {
+            "default": "",
+            "description": "Machine reason: same_location | new_book_auto | review_tier_new_book | ambiguous_location | relinked_by_decision | new_copy_by_decision | duplicate_within_depth | no_identity | rejected | wrong_book.",
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "claim",
+          "kind"
+        ],
+        "title": "ClaimOutcomeDTO",
+        "type": "object"
+      },
       "CopyCreate": {
         "description": "*\"I have another copy\"* (§5.1) — the only path that creates a second\nphysical object. No ``shelf_id`` here: shelves don't exist until P2.1, so\nevery copy today is unlocated regardless of how it was created.",
         "properties": {
@@ -606,6 +705,89 @@
           }
         },
         "title": "CopyPatch",
+        "type": "object"
+      },
+      "DiffDTO": {
+        "description": "A read reconciled against the shelf's durable state (§5.6) — what the\nowner sees after re-photographing a shelf: a DIFF, never a new result set.",
+        "properties": {
+          "added": {
+            "items": {
+              "$ref": "#/components/schemas/ClaimOutcomeDTO"
+            },
+            "title": "Added",
+            "type": "array"
+          },
+          "corrected": {
+            "items": {
+              "$ref": "#/components/schemas/ClaimOutcomeDTO"
+            },
+            "title": "Corrected",
+            "type": "array"
+          },
+          "depth": {
+            "title": "Depth",
+            "type": "integer"
+          },
+          "ignored": {
+            "description": "No book identity, or a within-read duplicate of another claim (§5.7 #2 overlap dedup).",
+            "items": {
+              "$ref": "#/components/schemas/ClaimOutcomeDTO"
+            },
+            "title": "Ignored",
+            "type": "array"
+          },
+          "needs_decision": {
+            "description": "Still open — §5.4's ask, or a REVIEW-tier new-book claim awaiting confirm/reject. POST .../apply with an answer for each claim_id to resolve one.",
+            "items": {
+              "$ref": "#/components/schemas/ClaimOutcomeDTO"
+            },
+            "title": "Needs Decision",
+            "type": "array"
+          },
+          "not_seen": {
+            "items": {
+              "$ref": "#/components/schemas/NotSeenEntryDTO"
+            },
+            "title": "Not Seen",
+            "type": "array"
+          },
+          "read_id": {
+            "title": "Read Id",
+            "type": "string"
+          },
+          "rejected": {
+            "description": "Excluded on purpose — a standing decision said so. Not one of the plan's four headline counts; kept for transparency so a suppressed book has a visible reason.",
+            "items": {
+              "$ref": "#/components/schemas/ClaimOutcomeDTO"
+            },
+            "title": "Rejected",
+            "type": "array"
+          },
+          "shelf_id": {
+            "title": "Shelf Id",
+            "type": "string"
+          },
+          "unchanged": {
+            "items": {
+              "$ref": "#/components/schemas/ClaimOutcomeDTO"
+            },
+            "title": "Unchanged",
+            "type": "array"
+          }
+        },
+        "required": [
+          "shelf_id",
+          "depth",
+          "read_id",
+          "added",
+          "corrected",
+          "unchanged",
+          "needs_decision",
+          "not_seen",
+          "rejected",
+          "ignored"
+        ],
+        "title": "DiffDTO",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -793,6 +975,24 @@
           "library"
         ],
         "title": "MetaResponse",
+        "type": "object"
+      },
+      "NotSeenEntryDTO": {
+        "description": "A copy that stood here before this read and was not reconfirmed by it.\nNEVER a removal — see `app.domain.reconcile.NotSeenEntry`.",
+        "properties": {
+          "book": {
+            "$ref": "#/components/schemas/BookDTO"
+          },
+          "copy_id": {
+            "title": "Copy Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "book",
+          "copy_id"
+        ],
+        "title": "NotSeenEntryDTO",
         "type": "object"
       },
       "ReadCreate": {
@@ -2701,6 +2901,120 @@
           }
         },
         "summary": "Get Read",
+        "tags": [
+          "reads"
+        ]
+      }
+    },
+    "/api/v1/shelves/{shelf_id}/reads/{read_id}/apply": {
+      "post": {
+        "description": "Persist a read's diff (§5.6): every ``added``/``unchanged``/\n``corrected`` claim writes through unconditionally — those are rules\n`reconcile()` already settled, not questions — and ``body.answers``\nresolves whichever ``needs_decision`` claims the caller is answering now.\nAn unanswered one simply stays open; nothing is lost, it just shows up\nagain next time the diff is asked for (P2.6 owns making that durable\nacross sessions rather than per-call).\n\nReturns the diff RECOMPUTED after writing, so a resolved claim moves out\nof ``needs_decision`` in the same response that resolved it.",
+        "operationId": "apply_read_diff_api_v1_shelves__shelf_id__reads__read_id__apply_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "shelf_id",
+            "required": true,
+            "schema": {
+              "title": "Shelf Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "read_id",
+            "required": true,
+            "schema": {
+              "title": "Read Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplyDiffRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiffDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Apply Read Diff",
+        "tags": [
+          "reads"
+        ]
+      }
+    },
+    "/api/v1/shelves/{shelf_id}/reads/{read_id}/diff": {
+      "get": {
+        "description": "What this read changes on the shelf's durable book list (§5.6): added\n/ corrected / unchanged / not-seen, plus whatever §5.4 asks are still\nopen. Read-only — nothing here is written until ``POST .../apply``.",
+        "operationId": "get_diff_api_v1_shelves__shelf_id__reads__read_id__diff_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "shelf_id",
+            "required": true,
+            "schema": {
+              "title": "Shelf Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "read_id",
+            "required": true,
+            "schema": {
+              "title": "Read Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiffDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Diff",
         "tags": [
           "reads"
         ]

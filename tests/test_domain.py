@@ -29,6 +29,8 @@ from app.domain import (
     ClaimTier,
     CopyAlreadyLentOut,
     CopyNotLentOut,
+    Decision,
+    DecisionKind,
     DomainError,
     Provenance,
     ReadAlreadyFinished,
@@ -55,6 +57,8 @@ from app.domain import (
     new_read,
     new_shelf,
     observe,
+    reconcile,
+    relink_copy,
     remove_from_shelf,
     rename_shelf,
     return_copy,
@@ -150,6 +154,34 @@ def test_same_shelf_re_read_never_asks():
     b = _book(shelf_id="s1")
     out = observe(b, Provenance("r2", "sp2", shelf_id="s1"))
     assert out.copy_count == 1
+    assert len(out.copy("c1").provenance) == 1
+
+
+def test_observe_refuses_to_move_an_already_located_copy():
+    """The other half of the rule `relink_copy` exists to override: a bare
+    read must never relocate a copy on its own claim alone, even with an
+    explicit copy_id — only a human's §5.4 answer (`relink_copy`) may."""
+    b = _book(shelf_id="s1")
+    out = observe(b, Provenance("r2", "sp2", shelf_id="s9"), copy_id="c1")
+    assert out.copy("c1").shelf_id == "s1", "observe() moved a located copy"
+
+
+def test_relink_copy_is_the_only_path_that_moves_a_located_copy():
+    """§5.4's 'already listed copy' answer, at the domain level: a human
+    decision relocates the copy, appends the sighting, and never demotes."""
+    b = approve(_book(shelf_id="s1"))
+    out = relink_copy(b, "c1", Provenance("r2", "sp2", shelf_id="s9", depth=2))
+    assert out.copy("c1").location == ("s9", 2)
+    assert [p.sighting for p in out.copy("c1").provenance] == \
+        [("r2", "sp2")], "the sighting was not appended"
+    assert out.status is Status.APPROVED, "relink must not demote"
+
+
+def test_relink_copy_is_idempotent_per_sighting():
+    b = _book(shelf_id="s1")
+    prov = Provenance("r2", "sp2", shelf_id="s9")
+    out = relink_copy(b, "c1", prov)
+    out = relink_copy(out, "c1", prov)
     assert len(out.copy("c1").provenance) == 1
 
 
@@ -722,6 +754,286 @@ def test_claim_tier_defaults_to_unmatched():
     nothing to say about — so it needs a real tier value rather than a null
     one standing in for "no match"."""
     assert _claim().tier is ClaimTier.UNMATCHED
+
+
+# --- P2.5: reconciliation (§5.6) — the pure diff engine --------------------
+#
+# `reconcile()` is the item's whole point: (shelf state, claims, decisions) ->
+# diff. Every named rule from the plan's H5 checklist gets its own test here.
+
+def _rshelf(**kw):
+    args = dict(id="sh1", library_id=LIB, depth_count=2)
+    args.update(kw)
+    return new_shelf(**args)
+
+
+def _rclaim(n: int = 1, **kw) -> Claim:
+    args = dict(id=f"rcl{n}", spine_id=f"rsp{n}", capture_id="cap1",
+                title="מלכי הכופרים", author="פול קארני",
+                tier=ClaimTier.AUTO, score=90.0)
+    args.update(kw)
+    return Claim(**args)
+
+
+def test_a_book_already_here_gets_no_new_record_and_no_review_prompt():
+    """§5.6 row 1: same shelf, same depth -> append provenance, nothing else.
+    Guards reconcile() routing an already-here match through NEEDS_DECISION
+    (a needless question) or ADDED (a second record for a book that never
+    moved) instead of UNCHANGED."""
+    shelf = _rshelf()
+    here = new_book(id="b1", library_id=LIB, title="מלכי הכופרים",
+                    author="פול קארני", copy_id="c1", shelf_id="sh1", depth=1)
+    diff = reconcile(shelf, 1, [_rclaim()], {here.key: here}, [], read_id="r1")
+
+    assert len(diff.unchanged) == 1
+    assert not diff.added and not diff.needs_decision
+    outcome = diff.unchanged[0]
+    assert outcome.existing_copy_id == "c1"
+    assert outcome.reason == "same_location"
+
+
+def test_a_book_on_another_shelf_asks_instead_of_guessing():
+    """§5.4's real case, through reconcile(): a claim matching a book
+    confirmed elsewhere in the library goes to needs_decision, never
+    silently into added or unchanged."""
+    shelf = _rshelf()
+    elsewhere = new_book(id="b1", library_id=LIB, title="מלכי הכופרים",
+                         author="פול קארני", copy_id="c1", shelf_id="sh9", depth=1)
+    diff = reconcile(shelf, 1, [_rclaim()], {elsewhere.key: elsewhere}, [],
+                     read_id="r1")
+
+    assert not diff.added and not diff.unchanged
+    assert len(diff.needs_decision) == 1
+    outcome = diff.needs_decision[0]
+    assert outcome.reason == "ambiguous_location"
+    assert outcome.existing_book.id == "b1"
+
+
+def test_another_depth_of_the_same_shelf_also_asks():
+    """§5.7 #3: a different row of the SAME shelf is a different location,
+    not "still here" — the ask fires exactly as for a different shelf."""
+    shelf = _rshelf(depth_count=2)
+    back_row = new_book(id="b1", library_id=LIB, title="מלכי הכופרים",
+                        author="פול קארני", copy_id="c1", shelf_id="sh1", depth=2)
+    diff = reconcile(shelf, 1, [_rclaim()], {back_row.key: back_row}, [],
+                     read_id="r1")
+    assert len(diff.needs_decision) == 1
+    assert diff.needs_decision[0].reason == "ambiguous_location"
+
+
+def test_a_book_not_in_the_library_is_added_at_auto_tier():
+    shelf = _rshelf()
+    diff = reconcile(shelf, 1, [_rclaim()], {}, [], read_id="r1")
+    assert len(diff.added) == 1
+    assert not diff.unchanged and not diff.needs_decision
+    assert diff.added[0].reason == "new_book_auto"
+
+
+def test_a_review_tier_new_book_waits_for_a_human_instead_of_auto_entering():
+    """The rule `booksnap/library.py::absorb_auto_claims` already applies
+    (REVIEW claims wait for an explicit decision), carried into reconcile():
+    unlike an AUTO claim, a REVIEW-tier claim for a book the library has
+    never heard of must not silently become `added` — `Status` has no
+    "pending" rung to create it at honestly."""
+    shelf = _rshelf()
+    claim = _rclaim(tier=ClaimTier.REVIEW, score=60.0)
+    diff = reconcile(shelf, 1, [claim], {}, [], read_id="r1")
+    assert not diff.added, "a REVIEW-tier claim auto-entered the library"
+    assert len(diff.needs_decision) == 1
+    assert diff.needs_decision[0].reason == "review_tier_new_book"
+
+
+def test_a_previously_rejected_claim_is_never_re_added():
+    """§5.6 row 4 — the plan's own words: 'a human decision must not be
+    overridden by re-running'. Same rule
+    `booksnap/library.py::absorb_auto_claims` already enforces for the
+    tuning server, carried into the product's reconciliation."""
+    shelf = _rshelf()
+    key = book_key("מלכי הכופרים", "פול קארני")
+    rejection = Decision(library_id=LIB, shelf_id="sh1", depth=1,
+                         book_key=key, kind=DecisionKind.REJECTED)
+    diff = reconcile(shelf, 1, [_rclaim()], {}, [rejection], read_id="r1")
+    assert not diff.added, "a rejected claim was re-added"
+    assert len(diff.rejected) == 1
+    assert diff.rejected[0].reason == "rejected"
+
+
+def test_a_wrong_book_decision_suppresses_the_ambiguous_claim_too():
+    """§5.4's third answer, replayed: once a human says "not this book",
+    the SAME (shelf, depth, book_key) never asks — or adds — again."""
+    shelf = _rshelf()
+    elsewhere = new_book(id="b1", library_id=LIB, title="מלכי הכופרים",
+                         author="פול קארני", copy_id="c1", shelf_id="sh9", depth=1)
+    wrong = Decision(library_id=LIB, shelf_id="sh1", depth=1,
+                     book_key=elsewhere.key, kind=DecisionKind.WRONG_BOOK)
+    diff = reconcile(shelf, 1, [_rclaim()], {elsewhere.key: elsewhere},
+                     [wrong], read_id="r1")
+    assert not diff.needs_decision and not diff.unchanged and not diff.added
+    assert len(diff.rejected) == 1
+    assert diff.rejected[0].reason == "wrong_book"
+
+
+def test_approval_survives_a_worse_re_read_through_reconcile():
+    """§5.6 row 5: reconcile() must route an already-here match to
+    `unchanged` REGARDLESS of how weak this read's claim is — never to
+    needs_decision (re-questioning an approved book) or added (duplicating
+    it). `Status.merge`'s own never-demote guarantee (already covered at the
+    book level) is what then keeps APPROVED once the outcome is applied."""
+    shelf = _rshelf()
+    approved = approve(new_book(id="b1", library_id=LIB, title="מלכי הכופרים",
+                                author="פול קארני", copy_id="c1",
+                                shelf_id="sh1", depth=1))
+    weak_claim = _rclaim(tier=ClaimTier.REVIEW, score=12.0)
+    diff = reconcile(shelf, 1, [weak_claim], {approved.key: approved}, [],
+                     read_id="r1")
+    assert len(diff.unchanged) == 1
+    assert diff.unchanged[0].existing_book.status is Status.APPROVED
+    assert not diff.needs_decision, "a weaker re-read re-questioned an approved book"
+
+
+def test_a_book_this_read_did_not_find_is_reported_not_seen_never_removed():
+    """§5.6's central rule: absence from one read is weak evidence (measured
+    recall 0.78-0.83). reconcile() reports the fact; there is no operation
+    here that removes anything — not_seen carries the UNMODIFIED book."""
+    shelf = _rshelf()
+    here = new_book(id="b1", library_id=LIB, title="ספר שלא נקרא", author="",
+                    copy_id="c1", shelf_id="sh1", depth=1)
+    diff = reconcile(shelf, 1, [], {here.key: here}, [], read_id="r1")
+    assert not diff.added and not diff.unchanged and not diff.needs_decision
+    assert len(diff.not_seen) == 1
+    assert diff.not_seen[0].book is here, "not_seen must carry the SAME, unmodified book"
+    assert diff.not_seen[0].copy_id == "c1"
+
+
+def test_not_seen_is_scoped_to_the_depth_actually_read():
+    """§5.7 #1: a front-row re-read of a 3-row shelf must not flag the other
+    rows' books as missing — comparing against the whole shelf would flag
+    two thirds of it, every single time."""
+    shelf = _rshelf(depth_count=3)
+    front = new_book(id="b1", library_id=LIB, title="ספר קדמי", author="",
+                     copy_id="c1", shelf_id="sh1", depth=1)
+    middle = new_book(id="b2", library_id=LIB, title="ספר אמצעי", author="",
+                      copy_id="c2", shelf_id="sh1", depth=2)
+    back = new_book(id="b3", library_id=LIB, title="ספר אחורי", author="",
+                    copy_id="c3", shelf_id="sh1", depth=3)
+    books = {b.key: b for b in (front, middle, back)}
+    claim = _rclaim(title="ספר קדמי", author="")
+    diff = reconcile(shelf, 1, [claim], books, [], read_id="r1")
+
+    assert len(diff.unchanged) == 1 and diff.unchanged[0].existing_book.id == "b1"
+    assert diff.not_seen == (), (
+        "a front-row read flagged books on OTHER rows as not seen"
+    )
+
+
+def test_two_captures_of_one_depth_claiming_the_same_book_collapse_to_one():
+    """§5.7 #2: overlap dedup applies WITHIN a depth. Two claims (as two
+    overlapping captures of one row would each produce) naming the same book
+    must collapse to ONE outcome — never two records, and never an
+    ambiguous "second copy" ask for a book that never left the shelf."""
+    shelf = _rshelf()
+    weak = _rclaim(1, capture_id="capA", score=70.0)
+    strong = _rclaim(2, capture_id="capB", score=91.0)
+    diff = reconcile(shelf, 1, [weak, strong], {}, [], read_id="r1")
+
+    assert len(diff.added) == 1, "an overlap produced two records for one book"
+    assert diff.added[0].claim.id == "rcl2", "the higher-score claim should win"
+    assert len(diff.ignored) == 1
+    assert diff.ignored[0].reason == "duplicate_within_depth"
+    assert diff.ignored[0].superseded_by == "rcl2"
+
+
+def test_an_already_listed_decision_relinks_without_asking_again():
+    """The `corrected` bucket's main case: once a human has answered §5.4's
+    prompt with "already listed copy", a REPEAT of the exact same (shelf,
+    depth, book_key) applies it automatically — no second ask."""
+    shelf = _rshelf()
+    elsewhere = new_book(id="b1", library_id=LIB, title="מלכי הכופרים",
+                         author="פול קארני", copy_id="c1", shelf_id="sh9", depth=1)
+    already = Decision(library_id=LIB, shelf_id="sh1", depth=1,
+                       book_key=elsewhere.key, kind=DecisionKind.ALREADY_LISTED,
+                       copy_id="c1")
+    diff = reconcile(shelf, 1, [_rclaim()], {elsewhere.key: elsewhere},
+                     [already], read_id="r1")
+    assert not diff.needs_decision
+    assert len(diff.corrected) == 1
+    outcome = diff.corrected[0]
+    assert outcome.existing_copy_id == "c1"
+    assert outcome.reason == "relinked_by_decision"
+
+
+def test_an_another_copy_decision_replays_without_asking_again():
+    """§5.4's second answer, replayed the same way — but this ends in a
+    fresh copy, so unlike the relink case there is no existing id to carry."""
+    shelf = _rshelf()
+    elsewhere = new_book(id="b1", library_id=LIB, title="מלכי הכופרים",
+                         author="פול קארני", copy_id="c1", shelf_id="sh9", depth=1)
+    another = Decision(library_id=LIB, shelf_id="sh1", depth=1,
+                       book_key=elsewhere.key, kind=DecisionKind.ANOTHER_COPY)
+    diff = reconcile(shelf, 1, [_rclaim()], {elsewhere.key: elsewhere},
+                     [another], read_id="r1")
+    assert not diff.needs_decision
+    assert len(diff.corrected) == 1
+    outcome = diff.corrected[0]
+    assert outcome.existing_copy_id is None, "a fresh copy has no id yet"
+    assert outcome.reason == "new_copy_by_decision"
+
+
+def test_a_stale_already_listed_decision_falls_back_to_asking():
+    """The decision names a copy that no longer exists (it was deleted, or
+    the id was simply wrong) — reconcile() must not crash or silently
+    misresolve; it asks again rather than guessing."""
+    shelf = _rshelf()
+    elsewhere = new_book(id="b1", library_id=LIB, title="מלכי הכופרים",
+                         author="פול קארני", copy_id="c1", shelf_id="sh9", depth=1)
+    stale = Decision(library_id=LIB, shelf_id="sh1", depth=1,
+                     book_key=elsewhere.key, kind=DecisionKind.ALREADY_LISTED,
+                     copy_id="gone")
+    diff = reconcile(shelf, 1, [_rclaim()], {elsewhere.key: elsewhere},
+                     [stale], read_id="r1")
+    assert len(diff.needs_decision) == 1
+    assert diff.needs_decision[0].reason == "ambiguous_location"
+
+
+def test_a_book_already_here_wins_over_a_stale_suppressing_decision():
+    """Ordering matters: reconcile() checks "is it already standing here"
+    BEFORE consulting decisions, so a leftover REJECTED/WRONG_BOOK decision
+    from before the book existed at this location cannot suppress a claim
+    that is now correctly reconfirming it."""
+    shelf = _rshelf()
+    here = new_book(id="b1", library_id=LIB, title="מלכי הכופרים",
+                    author="פול קארני", copy_id="c1", shelf_id="sh1", depth=1)
+    stale_reject = Decision(library_id=LIB, shelf_id="sh1", depth=1,
+                            book_key=here.key, kind=DecisionKind.REJECTED)
+    diff = reconcile(shelf, 1, [_rclaim()], {here.key: here}, [stale_reject],
+                     read_id="r1")
+    assert len(diff.unchanged) == 1, "a stale decision suppressed a real match"
+    assert not diff.rejected
+
+
+def test_a_decision_from_a_different_location_is_refused_not_silently_dropped():
+    """Defense in depth: reconcile()'s caller must pre-scope decisions to
+    the EXACT (shelf, depth) being reconciled. A mismatched one is a wiring
+    bug and must be loud — silently skipping it would look identical to
+    "no decision yet" and mask the bug."""
+    shelf = _rshelf()
+    wrong_depth = Decision(library_id=LIB, shelf_id="sh1", depth=2,
+                           book_key="x|y", kind=DecisionKind.REJECTED)
+    _raises(DomainError, reconcile, shelf, 1, [], {}, [wrong_depth], read_id="r1")
+
+
+def test_reconcile_refuses_an_undeclared_depth():
+    shelf = _rshelf()  # depth_count=2
+    _raises(UnknownDepth, reconcile, shelf, 5, [], {}, [], read_id="r1")
+
+
+def test_a_claim_with_no_title_has_no_book_identity():
+    shelf = _rshelf()
+    blank = _rclaim(title="", author="")
+    diff = reconcile(shelf, 1, [blank], {}, [], read_id="r1")
+    assert not diff.added and not diff.unchanged and not diff.needs_decision
+    assert len(diff.ignored) == 1
+    assert diff.ignored[0].reason == "no_identity"
 
 
 if __name__ == "__main__":

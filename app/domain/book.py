@@ -351,11 +351,21 @@ def add_copy(
     depth: int | None = None,
     status: Status = Status.MANUAL,
     fields: CopyFields = CopyFields(),
+    provenance: tuple[Provenance, ...] = (),
 ) -> Book:
     """*"I have another copy"* — THE ONLY path that creates a second copy.
 
     Status defaults to ``manual`` because a person declaring a duplicate is
     the strongest evidence the system ever gets; no re-read can produce this.
+
+    ``provenance`` defaults to empty — a copy declared by hand via *"I have
+    another copy"* has no read behind it (P1.7's route never passes one). It
+    exists as a parameter for P2.5's reconciliation: when a human answers
+    §5.4's prompt with *"another copy"*, the copy being created was, in fact,
+    just observed by a read at a specific (shelf, depth) — and that sighting
+    is real evidence the new copy's history must not start without, or its
+    `last_seen` would be `None` the moment it is created despite a spine
+    photograph being the reason it exists at all.
     """
     extra = Copy(
         id=copy_id,
@@ -365,6 +375,7 @@ def add_copy(
         shelf_id=shelf_id,
         depth=depth,
         fields=fields,
+        provenance=provenance,
     )
     return replace(book, copies=book.copies + (extra,))
 
@@ -414,6 +425,45 @@ def observe(
         status=Status.merge(target.status, status),
         shelf_id=shelf_id,
         depth=depth,
+    )
+    return _with_copy(book, updated)
+
+
+def relink_copy(
+    book: Book,
+    copy_id: str,
+    prov: Provenance,
+    *,
+    status: Status = Status.AUTO,
+) -> Book:
+    """§5.4's *"already listed copy"* answer: a HUMAN has said this copy moved
+    (or was found again) at ``prov.location`` — move it there, replacing
+    wherever it stood before, and append the provenance.
+
+    The one place in this module that WILL relocate an already-located copy.
+    ``observe`` deliberately never does (see its own docstring: "adopting an
+    unshelved copy is the only relink a read may perform") — a bare read must
+    never move a copy on its own claim alone, because that claim might simply
+    be wrong. Reached only from a recorded human decision (P2.5's §5.4 prompt,
+    or its stored replay via `app.reconcile_apply`) — never from `observe`'s
+    own resolution — which is the stronger evidence that justifies doing what
+    `observe` refuses to.
+
+    Same append-only, idempotent, never-demote shape as `observe` (this is a
+    relocation, not a different kind of evidence): a `(run_id, spine_id)`
+    sighting already on the copy is not duplicated, and `Status.merge` still
+    means a worse read backing the same decision cannot demote it.
+    """
+    copy = book.copy(copy_id)
+    seen = {p.sighting for p in copy.provenance}
+    provenance = copy.provenance if prov.sighting in seen \
+        else copy.provenance + (prov,)
+    updated = replace(
+        copy,
+        provenance=provenance,
+        status=Status.merge(copy.status, status),
+        shelf_id=prov.shelf_id,
+        depth=prov.depth,
     )
     return _with_copy(book, updated)
 
