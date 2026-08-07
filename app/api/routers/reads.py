@@ -38,6 +38,7 @@ from app.api.deps import (
 )
 from app.api.dto import ApplyDiffRequest, DiffDTO, ReadCreate, ReadDTO, ReadSummaryDTO
 from app.domain import (
+    Alternative,
     Capture,
     Claim,
     ClaimTier,
@@ -358,6 +359,11 @@ def _job(
                     capture_id=rc.capture_id, text=rc.text, title=rc.title,
                     author=rc.author, tier=ClaimTier(rc.tier), score=rc.score,
                     catalog_id=rc.catalog_id, crop_key=crop_key, box=rc.box,
+                    alternatives=tuple(
+                        Alternative(title=a.title, author=a.author,
+                                   score=a.score, reason=a.reason)
+                        for a in rc.alternatives
+                    ),
                 )
                 current = append_claim(current, claim)
             current = (

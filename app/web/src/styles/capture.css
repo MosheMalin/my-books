@@ -1,0 +1,263 @@
+/* booksnap — Capture tab component styles (P2.7).
+   SOURCE OF TRUTH: planning/mockup/css/mock.css's "capture tab" section (see
+   also js/capture.js for which classes wrap which markup) — same porting
+   rule books.css documents: literal pixel values kept for fidelity with the
+   mock, the token scale used only for rules invented here.
+
+   A few classes below (`.panel`, `.linkish`) are generic enough that the mock
+   uses them on every tab, but Books never needed them (its own layout is
+   flatter) — they land here because this is the first React screen that
+   does, not because they are Capture-specific. Move them to base.css if a
+   third screen needs them too. */
+
+/* ================= generic (not yet in base.css — see note above) ========= */
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+}
+.panel > h3 {
+  margin: 0;
+  font-size: 12.5px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--muted);
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.panel .body {
+  padding: 14px;
+}
+.linkish {
+  border: none;
+  background: none;
+  color: var(--muted);
+  padding: 2px 6px;
+  font: inherit;
+  font-size: 13px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.linkish:hover {
+  color: var(--accent);
+}
+.linkish:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
+/* ================= layout ================= */
+.capturelayout {
+  display: grid;
+  grid-template-columns: minmax(320px, 420px) 1fr;
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 1000px) {
+  .capturelayout {
+    grid-template-columns: 1fr;
+  }
+}
+.reviewcol {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ================= intake: drop zone + list ================= */
+.dropzone {
+  border: 1.5px dashed var(--line);
+  border-radius: 10px;
+  padding: 22px 14px;
+  text-align: center;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+}
+.dropzone:hover,
+.dropzone:focus-visible {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.phonehint {
+  margin-top: 7px;
+}
+.intakeactions {
+  margin: 12px 0 6px;
+}
+.caplist {
+  display: flex;
+  flex-direction: column;
+}
+.caprow {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 6px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+}
+.caprow:hover {
+  background: var(--bg);
+}
+.caprow.sel {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.caprow img {
+  width: 64px;
+  height: 46px;
+  object-fit: cover;
+  border-radius: 6px;
+  flex: none;
+  background: var(--none-bg);
+}
+.caprow .m {
+  flex: 1;
+  min-width: 0;
+}
+.caprow .fn {
+  font-size: 13px;
+  font-weight: 550;
+}
+.caprow-assign {
+  display: flex;
+  gap: 5px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.caprow-assign select {
+  font-size: 12px;
+  padding: 3px 7px;
+  width: auto;
+  max-width: 100%;
+}
+
+/* ================= mode + run ================= */
+.runblock {
+  margin-top: 14px;
+}
+.modeopts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.modeopt {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 9px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--muted);
+}
+.modeopt:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.modeopt b {
+  color: var(--ink);
+  font-size: 12.5px;
+  display: inline;
+  margin-inline-end: 6px;
+}
+.runactions {
+  display: flex;
+  gap: 8px;
+}
+.runactions .btn {
+  flex: 1;
+}
+
+/* ================= review panel ================= */
+.reviewhint {
+  margin-bottom: 10px;
+}
+.diffbits {
+  display: flex;
+  gap: 9px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+  margin-bottom: 8px;
+}
+.diffbits .g {
+  color: var(--auto);
+}
+.diffbits .m {
+  color: var(--muted);
+}
+.diffbits .r {
+  color: var(--danger);
+}
+
+.spine {
+  width: 34px;
+  height: 50px;
+  object-fit: cover;
+  border-radius: 4px;
+  background: var(--none-bg);
+  flex: none;
+}
+.rrow {
+  border-bottom: 1px solid var(--line);
+  padding: 10px 4px;
+}
+.rrow:last-child {
+  border-bottom: none;
+}
+.rrow .top {
+  display: flex;
+  gap: 11px;
+  align-items: center;
+}
+.rrow .m {
+  flex: 1;
+  min-width: 0;
+}
+.rrow .t {
+  font-weight: 600;
+}
+.rrow .acts {
+  display: flex;
+  gap: 6px;
+  flex: none;
+}
+.dupbox,
+.altbox {
+  margin-top: 9px;
+  margin-inline-start: 45px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 9px 11px;
+  font-size: 13px;
+}
+.altbox table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.altbox td {
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--line);
+}
+.altbox tr:last-child td {
+  border-bottom: none;
+}
+
+/* review-tier badge — the mock's `.b-review`, ported here because Capture is
+   the first screen that needs it (books.css's own badge set only covers
+   book STATUS, a different vocabulary from a claim's TIER/diff outcome). */
+.b-review {
+  color: var(--review);
+  background: var(--review-bg);
+}

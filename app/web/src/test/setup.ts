@@ -22,3 +22,16 @@ class NoopIntersectionObserver implements IntersectionObserver {
 
 globalThis.IntersectionObserver =
   NoopIntersectionObserver as unknown as typeof IntersectionObserver
+
+/**
+ * jsdom has no object URL machinery, and the Capture tab (P2.7) previews each
+ * dropped file with `URL.createObjectURL` before it has finished uploading.
+ * A no-op stub is enough — no test inspects the resulting string, only that
+ * calling it (and its `revoke` counterpart, on unmount) does not throw.
+ */
+if (typeof URL.createObjectURL !== 'function') {
+  URL.createObjectURL = () => 'blob:mock'
+}
+if (typeof URL.revokeObjectURL !== 'function') {
+  URL.revokeObjectURL = () => undefined
+}

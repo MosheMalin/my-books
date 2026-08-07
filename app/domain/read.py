@@ -64,6 +64,26 @@ class ClaimTier(str, Enum):
     UNMATCHED = "unmatched"
 
 
+@dataclass(frozen=True)
+class Alternative:
+    """One ranked candidate `booksnap.match.explain()` considered for a claim's
+    OCR text, kept for the review UI's *"why?"* affordance (P2.7, UI_PLAN §4).
+
+    Deliberately thin: title/author/score are what a human scans a ranked
+    list for, and ``reason`` is the gate that refused the candidate — empty
+    for one that passed the matcher's own gates (a real runner-up), non-empty
+    for one `explain()` rejected and says why. This is display data, not a
+    domain rule of its own; the matcher already decided everything it means
+    (booksnap philosophy: deterministic first) — this only carries the
+    reasoning to the screen that asks for it.
+    """
+
+    title: str
+    author: str = ""
+    score: float = 0.0
+    reason: str = ""
+
+
 class ReadStatus(str, Enum):
     """``running`` settles into exactly one of ``done`` / ``stopped`` /
     ``failed`` — see the module docstring for why ``stopped`` is not folded
@@ -111,6 +131,7 @@ class Claim:
     catalog_id: str | None = None
     crop_key: str | None = None
     box: tuple[int, int, int, int] | None = None   # x0, y0, x1, y1
+    alternatives: tuple[Alternative, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.spine_id:

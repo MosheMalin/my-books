@@ -41,6 +41,22 @@ class ReadRequest:
 
 
 @dataclass(frozen=True)
+class ReadAlternative:
+    """One ranked candidate for a claim's OCR text — the Reader-side twin of
+    ``app.domain.read.Alternative`` (P2.7). Kept separate from its domain
+    counterpart for the same reason ``ReadClaim`` is kept separate from
+    ``Claim``: this port must not import ``app.domain.read`` beyond
+    ``LibraryRef``, so the concrete adapter that DOES have ``booksnap.match``
+    in scope has somewhere to put ``explain()``'s output without minting a
+    domain object itself."""
+
+    title: str
+    author: str = ""
+    score: float = 0.0
+    reason: str = ""
+
+
+@dataclass(frozen=True)
 class ReadClaim:
     """What the Reader hands back for one detected spine.
 
@@ -61,6 +77,12 @@ class ReadClaim:
     catalog_id: str | None = None
     crop: bytes | None = None    # the spine crop, if the engine produced one
     box: tuple[int, int, int, int] | None = None
+    # Ranked runners-up from `booksnap.match.explain()`, powering the review
+    # UI's "why?" (P2.7). Computed against the SAME catalog query text already
+    # used to produce this claim's match, so a disk-cached catalog (NLICatalog)
+    # answers it for free — never a second live lookup. Empty when the engine
+    # has no `explain()` (a structured fallback provider) or no OCR text at all.
+    alternatives: tuple[ReadAlternative, ...] = ()
 
 
 class Reader(Protocol):

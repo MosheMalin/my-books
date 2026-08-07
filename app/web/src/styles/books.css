@@ -34,6 +34,38 @@
 .appbar .spacer {
   flex: 1;
 }
+/* Two tabs today (Books, Capture, P2.7) — ported from the mock's `.nav`,
+   which also carries Map/Settings the product hasn't grown yet (absent, not
+   disabled: CLAUDE.md). The mock hides this at mobile width in favour of a
+   `.botnav` bottom bar — not built here (out of this item's scope), so the
+   nav stays visible and just tightens instead of disappearing, or a phone
+   would have no way to reach the Capture tab at all. */
+.nav {
+  display: flex;
+  gap: 4px;
+}
+.nav button {
+  font-size: 14.5px;
+  padding: 7px 14px;
+  border-radius: 9px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.nav button:hover {
+  background: var(--bg);
+  color: var(--ink);
+}
+.nav button.on {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+@media (max-width: 760px) {
+  .nav button {
+    padding: 6px 9px;
+    font-size: 13px;
+  }
+}
 /* Contract name differs from the mock's `.langtog` — same idiom, ported
    under the new name. */
 .langswitch {
