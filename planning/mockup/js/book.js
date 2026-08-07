@@ -33,7 +33,7 @@ export function detailHTML(b, { full = false } = {}) {
     </div>` : `
     <div style="flex:1;min-width:0">
       <h2 class="rtl-safe">${esc(b.title)}</h2>
-      <div class="a rtl-safe"><a href="#" data-author="${esc(b.author)}">${esc(b.author)}</a></div>
+      <div class="a rtl-safe">${esc(b.author)}</div>
       <div class="chiprow" style="margin-top:9px">
         ${statusBadge(b.status)}
         ${c0.lending ? `<span class="badge b-lent">${esc(t('lent_to', c0.lending.lentTo))}</span>` : ''}
@@ -133,7 +133,7 @@ export function renderBookPage(id, back) {
   if (!b) return `<div class="empty">?</div>`;
   return `<div class="bookpage" data-book="${id}">
     <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px">
-      <button class="btn sm ghost" data-act="back" data-back="${esc(back || '#/library')}">← ${esc(t('back_to'))}</button>
+      <button class="btn sm ghost" data-act="back" data-back="${esc(back || '#/map')}">← ${esc(t('back_to'))}</button>
       <span class="muted tiny mono">${esc(location.hash || '#/book/' + id)}</span>
     </div>
     <div class="panel"><div style="padding:16px">${detailHTML(b, { full: true })}</div></div>
@@ -143,7 +143,7 @@ export function renderBookPage(id, back) {
 // ---------------- shared interactions ----------------
 export function wireDetail(root, { onNav } = {}) {
   root.addEventListener('click', e => {
-    const el = e.target.closest('[data-act], [data-author], [data-star]');
+    const el = e.target.closest('[data-act], [data-star]');
     if (!el) return;
     const host = root.dataset.book ? root : root.querySelector('[data-book]');
     if (!host) return;                       // not a book surface — ignore the click
@@ -153,10 +153,6 @@ export function wireDetail(root, { onNav } = {}) {
 
     if (el.dataset.star && el.closest('[data-rate]')) {
       b.work.rating = +el.dataset.star; rerender(root, b); flashSaved(root); bookChanged(); return;
-    }
-    if (el.dataset.author) {
-      e.preventDefault(); closeDrawer();
-      onNav && onNav('#/library?author=' + encodeURIComponent(el.dataset.author)); return;
     }
     const act = el.dataset.act;
     if (act === 'close') return closeDrawer();
@@ -192,7 +188,7 @@ export function wireDetail(root, { onNav } = {}) {
       if (!confirm(t('delete_confirm', b.title))) return;
       books.splice(books.indexOf(b), 1); delete byId[b.id];
       closeDrawer(); bookChanged(); toast(t('delete_done'));
-      if (root.id !== 'drawer') onNav && onNav('#/library');
+      if (root.id !== 'drawer') onNav && onNav('#/map');
       return;
     }
     if (act === 'movecopy') {

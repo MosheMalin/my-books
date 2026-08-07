@@ -1,0 +1,876 @@
+/* booksnap — Books tab + book surface component styles.
+   SOURCE OF TRUTH: planning/mockup/css/mock.css (see also index.html,
+   js/library.js, js/book.js for which classes wrap which markup). Rules
+   ported from the mock keep their literal pixel values on purpose, for
+   visual fidelity with the mock — the spacing/type scale in tokens.css is
+   used for rules this file had to invent (states, modal footer, etc.)
+   because the mock has no precedent for them.
+
+   Import order: tokens.css, base.css, then this file. Uses only logical
+   properties (inset-inline-*, padding-inline-*, border-inline-*) so the
+   whole layout mirrors for free when <html dir> flips — the two explicit
+   [dir=...] overrides below (drawer slide direction) are the only place
+   physical direction is named. */
+
+/* ================= shell ================= */
+.appbar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 20px;
+}
+.appbar .brand {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  font-weight: 650;
+  font-size: var(--fs-lg);
+}
+.appbar .spacer {
+  flex: 1;
+}
+/* Contract name differs from the mock's `.langtog` — same idiom, ported
+   under the new name. */
+.langswitch {
+  display: flex;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  overflow: hidden;
+  flex: none;
+}
+.langswitch button {
+  font-size: 12.5px;
+  padding: 6px 10px;
+  background: var(--panel);
+  color: var(--muted);
+}
+.langswitch button.on {
+  background: var(--accent);
+  color: #fff;
+}
+
+.page {
+  padding: 18px 20px 60px;
+  max-width: 1500px;
+  margin: 0 auto;
+}
+@media (max-width: 760px) {
+  .appbar {
+    gap: 8px;
+    padding: 9px 12px;
+  }
+  .appbar .brand {
+    font-size: 15px;
+    white-space: nowrap;
+  }
+  .page {
+    padding: 14px 12px 84px;
+  }
+}
+
+/* ================= toolbar ================= */
+.toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  position: sticky;
+  /* named offset instead of the mock's hard-coded `top: 55px` — see
+     tokens.css for why */
+  top: var(--appbar-h);
+  z-index: 20;
+}
+@media (max-width: 760px) {
+  /* on narrow viewports the appbar's own nav collapses (the bottom nav
+     takes over), so the toolbar docks flush with the viewport top instead
+     of leaving a gap the size of the (now nav-less) appbar */
+  .toolbar {
+    top: 0;
+  }
+}
+
+.searchwrap {
+  position: relative;
+  flex: 1;
+  min-width: 220px;
+}
+.searchwrap input {
+  padding-inline-start: 34px;
+}
+.searchwrap .mag {
+  position: absolute;
+  inset-inline-start: 11px;
+  top: 8px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.seg {
+  display: flex;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  overflow: hidden;
+  flex: none;
+}
+.seg button {
+  font-size: 13px;
+  padding: 7px 11px;
+  background: var(--panel);
+  color: var(--muted);
+}
+.seg button.on {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.btn {
+  font-size: var(--fs-base);
+  padding: 7px 13px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+}
+.btn:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.btn:disabled {
+  opacity: .5;
+}
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.btn.danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+.btn.ghost {
+  background: none;
+}
+
+/* ================= filters ================= */
+.filterbar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 9px;
+  background: var(--panel);
+  white-space: nowrap;
+}
+.chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.chip.on {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+/* small close glyph inside an active chip (e.g. the author-filter chip) */
+.chip .x {
+  font-size: 10px;
+  line-height: 1;
+}
+.clearlink {
+  border: none;
+  background: none;
+  color: var(--muted);
+  padding: 2px 6px;
+  font-size: 13px;
+  text-decoration: underline;
+}
+.clearlink:hover {
+  color: var(--accent);
+}
+.countline {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  margin: 0 2px 10px;
+}
+
+/* ================= list feed ================= */
+.booklist {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  overflow: hidden;
+}
+.brow {
+  display: flex;
+  gap: 12px;
+  /* Not `center`: with two badges wrapping onto two lines (status + lending,
+     P1.7), centering the whole chiprow against the whole meta block only
+     matches their TOTAL heights, not each badge to its neighbouring text
+     line — the badges end up visibly floating off the title/author baseline.
+     Top-aligning both columns means the first badge always starts level with
+     the title, however many badges wrap under it. */
+  align-items: flex-start;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+}
+.brow:last-child {
+  border-bottom: none;
+}
+.brow:hover {
+  background: var(--bg);
+}
+.brow .meta {
+  flex: 1;
+  min-width: 0;
+}
+/* The mock's title/author are DIVs; the React markup uses spans inside a
+   <button>, so both of the mock's rules silently stopped applying: inline
+   boxes don't stack (title and author rendered glued on one line) and
+   `text-align` is a no-op on an inline box, which turned OFF §7.2's
+   per-container alignment for the whole feed. `display: block` restores both.
+   Same trap in `.card` below — check it whenever a span replaces a div. */
+.brow .t,
+.brow .a {
+  display: block;
+}
+.brow .t {
+  font-weight: 550;
+}
+.brow .a {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  margin-top: 2px;
+}
+/* alignment/direction handling for .brow .side lives in base.css, next to
+   the rest of the .rtl-safe rule set it's an exception to */
+.brow .side {
+  font-size: 12px;
+  color: var(--muted);
+  flex: none;
+  max-width: 42%;
+}
+@media (max-width: 700px) {
+  .brow .side {
+    display: none;
+  }
+}
+.chiprow {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+/* ================= grid feed ================= */
+.bookgrid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+}
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: 11px;
+  display: flex;
+  gap: 11px;
+  align-items: flex-start;
+  cursor: pointer;
+  transition: border-color .12s, transform .12s;
+}
+.card:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+.card .meta {
+  min-width: 0;
+  flex: 1;
+}
+.card .t,
+.card .a {
+  display: block;
+}
+.card .t {
+  font-weight: 600;
+  font-size: var(--fs-base);
+  line-height: 1.3;
+}
+.card .a {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  margin-top: 2px;
+}
+.card .foot {
+  margin-top: 7px;
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+@media (prefers-reduced-motion: reduce) {
+  .card {
+    transition: none;
+  }
+}
+
+/* ================= states ================= */
+.empty {
+  color: var(--muted);
+  text-align: center;
+  padding: 40px 14px;
+  font-size: var(--fs-base);
+}
+.sentinel {
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  padding: 18px;
+}
+/* No precedent in the mock (the mock's sentinel is text-only, no spinner) —
+   invented in the same visual idiom as the rest of the muted/quiet states. */
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  color: var(--muted);
+  font-size: var(--fs-base);
+  padding: var(--sp-6) var(--sp-3);
+}
+.loading::before {
+  content: '';
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  animation: books-spin .7s linear infinite;
+}
+@keyframes books-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .loading::before {
+    animation: none;
+    border-top-color: var(--line);
+  }
+}
+/* Also no precedent in the mock — styled from the shared danger tokens so
+   it reads as "this state is wrong" the same way .btn.danger/.dangerzone
+   do. */
+.errorbox {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--danger);
+  background: var(--danger-bg);
+  border: 1px solid var(--danger);
+  border-radius: var(--r);
+  padding: var(--sp-3) var(--sp-4);
+  font-size: var(--fs-base);
+}
+
+/* ================= badges ================= */
+.badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 650;
+  padding: 1px 8px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+.b-auto {
+  color: var(--auto);
+  background: var(--auto-bg);
+}
+.b-approved {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.b-manual {
+  color: var(--muted);
+  background: var(--none-bg);
+}
+.b-none {
+  color: var(--none);
+  background: var(--none-bg);
+}
+/* Lending, not a status-ladder tier — the mock's `--review`/`--review-bg`
+   idiom ("needs attention"), reused here because a book out on loan is
+   exactly that: nothing is wrong with the RECORD, but it needs following up.
+   `.b-copies` is deliberately its own class rather than reusing `.b-manual`
+   (P1.7): a ×2 count and a MANUAL status are unrelated facts, and giving them
+   the same colour would read as one. */
+.b-lent {
+  color: var(--review);
+  background: var(--review-bg);
+}
+.b-copies {
+  color: var(--muted);
+  background: var(--none-bg);
+}
+
+/* ================= book surface: drawer + full page ================= */
+.scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 11, 16, .5);
+  z-index: 60;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .18s;
+}
+.scrim.on {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* The drawer always slides in from its anchored edge (inset-inline-end).
+   --slide is the CLOSED-state transform offset: 100% (off past the
+   inline-end edge) in LTR, flipped to -100% in RTL, so "closed" always
+   means "off past the edge it's anchored to" regardless of language —
+   never a hard-coded physical direction. */
+.drawer {
+  position: fixed;
+  inset-block: 0;
+  inset-inline-end: 0;
+  width: min(460px, 100%);
+  background: var(--panel);
+  border-inline-start: 1px solid var(--line);
+  z-index: 61;
+  box-shadow: var(--shadow);
+  overflow-y: auto;
+  transform: translateX(var(--slide, 100%));
+  transition: transform .2s ease;
+}
+:root[dir=rtl] .drawer {
+  --slide: -100%;
+}
+.drawer.on {
+  transform: translateX(0);
+}
+/* Not in the mock (it has no focus handling at all) — a real gap, since the
+   drawer is a focus trap target. Inset so the ring reads against the panel
+   background instead of being clipped by overflow-y. */
+.drawer:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+@media (max-width: 620px) {
+  .drawer {
+    inset: auto 0 0 0;
+    width: 100%;
+    height: 88vh;
+    border-radius: 16px 16px 0 0;
+    border-inline-start: none;
+    border-top: 1px solid var(--line);
+    transform: translateY(var(--slide, 100%));
+  }
+  /* Bottom-sheet form: the slide axis is now vertical, so there is no
+     "wrong side" to correct for — both directions come up from the bottom,
+     hence 100% again rather than the side-drawer's -100%. */
+  :root[dir=rtl] .drawer {
+    --slide: 100%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .scrim,
+  .drawer {
+    transition: none;
+  }
+}
+
+.dhead {
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  padding: 11px 14px;
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  z-index: 2;
+}
+.dhead .ttl {
+  flex: 1;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--muted);
+}
+.dbody {
+  padding: 14px;
+}
+.bookpage {
+  max-width: 860px;
+  margin: 0 auto;
+}
+.bookpage .dbody {
+  padding: 0;
+}
+
+.bhero {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+.bhero img {
+  width: 74px;
+  height: 112px;
+  object-fit: cover;
+  border-radius: 6px;
+  background: var(--none-bg);
+  flex: none;
+}
+.bhero h2 {
+  margin: 0 0 3px;
+  font-size: var(--fs-xl);
+  line-height: 1.25;
+}
+.bhero .a {
+  color: var(--muted);
+  font-size: var(--fs-base);
+}
+/* mock: an inline `style="margin-top:9px"` on the same row. */
+.herobody .chiprow {
+  margin-top: 9px;
+}
+
+/* The column inside `.bhero` (mock: an inline `style="flex:1;min-width:0"`
+   div — named here so it isn't invented per-use). BOTH branches of the head
+   need it: `.bhero` is a flex ROW so it can seat a cover/spine image beside
+   the text, and an unwrapped head puts the title, the author, the badge and
+   the buttons side by side in that row instead of stacked. */
+.herobody {
+  flex: 1;
+  min-width: 0;
+}
+/* mock: `label.fld` — same idiom, ported under the contract's name. */
+.field {
+  display: block;
+  margin-bottom: 11px;
+}
+.field > span {
+  display: block;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+/* ================= book surface: sections (P1.7) ================= */
+/* Ported from the mock verbatim (it never got the Copies section built in
+   React until P1.7, so these rules sat unused in books.css until now). */
+.sect {
+  margin-top: 18px;
+}
+.sect > h4 {
+  margin: 0 0 8px;
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--muted);
+  font-weight: 650;
+}
+.kv {
+  display: flex;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13.5px;
+}
+.kv:last-child {
+  border-bottom: none;
+}
+.kv .k {
+  color: var(--muted);
+  min-width: 92px;
+  flex: none;
+}
+.copybox {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 10px;
+  margin-bottom: 8px;
+}
+/* Not in the mock (its lend flow was a native `prompt()`, a placeholder
+   worth replacing rather than porting — see the mock-reference rule in
+   CLAUDE.md/UI_PLAN §7). The inline form follows the same idiom as the
+   title/author edit above: a `.field`-built form replaces the read view
+   rather than opening a modal, so lending a copy costs no more UI than
+   editing one. */
+.copyhead {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+.copyactions {
+  margin-top: 8px;
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+/* Invented as a section wrapper in the same idiom as the rest of the book
+   surface's `.sect` spacing, so the destructive action reads as its own zone
+   rather than sitting flush against the row above (the mock applies
+   `.dangertext` straight to the delete button with no wrapper at all). */
+.dangerzone {
+  margin-top: var(--sp-4);
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--line);
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+/* `:not(.danger)` is load-bearing: this rule comes AFTER `.btn.danger` at
+   equal specificity, so without it the filled delete button gets red text on
+   its red background and renders as a blank red rectangle. */
+.dangerzone .btn:not(.danger) {
+  color: var(--danger);
+}
+.dangerzone .btn:hover:not(:disabled) {
+  border-color: var(--danger);
+}
+
+.savednote {
+  margin-top: 10px;
+  font-size: var(--fs-sm);
+  color: var(--auto);
+  background: var(--auto-bg);
+  border-radius: 8px;
+  padding: 6px 10px;
+  display: none;
+}
+.savednote.on {
+  display: block;
+}
+
+/* ================= modal ================= */
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: rgba(8, 11, 16, .5);
+}
+/* The mock swaps display:none/flex with no entrance transition at all. A
+   short fade+pop is added here (display can't itself transition, so it's
+   done as an animation keyed off .on) and explicitly turned off under
+   reduced motion, per the same rule applied to the drawer/scrim. */
+.modal.on {
+  display: flex;
+  animation: books-modal-fade .15s ease;
+}
+.modal.on .modalbox {
+  animation: books-modal-pop .15s ease;
+}
+@keyframes books-modal-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes books-modal-pop {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .modal.on,
+  .modal.on .modalbox {
+    animation: none;
+  }
+}
+
+.modalbox {
+  background: var(--panel);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  width: min(480px, 100%);
+  max-height: 88vh;
+  overflow-y: auto;
+}
+.modalbox > h3 {
+  margin: 0;
+  padding: 14px;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-lg);
+}
+.modalbox .body {
+  padding: 14px;
+}
+.modalfoot {
+  padding: 12px 14px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* mock: plain text with `<span class="ok">`/`<span class="near">` nested
+   inside an unstyled `.hint`. The contract asks for state modifiers on the
+   `.hint` container itself, so the mapping is: ok -> ok (unchanged), the
+   mock's "near" -> warn (same review/amber token — "near match, look
+   twice"), and none is new (no match at all, muted rather than colored). */
+.hint {
+  font-size: var(--fs-sm);
+  line-height: 1.7;
+  margin-top: 4px;
+  min-height: 20px;
+}
+.hint.ok {
+  color: var(--auto);
+  font-weight: 600;
+}
+.hint.warn {
+  color: var(--review);
+  font-weight: 600;
+}
+.hint.none {
+  color: var(--muted);
+}
+
+/* --- classes the React markup adds beyond the mock's ------------------- */
+/* The mock had no author link, no meta list, and no visually-hidden helper;
+   these follow the same idiom and use the token scales. */
+
+.toolbar .spacer { flex: 1 1 auto; }
+
+/* The sort key and its direction are ONE control: the toggle is overlaid
+   inside the select's own box at the inline-start edge (the same idiom as
+   `.searchwrap .mag`), and the select is padded on both sides to make room —
+   inline-start for the toggle, inline-end so the native dropdown chevron
+   isn't jammed against the border. */
+.sortwrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+}
+.sortwrap select {
+  /* The UA chevron ignores padding-inline-end — Chrome pins it a fixed
+     distance from the border — so it is replaced by the ::after below, which
+     can be positioned (and, unlike a background-image data URI, can read
+     var(--muted) and so follows dark mode). */
+  appearance: none;
+  padding-inline-start: 32px;
+  padding-inline-end: 30px;
+  width: auto;
+}
+/* A chevron drawn from two borders. The SHAPE is direction-independent (a
+   downward v), so the borders are physical on purpose; only its POSITION is
+   logical, which is what mirrors it with the language. */
+.sortwrap::after {
+  content: '';
+  position: absolute;
+  inset-inline-end: 12px;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: translateY(-2px) rotate(45deg);
+  pointer-events: none;
+}
+.sortdir {
+  position: absolute;
+  inset-inline-start: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: var(--accent);
+  z-index: 1;
+}
+.sortdir:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+.sortdir:disabled {
+  color: var(--muted);
+  opacity: .5;
+}
+/* One glyph, flipped — so ascending and descending can never drift into two
+   differently-weighted icons. */
+.sortdir.desc svg {
+  transform: rotate(180deg);
+}
+
+/* An author is a LINK, not a label: clicking one filters the list to that
+   author (UI_PLAN §5). It has to read as clickable without becoming a button
+   in the middle of a heading block. */
+.authorlink {
+  display: block;
+  background: none;
+  border: 0;
+  padding: 0;
+  /* Collapses against the h2's own 3px, so this IS the gap, not an addition
+     to it. 6px rather than the mock's 3: the author is underlined here (it is
+     a link, not a label) and the underline sitting 3px under a 20px title
+     read as one crowded block. */
+  margin-block-start: 6px;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.authorlink:hover { text-decoration-thickness: 2px; }
+
+.bookmeta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--sp-1) var(--sp-3);
+  margin: var(--sp-4) 0;
+  font-size: var(--fs-sm);
+}
+.bookmeta dt { color: var(--muted); }
+.bookmeta dd { margin: 0; }
+.bookmeta:empty { display: none; }
+
+/* Available to assistive tech, invisible on screen. Used for control labels
+   whose meaning is carried visually by an icon. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}

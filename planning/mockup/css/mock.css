@@ -41,9 +41,6 @@ body {
 .rtl-safe { unicode-bidi: plaintext; }
 :root[dir=ltr] .rtl-safe { text-align: left; }
 :root[dir=rtl] .rtl-safe { text-align: right; }
-/* …except where the container itself is end-aligned (the location column). */
-:root[dir=ltr] .side .rtl-safe, :root[dir=ltr] .brow .side { text-align: right; }
-:root[dir=rtl] .side .rtl-safe, :root[dir=rtl] .brow .side { text-align: left; }
 .muted { color: var(--muted); }
 .tiny { font-size: 12px; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; }
@@ -170,44 +167,19 @@ label.fld > span { display: block; font-size: 12.5px; color: var(--muted); margi
 }
 .empty { color: var(--muted); text-align: center; padding: 40px 14px; font-size: 14px; }
 
-/* ---------------- library tab ---------------- */
-.toolbar {
-  display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
-  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r);
-  padding: 10px 12px; margin-bottom: 12px;
-  position: sticky; top: 55px; z-index: 20;
-}
-@media (max-width: 760px) { .toolbar { top: 0; } }
-.searchwrap { position: relative; flex: 1; min-width: 220px; }
-.searchwrap input { padding-inline-start: 34px; }
-.searchwrap .mag { position: absolute; inset-inline-start: 11px; top: 8px; color: var(--muted); font-size: 14px; }
+/* ---------------- shared list chrome ----------------
+   What is left of the old "library tab" block after the Books tab was
+   retired (plan D4). Everything here is still used by the MAP tab: .seg is
+   its map/list toggle, and .booklist/.brow are its shelf panel's book rows.
+   The Books-only rules (.toolbar, .searchwrap, .filterbar, .countline,
+   .bookgrid, .card*, .brow .side, .groupsep, .sentinel) live on in
+   app/web/src/styles/books.css. */
 .seg { display: flex; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; flex: none; }
 .seg button {
   border: none; background: var(--panel); color: var(--muted); font: inherit; font-size: 13px;
   padding: 7px 11px; cursor: pointer;
 }
 .seg button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
-.filterbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
-.countline { font-size: 13px; color: var(--muted); margin: 0 2px 10px; }
-
-.bookgrid {
-  display: grid; gap: 10px;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-}
-.card.noimg { padding: 10px 12px; }
-.card {
-  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r);
-  padding: 11px; display: flex; gap: 11px; cursor: pointer; align-items: flex-start;
-  transition: border-color .12s, transform .12s;
-}
-.card:hover { border-color: var(--accent); transform: translateY(-1px); }
-.card .spine { width: 42px; height: 64px; }
-.card .meta { min-width: 0; flex: 1; }
-.card .t { font-weight: 600; font-size: 14px; line-height: 1.3; }
-.card .a { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
-.card .loc { font-size: 11.5px; color: var(--muted); margin-top: 6px; }
-.card .foot { margin-top: 7px; display: flex; gap: 5px; flex-wrap: wrap; }
-
 .booklist { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
 .brow {
   display: flex; gap: 12px; align-items: center; padding: 9px 12px;
@@ -218,14 +190,6 @@ label.fld > span { display: block; font-size: 12.5px; color: var(--muted); margi
 .brow .meta { flex: 1; min-width: 0; }
 .brow .t { font-weight: 550; }
 .brow .a { font-size: 12.5px; color: var(--muted); }
-.brow .side { text-align: end; font-size: 12px; color: var(--muted); flex: none; max-width: 42%; }
-@media (max-width: 700px) { .brow .side { display: none; } }
-.groupsep {
-  padding: 8px 12px; font-size: 12px; font-weight: 650; color: var(--muted);
-  background: var(--bg); border-bottom: 1px solid var(--line);
-  text-transform: uppercase; letter-spacing: .05em; position: sticky; top: 112px; z-index: 5;
-}
-.sentinel { text-align: center; color: var(--muted); font-size: 13px; padding: 18px; }
 
 /* ---------------- map tab: the place schematic ---------------- */
 .plan { width: 100%; max-height: 330px; display: block; }

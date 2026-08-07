@@ -1,0 +1,97 @@
+/* booksnap — design tokens.
+   SOURCE OF TRUTH: planning/mockup/css/mock.css. The color/shadow/radius
+   values below are copied verbatim from the mock's `:root` block and its
+   `prefers-color-scheme: dark` override — do not re-tune them here; if the
+   palette needs to change, change it in the mock first and re-port.
+
+   Two additions the mock doesn't have, because it's a single hand-tuned
+   page and never needed them:
+   - a spacing scale (--sp-1..--sp-6) and type scale (--fs-sm..--fs-xl),
+     derived from the pixel values the mock hard-codes throughout, for the
+     React rebuild's new/invented rules (states, modal footer, etc.) to draw
+     from instead of inventing fresh numbers. Rules ported directly from the
+     mock keep their literal px values for pixel fidelity — see books.css.
+   - --appbar-h / --toolbar-h, replacing the mock's `top: 55px` /
+     `top: 112px` magic numbers on sticky elements with named values so a
+     future appbar height change doesn't silently break the toolbar's
+     sticky offset. */
+
+:root {
+  /* ---- surfaces & ink ---- */
+  --bg: #f6f7f9;
+  --panel: #fff;
+  --ink: #12161c;
+  --muted: #6b7480;
+  --line: #e3e6ea;
+
+  /* ---- accent ---- */
+  --accent: #2f6fed;
+  --accent-soft: rgba(47, 111, 237, .09);
+
+  /* ---- status colors (match tiers / book status) ---- */
+  --auto: #12864b;
+  --auto-bg: #e6f5ec;
+  --review: #a3690a;
+  --review-bg: #fdf3e0;
+  --none: #8a9099;
+  --none-bg: #f0f1f3;
+  --danger: #c0392b;
+  --danger-bg: #fdeae7;
+
+  /* ---- elevation / shape ---- */
+  --shadow: 0 10px 30px rgba(16, 22, 32, .13);
+  --r: 12px;
+
+  /* ---- spacing scale (added; not in the mock) ----
+     A 4px-based scale chosen to sit close to the mock's own recurring
+     numbers (4, 8, 10-12, 14-16, 18-20 turn up constantly) without forcing
+     every ported rule onto the grid. */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+
+  /* ---- type scale (added; not in the mock) ----
+     Derived from the mock's most-repeated sizes: 12.5px is the dominant
+     "meta/secondary" size (.a, .countline, label spans); 14px is the
+     dominant control size (buttons, inputs, card titles); 17px is the
+     brand/prominent-label size; 20px is the book-hero title size. The
+     document's own reading size (15px, set on <body>) is deliberately
+     NOT one of these — it's the base.css font shorthand, not a component
+     token. */
+  --fs-sm: 12.5px;
+  --fs-base: 14px;
+  --fs-lg: 17px;
+  --fs-xl: 20px;
+
+  /* ---- sticky layout offsets (added; not in the mock) ----
+     The mock hard-codes `.toolbar { top: 55px }`, a number that only works
+     as long as the appbar happens to render at 55px. Naming it means a
+     future appbar change (e.g. a wrapped brand row on narrow desktop) only
+     needs to update one variable. */
+  --appbar-h: 55px;
+  --toolbar-h: 57px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171c;
+    --panel: #1b1f26;
+    --ink: #e8ebef;
+    --muted: #98a1ad;
+    --line: #2b313a;
+    --accent: #6b9bff;
+    --accent-soft: rgba(107, 155, 255, .13);
+    --auto: #59d795;
+    --auto-bg: #17331f;
+    --review: #e8b45c;
+    --review-bg: #352a15;
+    --none: #8c95a1;
+    --none-bg: #242a32;
+    --danger: #ef7a6d;
+    --danger-bg: #3a1f1b;
+    --shadow: 0 10px 34px rgba(0, 0, 0, .5);
+  }
+}

@@ -37,12 +37,98 @@ booksnap/
   pipeline.py   orchestrator: segment -> ocr -> match -> optional fallback
   cli.py        `python -m booksnap.cli --catalog ... img...`
   server.py     FastAPI: upload/select images, background runs, run history
-  static/       single-file vanilla-JS UI (no build step, no CDN)
-tests/          test_core.py (matcher/normalize), test_integrations.py (adapters, mocked)
+  static/       single-file vanilla-JS UI (no build step, no CDN) — see below
+tests/          python rings; see "Tests" below. run_all.py is the runner
+                with a real exit code
 ```
+
+⚠️ **"single-file vanilla-JS UI (no build step, no CDN)" describes the TUNING /
+AUDIT surface only** — `booksnap/static/index.html`, served by
+`booksnap/server.py` on `/api/*`. It is not a project-wide rule. The
+user-facing product client is a React + Vite + TypeScript app in `app/web/`
+(build step, npm deps, still no CDN — everything bundled locally). That
+reversal is argued in `planning/IMPLEMENTATION_PLAN.md` D3. The tuning page is
+deliberately NOT migrated: it is where `explain()`, config snapshots, per-spine
+scores and crops live, and putting the accuracy loop through a build step buys
+nothing.
 
 Stages are independent and individually callable, so the server can parallelise
 OCR across cores and run the fallback in a separate queue.
+
+## The product app (`app/`) — separate from the engine on purpose
+
+```
+app/
+  domain/       entities + rules. pure Python, no I/O, no framework
+    book.py       Book/Copy/Status/Provenance + the rules (VISION §5.1-5.6)
+    text.py       book_key() over booksnap.catalog.normalize — NOT a copy
+    search.py     Hebrew search SEMANTICS: parse + rank, pure and portable
+  ports/        Protocols: Principal, Clock, IdGen, BookStore
+  adapters/     implementations behind the ports
+    sqlite_store.py  the real one (D1); connection per operation, WAL
+    memory_store.py  the API ring's store, and the contract's 2nd implementation
+    migrations.py    versioned schema via PRAGMA user_version (H6)
+    legacy_import.py work/*.json -> entities; I/O and PURE mapping split
+  api/          FastAPI routers under /api/v1 + DTOs. THIN — no rules
+    routers/meta.py   service + library identity
+    routers/books.py  list / get / patch / delete / manual add / export
+  api/openapi.json          committed contract, regenerated, never hand-edited
+  main.py       the composition root — the ONE file allowed to cross layers
+  web/          React + Vite + TS client; talks only to /api/v1
+    src/lib/        books.tsx (the store), i18n.tsx (he/en + dir), route.ts
+    src/books/      Tab 1: Toolbar, FilterBar, Feed, AddBookModal
+    src/book/       the book surface: ONE renderer, drawer + page mounts
+    src/styles/     tokens / base / books — palette ported from the mock
+```
+
+Two applications coexist through pillars 1–2, by design (plan H1/D2,
+"strangle, don't refactor"): the tuning server on `:8756` `/api/*`, the product
+on `:8757` `/api/v1/*`. Run the product with
+`uvicorn app.main:app --port 8757`; in dev, `npm --prefix app/web run dev`
+serves the client on `:5173` and proxies `/api` to it.
+
+The product database is `work/product.db` (override with `BOOKSNAP_DB`;
+defaults under `BOOKSNAP_WORK`). It is a **different file from the tuning
+server's `store.json`** — the product never writes into the run archive, and
+the run archive is not the product's source of truth. Populate it with
+`python tools/import_legacy.py --db work/product.db`.
+
+⚠ **Bind a port with a zero-argument closure, never `lambda v=value: v`.**
+FastAPI analyses a dependency's signature and treats a defaulted parameter as
+a field to resolve, which runs the default through pydantic — and pydantic
+DEEP-COPIES mutable defaults. Every endpoint then gets a *copy* of the store:
+reads look perfect, writes silently vanish. `app/api/app.py:_always` is the
+correct form, and `test_a_write_through_the_api_reaches_the_real_store` is the
+only test that catches it (every other assertion reads back through the same
+request-scoped copy and passes).
+
+Rules that are enforced mechanically, not by intention
+(`tests/test_layering.py`, `tests/test_api.py`):
+
+- `booksnap/*` never imports `app/*` — this is what lets accuracy work and
+  product work run on separate branches without colliding;
+- `tools/sweep.py|spotcheck.py|rescore.py` never import `app/*` either, so a
+  product bug cannot move a baseline number;
+- `app/api/*` never imports `app/adapters/*` — the rule that keeps the
+  datastore choice (plan D1) a swap rather than a rewrite;
+- `app/domain/*` imports **`booksnap.catalog` and nothing else** from the
+  core. That direction is legal (only `booksnap → app` is banned) and it is
+  used on purpose: the product's search keys come from the *same*
+  `normalize()` the matcher uses, because two normalizers drift. Importing
+  the pipeline or the OCR modules there would put cv2/tesseract behind a
+  "milliseconds, no I/O" rule test, so it is blocked;
+- every `/api/v1` route resolves its library through the single function
+  `app/api/deps.py:current_library`, and every API route is under `/api/v1`.
+  Both are meta-tests over *all* routes, so they keep holding as routes are
+  added;
+- no module-level mutable state in `app/` (the tuning server's global job dict
+  is exactly what a second tenant breaks).
+
+**The API contract is committed and generated, both halves.**
+`app/api/dto.py` → `app/api/openapi.json` → `app/web/src/api/schema.d.ts`.
+After any DTO or route change run `python tools/api_contract.py --write` and
+commit both artefacts; `--check` fails the commit on drift. This is why a
+renamed field is a client *compile* error instead of a runtime surprise.
 
 ## How the pipeline works (the parts that took iteration)
 
@@ -385,12 +471,361 @@ the environment. `.gitignore` excludes .env, *-key.json, credentials.json, etc.
 (fetched, not source). Env overrides: BOOKSNAP_TESSDATA_BEST,
 BOOKSNAP_TESSDATA_FAST, BOOKSNAP_WORK.
 
+The product client is a separate, optional install — nothing in the
+recognition core or the tuning server needs it:
+`npm install --prefix app/web`. Skipping it only means the client half of the
+commit gate self-skips.
+
+**Node 24 LTS (>=24.15.0)** — declared in `app/web/package.json` `engines`, so
+npm says so rather than it being tribal knowledge. Node 22 is maintenance-only
+now; the floor is the active LTS line. Installed here from the official MSI
+(`winget install OpenJS.NodeJS.LTS`), not a version manager.
+
 ## Tests
 
-`python tests/test_core.py` (52, matcher/normalize/gates) and
-`python tests/test_integrations.py` (24, catalog+fallback adapters, fully
-mocked/offline — no key, no network, no cloud SDK needed). Keep these green.
-Counts grow with each run's fixes; SESSION_NOTES.md tracks the history.
+**`python tests/run_all.py`** runs everything and **exits non-zero on
+failure** — the individual `test_*.py` `__main__` blocks print PASS/FAIL and
+then exit 0, which is fine for a human and useless as a gate. Pass module
+names to run a subset (`python tests/run_all.py test_api`).
+
+| module | count | what it protects |
+|---|---|---|
+| `test_core.py` | 52 | matcher / normalize / evidence gates |
+| `test_integrations.py` | 24 | catalog + fallback adapters, fully mocked/offline |
+| `test_domain.py` | 33 | the VISION rules that can be silently reversed |
+| `test_store_contract.py` | 81 | one store spec × every implementation + isolation |
+| `test_legacy_import.py` | 21 | `work/*.json` → entities, against a committed fixture |
+| `test_search.py` | 15 | Hebrew search, against 24 real queries on the real 251 books |
+| `test_layering.py` | 9 | the one-way import rules (plan H1) |
+| `test_api.py` | 38 | `/api/v1` shapes + the versioning/tenancy meta-tests |
+
+273 python tests as of P1.7 (the +19 since P1.6.1 are copies & lending: `lend`/
+`return_copy`/`edit_copy`, the `lent_out` store filter and its schema v4, and
+the copy-mutation routes). No pytest dependency, deliberately — the repo has never
+had one and the accuracy gate runs on bare python. Counts grow with each run's
+fixes; the commit log is the history (`SESSION_NOTES.md` was a one-time handoff
+and is gone — session scratch belongs in `notes/`, which is gitignored).
+
+**`test_domain.py` is not coverage** — it is one test per sentence of VISION
+that someone could plausibly "fix" later, and every one was verified to FAIL
+when its rule is reversed (mutation-checked, not assumed). Two of them are
+structural rather than behavioural, which is the more valuable kind here:
+`Copy()` may be constructed only in `new_book`/`add_copy` (an AST walk, so it
+also constrains the reconciliation code that P2.3 will add to the same
+package), and `normalize()` may not be re-implemented in `app/domain`. Add
+rules there, not assertions about dataclass plumbing.
+
+**`test_store_contract.py` is ONE spec run against EVERY implementation** —
+24 cases × (`MemoryBookStore`, `SqliteBookStore`) + 4 sqlite-specific. Adding
+an adapter (Postgres) means adding one line to `IMPLEMENTATIONS`; that is what
+makes D1's datastore choice a swap rather than a leap. It carries the
+**tenant-isolation** suite too, already running against two library refs even
+though the app resolves one until pillar 3 — §4.2's "a foreign record reads as
+ABSENT" is a store property, and no route can answer 404-not-403 unless it
+holds here. Mutation-checked: eight planted bugs (dropped library scope in
+get/delete/list, `foreign_keys` left at SQLite's OFF default, the unique index
+removed, missing wrong-library check, missing sort tiebreaker) each fail named
+cases, and each only in the adapter that was broken.
+
+⚠ A paging test that inserts in id order and checks for duplicates passes with
+NO tiebreaker at all — Python's sort is stable and dicts keep insertion order.
+The committed test inserts in DESCENDING id order for exactly that reason.
+Found by mutation testing, not by review.
+
+## The Books UI (P1.6)
+
+Built against the real API; `planning/mockup/` was the design reference, and
+per plan D4 the Books/book parts of the mock are deleted now that this is at
+parity — two live implementations of one screen drift invisibly.
+
+**State is hand-rolled, not TanStack Query.** One paginated list query, one
+record map, three mutations: a query library would mostly be API surface here.
+The one thing it would have given us free is the request-id guard in
+`lib/books.tsx` — a response whose query has been superseded is DROPPED, or a
+slow first page lands after a search and repaints books the user already
+filtered away. That guard is tested, and the test fails without it. Revisit
+when a second screen needs its own cache.
+
+Rules that are load-bearing and easy to "simplify" later:
+
+- **mixed-script alignment (UI_PLAN §7.2).** `unicode-bidi: plaintext` for
+  glyph order, `text-align` keyed on the CONTAINER's `dir` for the edge.
+  Direction per string, alignment per container — that is what lets `Sapiens`
+  and `משחקי הכס` share one clean edge instead of two ragged ones. Every
+  user-generated string carries `.rtl-safe`, and a test asserts the class is
+  actually on them, because a missing one is invisible until someone looks at
+  a mixed-script list;
+- **the drawer is not a route.** It overlays an untouched list, so a URL would
+  make Back close it rather than leave the tab. ⤢ promotes it to
+  `#/book/<id>`, and promoting CLEARS the drawer — otherwise Back lands on the
+  list with the drawer still over it;
+- **the drawer mirrors via a custom property** (`--slide`), not a duplicated
+  transform. Verified live: `x 501..961` in LTR, `0..460` in RTL — both the
+  inline-end;
+- **absent, not disabled.** Shelf/wishlist/duplicates filters, the spine crop,
+  location, Mine, and "where it was seen" all need P2.1/P2.4/P2.5/P3.5/P6. A
+  greyed-out control that never becomes clickable reads as a bug; absence
+  reads as a product that has not grown that far. Copies/lending/lent-out
+  graduated out of this list at P1.7 — see below.
+
+- **the sort control carries its own direction.** The select names the KEY,
+  a toggle overlaid at the box's inline-start edge names the DIRECTION —
+  one control, one question, and it mirrors with the language. Changing the
+  key RESETS the direction to that key's natural one (`naturalAscending`):
+  carrying A-Z's "ascending" onto a date key silently answers a question
+  nobody asked (recently added, oldest first). The API already took
+  `ascending`; only the client hard-coded it.
+
+Traps found while verifying in the browser, all worth knowing:
+
+⚠ **A span is not a div — and CSS ported from the mock will not say so.**
+Three of the mock's rules stopped applying when its `<div>`s became `<span>`s
+inside a `<button>`: the feed's title/author rendered glued on ONE line, and
+`text-align` is a no-op on an inline box, so §7.2's per-container alignment
+was silently OFF for the entire feed. The book hero was worse — `.bhero` is a
+flex ROW (it seats a cover image), and the head lost the mock's
+`flex:1;min-width:0` wrapper, so title, author, badge and buttons splayed
+side by side. Both were invisible in the test ring: jsdom computes no
+cascade, so only a browser catches them.
+
+⚠ **A later rule at equal specificity wins.** `.dangerzone .btn { color:
+var(--danger) }` sits after `.btn.danger` in the same file, so the filled
+delete button got red text on its red background and rendered as a blank red
+rectangle. It needs `:not(.danger)`.
+
+⚠ **Chrome pins the native `<select>` chevron** a fixed distance from the
+border and ignores `padding-inline-end`. The only way to control the gap is
+`appearance: none` plus a chevron of our own — drawn from two borders on
+`.sortwrap::after` rather than a background-image data URI, because a drawn
+one can read `var(--muted)` and so follows dark mode.
+
+
+⚠ **FastAPI silently ignores unknown query params.** A `product-api` started
+before P1.5 answered `?q=…` with the whole 251-book library and a 200. The
+client looked broken; the server was stale. **Restart the API server after any
+route change** — there is no `--reload` in `.claude/launch.json`.
+
+⚠ **CSS transitions freeze at t=0 when the Browser pane is not displayed.**
+No frames composited means no animation progress, so `getComputedStyle`
+returns the transition's START value and the element looks mis-positioned.
+`el.getAnimations().forEach(a => a.finish())` before measuring, or the reading
+is a lie. Cost half an hour of chasing a drawer bug that did not exist.
+
+## Copies & lending (P1.7)
+
+The last Pillar 1 item: "I have another copy", per-copy label/tags/condition,
+lend/mark-returned, and "who has my books" (VISION §5.2). Domain ops added to
+`app/domain/book.py`: `lend`/`return_copy` (a copy is out or it isn't —
+lending an already-out copy raises `CopyAlreadyLentOut` naming the current
+borrower, rather than silently overwriting who has it; returning a copy that
+isn't out raises `CopyNotLentOut`) and `edit_copy` (label/tags/condition —
+object-level metadata, so unlike `edit()` it must NOT touch status; a person
+noting "torn cover" has not vouched for the book's identity). `add_copy`
+gained a `fields:` param so the API can create a copy with its metadata in
+one domain call instead of two.
+
+Store-side: `list(..., lent_out: bool | None)` — a book qualifies if AT LEAST
+ONE copy is currently out. SQLite gained schema **v4**: a materialized
+`copies.lent_out` column rather than filtering the `lending` JSON blob at
+query time (SQLite's json1 extension isn't guaranteed present, and even where
+it is, deriving `is_out` on every row of every query is exactly the cost
+`search_text`/`sort_author` were added to avoid). v4 is pure SQL, unlike v3 —
+every row at v3 predates lending, so `DEFAULT 0` is already correct for all of
+them; there is nothing to backfill.
+
+API: `POST/PATCH .../copies[/{id}]`, `POST .../copies/{id}/lend`, `POST
+.../copies/{id}/return`. Every one returns the whole `BookDTO`, never a bare
+`CopyDTO` — same reasoning as `patch_book`: the client replaces one record by
+id, and a partial response would force it to reassemble the book itself,
+which is exactly the logic H3 keeps out of the client. `lend_at`/`returned_at`
+are server time (the injected `Clock`), never client-supplied, same as
+`added_at`.
+
+Client: the sort control's "own its result" pattern repeats here — the
+lending badge is drawn in BOTH the feed row and the drawer hero (VISION §5.2:
+"visible in list and detail", not detail alone), via one shared `CopyBadges`
+component so the two cannot drift. The copy's lend/edit forms replace the
+read view in place (the same idiom as the title/author edit), not a modal —
+lending a copy should cost no more UI than editing one. Tag parsing
+(comma-split, trim, drop blanks) happens in the CLIENT — the server takes an
+array — and is mutation-checked: the first version of the test only asserted
+the form closed, which passed even with unparsed tags, because the UI had no
+read-view display of a copy's metadata to check against. Fixed by adding one
+(`.kv` row, `t.copy_details`) — a lesson on its own: **a test that never reads
+back what it wrote isn't testing the parsing, only that the request didn't
+crash.**
+
+⚠ **The generic `t.edit` label collides with a copy-level edit button on the
+same screen.** Screen readers announce both as "Edit" with nothing to tell
+them apart, and `getByRole('button', {name: 'עריכה'})` in the existing edit
+tests started matching two elements the moment the copies section shipped.
+Fixed with a distinct string (`t.copy_edit`, "Edit copy details") — any new
+per-copy action button needs its own label for the same reason, not a reuse
+of a book-level one.
+
+⚠ **Verifying this one mutated the real `work/product.db`.** Live browser
+testing (lend, return, add copy) went through the real dev API against the
+real file, same as any other live verification here — but unlike a read-only
+check, these are writes. Restored from a `cp work/product.db` snapshot taken
+before the live pass; **take that snapshot BEFORE driving mutations through
+the browser against `work/product.db`**, not after.
+
+## Author sort, and why it needed a schema version
+
+"Sort by author" means the SHELF order — by surname. Sorting the stored string
+files גרג הורביץ under ג and דיוויד באלדאצ'י under ד, i.e. everyone under
+their given name, which makes the sort useless for finding an author. The rule
+is `app/domain/text.py:author_sort_key`, and it handles both shapes that exist
+in the owner's 251 books: `אסימוב, אייזיק` (19 — everything before the first
+comma is the surname, which also absorbs the `(אדריכל)` parentheticals) and
+`גרג הורביץ` (232 — the last whitespace-separated token). Measured on the real
+data before it was written, not guessed at.
+
+Things worth knowing:
+
+- **it is a SECOND key, not a re-ordered `normalized_author`.** That one is
+  identity: the author chip filters on it and it is half the search haystack.
+  Making it sort nicely would silently change which books an author filter
+  returns;
+- **no particle list.** `סבסטיאן דה קסטל` files under קסטל, not דה — 2 books
+  of 251, and which is "right" depends on the cataloguing convention. A list
+  containing `ד` would file `ג'ואן ד. וינג'` under ד, which is the kind of
+  improvement that costs more than it buys. `ארתור סי.קלארק` files under ס
+  because the source string is missing a space; that is a data fix;
+- **sqlite needed schema v3** (`sort_author` + its index): ORDER BY has to see
+  the key, and Python-side sorting would break LIMIT/OFFSET. Same reasoning as
+  P1.5's `search_text` column;
+- ⚠ **v3 is the first migration step that is a CALLABLE, not SQL.** "the last
+  word, unless there is a comma" is not expressible in SQLite without a user
+  function, and writing one there would put a second copy of the rule in
+  `migrations.py`. The runner now accepts either, and the rule is reached for
+  only when the column is DERIVED by domain logic. The migration test asserts
+  a v1 database backfills AND that a book saved afterwards interleaves with
+  the migrated ones — a backfill using a different rule from the write path
+  looks fine until the two groups sort apart.
+
+**Export downloads are named `books-<library>-<YYYY-MM-DD>.<ext>`.** The file
+lands in a Downloads folder next to everyone else's, and it is a snapshot — a
+second `booksnap-library.csv` becomes `booksnap-library (1).csv` and neither
+one says what it holds or when. Both halves of RFC 6266 are sent, because the
+library name may be Hebrew: `filename*=UTF-8''…` carries the real name and the
+ASCII `filename=` fallback keeps the date rather than degrading to something
+generic.
+
+## Hebrew search (P1.5)
+
+**The semantics are in `app/domain/search.py`; adapters own only retrieval.**
+That split is what makes a Postgres adapter cheap: `parse()` says what a query
+means and `score()` says what comes first, both pure and shared, so an adapter
+chooses only how it NARROWS — SQLite `LIKE` over a stored `search_text`
+column, Postgres could use `pg_trgm` or a tsvector — and then ranks with the
+same function. **Ranking is never done in SQL**: doing it there means writing
+it twice in two dialects and finding the drift in a user report. The store
+contract runs the same search cases against every implementation, so a clever
+retrieval strategy that changes the ANSWERS gets caught.
+
+Measured on `fixtures/search/` (24 real queries × the real 251 books,
+`python tools/search_eval.py --compare`):
+
+| mechanism | P@1 | recall | results/query |
+|---|---|---|---|
+| **and + particles + rank** (shipped) | **1.00** | **1.00** | **2.8** |
+| alphabetical instead of ranked | 0.88 | 1.00 | 2.8 |
+| no particle variants | 0.94 | 0.97 | 2.7 |
+| OR terms | 1.00 | 1.00 | 6.8 |
+| word-start matching only | 0.81 | 0.89 | 2.5 |
+
+P@1 is the metric that matters — the failure mode on a personal library is
+never "nothing found", it is the right book at rank 9 behind its series
+siblings. AND does *not* beat OR on P@1; its case is the 2.4× smaller result
+set.
+
+Things worth knowing:
+
+- **leading ה/ו/ב/ל/מ/ש/כ are tolerated in the QUERY only.** Note the
+  asymmetry with the matcher, where the same transform measured *harmful*
+  (precision 0.62 → 0.50): a matcher compares two machine strings, search
+  compares a human's typing to a catalogue. The stored key is never stripped;
+  only one leading letter is removed, and only if ≥2 chars remain;
+- substring matching covers the other direction free — a query for `נבונים`
+  finds the stored `הנבונים` with no variant at all;
+- terms shorter than 3 chars match only at a word start. 1–2 letters appear
+  inside almost every Hebrew word, so infix matching on them returns the
+  library;
+- **the title-length bonus applies only when the query touched the TITLE.** On
+  a pure author search every hit scores identically, so a length bonus becomes
+  the sole tiebreak and orders an author's shelf by title length. Without it
+  the tie falls through to alphabetical, which is what browsing wants. Found
+  by reading real output, not by the fixture;
+- search cost is a linear scan and that is deliberate: no index helps
+  `LIKE '%x%'`. Measured 4ms at 251 books, 9ms at 2k, 53ms at 10k. The target
+  is a few thousand; when it stops being enough the fix is a better narrowing
+  clause (FTS5, trigram) in the adapter, not a different ranking.
+
+## Legacy import (`work/` → the product store)
+
+```bash
+python tools/import_legacy.py --dry-run          # report only, nothing written
+python tools/import_legacy.py --db work/product.db
+python tools/import_legacy.py --export-fixture   # refresh fixtures/legacy/
+```
+
+Measured on the real data: **251 books → 117 approved, 110 auto, 24 manual**,
+one copy and one provenance entry each, ~296KB SQLite. Re-running is a clean
+no-op. Four things here are not obvious and are each pinned by a test:
+
+- **stored keys are RECOMPUTED, never trusted.** 30 of the 251 keys in
+  `library.json` predate the geresh fix in `normalize()` (`צ רלס סטרוס` vs
+  today's `צרלס סטרוס`). Imported verbatim they would carry a key no future
+  lookup could produce. Re-keying yields 251 distinct keys, zero collisions —
+  but a collision would be *reported*, not silently resolved;
+- **`store.json`'s `runs` is a DICT keyed by run_id**, not a list. Reading it
+  as a list fails silently: iterating a dict yields strings, an `isinstance`
+  guard drops them all, and every hand-typed book quietly loses its date. The
+  committed fixture caught this;
+- **manual adds are identified by `source.manual`, not by the `owner-fb-`
+  spine prefix.** 9 of the 24 use `manual-<timestamp>`, and `owner-fb-` also
+  covers 5 books that were *replaced* rather than typed;
+- **"already present" is checked by id AND key, and the id is the load-bearing
+  half.** Once a title is edited the key changes, so a key-only check reads as
+  absent and re-saves under the same deterministic id — replacing the
+  correction with the original text.
+
+`source.replaced` (5 books) imports as `approved`, not `manual`: a human chose
+from ranked alternatives, but the text is the catalog's. Constant
+`REPLACED_STATUS` if that judgement should flip.
+
+⚠ **14 rejected claims are NOT migrated.** §5.6 says a rejected book must not
+be re-added by a later run; a rejection is scoped to a *shelf*, and shelves
+arrive in P2.1. The importer reports them loudly rather than dropping them —
+until P2.3 lands, a re-read could re-add those books.
+
+Client ring (needs `npm install --prefix app/web` once):
+`npm --prefix app/web run test` (vitest + React Testing Library, **33 tests**
+as of P1.7) and `npm --prefix app/web run typecheck`. Test what encodes a
+*decision*, not layout and not DTO plumbing — same standard as the Python
+rings. The suite mocks `fetch`, never `useBooks`: the store, the request-id
+race guard and the paging arithmetic are exactly what needs exercising.
+Mutation-checked — nine reversed decisions (dropped race guard, missing
+`.rtl-safe`, edit not abandoned on book change, delete without confirmation,
+409 clearing the form, focus not restored, drawer left open on promote,
+sort direction surviving a key change, tags not trimmed/blanks-dropped) each
+fail a named test.
+
+⚠ **This ring cannot see CSS.** jsdom computes no cascade, so every finding
+in the "traps" list above was invisible here and had to be caught in a real
+browser. Do not read a green client ring as "the screen is right".
+
+⚠ jsdom keeps `localStorage` across tests in a file, and the language choice
+persists deliberately — so `afterEach` must clear it, or every test after the
+mirroring one starts in English and looks for the wrong strings.
+
+**The pre-commit hook now has two independent halves** (`tools/githooks/pre-commit`):
+accuracy (sweep + spotchecks, unchanged) and product (`tests/run_all.py`,
+`tools/api_contract.py --check`, and the client tests when `app/web/` is
+staged). Product work must never require touching the accuracy baseline. The
+client half self-skips without `node_modules`, like the spotchecks do without
+run data.
 
 ## Known constraints / next steps (roughly prioritised, updated 2026-08-06)
 

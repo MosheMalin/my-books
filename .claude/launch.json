@@ -16,6 +16,23 @@
       }
     },
     {
+      "name": "product-api",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "-c",
+        "import os, uvicorn; uvicorn.run('app.main:app', host='127.0.0.1', port=int(os.environ.get('PORT', '8757')), reload=False)"
+      ],
+      "port": 8757,
+      "autoPort": false
+    },
+    {
+      "name": "product-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "app/web", "run", "dev"],
+      "port": 5173,
+      "autoPort": true
+    },
+    {
       "name": "ui-mock",
       "runtimeExecutable": "python",
       "runtimeArgs": ["-m", "http.server", "8790", "--directory", "planning/mockup"],

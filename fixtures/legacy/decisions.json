@@ -1,0 +1,127 @@
+{
+ "6f1bfe4527c4": {
+  "manual-test": {
+   "action": "reject_ignore",
+   "title": "",
+   "author": "",
+   "rejected_title": "ספר בדיקה זמני",
+   "rejected_author": "בודק"
+  }
+ },
+ "54bd7aa4ed7e": {
+  "owner-fb-1": {
+   "action": "reject_ignore",
+   "title": "",
+   "author": "",
+   "rejected_title": "מכונת הזמן",
+   "rejected_author": "ה.ג'. וולס"
+  },
+  "owner-fb-2": {
+   "action": "reject_ignore",
+   "title": "",
+   "author": "",
+   "rejected_title": "שלושה ימים",
+   "rejected_author": "אנדרס רוסלנד"
+  },
+  "owner-fb-שלושה ימים בספטמבר": {
+   "action": "manual_add",
+   "title": "שלושה ימים בספטמבר",
+   "author": "רון יניב"
+  }
+ },
+ "77cbcc9fb886": {
+  "owner-fb-יהודית": {
+   "action": "reject_ignore",
+   "title": "",
+   "author": "",
+   "rejected_title": "יהודית",
+   "rejected_author": ""
+  },
+  "owner-fb-הסכין": {
+   "action": "reject_ignore",
+   "title": "",
+   "author": "",
+   "rejected_title": "הסכין",
+   "rejected_author": "תדהר ניר"
+  },
+  "owner-fb-המצפן": {
+   "action": "reject_ignore",
+   "title": "",
+   "author": "",
+   "rejected_title": "המצפן",
+   "rejected_author": "ג'ון ספנסר אליס"
+  }
+ },
+ "4b9fa6bea8c8": {
+  "owner-fb-series": {
+   "action": "reject_ignore",
+   "title": "",
+   "author": "",
+   "rejected_title": "מחזור שער המוות",
+   "rejected_author": "וייס, מרגרט"
+  },
+  "owner-fb-יד הכאוס": {
+   "action": "manual_add",
+   "title": "יד הכאוס",
+   "author": "מרגרט וייס וטרייסי היקמן"
+  },
+  "owner-fb-על דם ואור": {
+   "action": "manual_add",
+   "title": "על דם ואור",
+   "author": "קמילה מונק"
+  }
+ },
+ "d37442d58597": {
+  "4c430ddc27d3_b0_s00": {
+   "action": "reject_ignore",
+   "title": "",
+   "author": "",
+   "rejected_title": "דן אלמגור: איש חסיד היה",
+   "rejected_author": "דן אלמגור"
+  },
+  "4c430ddc27d3_b0_s06": {
+   "action": "reject_ignore",
+   "title": "",
+   "author": "",
+   "rejected_title": "הקומקום",
+   "rejected_author": ""
+  },
+  "06dbb16e6718_b0_s00": {
+   "action": "reject_ignore",
+   "title": "",
+   "author": "",
+   "rejected_title": "בריאה",
+   "rejected_author": "גור וידאל"
+  }
+ },
+ "8725965a7509": {
+  "8411124d8630_b0_s00": {
+   "action": "reject_ignore",
+   "title": "",
+   "author": "",
+   "rejected_title": "השחורים",
+   "rejected_author": "ז'ן ז'נה"
+  },
+  "manual-1786051302671": {
+   "action": "manual_add",
+   "title": "הענן השחור",
+   "author": "פרד הויל",
+   "image": "IMG_8139.jpeg"
+  },
+  "manual-1786053293024": {
+   "action": "manual_add",
+   "title": "מלכת השלג",
+   "author": "ג'ואן וינג'",
+   "image": "IMG_8139.jpeg"
+  }
+ },
+ "12159c3db24a": {
+  "083e58dd298f_b0_s07": {
+   "action": "replace",
+   "title": "בלב היער",
+   "author": "טאנה פרנץ'",
+   "rejected_title": "בלב היער - 1",
+   "rejected_author": "טאנה פרנץ'"
+  }
+ }
+}

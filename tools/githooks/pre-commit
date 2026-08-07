@@ -1,7 +1,15 @@
 #!/bin/sh
-# Regression gate: changes that can affect matching accuracy must pass the
-# sweep check before they can be committed. Installed via:
+# Commit gate. Two independent halves, both installed via:
 #     git config core.hooksPath tools/githooks
+#
+#   1. ACCURACY  — the sweep + spotchecks, unchanged. Guards the recognition
+#      core against a silent regression.
+#   2. PRODUCT   — the app/ rings from IMPLEMENTATION_PLAN H4: layering, the
+#      API meta-tests, the OpenAPI->TypeScript contract, and the client
+#      component tests.
+#
+# The halves are deliberately independent: product work must never require
+# touching the accuracy baseline, and vice versa.
 #
 # Watchlist = everything the replay sweep actually exercises. If any of these
 # are staged, run `sweep.py --check` (offline, ~2s) against the committed
@@ -30,6 +38,62 @@ for s in $staged; do
     fi
 done
 
+# --- half 2: product rings -----------------------------------------------
+# Runs before the accuracy gate because it is the faster of the two to fail
+# and the one a product-only commit will actually trigger.
+app_hit=""
+web_hit=""
+for s in $staged; do
+    case "$s" in
+        app/web/*)          web_hit=1; app_hit=1 ;;
+        app/*|tests/*|tools/api_contract.py) app_hit=1 ;;
+    esac
+done
+
+if [ -n "$app_hit" ]; then
+    echo "pre-commit: product tests (layering + API rings)"
+    python tests/run_all.py
+    if [ $? -ne 0 ]; then
+        echo ""
+        echo "COMMIT BLOCKED: product tests failed (tests/run_all.py)."
+        exit 1
+    fi
+
+    echo "pre-commit: API contract (DTOs -> OpenAPI -> TypeScript)"
+    python tools/api_contract.py --check
+    if [ $? -ne 0 ]; then
+        echo ""
+        echo "COMMIT BLOCKED: the committed API contract is stale."
+        exit 1
+    fi
+fi
+
+if [ -n "$web_hit" ]; then
+    # Self-skips on a machine without the client toolchain installed, the same
+    # way the spotchecks skip without run data — a gate that cannot run must
+    # not be a gate that blocks.
+    if [ -d app/web/node_modules ]; then
+        echo "pre-commit: client tests (vitest)"
+        npm --prefix app/web run test --silent
+        if [ $? -ne 0 ]; then
+            echo ""
+            echo "COMMIT BLOCKED: client component tests failed."
+            exit 1
+        fi
+        echo "pre-commit: client typecheck"
+        npm --prefix app/web run typecheck --silent
+        if [ $? -ne 0 ]; then
+            echo ""
+            echo "COMMIT BLOCKED: client does not typecheck."
+            exit 1
+        fi
+    else
+        echo "pre-commit: app/web staged but node_modules missing — client"
+        echo "            checks skipped. Run: npm install --prefix app/web"
+    fi
+fi
+
+# --- half 1: accuracy gate ------------------------------------------------
 [ -z "$hit" ] && exit 0
 
 echo "pre-commit: accuracy-relevant files staged:$hit"

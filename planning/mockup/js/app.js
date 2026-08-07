@@ -1,22 +1,25 @@
 // App shell + hash router for the mock.
-//   #/library[?author=…]   #/map[/<shelfId>]   #/capture   #/settings
-//   #/book/<id>            full-page book, deep-linkable, returns to previous
+//   #/map[/<shelfId>]   #/capture   #/settings
+//   #/book/<id>         full-page book, deep-linkable, returns to previous
+//
+// The Books tab is GONE from this mock — it reached parity in app/web and
+// plan D4 says the mock's copy goes when that happens, because two live
+// implementations of one screen drift and the drift is invisible.
+// See ../README.md for why book.js survived the same cut.
 import { t, lang, setLang, isRtl } from './i18n.js';
 import { esc, $, h } from './ui.js';
-import * as libraryView from './library.js';
 import * as mapView from './map.js';
 import * as captureView from './capture.js';
 import * as settingsView from './settings.js';
 import { openDrawer, closeDrawer, isDrawerOpen, renderBookPage, wireDetail } from './book.js';
 
 const TABS = [
-  ['library',  'tab_library',  '📚'],
   ['map',      'tab_shelves',  '🗺'],
   ['capture',  'tab_capture',  '📷'],
   ['settings', 'tab_settings', '⚙'],
 ];
 
-let lastListHash = '#/library';
+let lastListHash = '#/map';
 
 function chrome() {
   document.documentElement.lang = lang;
@@ -42,8 +45,8 @@ function markTab(name) {
 }
 
 function route() {
-  const hash = location.hash || '#/library';
-  const [pathPart, query] = hash.replace(/^#\/?/, '').split('?');
+  const hash = location.hash || '#/map';
+  const [pathPart] = hash.replace(/^#\/?/, '').split('?');
   const [path, arg] = pathPart.split('/');
 
   if (path === 'book') {
@@ -63,9 +66,8 @@ function route() {
   } else if (path === 'settings') {
     markTab('settings'); settingsView.render(ensure('settings'));
   } else {
-    markTab('library');
-    libraryView.setAuthorFilter(new URLSearchParams(query || '').get('author'));
-    libraryView.render(ensure('library'));
+    // Anything unrecognised — including a stale #/library link — lands on Map.
+    markTab('map'); mapView.render(ensure('map'));
   }
   window.scrollTo(0, 0);
 }
@@ -109,7 +111,7 @@ function init() {
 }
 
 function rerenderCurrent(mount) {
-  ({ library: libraryView, map: mapView, capture: captureView, settings: settingsView }[mount.dataset.page])?.render(mount);
+  ({ map: mapView, capture: captureView, settings: settingsView }[mount.dataset.page])?.render(mount);
 }
 
 init();
