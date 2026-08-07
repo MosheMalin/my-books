@@ -35,6 +35,10 @@ __pycache__/
 venv/
 env/
 
+# --- session scratch / handoff notes (not source, not durable memory) ---
+# durable project memory lives in CLAUDE.md; this is per-session narrative
+notes/
+
 # --- editor / OS ---
 .vscode/
 .idea/

@@ -503,7 +503,8 @@ names to run a subset (`python tests/run_all.py test_api`).
 `return_copy`/`edit_copy`, the `lent_out` store filter and its schema v4, and
 the copy-mutation routes). No pytest dependency, deliberately — the repo has never
 had one and the accuracy gate runs on bare python. Counts grow with each run's
-fixes; SESSION_NOTES.md tracks the history.
+fixes; the commit log is the history (`SESSION_NOTES.md` was a one-time handoff
+and is gone — session scratch belongs in `notes/`, which is gitignored).
 
 **`test_domain.py` is not coverage** — it is one test per sentence of VISION
 that someone could plausibly "fix" later, and every one was verified to FAIL
