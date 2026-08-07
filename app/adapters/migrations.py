@@ -154,6 +154,63 @@ ALTER TABLE copies ADD COLUMN lent_out INTEGER NOT NULL DEFAULT 0;
 CREATE INDEX copies_lent_out ON copies (library_id, lent_out);
 """
 
+# --- v5: shelf identity and captures (P2.1, §5.3/§5.7) --------------------
+#
+# No place, no bookcase, no col, no level — those are the shelf ADDRESS and
+# they arrive with the map in pillar 6 (plan §1.1). What is here is identity:
+# an id, a label the owner types, and the declared depth_count.
+#
+# `depth` lands on copies and provenance in the same step because a location is
+# `(shelf, depth)` together (§5.7). Pure SQL and no backfill: every row at v4
+# predates shelves entirely — the 251 imported books have `shelf_id IS NULL`,
+# and the domain's rule is that an unlocated copy has no depth, so NULL is
+# already correct for all of them. (Contrast v3, which had to be a callable
+# because its column was DERIVED from data that already existed.)
+#
+# `virtual` is the wishlist. It is a column on shelves rather than a separate
+# table because it is the same thing with one fact different — a table would
+# duplicate every query below it.
+_V5 = """
+CREATE TABLE shelves (
+    id          TEXT PRIMARY KEY,
+    library_id  TEXT NOT NULL,
+    label       TEXT NOT NULL,
+    depth_count INTEGER NOT NULL DEFAULT 1,
+    virtual     INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT
+);
+
+-- Leads with library_id like every other read index, and carries `virtual`
+-- because excluding the wishlist is the DEFAULT of every shelf listing, not
+-- an occasional filter.
+CREATE INDEX shelves_by_label ON shelves (library_id, virtual, label, id);
+
+CREATE TABLE captures (
+    id          TEXT NOT NULL PRIMARY KEY,
+    shelf_id    TEXT NOT NULL REFERENCES shelves (id) ON DELETE CASCADE,
+    library_id  TEXT NOT NULL,
+    depth       INTEGER NOT NULL DEFAULT 1,
+    "order"     INTEGER NOT NULL DEFAULT 0,
+    image_id    TEXT,
+    captured_at TEXT
+);
+
+-- §5.3 gives a capture its identity as (shelf, depth, order); declaring it
+-- means two photos cannot claim the same slot of the same row, which is what
+-- would make a shelf's book order ambiguous.
+CREATE UNIQUE INDEX captures_slot ON captures (shelf_id, depth, "order");
+CREATE INDEX captures_of_shelf ON captures (library_id, shelf_id, depth, "order");
+
+ALTER TABLE copies ADD COLUMN depth INTEGER;
+ALTER TABLE provenance ADD COLUMN depth INTEGER;
+
+-- The location index is (shelf_id, depth), not shelf_id alone: §5.7 #1 scopes
+-- the not-seen rule to the depth that was read, so "the books at this row" is
+-- the query P2.3 runs, and answering it from a shelf-only index would scan
+-- every row of a stacked shelf to throw most of them away.
+CREATE INDEX copies_by_location ON copies (library_id, shelf_id, depth);
+"""
+
 # A step is either SQL to execute or a callable to run — both inside the same
 # once-only transaction. Callables exist because a derived column whose rule
 # lives in the domain must be backfilled BY that rule, not by a re-statement
@@ -163,6 +220,7 @@ MIGRATIONS: tuple[tuple[int, str | Step], ...] = (
     (2, _V2),
     (3, _v3),
     (4, _V4),
+    (5, _V5),
 )
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]

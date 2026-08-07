@@ -29,15 +29,22 @@ from app.domain import (
     CopyNotLentOut,
     DomainError,
     Provenance,
+    Shelf,
     Status,
     UnknownCopy,
+    UnknownDepth,
+    VirtualShelfHasNoDepth,
     add_copy,
+    add_depth,
     approve,
     book_key,
+    counts_toward_library,
     edit,
     edit_copy,
     lend,
     new_book,
+    new_capture,
+    new_shelf,
     observe,
     remove_from_shelf,
     return_copy,
@@ -394,6 +401,162 @@ def test_normalize_is_not_reimplemented_in_the_domain():
 
 def test_unknown_copy_is_rejected():
     _raises(UnknownCopy, remove_from_shelf, _book(), "nope")
+
+
+# --- P2.1: shelf identity, without the address (plan §1.1) ----------------
+
+def _shelf(**kw):
+    args = dict(id="sh1", library_id=LIB, label="סלון, כוננית 2, מדף 3")
+    args.update(kw)
+    return new_shelf(**args)
+
+
+def test_a_shelf_carries_no_address_only_identity():
+    """§1.1 splits shelf IDENTITY (here, pillar 2) from shelf ADDRESS (place →
+    bookcase → col → level, pillar 6). Structural rather than behavioural on
+    purpose: the tempting mistake is to add `bookcase` here "while we're at
+    it", and then two modules own an address and the map has to reconcile
+    them. Until then the label IS the location, which §1.1 calls enough.
+    """
+    fields = set(Shelf.__dataclass_fields__)
+    address = {"place", "place_id", "bookcase", "bookcase_id", "col",
+               "column", "level", "x", "y", "geometry"}
+    assert not (fields & address), (
+        f"shelf address fields in pillar 2: {sorted(fields & address)}"
+    )
+
+
+def test_depth_is_never_called_row_or_band_in_the_shelf_module():
+    """§5.7's named ⚠: `segment.py` already uses *band* for the horizontal
+    rows found WITHIN one photo, and `Spine.band` is in the stored record
+    format. That is a vertical concept; this one is front-to-back. Someone
+    reading `spine_id = IMG_1234_b0_s07` alongside a `shelf.row` would
+    reasonably conflate them, and the resulting bug is a book filed in a row
+    that does not exist.
+
+    Identifiers only — prose may say "row" (the UI string is *"add a row
+    behind this one"*), and the ban is on what code calls it.
+    """
+    src = (REPO_ROOT / "app" / "domain" / "shelf.py").read_text(encoding="utf-8")
+    banned = {"row", "rows", "band", "bands"}
+    offenders = sorted({
+        node.id if isinstance(node, ast.Name) else node.attr
+        for node in ast.walk(ast.parse(src))
+        if (isinstance(node, ast.Name) and node.id in banned)
+        or (isinstance(node, ast.Attribute) and node.attr in banned)
+    } | {
+        a.arg for fn in ast.walk(ast.parse(src))
+        if isinstance(fn, ast.FunctionDef)
+        for a in fn.args.args + fn.args.kwonlyargs if a.arg in banned
+    })
+    assert not offenders, (
+        f"§5.7: call it depth, never {offenders} — it collides with "
+        "segment.py's horizontal bands"
+    )
+
+
+def test_a_shelf_must_have_a_label_because_it_is_the_location():
+    """Until the map, the label is the whole of a book's location (§1.1). A
+    blank one means every book on the shelf answers "where is it?" with
+    nothing, and the shelf list becomes a column of empty rows."""
+    _raises(DomainError, _shelf, label="   ")
+
+
+def test_depth_is_declared_and_a_capture_cannot_invent_one():
+    """§5.7: nothing in an image says "this is the row behind" — the front
+    books are simply absent — so depth cannot be detected and must be
+    declared. A capture at depth 2 of a one-row shelf would create a location
+    with no counterpart in the room, and P2.3 would reconcile against it."""
+    shelf = _shelf()
+    assert new_capture(shelf, id="cap1").depth == 1
+    _raises(UnknownDepth, new_capture, shelf, id="cap2", depth=2)
+
+    deeper = add_depth(shelf)
+    assert deeper.depth_count == 2 and deeper.depths == (1, 2)
+    assert new_capture(deeper, id="cap2", depth=2).depth == 2
+
+
+def test_the_wishlist_is_not_furniture_and_does_not_count():
+    """The wishlist is `Shelf{virtual: true}` (P2.1) — a real list, kept where
+    the user looks for it, but not a place. It has no row behind it, and
+    counting it among the shelves inflates both the shelf list and the
+    apparent size of a library of books the owner does not own yet."""
+    wish = _shelf(id="wish", label="רשימת משאלות", virtual=True)
+    assert counts_toward_library(_shelf()) is True
+    assert counts_toward_library(wish) is False
+    _raises(VirtualShelfHasNoDepth, add_depth, wish)
+    _raises(VirtualShelfHasNoDepth, _shelf,
+            id="w2", label="x", virtual=True, depth_count=2)
+
+
+def test_a_capture_is_identified_by_shelf_depth_and_order():
+    """§5.3's key, all three parts. Order is what gives a shelf's book list a
+    sensible left-to-right sequence; depth is what stops two captures of
+    physically different scenes being treated as two views of one."""
+    shelf = add_depth(_shelf())
+    front = new_capture(shelf, id="cap1", depth=1, order=0)
+    behind = new_capture(shelf, id="cap2", depth=2, order=0)
+    assert front.slot == ("sh1", 1, 0)
+    assert behind.slot == ("sh1", 2, 0)
+    assert front.slot != behind.slot, "depth dropped out of a capture's identity"
+
+
+# --- P2.1: a location is (shelf, depth) together (§5.7) -------------------
+
+def test_a_different_row_of_the_same_shelf_is_a_different_location():
+    """§5.7 #3 puts "a different row of the same shelf" in the ASK column of
+    §5.4's firing table. Matching on shelf alone would answer it silently, and
+    answer it *already-listed* — relinking a copy that never moved onto the
+    row behind it, and losing the second copy that is genuinely there."""
+    b = _book(shelf_id="sh1", depth=1)
+    b = observe(b, Provenance("r1", "sp1", shelf_id="sh1", depth=1))
+    assert b.copy("c1").location == ("sh1", 1)
+
+    e = _raises(AmbiguousCopy, observe, b,
+                Provenance("r2", "sp9", shelf_id="sh1", depth=2))
+    assert "sh1" in str(e)
+
+
+def test_the_front_row_is_depth_one_however_it_was_written():
+    """A copy on a shelf with no depth and one at depth 1 are the same
+    physical place. Compared field-by-field they read as two, which would fire
+    §5.4's prompt on a book that never moved — so a located copy always
+    carries a depth."""
+    b = _book(shelf_id="sh1")
+    assert b.copy("c1").depth == 1
+    b = observe(b, Provenance("r1", "sp1", shelf_id="sh1"))
+    assert b.copy("c1").provenance[0].location == ("sh1", 1)
+    assert b.copy("c1").location == ("sh1", 1), "the same place read as two"
+
+
+def test_a_depth_without_a_shelf_is_refused_not_dropped():
+    """A row of nothing. It is always a wiring bug — most likely clearing
+    `shelf_id` and forgetting `depth` — and dropping it quietly would make
+    *remove from shelf* look right while leaking the old row into the next
+    place the copy stands."""
+    _raises(DomainError, _book, depth=2)
+    _raises(DomainError, Provenance, "r1", "sp1", None, None, 2)
+
+
+def test_removing_from_a_shelf_clears_the_depth_too():
+    """The other half of the rule above, and the one a later "simplification"
+    would drop: clearing only `shelf_id` raises here rather than silently
+    leaving a copy that remembers a row it no longer stands in."""
+    b = _book(shelf_id="sh1", depth=2)
+    b = remove_from_shelf(b, "c1")
+    assert b.copy("c1").location is None
+    assert b.copy("c1").depth is None
+
+
+def test_a_read_adopts_shelf_and_depth_together():
+    """An unlocated copy is the one relink a read may perform (§5.4). Adopting
+    the shelf without the depth would put the book on the right shelf at
+    whatever row it last remembered — which for a fresh copy is none, and for
+    a re-used one is wrong."""
+    b = _book()
+    assert b.copy("c1").location is None
+    b = observe(b, Provenance("r1", "sp1", shelf_id="sh7", depth=3))
+    assert b.copy("c1").location == ("sh7", 3)
 
 
 if __name__ == "__main__":

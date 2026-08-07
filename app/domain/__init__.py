@@ -3,7 +3,7 @@
 
 The one import that leaves this package is ``normalize()`` from the
 recognition core — see ``app/domain/text.py`` for why duplicating it would be
-the worse choice. Shelf/Capture arrive in P2.1, reconciliation in P2.3.
+the worse choice. Reconciliation arrives in P2.3.
 
 Rules that live here because they must be testable in milliseconds and must
 never be silently reversed (plan H5):
@@ -12,6 +12,9 @@ never be silently reversed (plan H5):
   - an approved book is never demoted by a worse re-read  §5.6  Status.merge
   - *remove from shelf* != *delete from library* ....... UI §5  remove_from_shelf
   - lending is per copy, never per book ................ §5.2  Lending, lend
+  - depth is declared, never detected ................. §5.7  shelf.new_capture
+  - a different row is a different location ........... §5.7  book._resolve_copy
+  - the wishlist is not furniture ..................... §5.7  counts_toward_library
 """
 from __future__ import annotations
 
@@ -40,11 +43,23 @@ from app.domain.book import (
     set_work_fields,
 )
 from app.domain.library import LibraryRef
+from app.domain.shelf import (
+    Capture,
+    Shelf,
+    UnknownDepth,
+    VirtualShelfHasNoDepth,
+    add_depth,
+    counts_toward_library,
+    new_capture,
+    new_shelf,
+    rename_shelf,
+)
 from app.domain.text import author_sort_key, book_key, normalize
 
 __all__ = [
     "AmbiguousCopy",
     "Book",
+    "Capture",
     "Copy",
     "CopyAlreadyLentOut",
     "CopyFields",
@@ -53,20 +68,28 @@ __all__ = [
     "Lending",
     "LibraryRef",
     "Provenance",
+    "Shelf",
     "Status",
     "UnknownCopy",
+    "UnknownDepth",
+    "VirtualShelfHasNoDepth",
     "WorkFields",
     "add_copy",
+    "add_depth",
     "approve",
     "author_sort_key",
     "book_key",
+    "counts_toward_library",
     "edit",
     "edit_copy",
     "lend",
     "new_book",
+    "new_capture",
+    "new_shelf",
     "normalize",
     "observe",
     "remove_from_shelf",
+    "rename_shelf",
     "return_copy",
     "set_work_fields",
 ]
