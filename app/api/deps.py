@@ -19,6 +19,7 @@ from app.domain import LibraryRef
 from app.ports import Clock, IdGen, Principal
 from app.ports.blobs import BlobStore
 from app.ports.decisions import DecisionStore
+from app.ports.duplicates import DuplicateQueue
 from app.ports.jobs import JobRunner
 from app.ports.reader import Reader
 from app.ports.store import BookStore, ReadStore, ShelfStore
@@ -63,6 +64,10 @@ def get_read_store() -> ReadStore:
 
 def get_decision_store() -> DecisionStore:
     raise RuntimeError("no DecisionStore bound; build the app via create_app")
+
+
+def get_duplicate_queue() -> DuplicateQueue:
+    raise RuntimeError("no DuplicateQueue bound; build the app via create_app")
 
 
 def get_reader() -> Reader:

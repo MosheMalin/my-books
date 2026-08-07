@@ -66,6 +66,11 @@ export interface FakeServer {
    *  test can make a STALE response land after a newer one. */
   holdWhen: ((url: string) => boolean) | null
   release: () => void
+  /** Book ids with an open §5.4 question (P2.6) — the "duplicates to
+   *  resolve" queue lives on a SEPARATE aggregate from Book, so unlike
+   *  `lentOut` (a fact on the copy itself) this cannot be derived from a
+   *  fixture's own fields; a test opts a book in by adding its id here. */
+  openDuplicateIds: Set<string>
 }
 
 export function fakeServer(initial: FakeBookRecord[] = []): FakeServer {
@@ -75,6 +80,7 @@ export function fakeServer(initial: FakeBookRecord[] = []): FakeServer {
     calls: [],
     failNextWith: null,
     holdWhen: null,
+    openDuplicateIds: new Set(),
     release: () => {
       while (pending.length) pending.shift()?.()
     },
@@ -224,6 +230,7 @@ export function fakeServer(initial: FakeBookRecord[] = []): FakeServer {
     const status = u.searchParams.get('status')
     const authorKey = u.searchParams.get('author_key')
     const lentOut = u.searchParams.get('lent_out')
+    const duplicates = u.searchParams.get('duplicates') === 'true'
     const limit = Number(u.searchParams.get('limit') ?? 50)
     const offset = Number(u.searchParams.get('offset') ?? 0)
 
@@ -235,6 +242,9 @@ export function fakeServer(initial: FakeBookRecord[] = []): FakeServer {
       const want = lentOut === 'true'
       items = items.filter((b) =>
         b.copies.some((c) => c.lending?.is_out) === want)
+    }
+    if (duplicates) {
+      items = items.filter((b) => server.openDuplicateIds.has(b.id))
     }
 
     const body = {

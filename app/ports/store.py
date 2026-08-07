@@ -149,6 +149,7 @@ class BookStore(Protocol):
         status: Status | None = None,
         author_key: str | None = None,
         lent_out: bool | None = None,
+        book_ids: tuple[str, ...] | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> BookPage:
@@ -160,6 +161,16 @@ class BookStore(Protocol):
         ``lent_out`` matches a book with AT LEAST ONE copy currently lent out
         (``Lending.is_out``) — the "who has my books" view (§5.2). It is a
         book-level filter over a copy-level fact, same shape as ``status``.
+
+        ``book_ids`` restricts the result to an explicit id set — sort and
+        paging still apply on top of it. Generic on purpose (P2.6): this
+        store has no idea what a "duplicate question" is (that is
+        ``app.ports.duplicates.DuplicateQueue``'s aggregate, a separate
+        port), so the Books tab's "duplicates to resolve" filter is composed
+        at the API layer — list the open questions' book ids, then narrow
+        here — rather than teaching this port about another aggregate. An
+        explicit EMPTY tuple means "match nothing" (an empty queue pages as
+        zero books), which is different from ``None`` ("no id filter").
         """
 
     def search(

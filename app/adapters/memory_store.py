@@ -12,7 +12,16 @@ frozen, so there is nothing to defensively copy.
 """
 from __future__ import annotations
 
-from app.domain import Book, Capture, Decision, LibraryRef, Read, Shelf, Status
+from app.domain import (
+    Book,
+    Capture,
+    Decision,
+    DuplicateQuestion,
+    LibraryRef,
+    Read,
+    Shelf,
+    Status,
+)
 from app.domain.search import parse
 from app.domain.search import search as domain_search
 from app.ports.store import (
@@ -75,9 +84,14 @@ class MemoryBookStore:
         status: Status | None = None,
         author_key: str | None = None,
         lent_out: bool | None = None,
+        book_ids: tuple[str, ...] | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> BookPage:
+        if book_ids is not None and not book_ids:
+            # An explicit empty set means "nothing" — an empty duplicates
+            # queue must page as zero books, not as "no id filter at all".
+            return BookPage(items=(), total=0, offset=offset, limit=limit)
         rows = list(self._shelf(library).values())
         if status is not None:
             rows = [b for b in rows if b.status is status]
@@ -85,6 +99,9 @@ class MemoryBookStore:
             rows = [b for b in rows if b.normalized_author == author_key]
         if lent_out is not None:
             rows = [b for b in rows if _any_copy_out(b) == lent_out]
+        if book_ids is not None:
+            wanted = set(book_ids)
+            rows = [b for b in rows if b.id in wanted]
 
         rows.sort(key=lambda b: _sort_key(b, sort), reverse=not ascending)
         total = len(rows)
@@ -295,6 +312,50 @@ class MemoryDecisionStore:
     ) -> bool:
         key = (shelf_id, depth, book_key)
         return self._d(library).pop(key, None) is not None
+
+
+class MemoryDuplicateQueue:
+    """Implements ``app.ports.duplicates.DuplicateQueue`` (P2.6).
+
+    Same role and same shape as :class:`MemoryDecisionStore` — the natural
+    key is identical, which is the whole point (a question and its answer
+    are two states of one fact).
+    """
+
+    def __init__(self) -> None:
+        self._by_library: dict[str, dict[tuple[str, int, str], DuplicateQuestion]] = {}
+
+    def _q(self, library: LibraryRef) -> dict[tuple[str, int, str], DuplicateQuestion]:
+        return self._by_library.setdefault(library.id, {})
+
+    def save_question(self, library: LibraryRef, question: DuplicateQuestion) -> None:
+        if question.library_id != library.id:
+            raise WrongLibrary(
+                f"question for {question.book_key!r} belongs to "
+                f"{question.library_id!r}, not {library.id!r}"
+            )
+        key = (question.shelf_id, question.depth, question.book_key)
+        self._q(library)[key] = question
+
+    def get_question(
+        self, library: LibraryRef, shelf_id: str, depth: int, book_key: str,
+    ) -> DuplicateQuestion | None:
+        return self._q(library).get((shelf_id, depth, book_key))
+
+    def list_open_questions(
+        self, library: LibraryRef, *, shelf_id: str | None = None,
+    ) -> tuple[DuplicateQuestion, ...]:
+        rows = list(self._q(library).values())
+        if shelf_id is not None:
+            rows = [q for q in rows if q.shelf_id == shelf_id]
+        rows.sort(key=lambda q: (q.opened_at, q.id))
+        return tuple(rows)
+
+    def delete_question(
+        self, library: LibraryRef, shelf_id: str, depth: int, book_key: str,
+    ) -> bool:
+        key = (shelf_id, depth, book_key)
+        return self._q(library).pop(key, None) is not None
 
 
 def _any_copy_out(book: Book) -> bool:

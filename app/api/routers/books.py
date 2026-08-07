@@ -25,7 +25,13 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
-from app.api.deps import current_library, get_book_store, get_clock, get_id_gen
+from app.api.deps import (
+    current_library,
+    get_book_store,
+    get_clock,
+    get_duplicate_queue,
+    get_id_gen,
+)
 from app.api.dto import (
     BookCreate,
     BookDTO,
@@ -51,6 +57,7 @@ from app.domain import (
     return_copy,
 )
 from app.ports import Clock, IdGen
+from app.ports.duplicates import DuplicateQueue
 from app.ports.store import BookSort, BookStore, DuplicateBookKey
 
 router = APIRouter(prefix="/books", tags=["books"])
@@ -135,6 +142,12 @@ def list_books(
                                               "books\" view: books with at "
                                               "least one copy currently lent "
                                               "out."),
+    duplicates: bool = Query(False,
+                             description="True for the \"duplicates to "
+                                         "resolve\" queue (§5.4, P2.6): only "
+                                         "books with at least one still-open "
+                                         "copy-resolution question."),
+    duplicate_queue: DuplicateQueue = Depends(get_duplicate_queue),
     limit: int = Query(50, ge=1, le=MAX_LIMIT),
     offset: int = Query(0, ge=0),
 ) -> BookPageDTO:
@@ -144,13 +157,27 @@ def list_books(
     `sort` passed alongside `q` would be a promise the server cannot keep.
     It is ignored rather than rejected: a UI that keeps a sort control on
     screen while the user types should not start returning 400s mid-keystroke.
+    The `duplicates` filter is ignored during a search too, same as every
+    other filter here — the two are ORTHOGONAL views (find a book vs. review
+    a queue), and combining them was never asked for.
     """
     if q is not None and q.strip():
         page = store.search(library, q, limit=limit, offset=offset)
     else:
+        book_ids = None
+        if duplicates:
+            # BookStore has no idea what a "duplicate question" is (P2.6's
+            # DuplicateQueue is a separate aggregate/port) -- composed here,
+            # at the API layer, the same way reads.py composes across four
+            # ports to build one diff. A book can have more than one open
+            # question (ambiguous at two different locations); the SET of
+            # distinct book ids is what the filter narrows to.
+            book_ids = tuple({question.existing_book_id for question in
+                              duplicate_queue.list_open_questions(library)})
         page = store.list(library, sort=sort, ascending=ascending,
                           status=book_status, author_key=author_key,
-                          lent_out=lent_out, limit=limit, offset=offset)
+                          lent_out=lent_out, book_ids=book_ids,
+                          limit=limit, offset=offset)
     return BookPageDTO(
         items=[BookDTO.of(b) for b in page.items],
         total=page.total, offset=page.offset, limit=page.limit,

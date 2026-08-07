@@ -37,6 +37,7 @@ from app.domain import (
     CopyFields,
     Decision,
     DecisionKind,
+    DuplicateQuestion,
     Lending,
     LibraryRef,
     Provenance,
@@ -179,14 +180,23 @@ class SqliteBookStore(_SqliteStore):
         status: Status | None = None,
         author_key: str | None = None,
         lent_out: bool | None = None,
+        book_ids: tuple[str, ...] | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> BookPage:
+        if book_ids is not None and not book_ids:
+            # See the port docstring: an explicit EMPTY set means "match
+            # nothing", not "no id filter" — an "IN ()" clause is invalid
+            # SQL, so this has to be handled before a query is even built.
+            return BookPage(items=(), total=0, offset=offset, limit=limit)
         where = ["library_id = ?"]
         params: list[object] = [library.id]
         if author_key is not None:
             where.append("norm_author = ?")
             params.append(author_key)
+        if book_ids is not None:
+            where.append(f"id IN ({','.join('?' for _ in book_ids)})")
+            params.extend(book_ids)
         clause = " AND ".join(where)
 
         # A book's status is the strongest claim among its copies (§5.2), so
@@ -591,6 +601,98 @@ def _load_decision(row: sqlite3.Row) -> Decision:
         depth=row["depth"], book_key=row["book_key"],
         kind=DecisionKind(row["kind"]), copy_id=row["copy_id"],
         decided_at=row["decided_at"],
+    )
+
+
+class SqliteDuplicateQueue(_SqliteStore):
+    """Implements ``app.ports.duplicates.DuplicateQueue`` (P2.6).
+
+    Shares the file with the other stores, same reasoning as
+    :class:`SqliteDecisionStore` — a queued question and the `Decision` that
+    eventually closes it must never end up in different databases.
+    """
+
+    def __init__(self, path: str | Path) -> None:
+        super().__init__(path, kind="SqliteDuplicateQueue")
+
+    def save_question(self, library: LibraryRef, question: DuplicateQuestion) -> None:
+        if question.library_id != library.id:
+            raise WrongLibrary(
+                f"question for {question.book_key!r} belongs to "
+                f"{question.library_id!r}, not {library.id!r}"
+            )
+        with self._connect() as conn:
+            with conn:
+                # Same upsert shape as decisions: the composite key IS the
+                # identity, so a refresh (a re-skip on a later read) replaces
+                # the row rather than accumulating one per read.
+                conn.execute(
+                    "INSERT INTO duplicate_questions (id, library_id, shelf_id,"
+                    " depth, book_key, read_id, spine_id, claim_title,"
+                    " claim_author, existing_book_id, opened_at, captured_at)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
+                    " ON CONFLICT(library_id, shelf_id, depth, book_key)"
+                    " DO UPDATE SET id=excluded.id, read_id=excluded.read_id,"
+                    " spine_id=excluded.spine_id,"
+                    " claim_title=excluded.claim_title,"
+                    " claim_author=excluded.claim_author,"
+                    " existing_book_id=excluded.existing_book_id,"
+                    " opened_at=excluded.opened_at,"
+                    " captured_at=excluded.captured_at",
+                    (question.id, library.id, question.shelf_id, question.depth,
+                     question.book_key, question.read_id, question.spine_id,
+                     question.claim_title, question.claim_author,
+                     question.existing_book_id, question.opened_at,
+                     question.captured_at),
+                )
+
+    def get_question(
+        self, library: LibraryRef, shelf_id: str, depth: int, book_key: str,
+    ) -> DuplicateQuestion | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM duplicate_questions WHERE library_id = ?"
+                " AND shelf_id = ? AND depth = ? AND book_key = ?",
+                (library.id, shelf_id, depth, book_key),
+            ).fetchone()
+        return _load_question(row) if row else None
+
+    def list_open_questions(
+        self, library: LibraryRef, *, shelf_id: str | None = None,
+    ) -> tuple[DuplicateQuestion, ...]:
+        clause = "library_id = ?"
+        params: list[object] = [library.id]
+        if shelf_id is not None:
+            clause += " AND shelf_id = ?"
+            params.append(shelf_id)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM duplicate_questions WHERE {clause}"
+                " ORDER BY opened_at, id",
+                params,
+            ).fetchall()
+        return tuple(_load_question(r) for r in rows)
+
+    def delete_question(
+        self, library: LibraryRef, shelf_id: str, depth: int, book_key: str,
+    ) -> bool:
+        with self._connect() as conn:
+            with conn:
+                cur = conn.execute(
+                    "DELETE FROM duplicate_questions WHERE library_id = ?"
+                    " AND shelf_id = ? AND depth = ? AND book_key = ?",
+                    (library.id, shelf_id, depth, book_key),
+                )
+            return cur.rowcount > 0
+
+
+def _load_question(row: sqlite3.Row) -> DuplicateQuestion:
+    return DuplicateQuestion(
+        id=row["id"], library_id=row["library_id"], shelf_id=row["shelf_id"],
+        depth=row["depth"], book_key=row["book_key"], read_id=row["read_id"],
+        spine_id=row["spine_id"], claim_title=row["claim_title"],
+        claim_author=row["claim_author"], existing_book_id=row["existing_book_id"],
+        opened_at=row["opened_at"], captured_at=row["captured_at"],
     )
 
 

@@ -158,6 +158,26 @@ describe('Books tab', () => {
     expect(await screen.findByText('היער השיכור')).toBeInTheDocument()
   })
 
+  it('filters to the duplicates-to-resolve queue and back (§5.4, P2.6)', async () => {
+    const ambiguous = book({ id: 'b5', title: 'ספר שנוי במחלוקת', author: 'מחבר' })
+    const server = fakeServer([DURRELL, ambiguous])
+    server.openDuplicateIds.add('b5')
+    renderApp(<App />)
+    await screen.findByText('היער השיכור')
+
+    await userEvent.click(screen.getByRole('button', { name: 'כפילויות לבירור' }))
+    await waitFor(() =>
+      expect(server.calls.some((c) => c.includes('duplicates=true'))).toBe(true))
+    await waitFor(() =>
+      expect(screen.queryByText('היער השיכור')).not.toBeInTheDocument())
+    expect(screen.getByText('ספר שנוי במחלוקת')).toBeInTheDocument()
+
+    // A single-select-feeling filter with no way back to "all" is a trap,
+    // same rule as every other chip on this bar.
+    await userEvent.click(screen.getByRole('button', { name: 'כפילויות לבירור' }))
+    expect(await screen.findByText('היער השיכור')).toBeInTheDocument()
+  })
+
   it('resets paging when the query changes', async () => {
     const server = fakeServer(Array.from({ length: 45 }, (_, i) =>
       book({ id: `b${i}`, title: `ספר ${i}` })))

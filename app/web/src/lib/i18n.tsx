@@ -61,6 +61,10 @@ const HE = {
     added_at: 'נוסף',
     last_seen: 'נראה לאחרונה',
     lent_only: 'מושאלים בלבד',
+    // P2.6 — the "duplicates to resolve" queue (§5.4) as a filter chip,
+    // exactly like lent_only: a boolean filter on `list`, nothing new for
+    // this tab to render.
+    duplicates_only: 'כפילויות לבירור',
     copies: 'עותקים',
     copy_n: (n: number) => `עותק ${n}`,
     copy_label: 'תווית',
@@ -149,6 +153,7 @@ const EN: Strings = {
     added_at: 'Added',
     last_seen: 'Last seen',
     lent_only: 'Lent out only',
+    duplicates_only: 'Duplicates to resolve',
     copies: 'Copies',
     copy_n: (n: number) => `Copy ${n}`,
     copy_label: 'Label',

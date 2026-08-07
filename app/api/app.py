@@ -22,6 +22,7 @@ from app.api.deps import (
     get_book_store,
     get_clock,
     get_decision_store,
+    get_duplicate_queue,
     get_id_gen,
     get_job_runner,
     get_principal,
@@ -29,10 +30,11 @@ from app.api.deps import (
     get_reader,
     get_shelf_store,
 )
-from app.api.routers import books, images, meta, reads, shelves
+from app.api.routers import books, duplicates, images, meta, reads, shelves
 from app.ports import Clock, IdGen, Principal
 from app.ports.blobs import BlobStore
 from app.ports.decisions import DecisionStore
+from app.ports.duplicates import DuplicateQueue
 from app.ports.jobs import JobRunner
 from app.ports.reader import Reader
 from app.ports.store import BookStore, ReadStore, ShelfStore
@@ -66,6 +68,7 @@ def create_app(
     blob_store: BlobStore | None = None,
     read_store: ReadStore | None = None,
     decision_store: DecisionStore | None = None,
+    duplicate_queue: DuplicateQueue | None = None,
     reader: Reader | None = None,
     job_runner: JobRunner | None = None,
     web_dist: Path | None = None,
@@ -99,12 +102,14 @@ def create_app(
     app.include_router(shelves.captures, prefix=API_PREFIX)
     app.include_router(images.router, prefix=API_PREFIX)
     app.include_router(reads.router, prefix=API_PREFIX)
+    app.include_router(duplicates.router, prefix=API_PREFIX)
 
     app.dependency_overrides[get_principal] = principal_provider
     for dep, impl in ((get_book_store, book_store), (get_clock, clock),
                       (get_id_gen, id_gen), (get_shelf_store, shelf_store),
                       (get_blob_store, blob_store), (get_read_store, read_store),
                       (get_decision_store, decision_store),
+                      (get_duplicate_queue, duplicate_queue),
                       (get_reader, reader), (get_job_runner, job_runner)):
         if impl is not None:
             app.dependency_overrides[dep] = _always(impl)

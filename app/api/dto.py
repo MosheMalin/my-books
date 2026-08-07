@@ -606,3 +606,70 @@ class ApplyDiffRequest(BaseModel):
     the caller is answering right now. Omitted ones simply stay open."""
 
     answers: list[AnswerIn] = Field(default_factory=list)
+
+
+# --- the durable duplicates queue (P2.6, §5.4) ------------------------------
+
+class DuplicateQuestionDTO(BaseModel):
+    """One open §5.4 ask, as the "duplicates to resolve" queue shows it.
+
+    ``existing_book`` and the two cheap-win fields are all computed FRESH
+    against the book's CURRENT state on every read of this DTO — never
+    cached on the stored question — same reasoning as `DiffDTO` being
+    recomputed on every call: the book may have gained a copy, been edited,
+    or had its loan returned since the question was opened.
+    """
+
+    id: str
+    shelf_id: str
+    depth: int
+    book_key: str
+    claim_title: str
+    claim_author: str
+    existing_book: BookDTO
+    opened_at: str
+    prompt_kind: str = Field(
+        description="three_way | lent_out_return — the sharper question "
+                    "('you lent this to X — is it back?') when the "
+                    "preselected candidate copy is currently lent out "
+                    "(§5.4's first cheap win).",
+    )
+    default_copy_id: str | None = Field(
+        default=None,
+        description="The preselected candidate for 'already listed' — no "
+                    "shelf assigned, else least-recently-seen (§5.4's "
+                    "second cheap win). A PRESELECTION only; never applied "
+                    "without a human choosing it, except via POST .../skip.",
+    )
+    lent_to: str | None = Field(
+        default=None,
+        description="Populated only when prompt_kind is lent_out_return.",
+    )
+
+    @classmethod
+    def of(cls, q, *, book: Book, prompt) -> "DuplicateQuestionDTO":
+        return cls(
+            id=q.id, shelf_id=q.shelf_id, depth=q.depth, book_key=q.book_key,
+            claim_title=q.claim_title, claim_author=q.claim_author,
+            existing_book=BookDTO.of(book), opened_at=q.opened_at,
+            prompt_kind=prompt.kind.value,
+            default_copy_id=prompt.candidate_copy_id, lent_to=prompt.lent_to,
+        )
+
+
+class DuplicateAnswerIn(BaseModel):
+    """A human's answer to one queued question — the SAME three-way
+    vocabulary as §5.4's inline prompt (`app.reconcile_apply.AnswerKind`),
+    minus ``confirm``/``reject``: a queued question is always
+    ``ambiguous_location`` (the review-tier "is this a real book?" question
+    has no standing queue — P2.6 is scoped to copy resolution only)."""
+
+    kind: str = Field(
+        description="already_listed | another_copy | wrong_book.",
+    )
+    copy_id: str | None = Field(
+        default=None,
+        description="Which existing copy, for 'already_listed' when the "
+                    "book has more than one (§5.4). Omit to use the "
+                    "preselected default_copy_id.",
+    )

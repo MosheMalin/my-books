@@ -19,6 +19,9 @@ export interface paths {
          *     `sort` passed alongside `q` would be a promise the server cannot keep.
          *     It is ignored rather than rejected: a UI that keeps a sort control on
          *     screen while the user types should not start returning 400s mid-keystroke.
+         *     The `duplicates` filter is ignored during a search too, same as every
+         *     other filter here — the two are ORTHOGONAL views (find a book vs. review
+         *     a queue), and combining them was never asked for.
          */
         get: operations["list_books_api_v1_books_get"];
         put?: never;
@@ -221,6 +224,78 @@ export interface paths {
          *     exist would give reconciliation a location with no counterpart in the room.
          */
         patch: operations["bind_capture_api_v1_captures__capture_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/duplicates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Open Questions
+         * @description Every open §5.4 ask across the whole library — what the Books tab's
+         *     "duplicates to resolve" filter (``GET /books?duplicates=true``) narrows
+         *     to, and what this screen answers or skips from.
+         */
+        get: operations["list_open_questions_api_v1_duplicates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/duplicates/{question_id}/answer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Answer Question
+         * @description A human's real answer — already listed / another copy / wrong book —
+         *     to one queued question. Closes the queue row in the SAME write as the
+         *     `Decision` it creates (``app.reconcile_apply``'s bookkeeping).
+         */
+        post: operations["answer_question_api_v1_duplicates__question_id__answer_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/duplicates/{question_id}/skip": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Skip Question
+         * @description *"Not now — use the safe default."* §5.4, verbatim: *"Default when the
+         *     question is skipped or the run is never reviewed: already listed copy —
+         *     one copy, relinked."* Distinct from simply NOT answering during
+         *     ``POST .../reads/{id}/apply`` (which leaves the question open in this
+         *     same queue for later) — this is the explicit "stop asking about this
+         *     one" action, and it always resolves to
+         *     :data:`app.domain.copy_resolution.DEFAULT_RESOLUTION`, never to creating
+         *     a copy: reversing that default is exactly the mistake that invents a
+         *     phantom object nobody asked for.
+         */
+        post: operations["skip_question_api_v1_duplicates__question_id__skip_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/images": {
@@ -509,9 +584,10 @@ export interface paths {
          *     ``corrected`` claim writes through unconditionally — those are rules
          *     `reconcile()` already settled, not questions — and ``body.answers``
          *     resolves whichever ``needs_decision`` claims the caller is answering now.
-         *     An unanswered one simply stays open; nothing is lost, it just shows up
-         *     again next time the diff is asked for (P2.6 owns making that durable
-         *     across sessions rather than per-call).
+         *     An unanswered ``ambiguous_location`` one is opened in the durable
+         *     "duplicates to resolve" queue (P2.6, §5.4) rather than simply lost — see
+         *     ``GET /duplicates`` to answer it later, from the Books tab, without
+         *     re-running anything.
          *
          *     Returns the diff RECOMPUTED after writing, so a resolved claim moves out
          *     of ``needs_decision`` in the same response that resolved it.
@@ -979,6 +1055,68 @@ export interface components {
             /** Unchanged */
             unchanged: components["schemas"]["ClaimOutcomeDTO"][];
         };
+        /**
+         * DuplicateAnswerIn
+         * @description A human's answer to one queued question — the SAME three-way
+         *     vocabulary as §5.4's inline prompt (`app.reconcile_apply.AnswerKind`),
+         *     minus ``confirm``/``reject``: a queued question is always
+         *     ``ambiguous_location`` (the review-tier "is this a real book?" question
+         *     has no standing queue — P2.6 is scoped to copy resolution only).
+         */
+        DuplicateAnswerIn: {
+            /**
+             * Copy Id
+             * @description Which existing copy, for 'already_listed' when the book has more than one (§5.4). Omit to use the preselected default_copy_id.
+             */
+            copy_id?: string | null;
+            /**
+             * Kind
+             * @description already_listed | another_copy | wrong_book.
+             */
+            kind: string;
+        };
+        /**
+         * DuplicateQuestionDTO
+         * @description One open §5.4 ask, as the "duplicates to resolve" queue shows it.
+         *
+         *     ``existing_book`` and the two cheap-win fields are all computed FRESH
+         *     against the book's CURRENT state on every read of this DTO — never
+         *     cached on the stored question — same reasoning as `DiffDTO` being
+         *     recomputed on every call: the book may have gained a copy, been edited,
+         *     or had its loan returned since the question was opened.
+         */
+        DuplicateQuestionDTO: {
+            /** Book Key */
+            book_key: string;
+            /** Claim Author */
+            claim_author: string;
+            /** Claim Title */
+            claim_title: string;
+            /**
+             * Default Copy Id
+             * @description The preselected candidate for 'already listed' — no shelf assigned, else least-recently-seen (§5.4's second cheap win). A PRESELECTION only; never applied without a human choosing it, except via POST .../skip.
+             */
+            default_copy_id?: string | null;
+            /** Depth */
+            depth: number;
+            existing_book: components["schemas"]["BookDTO"];
+            /** Id */
+            id: string;
+            /**
+             * Lent To
+             * @description Populated only when prompt_kind is lent_out_return.
+             */
+            lent_to?: string | null;
+            /** Opened At */
+            opened_at: string;
+            /**
+             * Prompt Kind
+             * @description three_way | lent_out_return — the sharper question ('you lent this to X — is it back?') when the preselected candidate copy is currently lent out (§5.4's first cheap win).
+             */
+            prompt_kind: string;
+            /** Shelf Id */
+            shelf_id: string;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -1337,6 +1475,8 @@ export interface operations {
                 author_key?: string | null;
                 /** @description True for the "who has my books" view: books with at least one copy currently lent out. */
                 lent_out?: boolean | null;
+                /** @description True for the "duplicates to resolve" queue (§5.4, P2.6): only books with at least one still-open copy-resolution question. */
+                duplicates?: boolean;
                 limit?: number;
                 offset?: number;
             };
@@ -1779,6 +1919,92 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaptureBinding"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_open_questions_api_v1_duplicates_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DuplicateQuestionDTO"][];
+                };
+            };
+        };
+    };
+    answer_question_api_v1_duplicates__question_id__answer_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                question_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DuplicateAnswerIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    skip_question_api_v1_duplicates__question_id__skip_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                question_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookDTO"];
                 };
             };
             /** @description Validation Error */

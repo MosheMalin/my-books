@@ -29,6 +29,7 @@ from app.api.deps import (
     get_book_store,
     get_clock,
     get_decision_store,
+    get_duplicate_queue,
     get_id_gen,
     get_job_runner,
     get_read_store,
@@ -56,6 +57,7 @@ from app.domain.shelf import UnknownDepth
 from app.ports import Clock, IdGen
 from app.ports.blobs import BlobStore
 from app.ports.decisions import DecisionStore
+from app.ports.duplicates import DuplicateQueue
 from app.ports.jobs import JobHandle, JobRunner
 from app.ports.reader import Reader, ReadRequest
 from app.ports.store import BookStore, ReadStore, ShelfStore
@@ -205,7 +207,7 @@ def stop(
 
 # --- reconciliation (P2.5) --------------------------------------------------
 
-def _diff_for(
+def diff_for(
     shelf_id: str,
     read_id: str,
     library: LibraryRef,
@@ -218,7 +220,14 @@ def _diff_for(
     state — recomputed fresh on every call (never cached), so GET and POST
     .../apply always see the same reality the store holds right now, and so
     "would this claim resolve differently now" is a real, answerable question
-    rather than a stale snapshot."""
+    rather than a stale snapshot.
+
+    Not prefixed ``_`` (unlike this module's other helpers): P2.6's
+    ``app/api/routers/duplicates.py`` calls it too, to re-derive the SAME
+    outcome a queued question was raised from before answering it — the
+    queue stores a `(shelf_id, read_id, book_key)`, not a snapshot, for
+    exactly this reason.
+    """
     shelf = _load_shelf(shelves, library, shelf_id)
     read = _load_read(reads, library, shelf_id, read_id)
     if read.status is ReadStatus.RUNNING:
@@ -250,7 +259,7 @@ def get_diff(
     """What this read changes on the shelf's durable book list (§5.6): added
     / corrected / unchanged / not-seen, plus whatever §5.4 asks are still
     open. Read-only — nothing here is written until ``POST .../apply``."""
-    _, diff = _diff_for(shelf_id, read_id, library, shelves, reads, books,
+    _, diff = diff_for(shelf_id, read_id, library, shelves, reads, books,
                         decisions)
     return DiffDTO.of(diff)
 
@@ -268,6 +277,7 @@ def apply_read_diff(
     reads: ReadStore = Depends(get_read_store),
     books: BookStore = Depends(get_book_store),
     decisions: DecisionStore = Depends(get_decision_store),
+    duplicates: DuplicateQueue = Depends(get_duplicate_queue),
     clock: Clock = Depends(get_clock),
     ids: IdGen = Depends(get_id_gen),
 ) -> DiffDTO:
@@ -275,14 +285,15 @@ def apply_read_diff(
     ``corrected`` claim writes through unconditionally — those are rules
     `reconcile()` already settled, not questions — and ``body.answers``
     resolves whichever ``needs_decision`` claims the caller is answering now.
-    An unanswered one simply stays open; nothing is lost, it just shows up
-    again next time the diff is asked for (P2.6 owns making that durable
-    across sessions rather than per-call).
+    An unanswered ``ambiguous_location`` one is opened in the durable
+    "duplicates to resolve" queue (P2.6, §5.4) rather than simply lost — see
+    ``GET /duplicates`` to answer it later, from the Books tab, without
+    re-running anything.
 
     Returns the diff RECOMPUTED after writing, so a resolved claim moves out
     of ``needs_decision`` in the same response that resolved it.
     """
-    read, diff = _diff_for(shelf_id, read_id, library, shelves, reads, books,
+    read, diff = diff_for(shelf_id, read_id, library, shelves, reads, books,
                            decisions)
     answers = []
     for a in body.answers:
@@ -297,12 +308,13 @@ def apply_read_diff(
                               copy_id=a.copy_id))
     try:
         apply_diff(diff, library=library, books=books, shelves=shelves,
-                  decisions=decisions, clock=clock, ids=ids,
-                  captured_at=read.finished_at, answers=tuple(answers))
+                  decisions=decisions, duplicates=duplicates, clock=clock,
+                  ids=ids, captured_at=read.finished_at,
+                  answers=tuple(answers))
     except UnresolvedAnswer as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
 
-    _, fresh = _diff_for(shelf_id, read_id, library, shelves, reads, books,
+    _, fresh = diff_for(shelf_id, read_id, library, shelves, reads, books,
                          decisions)
     return DiffDTO.of(fresh)
 

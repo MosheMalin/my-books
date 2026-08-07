@@ -20,9 +20,11 @@ sys.path.insert(0, str(REPO_ROOT))
 from app.adapters.memory_store import (
     MemoryBookStore,
     MemoryDecisionStore,
+    MemoryDuplicateQueue,
     MemoryShelfStore,
 )
 from app.domain import (
+    DEFAULT_RESOLUTION,
     Claim,
     ClaimTier,
     DecisionKind,
@@ -31,6 +33,7 @@ from app.domain import (
     UnknownCopy,
     new_book,
     new_shelf,
+    pick_default_copy,
     reconcile,
 )
 from app.domain.book import DomainError
@@ -316,6 +319,159 @@ def test_apply_refuses_when_the_shelf_no_longer_exists():
     empty_shelves = MemoryShelfStore()  # the shelf was never saved here
     _raises(DomainError, apply_diff, diff, library=LIB, books=books,
            shelves=empty_shelves, decisions=decisions, clock=clock, ids=ids)
+
+
+# --- P2.6: the durable duplicates queue (§5.4) ------------------------------
+#
+# `duplicates=None` (every test above) must keep working unchanged — every
+# test in this section is what proves the OPPOSITE: passing a real
+# DuplicateQueue actually keeps it in step with what apply_diff writes.
+
+def test_an_unanswered_ambiguous_claim_opens_a_duplicate_question():
+    shelf, shelves, books, decisions, clock, ids = _rig()
+    duplicates = MemoryDuplicateQueue()
+    elsewhere = new_book(id="b1", library_id=LIB.id, title="מלכי הכופרים",
+                         author="פול קארני", copy_id="c1", shelf_id="sh9", depth=1)
+    books.save(LIB, elsewhere)
+
+    diff = reconcile(shelf, 1, [_claim()], {elsewhere.key: elsewhere}, [],
+                     read_id="r1")
+    apply_diff(diff, library=LIB, books=books, shelves=shelves,
+              decisions=decisions, duplicates=duplicates, clock=clock, ids=ids)
+
+    open_qs = duplicates.list_open_questions(LIB)
+    assert len(open_qs) == 1
+    q = open_qs[0]
+    assert q.shelf_id == "sh1" and q.depth == 1 and q.book_key == elsewhere.key
+    assert q.existing_book_id == "b1"
+    assert books.get(LIB, "b1").copy_count == 1, (
+        "an unanswered claim must write NOTHING to the book — only the queue"
+    )
+
+
+def test_answering_a_queued_claim_closes_the_question_in_the_same_write():
+    shelf, shelves, books, decisions, clock, ids = _rig()
+    duplicates = MemoryDuplicateQueue()
+    elsewhere = new_book(id="b1", library_id=LIB.id, title="מלכי הכופרים",
+                         author="פול קארני", copy_id="c1", shelf_id="sh9", depth=1)
+    books.save(LIB, elsewhere)
+    diff = reconcile(shelf, 1, [_claim()], {elsewhere.key: elsewhere}, [],
+                     read_id="r1")
+    apply_diff(diff, library=LIB, books=books, shelves=shelves,
+              decisions=decisions, duplicates=duplicates, clock=clock, ids=ids)
+    assert len(duplicates.list_open_questions(LIB)) == 1
+
+    apply_diff(diff, library=LIB, books=books, shelves=shelves,
+              decisions=decisions, duplicates=duplicates, clock=clock, ids=ids,
+              answers=(Answer(claim_id="cl1", kind=AnswerKind.ALREADY_LISTED),))
+    assert duplicates.list_open_questions(LIB) == (), (
+        "answering the claim must close the queue row, not leave it stale"
+    )
+
+
+def test_a_wrong_book_answer_also_closes_the_open_question():
+    """WRONG_BOOK writes no book, but it DOES answer the question — the
+    queue row must close exactly as it would for the other two answers."""
+    shelf, shelves, books, decisions, clock, ids = _rig()
+    duplicates = MemoryDuplicateQueue()
+    elsewhere = new_book(id="b1", library_id=LIB.id, title="מלכי הכופרים",
+                         author="פול קארני", copy_id="c1", shelf_id="sh9", depth=1)
+    books.save(LIB, elsewhere)
+    diff = reconcile(shelf, 1, [_claim()], {elsewhere.key: elsewhere}, [],
+                     read_id="r1")
+    apply_diff(diff, library=LIB, books=books, shelves=shelves,
+              decisions=decisions, duplicates=duplicates, clock=clock, ids=ids)
+    assert len(duplicates.list_open_questions(LIB)) == 1
+
+    apply_diff(diff, library=LIB, books=books, shelves=shelves,
+              decisions=decisions, duplicates=duplicates, clock=clock, ids=ids,
+              answers=(Answer(claim_id="cl1", kind=AnswerKind.WRONG_BOOK),))
+    assert duplicates.list_open_questions(LIB) == ()
+
+
+def test_a_repeat_unanswered_claim_refreshes_the_same_row_not_a_second_one():
+    """A later read of the same (shelf, depth) that ALSO leaves the question
+    unanswered must not pile up a second row — `open_or_refresh` (the domain
+    rule) keeps this to one, and this is the proof the real pipeline calls
+    it rather than a bare upsert-by-accident that happens to look similar."""
+    shelf, shelves, books, decisions, clock, ids = _rig()
+    duplicates = MemoryDuplicateQueue()
+    elsewhere = new_book(id="b1", library_id=LIB.id, title="מלכי הכופרים",
+                         author="פול קארני", copy_id="c1", shelf_id="sh9", depth=1)
+    books.save(LIB, elsewhere)
+
+    diff1 = reconcile(shelf, 1, [_claim(1)], {elsewhere.key: elsewhere}, [],
+                      read_id="r1")
+    apply_diff(diff1, library=LIB, books=books, shelves=shelves,
+              decisions=decisions, duplicates=duplicates, clock=clock, ids=ids)
+    first_id = duplicates.list_open_questions(LIB)[0].id
+
+    diff2 = reconcile(shelf, 1, [_claim(2)], {elsewhere.key: elsewhere}, [],
+                      read_id="r2")
+    apply_diff(diff2, library=LIB, books=books, shelves=shelves,
+              decisions=decisions, duplicates=duplicates, clock=clock, ids=ids)
+
+    open_qs = duplicates.list_open_questions(LIB)
+    assert len(open_qs) == 1, "a repeat unanswered claim opened a SECOND row"
+    assert open_qs[0].id == first_id, "the row's id must survive a refresh"
+    assert open_qs[0].read_id == "r2", "but its content should be the latest"
+
+
+def test_the_skip_default_relinks_rather_than_creating_a_second_copy():
+    """§5.4, verbatim: 'default when the question is skipped or the run is
+    never reviewed: already listed copy -- one copy, relinked.' The
+    end-to-end, MUTATION-CHECKABLE proof: this simulates exactly what
+    ``POST /duplicates/{id}/skip`` does (app/api/routers/duplicates.py) —
+    resolve with DEFAULT_RESOLUTION against the SAME candidate
+    pick_default_copy would preselect. Reversing DEFAULT_RESOLUTION to
+    ANOTHER_COPY makes this fail with copy_count == 2: a phantom copy is
+    exactly what that reversal invents, and §5.1 says a default may never
+    create one on its own.
+    """
+    shelf, shelves, books, decisions, clock, ids = _rig()
+    duplicates = MemoryDuplicateQueue()
+    elsewhere = new_book(id="b1", library_id=LIB.id, title="מלכי הכופרים",
+                         author="פול קארני", copy_id="c1", shelf_id="sh9", depth=1)
+    books.save(LIB, elsewhere)
+    diff = reconcile(shelf, 1, [_claim()], {elsewhere.key: elsewhere}, [],
+                     read_id="r1")
+    apply_diff(diff, library=LIB, books=books, shelves=shelves,
+              decisions=decisions, duplicates=duplicates, clock=clock, ids=ids)
+    assert books.get(LIB, "b1").copy_count == 1
+    assert len(duplicates.list_open_questions(LIB)) == 1
+
+    kind_of = {DecisionKind.ALREADY_LISTED: AnswerKind.ALREADY_LISTED,
+              DecisionKind.ANOTHER_COPY: AnswerKind.ANOTHER_COPY}
+    candidate = pick_default_copy(elsewhere)
+    default_answer = Answer(claim_id="cl1", kind=kind_of[DEFAULT_RESOLUTION],
+                            copy_id=candidate.id)
+    apply_diff(diff, library=LIB, books=books, shelves=shelves,
+              decisions=decisions, duplicates=duplicates, clock=clock, ids=ids,
+              answers=(default_answer,))
+
+    got = books.get(LIB, "b1")
+    assert got.copy_count == 1, (
+        "the default resolution created a second copy — this is the "
+        "phantom-copy regression §5.1/§5.4 exist to prevent"
+    )
+    assert got.copies[0].location == ("sh1", 1), "the copy was not relinked"
+    assert duplicates.list_open_questions(LIB) == ()
+
+
+def test_duplicates_none_skips_the_queue_bookkeeping_entirely():
+    """Every test above this section already exercises `duplicates=None`
+    implicitly; this one names the contract directly, so a future reader
+    does not have to infer it from absence."""
+    shelf, shelves, books, decisions, clock, ids = _rig()
+    elsewhere = new_book(id="b1", library_id=LIB.id, title="מלכי הכופרים",
+                         author="פול קארני", copy_id="c1", shelf_id="sh9", depth=1)
+    books.save(LIB, elsewhere)
+    diff = reconcile(shelf, 1, [_claim()], {elsewhere.key: elsewhere}, [],
+                     read_id="r1")
+    # Must not raise, and must not implicitly require a queue.
+    apply_diff(diff, library=LIB, books=books, shelves=shelves,
+              decisions=decisions, clock=clock, ids=ids)
+    assert books.get(LIB, "b1").copy_count == 1
 
 
 if __name__ == "__main__":

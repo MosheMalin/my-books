@@ -51,6 +51,10 @@ export interface BooksQuery {
   authorKey: string | null
   /** "Who has my books" (§5.2) — books with at least one copy out. */
   lentOut: boolean
+  /** The "duplicates to resolve" queue (§5.4, P2.6) — books with at least
+   *  one still-open copy-resolution question. Same boolean-filter shape as
+   *  lentOut; the server does the join against the DuplicateQueue. */
+  duplicates: boolean
 }
 
 /**
@@ -69,6 +73,7 @@ export const EMPTY_QUERY: BooksQuery = {
   status: null,
   authorKey: null,
   lentOut: false,
+  duplicates: false,
 }
 
 /** 30 matches the mock's feel; the API caps a page at 200. */
@@ -123,6 +128,7 @@ function toParams(query: BooksQuery, offset: number) {
     ...(query.status ? { status: query.status } : {}),
     ...(query.authorKey ? { author_key: query.authorKey } : {}),
     ...(query.lentOut ? { lent_out: true } : {}),
+    ...(query.duplicates ? { duplicates: true } : {}),
   }
 }
 
@@ -327,6 +333,7 @@ export function BooksProvider({ children }: { children: ReactNode }) {
         query.status !== null ||
         query.authorKey !== null ||
         query.lentOut ||
+        query.duplicates ||
         query.sort !== EMPTY_QUERY.sort ||
         query.ascending !== naturalAscending(query.sort),
       get,
