@@ -38,9 +38,8 @@ booksnap/
   cli.py        `python -m booksnap.cli --catalog ... img...`
   server.py     FastAPI: upload/select images, background runs, run history
   static/       single-file vanilla-JS UI (no build step, no CDN) — see below
-tests/          test_core.py (matcher/normalize), test_integrations.py (adapters,
-                mocked), test_layering.py + test_api.py (product app),
-                run_all.py (runner with a real exit code)
+tests/          python rings; see "Tests" below. run_all.py is the runner
+                with a real exit code
 ```
 
 ⚠️ **"single-file vanilla-JS UI (no build step, no CDN)" describes the TUNING /
@@ -76,6 +75,10 @@ app/
   api/openapi.json          committed contract, regenerated, never hand-edited
   main.py       the composition root — the ONE file allowed to cross layers
   web/          React + Vite + TS client; talks only to /api/v1
+    src/lib/        books.tsx (the store), i18n.tsx (he/en + dir), route.ts
+    src/books/      Tab 1: Toolbar, FilterBar, Feed, AddBookModal
+    src/book/       the book surface: ONE renderer, drawer + page mounts
+    src/styles/     tokens / base / books — palette ported from the mock
 ```
 
 Two applications coexist through pillars 1–2, by design (plan H1/D2,
@@ -496,7 +499,7 @@ names to run a subset (`python tests/run_all.py test_api`).
 | `test_layering.py` | 9 | the one-way import rules (plan H1) |
 | `test_api.py` | 28 | `/api/v1` shapes + the versioning/tenancy meta-tests |
 
-246 total as of P1.5. No pytest dependency, deliberately — the repo has never
+246 python tests as of P1.6 (unchanged by it — P1.6 is client-only). No pytest dependency, deliberately — the repo has never
 had one and the accuracy gate runs on bare python. Counts grow with each run's
 fixes; SESSION_NOTES.md tracks the history.
 
@@ -525,6 +528,55 @@ cases, and each only in the adapter that was broken.
 NO tiebreaker at all — Python's sort is stable and dicts keep insertion order.
 The committed test inserts in DESCENDING id order for exactly that reason.
 Found by mutation testing, not by review.
+
+## The Books UI (P1.6)
+
+Built against the real API; `planning/mockup/` was the design reference, and
+per plan D4 the Books/book parts of the mock are deleted now that this is at
+parity — two live implementations of one screen drift invisibly.
+
+**State is hand-rolled, not TanStack Query.** One paginated list query, one
+record map, three mutations: a query library would mostly be API surface here.
+The one thing it would have given us free is the request-id guard in
+`lib/books.tsx` — a response whose query has been superseded is DROPPED, or a
+slow first page lands after a search and repaints books the user already
+filtered away. That guard is tested, and the test fails without it. Revisit
+when a second screen needs its own cache.
+
+Rules that are load-bearing and easy to "simplify" later:
+
+- **mixed-script alignment (UI_PLAN §7.2).** `unicode-bidi: plaintext` for
+  glyph order, `text-align` keyed on the CONTAINER's `dir` for the edge.
+  Direction per string, alignment per container — that is what lets `Sapiens`
+  and `משחקי הכס` share one clean edge instead of two ragged ones. Every
+  user-generated string carries `.rtl-safe`, and a test asserts the class is
+  actually on them, because a missing one is invisible until someone looks at
+  a mixed-script list;
+- **the drawer is not a route.** It overlays an untouched list, so a URL would
+  make Back close it rather than leave the tab. ⤢ promotes it to
+  `#/book/<id>`, and promoting CLEARS the drawer — otherwise Back lands on the
+  list with the drawer still over it;
+- **the drawer mirrors via a custom property** (`--slide`), not a duplicated
+  transform. Verified live: `x 501..961` in LTR, `0..460` in RTL — both the
+  inline-end;
+- **absent, not disabled.** Shelf/wishlist/duplicates/lent-out filters, the
+  spine crop, location, copies, Mine, "where it was seen" and *remove from
+  shelf* all need P1.7/P2.1/P2.4/P2.5/P3.5/P6. A greyed-out control that never
+  becomes clickable reads as a bug; absence reads as a product that has not
+  grown that far.
+
+Two traps found while verifying in the browser, both worth knowing:
+
+⚠ **FastAPI silently ignores unknown query params.** A `product-api` started
+before P1.5 answered `?q=…` with the whole 251-book library and a 200. The
+client looked broken; the server was stale. **Restart the API server after any
+route change** — there is no `--reload` in `.claude/launch.json`.
+
+⚠ **CSS transitions freeze at t=0 when the Browser pane is not displayed.**
+No frames composited means no animation progress, so `getComputedStyle`
+returns the transition's START value and the element looks mis-positioned.
+`el.getAnimations().forEach(a => a.finish())` before measuring, or the reading
+is a lie. Cost half an hour of chasing a drawer bug that did not exist.
 
 ## Hebrew search (P1.5)
 
@@ -615,9 +667,19 @@ arrive in P2.1. The importer reports them loudly rather than dropping them —
 until P2.3 lands, a re-read could re-add those books.
 
 Client ring (needs `npm install --prefix app/web` once):
-`npm --prefix app/web run test` (vitest + React Testing Library) and
-`npm --prefix app/web run typecheck`. Test what encodes a *decision*, not
-layout and not DTO plumbing — same standard as the Python rings.
+`npm --prefix app/web run test` (vitest + React Testing Library, **25 tests**
+as of P1.6) and `npm --prefix app/web run typecheck`. Test what encodes a
+*decision*, not layout and not DTO plumbing — same standard as the Python
+rings. The suite mocks `fetch`, never `useBooks`: the store, the request-id
+race guard and the paging arithmetic are exactly what needs exercising.
+Mutation-checked — seven reversed decisions (dropped race guard, missing
+`.rtl-safe`, edit not abandoned on book change, delete without confirmation,
+409 clearing the form, focus not restored, drawer left open on promote) each
+fail a named test.
+
+⚠ jsdom keeps `localStorage` across tests in a file, and the language choice
+persists deliberately — so `afterEach` must clear it, or every test after the
+mirroring one starts in English and looks for the wrong strings.
 
 **The pre-commit hook now has two independent halves** (`tools/githooks/pre-commit`):
 accuracy (sweep + spotchecks, unchanged) and product (`tests/run_all.py`,

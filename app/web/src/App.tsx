@@ -1,83 +1,89 @@
-import { useEffect, useState } from 'react'
-import { getMeta, listBooks, type Meta } from './api/client'
-import './App.css'
-
-/** What the placeholder page needs: who we are, and how many books exist. */
-export interface Overview {
-  meta: Meta
-  bookCount: number
-}
-
-const loadOverview = async (): Promise<Overview> => {
-  const [meta, page] = await Promise.all([
-    getMeta(),
-    // limit=1: the count comes from `total`, so the page itself is waste.
-    listBooks({ query: { limit: 1 } }),
-  ])
-  return { meta, bookCount: page.total }
-}
-
-type State =
-  | { status: 'loading' }
-  | { status: 'ready'; overview: Overview }
-  | { status: 'error'; message: string }
-
-export interface AppProps {
-  /** Injected in tests. Production uses the real typed client. */
-  load?: () => Promise<Overview>
-}
-
 /**
- * P1.0's one page. It renders the library the server resolved for this
- * caller — deliberately the tenant, not a greeting: the client is
- * tenant-aware from the first screen (§1.3), so the library switcher of P3.1
- * has somewhere to switch.
+ * The shell: app bar, route, and the drawer that overlays whatever is behind.
  *
- * Loading and error are explicit states rather than a blank page, because
- * every screen from here on talks to a real API and "it showed nothing" is
- * the failure mode a mock-backed UI never teaches you to handle.
+ * The drawer is mounted HERE rather than inside the Books tab so it survives
+ * a tab change later — and so there is exactly one of it. Two drawer mounts
+ * would be two focus traps fighting over the same page.
  */
-export function App({ load = loadOverview }: AppProps) {
-  const [state, setState] = useState<State>({ status: 'loading' })
+import { useCallback, useEffect, useState } from 'react'
+import { BookDrawer } from './book/BookDrawer'
+import { BookPage } from './book/BookPage'
+import { BooksTab } from './books/BooksTab'
+import { getMeta, type Meta } from './api/client'
+import { useBooks } from './lib/books'
+import { useI18n } from './lib/i18n'
+import { bookHash, LIBRARY_HASH, useRoute } from './lib/route'
+
+export function App() {
+  const { t, lang, toggleLang } = useI18n()
+  const books = useBooks()
+  const { route, navigate, back } = useRoute()
+  const [meta, setMeta] = useState<Meta | null>(null)
+  const [drawerId, setDrawerId] = useState<string | null>(null)
 
   useEffect(() => {
     let live = true
-    load()
-      .then((overview) => live && setState({ status: 'ready', overview }))
-      .catch((err: unknown) =>
-        live &&
-        setState({
-          status: 'error',
-          message: err instanceof Error ? err.message : String(err),
-        }),
-      )
+    getMeta()
+      .then((m) => live && setMeta(m))
+      // The library name is chrome, not content: failing to load it must not
+      // take the books down with it.
+      .catch(() => undefined)
     return () => {
       live = false
     }
-  }, [load])
+  }, [])
+
+  // Promoting the drawer to the full page closes the drawer — otherwise the
+  // same surface renders twice, and the focus trap stays over a page the user
+  // has navigated to.
+  const promote = useCallback(
+    (id: string) => {
+      setDrawerId(null)
+      navigate(bookHash(id))
+    },
+    [navigate],
+  )
+
+  const filterByAuthor = useCallback(
+    (authorKey: string) => {
+      books.setQuery({ authorKey })
+      navigate(LIBRARY_HASH)
+    },
+    [books, navigate],
+  )
 
   return (
-    <main className="app">
-      <h1>booksnap</h1>
-      {state.status === 'loading' && <p role="status">טוען…</p>}
-      {state.status === 'error' && (
-        <p role="alert" className="error">
-          אין חיבור לשרת — {state.message}
-        </p>
-      )}
-      {state.status === 'ready' && (
-        <section aria-label="library">
-          <p className="library">{state.overview.meta.library.label}</p>
-          {/* Placeholder, replaced wholesale by the Books tab in P1.6
-              (UI_PLAN §2). It is here so P1.4's endpoint is verifiable in a
-              browser and not only under TestClient. */}
-          <p className="count">{state.overview.bookCount} ספרים</p>
-          <p className="build">
-            {state.overview.meta.app} {state.overview.meta.version} · API{' '}
-            {state.overview.meta.api_version}
-          </p>
-        </section>
-      )}
-    </main>
+    <>
+      <header className="appbar">
+        <span className="brand">{t.app}</span>
+        <span className="rtl-safe muted">{meta?.library.label ?? ''}</span>
+        <span className="spacer" />
+        <button
+          type="button"
+          className="langswitch"
+          onClick={toggleLang}
+          // The English mode exists to prove the layout mirrors and that
+          // mixed-script alignment holds both ways (UI_PLAN §7.1/§7.2).
+          aria-label={lang === 'he' ? 'Switch to English' : 'עברו לעברית'}
+        >
+          {t.lang}
+        </button>
+      </header>
+
+      <main className="page">
+        {route.name === 'book' ? (
+          <BookPage bookId={route.id} onBack={back} onAuthor={filterByAuthor} />
+        ) : (
+          <BooksTab onOpen={setDrawerId} />
+        )}
+      </main>
+
+      <BookDrawer
+        bookId={route.name === 'book' ? null : drawerId}
+        onClose={() => setDrawerId(null)}
+        onPromote={promote}
+        onAuthor={filterByAuthor}
+      />
+    </>
   )
 }

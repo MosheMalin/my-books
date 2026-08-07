@@ -86,3 +86,94 @@ export const getMeta = (opts?: ApiOptions): Promise<Meta> =>
 
 export const listBooks = (opts?: ApiOptions): Promise<BookPage> =>
   apiGet('/api/v1/books', opts)
+
+/**
+ * One book. The URL is built here rather than passed through `apiGet`,
+ * because the generated key is the TEMPLATE `/api/v1/books/{book_id}` and the
+ * request needs the substituted path — but the RESPONSE type still comes from
+ * the schema, which is the part that must not be hand-written.
+ */
+export type BookDetail =
+  paths['/api/v1/books/{book_id}']['get'] extends {
+    responses: { 200: { content: { 'application/json': infer T } } }
+  }
+    ? T
+    : never
+
+export async function getBook(
+  id: string,
+  opts: ApiOptions = {},
+): Promise<BookDetail> {
+  const doFetch = opts.fetchImpl ?? globalThis.fetch
+  const path = `/api/v1/books/${encodeURIComponent(id)}`
+  const res = await doFetch(path, {
+    headers: { Accept: 'application/json' },
+    ...(opts.signal ? { signal: opts.signal } : {}),
+  })
+  if (!res.ok) throw new ApiError(res.status, path, `GET ${path}: ${res.status}`)
+  return (await res.json()) as BookDetail
+}
+
+/** Bodies, straight out of the generated schema — never hand-written. */
+export type BookPatch =
+  paths['/api/v1/books/{book_id}']['patch'] extends {
+    requestBody: { content: { 'application/json': infer T } }
+  }
+    ? T
+    : never
+export type BookCreate =
+  paths['/api/v1/books']['post'] extends {
+    requestBody: { content: { 'application/json': infer T } }
+  }
+    ? T
+    : never
+
+async function send(
+  method: 'POST' | 'PATCH' | 'DELETE',
+  path: string,
+  body: unknown,
+  opts: ApiOptions = {},
+): Promise<unknown> {
+  const doFetch = opts.fetchImpl ?? globalThis.fetch
+  const headers: Record<string, string> = { Accept: 'application/json' }
+  if (body !== undefined) headers['Content-Type'] = 'application/json'
+  if (opts.libraryId) headers['X-Booksnap-Library'] = opts.libraryId
+
+  const res = await doFetch(path, {
+    method,
+    headers,
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    ...(opts.signal ? { signal: opts.signal } : {}),
+  })
+  if (!res.ok) {
+    // 409 is a NORMAL outcome here, not a crash: renaming onto a book you
+    // already own, or adding one you already have. Callers branch on
+    // `.status`, so the message stays for the console and the status carries
+    // the meaning.
+    let detail = `${method} ${path} failed: ${res.status}`
+    try {
+      const body = (await res.json()) as { detail?: string }
+      if (body?.detail) detail = body.detail
+    } catch {
+      /* a 204 or an HTML error page — the status is what matters */
+    }
+    throw new ApiError(res.status, path, detail)
+  }
+  return res.status === 204 ? undefined : await res.json()
+}
+
+export const createBook = (payload: BookCreate, opts?: ApiOptions) =>
+  send('POST', '/api/v1/books', payload, opts) as Promise<Book>
+
+export const patchBook = (id: string, payload: BookPatch, opts?: ApiOptions) =>
+  send('PATCH', `/api/v1/books/${encodeURIComponent(id)}`, payload,
+       opts) as Promise<Book>
+
+export const deleteBook = (id: string, opts?: ApiOptions) =>
+  send('DELETE', `/api/v1/books/${encodeURIComponent(id)}`, undefined,
+       opts) as Promise<void>
+
+/** Export is a file download, so it is a URL rather than a fetch — letting the
+ *  browser handle Content-Disposition is what makes "Save as…" work. */
+export const exportUrl = (format: 'csv' | 'json'): string =>
+  `/api/v1/books/export?format=${format}`
