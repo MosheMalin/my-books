@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-"""The BookStore port — the seam that makes the datastore decision reversible.
+"""BookStore, ShelfStore and ReadStore — the seam that makes the datastore
+decision reversible.
 
 Plan D1 picks SQLite *now*, Postgres later, and says plainly that "the
 contract tests are what keep this revisitable". So this file is the contract,
@@ -10,15 +11,18 @@ Two rules shape every signature here:
   - **every method is library-scoped** (H2). Not "most"; every one. A method
     without a ``library`` parameter is a method that has to be rewritten at
     pillar 3, and by then it has call sites;
-  - **the Book aggregate is saved whole.** Copies and provenance travel with
-    their book rather than having stores of their own. That keeps the rules in
-    ``app/domain`` — a store that could write a Copy independently would be a
-    second path to creating one, and §5.1 says there is exactly one.
+  - **every aggregate is saved whole.** Copies and provenance travel with
+    their book, claims travel with their read, rather than having stores of
+    their own. That keeps the rules in ``app/domain`` — a store that could
+    write a Copy or a Claim independently would be a second path to creating
+    one, and §5.1 says there is exactly one (for a Copy) and P2.4 makes the
+    same call for a Claim.
 
-Deliberately NOT here: reconciliation (P2.3 — a pure function over a shelf's
+Deliberately NOT here: reconciliation (P2.5 — a pure function over a shelf's
 state and a read's claims, so it belongs in the domain and needs no port) and
-blob storage (P3.5's ``BlobStore``; a capture's ``image_id`` is a reference,
-and multi-MB JPEGs are exactly what D1 keeps out of the database file).
+blob storage (P2.3's ``BlobStore``, in its own file — a capture's ``image_id``
+is a reference, and multi-MB JPEGs are exactly what D1 keeps out of the
+database file).
 """
 from __future__ import annotations
 
@@ -26,7 +30,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol
 
-from app.domain import Book, Capture, LibraryRef, Shelf, Status
+from app.domain import Book, Capture, LibraryRef, Read, Shelf, Status
 
 
 class StoreError(Exception):
@@ -278,3 +282,60 @@ class ShelfStore(Protocol):
 
     def delete_capture(self, library: LibraryRef, capture_id: str) -> bool:
         """Remove one capture. Returns False if it wasn't there."""
+
+
+class ReadStore(Protocol):
+    """Persistence for Read + its Claims (P2.4). All methods library-scoped
+    (H2), same as every other store here.
+
+    A SEPARATE port from :class:`ShelfStore`, not extra methods on it — same
+    reasoning as the ``BookStore``/``ShelfStore`` split: a Read's lifetime is
+    independent (created, runs, settles into a terminal status; a shelf just
+    accumulates them over time), and keeping the port separate is what stops
+    a Postgres move from having to port three aggregates in one commit.
+
+    Claims travel WITH their Read, whole — exactly like Copy/Provenance
+    travel with their Book. A store that could write a Claim on its own would
+    be a second path to producing evidence about a spine, and the whole point
+    of routing every read through the Reader/JobRunner ports is that there is
+    exactly one.
+
+    ⚠ Unlike :meth:`ShelfStore.save_capture`, ``save_read`` does NOT validate
+    that ``shelf_id`` names a real shelf in this library. A capture's
+    ``shelf_id`` is client-supplied and must be policed (§4.2); a Read's is
+    not — it is only ever constructed by ``app.domain.read.new_read`` from an
+    already-loaded ``Shelf``, so by the time a caller has a ``Read`` to save,
+    the shelf is known-good. Adding the check here would duplicate a
+    guarantee the domain already gives, for a class of bug (a forged
+    ``shelf_id``) that cannot occur through the one constructor.
+
+    Deliberately no ``delete_read``: reads are an audit trail, the same
+    "archived, never overwritten" stance the tuning server takes with its own
+    runs (CLAUDE.md, "Run history") — nothing in P2.4 needs one removed, and
+    adding it before something needs it is a guess at a requirement rather
+    than a measured one.
+    """
+
+    def save_read(self, library: LibraryRef, read: Read) -> None:
+        """Insert or replace, whole (claims included). Raises
+        :class:`WrongLibrary` if ``read.library_id`` disagrees with
+        ``library`` — never a user error, always a wiring bug (same as every
+        other aggregate's ``save``)."""
+
+    def get_read(self, library: LibraryRef, read_id: str) -> Read | None:
+        """By id, or ``None``. A read in another library reads as ``None`` —
+        the same 404-not-403 reasoning as everywhere else (§4.2)."""
+
+    def list_reads(
+        self,
+        library: LibraryRef,
+        shelf_id: str,
+        *,
+        depth: int | None = None,
+    ) -> tuple[Read, ...]:
+        """A shelf's reads, most recent first. ``depth`` narrows to one row —
+        the same shape as :meth:`ShelfStore.list_captures`, for the same
+        reason: §5.7 #1 scopes a read's history to the row it actually
+        covered, and a caller that could only ask "every read of this shelf"
+        would have to re-derive that scoping every time.
+        """

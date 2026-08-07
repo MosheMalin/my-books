@@ -21,6 +21,7 @@ import io
 import shutil
 import sys
 import tempfile
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import quote
@@ -33,10 +34,12 @@ from fastapi.testclient import TestClient
 
 from app import API_PREFIX, __version__
 from app.adapters.disk_blobs import DiskBlobStore
-from app.adapters.memory_store import MemoryBookStore, MemoryShelfStore
+from app.adapters.inprocess_jobs import InProcessJobRunner
+from app.adapters.memory_store import MemoryBookStore, MemoryReadStore, MemoryShelfStore
 from app.api import deps
 from app.api.app import create_app
 from app.domain import LibraryRef, Status, new_book
+from app.ports.reader import ReadClaim
 
 TEST_LIBRARY = LibraryRef(id="lib-test", label="Test library")
 
@@ -74,13 +77,16 @@ class StubPrincipal:
 
 
 def _app(principal: StubPrincipal | None = None, store=None, shelves=None,
-         blobs=None):
+         blobs=None, reads=None, reader=None, jobs=None):
     p = principal or StubPrincipal()
     return create_app(
         principal_provider=lambda: p,
         book_store=store if store is not None else MemoryBookStore(),
         shelf_store=shelves if shelves is not None else MemoryShelfStore(),
         blob_store=blobs,
+        read_store=reads if reads is not None else MemoryReadStore(),
+        reader=reader,
+        job_runner=jobs if jobs is not None else InProcessJobRunner(),
         clock=StubClock(),
         id_gen=SeqIdGen(),
     )
@@ -945,6 +951,300 @@ def test_deleting_a_photo_takes_its_renditions_with_it():
         assert list(Path(blobs.root).rglob("*~thumb.jpg")) == []
         assert c.get(f"{API_PREFIX}/images/{key}/full").status_code == 404
         assert c.delete(f"{API_PREFIX}/images/{key}").status_code == 404
+
+
+# --- reads (P2.4) ----------------------------------------------------------
+#
+# StubReader/SlowStubReader implement app.ports.reader.Reader without
+# booksnap, cv2 or tesseract — H4 ring 3's rule: this ring never invokes the
+# real engine. InProcessJobRunner IS real (it is fast and pure-Python); only
+# the engine is stubbed.
+
+class StubReader:
+    """Returns exactly the claims it is holding, ignoring `mode`. `_claims`
+    is mutable so a test can set it up AFTER learning a real capture id from
+    the API, then let the (already-submitted-later) job pick it up."""
+
+    def __init__(self, claims: list[ReadClaim] | None = None):
+        self._claims = claims or []
+
+    def read(self, library, requests, *, mode, progress=None, should_stop=None):
+        if progress:
+            progress({"stage": "done", "total": len(requests)})
+        return list(self._claims)
+
+    def code_version(self) -> dict:
+        return {"sha": "stub", "branch": "test", "dirty": False}
+
+    def config_snapshot(self) -> dict:
+        return {"stub": True}
+
+
+class SlowStubReader:
+    """Produces one claim at a time with a short pause between each, checking
+    `should_stop` before every one — enough real time for a test to call the
+    stop endpoint mid-read and see it actually take effect, without waiting
+    anywhere near a real engine's ~10s/spine."""
+
+    def __init__(self, capture_id: str, steps: int = 200, step_s: float = 0.01):
+        self._capture_id = capture_id
+        self._steps = steps
+        self._step_s = step_s
+
+    def read(self, library, requests, *, mode, progress=None, should_stop=None):
+        out = []
+        for i in range(self._steps):
+            if should_stop and should_stop():
+                break
+            out.append(ReadClaim(spine_id=f"sp{i}", capture_id=self._capture_id,
+                                 title=f"claim {i}", tier="auto"))
+            time.sleep(self._step_s)
+        return out
+
+    def code_version(self) -> dict:
+        return {"sha": "stub", "dirty": False}
+
+    def config_snapshot(self) -> dict:
+        return {}
+
+
+def _wait_until_settled(client, shelf_id: str, read_id: str, *, timeout: float = 2.0):
+    """Poll GET .../reads/{id} until its status leaves 'running'. The job
+    runs on a real background thread even with a stub engine, so a test has
+    to synchronise on it somehow — this is that somehow."""
+    deadline = time.monotonic() + timeout
+    body = None
+    while time.monotonic() < deadline:
+        body = client.get(
+            f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}").json()
+        if body["status"] != "running":
+            return body
+        time.sleep(0.01)
+    raise AssertionError(f"read did not settle within {timeout}s: {body}")
+
+
+def test_starting_a_read_needs_captures_at_that_depth():
+    with _blobs() as blobs:
+        c = TestClient(_app(blobs=blobs, reader=StubReader()))
+        shelf = c.post(f"{API_PREFIX}/shelves", json={"label": "סלון"}).json()
+        r = c.post(f"{API_PREFIX}/shelves/{shelf['id']}/reads", json={"depth": 1})
+    assert r.status_code == 409, r.text
+
+
+def test_starting_a_read_needs_uploaded_photos_not_just_captures():
+    """A shelf can have a capture before it has a photo (P2.2's recorded
+    gap). Refusing this loudly is clearer than letting the job run and
+    silently produce zero claims."""
+    with _blobs() as blobs:
+        c = TestClient(_app(blobs=blobs, reader=StubReader()))
+        made = c.post(f"{API_PREFIX}/captures", json={}).json()   # no image_id
+        r = c.post(f"{API_PREFIX}/shelves/{made['shelf']['id']}/reads",
+                   json={"depth": 1})
+    assert r.status_code == 409, r.text
+
+
+def test_a_read_at_an_undeclared_depth_is_409():
+    """§5.7: depth is declared, never detected — the same rule captures
+    enforce, reached through this door too."""
+    with _blobs() as blobs:
+        c = TestClient(_app(blobs=blobs, reader=StubReader()))
+        shelf = c.post(f"{API_PREFIX}/shelves", json={}).json()
+        r = c.post(f"{API_PREFIX}/shelves/{shelf['id']}/reads", json={"depth": 2})
+    assert r.status_code == 409, r.text
+    assert "2" in r.json()["detail"]
+
+
+def test_a_read_runs_via_a_stub_reader_and_produces_claims():
+    """The whole flow: upload a photo, bind it to a shelf via a capture,
+    start a read, poll until it settles, and see the claims the (stub)
+    engine produced — including a crop round-tripped through BlobStore, the
+    same way a real spine crop would be."""
+    with _blobs() as blobs:
+        reader = StubReader()
+        c = TestClient(_app(blobs=blobs, reader=reader))
+
+        img_key = c.post(f"{API_PREFIX}/images",
+                         files={"file": ("a.png", _png(), "image/png")}
+                         ).json()["key"]
+        made = c.post(f"{API_PREFIX}/captures", json={"image_id": img_key}).json()
+        shelf_id, cap_id = made["shelf"]["id"], made["capture"]["id"]
+
+        # Set up now that the real capture id is known — the job reads
+        # `reader._claims` only once the background thread actually runs,
+        # which is after this line.
+        reader._claims = [
+            ReadClaim(spine_id="sp1", capture_id=cap_id, text="קריאה גולמית",
+                     title="מלכי הכופרים", author="פול קארני", tier="auto",
+                     score=91.0, crop=_png((10, 40)), box=(1, 2, 3, 4)),
+            ReadClaim(spine_id="sp2", capture_id=cap_id, tier="unmatched"),
+        ]
+
+        started = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
+                         json={"depth": 1, "mode": "spines"})
+        assert started.status_code == 202, started.text
+        assert started.json()["status"] == "running"
+        read_id = started.json()["id"]
+
+        body = _wait_until_settled(c, shelf_id, read_id)
+        assert body["status"] == "done"
+        assert body["error"] is None
+        assert body["capture_ids"] == [cap_id]
+        assert body["code_version"] == {"sha": "stub", "branch": "test",
+                                        "dirty": False}
+        assert len(body["claims"]) == 2
+
+        auto = next(cl for cl in body["claims"] if cl["tier"] == "auto")
+        assert auto["title"] == "מלכי הכופרים"
+        assert auto["box"] == [1, 2, 3, 4]
+        assert auto["crop_key"], "the crop was not stored/keyed"
+        assert c.get(f"{API_PREFIX}/images/{auto['crop_key']}/full"
+                     ).status_code == 200
+
+        unmatched = next(cl for cl in body["claims"] if cl["tier"] == "unmatched")
+        assert unmatched["crop_key"] is None
+
+        # The list endpoint is a SUMMARY — status and a count, no claims.
+        listed = c.get(f"{API_PREFIX}/shelves/{shelf_id}/reads").json()
+        assert [r["id"] for r in listed] == [read_id]
+        assert listed[0]["claim_count"] == 2
+        assert "claims" not in listed[0], "the summary must not embed claims"
+
+
+def test_a_read_can_be_stopped_and_keeps_its_partial_claims():
+    """§ app.domain.read: a stopped read is a REAL partial result. Stopping
+    early must leave SOME claims (proving the partial result was kept) and
+    FEWER than the full run would have produced (proving the stop actually
+    took effect rather than the job racing to completion anyway)."""
+    with _blobs() as blobs:
+        shelves = MemoryShelfStore()
+        reads_store = MemoryReadStore()
+        setup = TestClient(_app(blobs=blobs, shelves=shelves, reads=reads_store))
+        img_key = setup.post(f"{API_PREFIX}/images",
+                             files={"file": ("a.png", _png(), "image/png")}
+                             ).json()["key"]
+        made = setup.post(f"{API_PREFIX}/captures", json={"image_id": img_key}).json()
+        shelf_id, cap_id = made["shelf"]["id"], made["capture"]["id"]
+
+        reader = SlowStubReader(capture_id=cap_id, steps=200, step_s=0.01)
+        c = TestClient(_app(blobs=blobs, shelves=shelves, reads=reads_store,
+                            reader=reader))
+        read_id = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
+                         json={"depth": 1}).json()["id"]
+
+        # Let the worker produce a handful of claims (~5 at 10ms/step), then
+        # stop it — long before its 200 simulated steps would finish alone.
+        time.sleep(0.05)
+        stopped = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/stop")
+        assert stopped.status_code == 202, stopped.text
+
+        body = _wait_until_settled(c, shelf_id, read_id, timeout=3.0)
+        assert body["status"] == "stopped"
+        assert body["error"] is None
+        assert 0 < len(body["claims"]) < 200, (
+            "expected a partial result — neither none (the stop lost the "
+            "evidence) nor the full 200 (the stop had no effect)"
+        )
+
+
+def test_a_read_id_reached_through_the_wrong_shelf_is_404():
+    """A real read id, but not this shelf's — must read as absent, not
+    silently serve one shelf's evidence at another shelf's address."""
+    with _blobs() as blobs:
+        c = TestClient(_app(blobs=blobs, reader=StubReader()))
+        img_key = c.post(f"{API_PREFIX}/images",
+                         files={"file": ("a.png", _png(), "image/png")}
+                         ).json()["key"]
+        made = c.post(f"{API_PREFIX}/captures", json={"image_id": img_key}).json()
+        shelf_id = made["shelf"]["id"]
+        read_id = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
+                         json={"depth": 1}).json()["id"]
+        _wait_until_settled(c, shelf_id, read_id)
+
+        other = c.post(f"{API_PREFIX}/shelves", json={"label": "אחר"}).json()
+        assert c.get(f"{API_PREFIX}/shelves/{other['id']}/reads/{read_id}"
+                     ).status_code == 404
+
+
+def test_a_read_in_another_library_is_404_not_403():
+    """§4.2, same as every other aggregate: absent and forbidden are the
+    same answer."""
+    with _blobs() as blobs:
+        shelves = MemoryShelfStore()
+        reads_store = MemoryReadStore()
+        mine = TestClient(_app(blobs=blobs, shelves=shelves, reads=reads_store,
+                               reader=StubReader()))
+        img_key = mine.post(f"{API_PREFIX}/images",
+                            files={"file": ("a.png", _png(), "image/png")}
+                            ).json()["key"]
+        made = mine.post(f"{API_PREFIX}/captures", json={"image_id": img_key}).json()
+        shelf_id = made["shelf"]["id"]
+        read_id = mine.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
+                            json={"depth": 1}).json()["id"]
+        _wait_until_settled(mine, shelf_id, read_id)
+
+        theirs = TestClient(_app(
+            StubPrincipal(LibraryRef("lib-other", "Other"), "p-other"),
+            blobs=blobs, shelves=shelves, reads=reads_store, reader=StubReader(),
+        ))
+        assert theirs.get(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}"
+                          ).status_code == 404
+        assert theirs.get(f"{API_PREFIX}/shelves/{shelf_id}/reads").status_code == 404
+        assert theirs.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
+                           json={"depth": 1}).status_code == 404
+        assert mine.get(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}"
+                        ).status_code == 200
+
+
+def test_reads_are_listed_per_shelf_most_recent_first():
+    with _blobs() as blobs:
+        shelves = MemoryShelfStore()
+        reads_store = MemoryReadStore()
+        c = TestClient(_app(blobs=blobs, shelves=shelves, reads=reads_store,
+                            reader=StubReader()))
+        img_key = c.post(f"{API_PREFIX}/images",
+                         files={"file": ("a.png", _png(), "image/png")}
+                         ).json()["key"]
+        made = c.post(f"{API_PREFIX}/captures", json={"image_id": img_key}).json()
+        shelf_id = made["shelf"]["id"]
+
+        first = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
+                       json={"depth": 1}).json()["id"]
+        _wait_until_settled(c, shelf_id, first)
+        second = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
+                        json={"depth": 1}).json()["id"]
+        _wait_until_settled(c, shelf_id, second)
+
+        listed = c.get(f"{API_PREFIX}/shelves/{shelf_id}/reads").json()
+        assert [r["id"] for r in listed] == [second, first]
+
+
+def test_a_capture_with_no_photo_is_skipped_not_fatal():
+    """Two captures at one depth, one with a photo and one without (P2.2's
+    recorded gap): the read still runs on the one that has evidence, rather
+    than refusing the whole depth because of the other."""
+    with _blobs() as blobs:
+        shelves = MemoryShelfStore()
+        reads_store = MemoryReadStore()
+        c = TestClient(_app(blobs=blobs, shelves=shelves, reads=reads_store))
+        shelf = c.post(f"{API_PREFIX}/shelves", json={}).json()
+        img_key = c.post(f"{API_PREFIX}/images",
+                         files={"file": ("a.png", _png(), "image/png")}
+                         ).json()["key"]
+        with_photo = c.post(f"{API_PREFIX}/captures",
+                            json={"shelf_id": shelf["id"], "image_id": img_key}
+                            ).json()["capture"]
+        c.post(f"{API_PREFIX}/captures", json={"shelf_id": shelf["id"]})  # no photo
+
+        reader = StubReader([ReadClaim(spine_id="sp1",
+                                       capture_id=with_photo["id"], tier="auto")])
+        c = TestClient(_app(blobs=blobs, shelves=shelves, reads=reads_store,
+                            reader=reader))
+        read_id = c.post(f"{API_PREFIX}/shelves/{shelf['id']}/reads",
+                         json={"depth": 1}).json()["id"]
+        body = _wait_until_settled(c, shelf["id"], read_id)
+        assert body["status"] == "done"
+        assert len(body["claims"]) == 1
+        assert body["claims"][0]["capture_id"] == with_photo["id"]
 
 
 def test_a_capture_can_carry_the_key_of_an_uploaded_photo():

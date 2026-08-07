@@ -31,25 +31,31 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from app.adapters.memory_store import MemoryBookStore, MemoryShelfStore
+from app.adapters.memory_store import MemoryBookStore, MemoryReadStore, MemoryShelfStore
 from app.adapters.migrations import SCHEMA_VERSION, current_version, migrate
-from app.adapters.sqlite_store import SqliteBookStore, SqliteShelfStore
+from app.adapters.sqlite_store import SqliteBookStore, SqliteReadStore, SqliteShelfStore
 from app.domain import (
     Capture,
+    Claim,
+    ClaimTier,
     LibraryRef,
     Provenance,
     Status,
     add_copy,
+    append_claim,
     approve,
     edit,
+    finish_read,
     lend,
     new_book,
     new_capture,
+    new_read,
     new_shelf,
     observe,
     remove_from_shelf,
     rename_shelf,
     return_copy,
+    stop_read,
 )
 from app.ports.store import (
     BookPage,
@@ -66,6 +72,7 @@ OTHER = LibraryRef("lib-b", "Library B")
 
 CONTRACT: list = []
 SHELF_CONTRACT: list = []
+READ_CONTRACT: list = []
 
 
 def contract(fn):
@@ -82,6 +89,13 @@ def shelf_contract(fn):
     wrong reason.
     """
     SHELF_CONTRACT.append(fn)
+    return fn
+
+
+def read_contract(fn):
+    """Mark a function as part of the ReadStore spec (P2.4). A third list,
+    same reasoning as `shelf_contract`."""
+    READ_CONTRACT.append(fn)
     return fn
 
 
@@ -760,6 +774,131 @@ def every_shelf_store_method_takes_a_library(store):
         assert hasattr(store, name), f"{type(store).__name__} lacks {name}()"
 
 
+# --- the read spec (P2.4) --------------------------------------------------
+#
+# A third contract list: reads run against the ReadStore implementations, not
+# the book or shelf ones. Same discipline as the other two — one spec, every
+# implementation, so P2.4's read model is as portable as P1.2's books and
+# P2.1's shelves.
+
+def _read(n: int = 1, *, library: LibraryRef = LIB, shelf_id: str = "sh1",
+          depth: int = 1, capture_ids=("cap1",), **kw) -> "Read":
+    from app.domain import Read
+
+    args = dict(id=f"rd{n}", library_id=library.id, shelf_id=shelf_id,
+                depth=depth, capture_ids=tuple(capture_ids), mode="spines",
+                started_at="2026-08-07T12:00:00+00:00")
+    args.update(kw)
+    return Read(**args)
+
+
+@read_contract
+def saves_and_reads_back_a_read_with_its_claims(store):
+    r = _read(1)
+    r = append_claim(r, Claim(id="cl1", spine_id="sp1", capture_id="cap1",
+                              title="מלכי הכופרים", tier=ClaimTier.AUTO, score=91.0,
+                              box=(1, 2, 3, 4)))
+    r = append_claim(r, Claim(id="cl2", spine_id="sp2", capture_id="cap1"))
+    r = finish_read(r, finished_at="2026-08-07T12:05:00+00:00")
+    store.save_read(LIB, r)
+
+    got = store.get_read(LIB, "rd1")
+    assert got == r, "the read (with its claims) did not survive the round trip"
+    assert got.claims[0].box == (1, 2, 3, 4)
+
+
+@read_contract
+def missing_read_reads_as_none(store):
+    assert store.get_read(LIB, "nope") is None
+
+
+@read_contract
+def re_saving_a_read_replaces_its_claims_rather_than_accumulating(store):
+    """Same "aggregate saved whole" rule as books' provenance — a Read saved
+    twice (once running, once finished) must not leave the running version's
+    claims lying around alongside the finished ones."""
+    r = _read(1)
+    store.save_read(LIB, r)
+    r = append_claim(r, Claim(id="cl1", spine_id="sp1", capture_id="cap1"))
+    r = finish_read(r, finished_at="2026-08-07T12:05:00+00:00")
+    store.save_read(LIB, r)
+
+    got = store.get_read(LIB, "rd1")
+    assert len(got.claims) == 1
+    assert got.status.value == "done"
+
+
+@read_contract
+def a_stopped_read_is_stored_as_a_real_result_not_a_failure(store):
+    r = _read(1)
+    r = append_claim(r, Claim(id="cl1", spine_id="sp1", capture_id="cap1"))
+    r = stop_read(r, finished_at="2026-08-07T12:05:00+00:00")
+    store.save_read(LIB, r)
+
+    got = store.get_read(LIB, "rd1")
+    assert got.status.value == "stopped"
+    assert got.error is None
+    assert len(got.claims) == 1, "the stop must not have discarded the claim"
+
+
+@read_contract
+def lists_a_shelfs_reads_most_recent_first(store):
+    store.save_read(LIB, _read(1, started_at="2026-08-01T00:00:00+00:00"))
+    store.save_read(LIB, _read(2, started_at="2026-08-03T00:00:00+00:00"))
+    store.save_read(LIB, _read(3, started_at="2026-08-02T00:00:00+00:00"))
+    assert [r.id for r in store.list_reads(LIB, "sh1")] == ["rd2", "rd3", "rd1"]
+
+
+@read_contract
+def lists_can_narrow_to_one_depth(store):
+    """The parameter §5.7 #1 needs: a shelf's read HISTORY is scoped to the
+    row it actually covered, same shape as ShelfStore.list_captures."""
+    store.save_read(LIB, _read(1, depth=1))
+    store.save_read(LIB, _read(2, depth=2))
+    assert [r.id for r in store.list_reads(LIB, "sh1", depth=2)] == ["rd2"]
+    assert len(store.list_reads(LIB, "sh1")) == 2
+
+
+@read_contract
+def listing_reads_never_crosses_shelves_or_libraries(store):
+    store.save_read(LIB, _read(1, shelf_id="sh1"))
+    store.save_read(LIB, _read(2, shelf_id="sh2"))
+    store.save_read(OTHER, _read(3, library=OTHER, shelf_id="sh1"))
+    assert [r.id for r in store.list_reads(LIB, "sh1")] == ["rd1"]
+    assert [r.id for r in store.list_reads(OTHER, "sh1")] == ["rd3"]
+
+
+@read_contract
+def a_read_in_another_library_reads_as_absent(store):
+    """§4.2 / P3.3: 404-not-403, same as every other aggregate — asserted
+    here because the route above it can only honour it if this holds."""
+    store.save_read(LIB, _read(1))
+    assert store.get_read(OTHER, "rd1") is None
+    assert store.list_reads(OTHER, "sh1") == ()
+
+
+@read_contract
+def saving_a_read_into_the_wrong_library_is_refused_loudly(store):
+    _raises(WrongLibrary, store.save_read, OTHER, _read(1, library=LIB))
+    assert store.get_read(OTHER, "rd1") is None
+    assert store.get_read(LIB, "rd1") is None, "the refused write leaked"
+
+
+@read_contract
+def every_read_store_method_takes_a_library(store):
+    """H2 by signature, same as the other two stores'."""
+    import inspect
+
+    from app.ports.store import ReadStore
+
+    for name, member in vars(ReadStore).items():
+        if name.startswith("_") or not callable(member):
+            continue
+        params = list(inspect.signature(member).parameters)
+        assert params[:2] == ["self", "library"], (name, params)
+        assert hasattr(store, name), f"{type(store).__name__} lacks {name}()"
+
+
 # --- registration ---------------------------------------------------------
 
 @contextmanager
@@ -790,9 +929,25 @@ def _sqlite_shelf_store():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+@contextmanager
+def _memory_read_store():
+    yield MemoryReadStore()
+
+
+@contextmanager
+def _sqlite_read_store():
+    tmp = tempfile.mkdtemp(prefix="booksnap-read-")
+    try:
+        yield SqliteReadStore(Path(tmp) / "books.db")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 IMPLEMENTATIONS = (("memory", _memory_store), ("sqlite", _sqlite_store))
 SHELF_IMPLEMENTATIONS = (("memory", _memory_shelf_store),
                          ("sqlite", _sqlite_shelf_store))
+READ_IMPLEMENTATIONS = (("memory", _memory_read_store),
+                        ("sqlite", _sqlite_read_store))
 
 
 def _bind(fn, factory, name):
@@ -814,6 +969,11 @@ for _label, _factory in IMPLEMENTATIONS:
 
 for _label, _factory in SHELF_IMPLEMENTATIONS:
     for _fn in SHELF_CONTRACT:
+        _name = f"test_{_fn.__name__}__{_label}"
+        globals()[_name] = _bind(_fn, _factory, _name)
+
+for _label, _factory in READ_IMPLEMENTATIONS:
+    for _fn in READ_CONTRACT:
         _name = f"test_{_fn.__name__}__{_label}"
         globals()[_name] = _bind(_fn, _factory, _name)
 
@@ -974,6 +1134,55 @@ def test_a_v5_database_upgrades_its_shelf_index_in_place():
         store.save_shelf(LIB, _sh(1, label="", created_at="2026-08-05"))
         store.save_shelf(LIB, _sh(2, label="", created_at="2026-08-02"))
         assert [s.id for s in store.list_shelves(LIB)] == ["sh2", "sh1"]
+
+
+def test_a_v6_database_upgrades_and_creates_the_reads_tables():
+    """H6: v7 is pure SQL with no backfill (P2.4 is a brand-new feature, so no
+    row anywhere predates it) — but the upgrade path itself still has to be
+    asserted, or a typo in the CREATE TABLE statements would only be caught by
+    a fresh database, never by the owner's real, already-migrated file."""
+    import sqlite3
+
+    from app.adapters.migrations import MIGRATIONS
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "v6.db"
+        conn = sqlite3.connect(str(path))
+        try:
+            for version, step in MIGRATIONS:
+                if version > 6:
+                    break
+                if isinstance(step, str):
+                    conn.executescript(step)
+                else:
+                    step(conn)
+            conn.execute("PRAGMA user_version = 6")
+            conn.commit()
+            assert current_version(conn) == 6
+            tables = {r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()}
+            assert "reads" not in tables and "claims" not in tables, \
+                "the fixture is not really v6"
+        finally:
+            conn.close()
+
+        store = SqliteReadStore(path)          # migrates on construction
+        conn = sqlite3.connect(str(path))
+        try:
+            assert current_version(conn) == SCHEMA_VERSION
+            tables = {r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()}
+            assert {"reads", "claims"} <= tables, "v7 did not create its tables"
+        finally:
+            conn.close()
+
+        # And the store built on the upgraded file actually works.
+        r = _read(1)
+        r = append_claim(r, Claim(id="cl1", spine_id="sp1", capture_id="cap1"))
+        store.save_read(LIB, r)
+        assert store.get_read(LIB, "rd1").claims[0].id == "cl1"
 
 
 def test_deleting_a_shelf_never_touches_the_books_that_stood_on_it():

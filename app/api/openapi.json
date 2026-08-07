@@ -355,6 +355,95 @@
         "title": "CapturePatch",
         "type": "object"
       },
+      "ClaimDTO": {
+        "description": "What one read asserts about one spine (`app.domain.read.Claim`).",
+        "properties": {
+          "author": {
+            "default": "",
+            "title": "Author",
+            "type": "string"
+          },
+          "box": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "[x0,y0,x1,y1] within the source capture image, or null.",
+            "title": "Box"
+          },
+          "capture_id": {
+            "title": "Capture Id",
+            "type": "string"
+          },
+          "catalog_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Catalog Id"
+          },
+          "crop_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "BlobStore key of the spine crop, if the engine produced one. Fetch its picture at GET /images/{crop_key}/thumb|full — the same endpoint every other photo uses.",
+            "title": "Crop Key"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "score": {
+            "default": 0.0,
+            "title": "Score",
+            "type": "number"
+          },
+          "spine_id": {
+            "title": "Spine Id",
+            "type": "string"
+          },
+          "text": {
+            "description": "The raw OCR/read text for this spine.",
+            "title": "Text",
+            "type": "string"
+          },
+          "tier": {
+            "description": "auto | review | unmatched.",
+            "title": "Tier",
+            "type": "string"
+          },
+          "title": {
+            "default": "",
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "spine_id",
+          "capture_id",
+          "text",
+          "tier"
+        ],
+        "title": "ClaimDTO",
+        "type": "object"
+      },
       "CopyCreate": {
         "description": "*\"I have another copy\"* (§5.1) — the only path that creates a second\nphysical object. No ``shelf_id`` here: shelves don't exist until P2.1, so\nevery copy today is unlocated regardless of how it was created.",
         "properties": {
@@ -704,6 +793,216 @@
           "library"
         ],
         "title": "MetaResponse",
+        "type": "object"
+      },
+      "ReadCreate": {
+        "description": "Start a read of one shelf at one depth.",
+        "properties": {
+          "depth": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Depth",
+            "type": "integer"
+          },
+          "mode": {
+            "default": "spines",
+            "description": "Engine mode: 'spines' (Tesseract, free, ~10s/spine), 'fullpage' (Google Vision) or 'llmpage' (Claude vision, the engine's own current default per CLAUDE.md). Passed straight through to booksnap.Pipeline.run — modes are the engine's own, not redefined here.",
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "title": "ReadCreate",
+        "type": "object"
+      },
+      "ReadDTO": {
+        "description": "One read, in full — returned by start/get/stop, never by the list.\n\n``config`` is the full tunable snapshot from `app.domain.read.Read` —\nincluded for the same audit reason the tuning server exposes its own run\nconfig, not because a review screen needs to render it.",
+        "properties": {
+          "capture_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Capture Ids",
+            "type": "array"
+          },
+          "claims": {
+            "items": {
+              "$ref": "#/components/schemas/ClaimDTO"
+            },
+            "title": "Claims",
+            "type": "array"
+          },
+          "code_version": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code Version"
+          },
+          "config": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config"
+          },
+          "depth": {
+            "title": "Depth",
+            "type": "integer"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Live progress while running (image N of M, spines read) — NOT persisted; comes from the job runner and is null once the read has a terminal status.",
+            "title": "Progress"
+          },
+          "shelf_id": {
+            "title": "Shelf Id",
+            "type": "string"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "shelf_id",
+          "depth",
+          "capture_ids",
+          "mode",
+          "status"
+        ],
+        "title": "ReadDTO",
+        "type": "object"
+      },
+      "ReadSummaryDTO": {
+        "description": "One row of a shelf's read history — no claims, no config. Listing a\nshelf's reads is a history view (§5.6's \"history as diffs\" surface, once\nP2.8 builds it); it does not need every claim of every past read to\nrender a row.",
+        "properties": {
+          "claim_count": {
+            "title": "Claim Count",
+            "type": "integer"
+          },
+          "depth": {
+            "title": "Depth",
+            "type": "integer"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          },
+          "shelf_id": {
+            "title": "Shelf Id",
+            "type": "string"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "shelf_id",
+          "depth",
+          "mode",
+          "status",
+          "claim_count"
+        ],
+        "title": "ReadSummaryDTO",
         "type": "object"
       },
       "ShelfCreate": {
@@ -2235,6 +2534,227 @@
         "summary": "Add A Row Behind",
         "tags": [
           "shelves"
+        ]
+      }
+    },
+    "/api/v1/shelves/{shelf_id}/reads": {
+      "get": {
+        "description": "A shelf's reads, most recent first.",
+        "operationId": "list_reads_api_v1_shelves__shelf_id__reads_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "shelf_id",
+            "required": true,
+            "schema": {
+              "title": "Shelf Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Narrow to one row front-to-back — §5.7 #1 scopes a read's history to the depth it actually covered.",
+            "in": "query",
+            "name": "depth",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Narrow to one row front-to-back — §5.7 #1 scopes a read's history to the depth it actually covered.",
+              "title": "Depth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ReadSummaryDTO"
+                  },
+                  "title": "Response List Reads Api V1 Shelves  Shelf Id  Reads Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Reads",
+        "tags": [
+          "reads"
+        ]
+      },
+      "post": {
+        "description": "Start reading a shelf at one depth.\n\n**202**, not 201 or 200: the read keeps running after this call returns,\nand the body is a snapshot of \"just started\" — poll ``GET`` to watch it\nsettle into ``done``/``stopped``/``failed``.",
+        "operationId": "start_read_api_v1_shelves__shelf_id__reads_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "shelf_id",
+            "required": true,
+            "schema": {
+              "title": "Shelf Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReadCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Read",
+        "tags": [
+          "reads"
+        ]
+      }
+    },
+    "/api/v1/shelves/{shelf_id}/reads/{read_id}": {
+      "get": {
+        "description": "One read, with every claim it produced so far. While the read is still\n``running`` the live progress from the job runner rides along in\n``progress`` — the stored claims themselves only land once the read\nsettles (see ``_job`` below).",
+        "operationId": "get_read_api_v1_shelves__shelf_id__reads__read_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "shelf_id",
+            "required": true,
+            "schema": {
+              "title": "Shelf Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "read_id",
+            "required": true,
+            "schema": {
+              "title": "Read Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Read",
+        "tags": [
+          "reads"
+        ]
+      }
+    },
+    "/api/v1/shelves/{shelf_id}/reads/{read_id}/stop": {
+      "post": {
+        "description": "Cooperative stop. **202**: the request is accepted, not honoured yet —\nthe worker notices between spines (the same shape as ``Pipeline.run``'s\n``should_stop``), so the read this returns may still say ``running``;\npoll ``GET`` until it settles to ``stopped``. The claims already\ncollected are kept — a stopped read is a real partial result, not a\nfailure (§ app.domain.read).",
+        "operationId": "stop_api_v1_shelves__shelf_id__reads__read_id__stop_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "shelf_id",
+            "required": true,
+            "schema": {
+              "title": "Shelf Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "read_id",
+            "required": true,
+            "schema": {
+              "title": "Read Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stop",
+        "tags": [
+          "reads"
         ]
       }
     }

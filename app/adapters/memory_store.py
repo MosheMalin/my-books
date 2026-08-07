@@ -12,7 +12,7 @@ frozen, so there is nothing to defensively copy.
 """
 from __future__ import annotations
 
-from app.domain import Book, Capture, LibraryRef, Shelf, Status
+from app.domain import Book, Capture, LibraryRef, Read, Shelf, Status
 from app.domain.search import parse
 from app.domain.search import search as domain_search
 from app.ports.store import (
@@ -212,6 +212,47 @@ class MemoryShelfStore:
 
     def delete_capture(self, library: LibraryRef, capture_id: str) -> bool:
         return self._c(library).pop(capture_id, None) is not None
+
+
+class MemoryReadStore:
+    """Implements ``app.ports.store.ReadStore``.
+
+    Same role as the other two memory stores: the API ring's store, and the
+    second implementation that turns the read contract into a spec rather
+    than a transcript of what SQLite happens to do.
+    """
+
+    def __init__(self) -> None:
+        self._reads: dict[str, dict[str, Read]] = {}
+
+    def _r(self, library: LibraryRef) -> dict[str, Read]:
+        return self._reads.setdefault(library.id, {})
+
+    def save_read(self, library: LibraryRef, read: Read) -> None:
+        if read.library_id != library.id:
+            raise WrongLibrary(
+                f"read {read.id} belongs to {read.library_id!r}, "
+                f"not {library.id!r}"
+            )
+        self._r(library)[read.id] = read
+
+    def get_read(self, library: LibraryRef, read_id: str) -> Read | None:
+        return self._r(library).get(read_id)
+
+    def list_reads(
+        self,
+        library: LibraryRef,
+        shelf_id: str,
+        *,
+        depth: int | None = None,
+    ) -> tuple[Read, ...]:
+        rows = [r for r in self._r(library).values() if r.shelf_id == shelf_id]
+        if depth is not None:
+            rows = [r for r in rows if r.depth == depth]
+        # Most-recent-first, id as the tiebreaker for a total order — mirrors
+        # the SQL adapter's ORDER BY exactly, so the two cannot disagree.
+        rows.sort(key=lambda r: (r.started_at or "", r.id), reverse=True)
+        return tuple(rows)
 
 
 def _any_copy_out(book: Book) -> bool:

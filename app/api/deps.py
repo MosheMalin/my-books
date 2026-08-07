@@ -18,7 +18,9 @@ from fastapi import Depends
 from app.domain import LibraryRef
 from app.ports import Clock, IdGen, Principal
 from app.ports.blobs import BlobStore
-from app.ports.store import BookStore, ShelfStore
+from app.ports.jobs import JobRunner
+from app.ports.reader import Reader
+from app.ports.store import BookStore, ReadStore, ShelfStore
 
 
 def get_principal() -> Principal:
@@ -52,6 +54,18 @@ def get_shelf_store() -> ShelfStore:
 
 def get_blob_store() -> BlobStore:
     raise RuntimeError("no BlobStore bound; build the app via create_app")
+
+
+def get_read_store() -> ReadStore:
+    raise RuntimeError("no ReadStore bound; build the app via create_app")
+
+
+def get_reader() -> Reader:
+    raise RuntimeError("no Reader bound; build the app via create_app")
+
+
+def get_job_runner() -> JobRunner:
+    raise RuntimeError("no JobRunner bound; build the app via create_app")
 
 
 def get_clock() -> Clock:

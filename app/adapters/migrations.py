@@ -236,6 +236,65 @@ CREATE INDEX shelves_by_label
     ON shelves (library_id, virtual, label, created_at, id);
 """
 
+# --- v7: reads and claims (P2.4, §5.7 #1) ---------------------------------
+#
+# One engine pass over one (shelf, depth), with the claims it produced.
+# `capture_ids`, `code_version` and `config` are JSON columns rather than
+# normalised tables — D1 explicitly calls this shape out ("JSON columns for
+# run/config snapshots"): they are document-shaped, written once per read and
+# never queried by field, unlike copies/provenance which get real WHERE
+# clauses (who has my books, books on a shelf). Claims DO get their own table,
+# for the same reason copies/provenance do: P2.5's reconciliation and P2.6's
+# copy resolution need to query them.
+#
+# Pure SQL, no backfill: this is a brand-new feature, so no row anywhere
+# predates it.
+#
+# `reads.shelf_id` is indexed but NOT a foreign key, unlike `captures.shelf_id`
+# — see the ⚠ in `app.ports.store.ReadStore`: a capture's shelf_id is
+# client-supplied and must be policed, a read's is not (it can only be built
+# from an already-loaded Shelf by `app.domain.read.new_read`), so there is no
+# invalid-shelf case for a constraint to catch.
+_V7 = """
+CREATE TABLE reads (
+    id            TEXT PRIMARY KEY,
+    library_id    TEXT NOT NULL,
+    shelf_id      TEXT NOT NULL,
+    depth         INTEGER NOT NULL,
+    capture_ids   TEXT NOT NULL,        -- JSON array, in read order
+    mode          TEXT NOT NULL,
+    status        TEXT NOT NULL,        -- running | done | stopped | failed
+    code_version  TEXT,                 -- JSON: {sha, branch, dirty}, or NULL
+    config        TEXT,                 -- JSON: full tunable snapshot, or NULL
+    started_at    TEXT,
+    finished_at   TEXT,
+    error         TEXT
+);
+
+-- Leads with library_id like every other read index (H2); shelf_id and depth
+-- follow because "this shelf's reads, optionally at one depth, newest first"
+-- is the only query this table serves.
+CREATE INDEX reads_by_shelf ON reads (library_id, shelf_id, depth, started_at);
+
+CREATE TABLE claims (
+    id          TEXT PRIMARY KEY,
+    read_id     TEXT NOT NULL REFERENCES reads (id) ON DELETE CASCADE,
+    position    INTEGER NOT NULL,       -- the order the engine produced them
+    spine_id    TEXT NOT NULL,
+    capture_id  TEXT NOT NULL,
+    text        TEXT NOT NULL DEFAULT '',
+    title       TEXT NOT NULL DEFAULT '',
+    author      TEXT NOT NULL DEFAULT '',
+    tier        TEXT NOT NULL,          -- auto | review | unmatched
+    score       REAL NOT NULL DEFAULT 0,
+    catalog_id  TEXT,
+    crop_key    TEXT,                   -- BlobStore key, or NULL
+    box         TEXT                    -- JSON [x0,y0,x1,y1], or NULL
+);
+
+CREATE INDEX claims_of_read ON claims (read_id, position);
+"""
+
 # A step is either SQL to execute or a callable to run — both inside the same
 # once-only transaction. Callables exist because a derived column whose rule
 # lives in the domain must be backfilled BY that rule, not by a re-statement
@@ -247,6 +306,7 @@ MIGRATIONS: tuple[tuple[int, str | Step], ...] = (
     (4, _V4),
     (5, _V5),
     (6, _V6),
+    (7, _V7),
 )
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]
