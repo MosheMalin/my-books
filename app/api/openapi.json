@@ -1,0 +1,87 @@
+{
+  "components": {
+    "schemas": {
+      "LibraryRefDTO": {
+        "description": "The tenant reference the client echoes back on every request.\n\nPresent from the very first endpoint on purpose: the client is\ntenant-aware from P1.0 (§1.3), even though there is exactly one library\nuntil pillar 3.",
+        "properties": {
+          "id": {
+            "description": "Opaque library identifier.",
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "description": "Human-readable library name.",
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label"
+        ],
+        "title": "LibraryRefDTO",
+        "type": "object"
+      },
+      "MetaResponse": {
+        "description": "Service identity + the caller's resolved library.\n\nThe one endpoint P1.0 ships. It carries no domain data — its job is to\nprove the whole path end to end: principal -> library -> DTO -> OpenAPI\nschema -> generated TS type -> typed fetch in a React component.",
+        "properties": {
+          "api_version": {
+            "description": "API major version, e.g. 'v1'.",
+            "title": "Api Version",
+            "type": "string"
+          },
+          "app": {
+            "description": "Service name.",
+            "title": "App",
+            "type": "string"
+          },
+          "library": {
+            "$ref": "#/components/schemas/LibraryRefDTO",
+            "description": "Library resolved for this caller."
+          },
+          "version": {
+            "description": "Server package version.",
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app",
+          "version",
+          "api_version",
+          "library"
+        ],
+        "title": "MetaResponse",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "booksnap product API",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/meta": {
+      "get": {
+        "operationId": "get_meta_api_v1_meta_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetaResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Service and library identity",
+        "tags": [
+          "meta"
+        ]
+      }
+    }
+  }
+}

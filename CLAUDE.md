@@ -37,12 +37,65 @@ booksnap/
   pipeline.py   orchestrator: segment -> ocr -> match -> optional fallback
   cli.py        `python -m booksnap.cli --catalog ... img...`
   server.py     FastAPI: upload/select images, background runs, run history
-  static/       single-file vanilla-JS UI (no build step, no CDN)
-tests/          test_core.py (matcher/normalize), test_integrations.py (adapters, mocked)
+  static/       single-file vanilla-JS UI (no build step, no CDN) — see below
+tests/          test_core.py (matcher/normalize), test_integrations.py (adapters,
+                mocked), test_layering.py + test_api.py (product app),
+                run_all.py (runner with a real exit code)
 ```
+
+⚠️ **"single-file vanilla-JS UI (no build step, no CDN)" describes the TUNING /
+AUDIT surface only** — `booksnap/static/index.html`, served by
+`booksnap/server.py` on `/api/*`. It is not a project-wide rule. The
+user-facing product client is a React + Vite + TypeScript app in `app/web/`
+(build step, npm deps, still no CDN — everything bundled locally). That
+reversal is argued in `planning/IMPLEMENTATION_PLAN.md` D3. The tuning page is
+deliberately NOT migrated: it is where `explain()`, config snapshots, per-spine
+scores and crops live, and putting the accuracy loop through a build step buys
+nothing.
 
 Stages are independent and individually callable, so the server can parallelise
 OCR across cores and run the fallback in a separate queue.
+
+## The product app (`app/`) — separate from the engine on purpose
+
+```
+app/
+  domain/       entities + rules. pure Python, no I/O, no framework
+  ports/        Protocols: Principal, Clock, IdGen (BookStore… as they land)
+  adapters/     implementations (dev identity today; sqlite/disk/queue later)
+  api/          FastAPI routers under /api/v1 + DTOs. THIN — no rules
+  api/openapi.json          committed contract, regenerated, never hand-edited
+  main.py       the composition root — the ONE file allowed to cross layers
+  web/          React + Vite + TS client; talks only to /api/v1
+```
+
+Two applications coexist through pillars 1–2, by design (plan H1/D2,
+"strangle, don't refactor"): the tuning server on `:8756` `/api/*`, the product
+on `:8757` `/api/v1/*`. Run the product with
+`uvicorn app.main:app --port 8757`; in dev, `npm --prefix app/web run dev`
+serves the client on `:5173` and proxies `/api` to it.
+
+Rules that are enforced mechanically, not by intention
+(`tests/test_layering.py`, `tests/test_api.py`):
+
+- `booksnap/*` never imports `app/*` — this is what lets accuracy work and
+  product work run on separate branches without colliding;
+- `tools/sweep.py|spotcheck.py|rescore.py` never import `app/*` either, so a
+  product bug cannot move a baseline number;
+- `app/api/*` never imports `app/adapters/*` — the rule that keeps the
+  datastore choice (plan D1) a swap rather than a rewrite;
+- every `/api/v1` route resolves its library through the single function
+  `app/api/deps.py:current_library`, and every API route is under `/api/v1`.
+  Both are meta-tests over *all* routes, so they keep holding as routes are
+  added;
+- no module-level mutable state in `app/` (the tuning server's global job dict
+  is exactly what a second tenant breaks).
+
+**The API contract is committed and generated, both halves.**
+`app/api/dto.py` → `app/api/openapi.json` → `app/web/src/api/schema.d.ts`.
+After any DTO or route change run `python tools/api_contract.py --write` and
+commit both artefacts; `--check` fails the commit on drift. This is why a
+renamed field is a client *compile* error instead of a runtime surprise.
 
 ## How the pipeline works (the parts that took iteration)
 
@@ -385,12 +438,40 @@ the environment. `.gitignore` excludes .env, *-key.json, credentials.json, etc.
 (fetched, not source). Env overrides: BOOKSNAP_TESSDATA_BEST,
 BOOKSNAP_TESSDATA_FAST, BOOKSNAP_WORK.
 
+The product client is a separate, optional install — nothing in the
+recognition core or the tuning server needs it:
+`npm install --prefix app/web` (Node 22+). Skipping it only means the client
+half of the commit gate self-skips.
+
 ## Tests
 
-`python tests/test_core.py` (52, matcher/normalize/gates) and
-`python tests/test_integrations.py` (24, catalog+fallback adapters, fully
-mocked/offline — no key, no network, no cloud SDK needed). Keep these green.
-Counts grow with each run's fixes; SESSION_NOTES.md tracks the history.
+**`python tests/run_all.py`** runs everything and **exits non-zero on
+failure** — the individual `test_*.py` `__main__` blocks print PASS/FAIL and
+then exit 0, which is fine for a human and useless as a gate. Pass module
+names to run a subset (`python tests/run_all.py test_api`).
+
+| module | count | what it protects |
+|---|---|---|
+| `test_core.py` | 52 | matcher / normalize / evidence gates |
+| `test_integrations.py` | 24 | catalog + fallback adapters, fully mocked/offline |
+| `test_layering.py` | 8 | the one-way import rules (plan H1) |
+| `test_api.py` | 9 | `/api/v1` shapes + the versioning/tenancy meta-tests |
+
+93 total as of P1.0. No pytest dependency, deliberately — the repo has never
+had one and the accuracy gate runs on bare python. Counts grow with each run's
+fixes; SESSION_NOTES.md tracks the history.
+
+Client ring (needs `npm install --prefix app/web` once):
+`npm --prefix app/web run test` (vitest + React Testing Library) and
+`npm --prefix app/web run typecheck`. Test what encodes a *decision*, not
+layout and not DTO plumbing — same standard as the Python rings.
+
+**The pre-commit hook now has two independent halves** (`tools/githooks/pre-commit`):
+accuracy (sweep + spotchecks, unchanged) and product (`tests/run_all.py`,
+`tools/api_contract.py --check`, and the client tests when `app/web/` is
+staged). Product work must never require touching the accuracy baseline. The
+client half self-skips without `node_modules`, like the spotchecks do without
+run data.
 
 ## Known constraints / next steps (roughly prioritised, updated 2026-08-06)
 

@@ -1,0 +1,42 @@
+/* Minimal, deliberately. The design system arrives with P1.6 (UI_PLAN §2);
+   styling the scaffolding first would only be thrown away. */
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, -apple-system, 'Segoe UI', Arial, sans-serif;
+}
+
+body {
+  margin: 0;
+}
+
+.app {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+}
+
+.app h1 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  opacity: 0.6;
+}
+
+.library {
+  font-size: 1.75rem;
+  font-weight: 700;
+  margin: 0.5rem 0 0;
+}
+
+.build {
+  /* Latin text inside an RTL document: pin its direction so the version
+     string doesn't get reordered (UI_PLAN §7.2 mixed-script alignment). */
+  direction: ltr;
+  text-align: start;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.6;
+  font-size: 0.875rem;
+}
+
+.error {
+  color: #b3261e;
+}
