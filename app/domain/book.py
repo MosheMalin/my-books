@@ -108,17 +108,37 @@ class Provenance:
     real books whose recorded evidence is only ``{run_id, spine_id}`` — the
     shape `booksnap/library.py` has been writing all along. Losing those books
     to a stricter type would be the wrong trade.
+
+    ``depth`` (P2.1, §5.7) records WHICH ROW front-to-back was photographed.
+    Without it §5.6's "not seen in this read" rule cannot be scoped: re-reading
+    only the front row of a three-row shelf would compare the read against the
+    whole shelf and flag two thirds of its books as possibly missing, every
+    single time.
     """
 
     run_id: str
     spine_id: str
     shelf_id: str | None = None
     captured_at: str | None = None
+    depth: int | None = None
+
+    def __post_init__(self) -> None:
+        _normalize_location(self)
 
     @property
     def sighting(self) -> tuple[str, str]:
         """Identity of the sighting, for idempotent appends."""
         return (self.run_id, self.spine_id)
+
+    @property
+    def location(self) -> tuple[str, int] | None:
+        """``(shelf_id, depth)`` — where this sighting happened, or ``None``.
+
+        A single value, because §5.4 and §5.7 #3 both ask "same place?" and
+        answering it with two fields compared separately is how "same shelf,
+        different row" gets read as "same location".
+        """
+        return None if self.shelf_id is None else (self.shelf_id, self.depth or 1)
 
 
 @dataclass(frozen=True)
@@ -166,6 +186,13 @@ class Copy:
     NEVER constructed by a read. ``tests/test_domain.py`` walks this module's
     AST and fails if a ``Copy(...)`` appears outside the two functions a human
     action reaches: :func:`new_book` and :func:`add_copy` (§5.1).
+
+    Located at ``(shelf_id, depth)`` — §5.7's model exactly, where depth is an
+    attribute of the location and not a second kind of shelf. Making "shelf 3,
+    back row" its own Shelf record needs no new concept, which is what makes it
+    tempting, but it doubles the shelf list, puts two shelves in one physical
+    slot on the pillar-6 map, and loses the fact that they are one piece of
+    furniture.
     """
 
     id: str
@@ -176,10 +203,24 @@ class Copy:
     provenance: tuple[Provenance, ...] = ()
     fields: CopyFields = field(default_factory=CopyFields)
     lending: Lending | None = None
+    depth: int | None = None
+
+    def __post_init__(self) -> None:
+        _normalize_location(self)
 
     @property
     def last_seen(self) -> Provenance | None:
         return self.provenance[-1] if self.provenance else None
+
+    @property
+    def location(self) -> tuple[str, int] | None:
+        """``(shelf_id, depth)``, or ``None`` for a copy that stands nowhere.
+
+        ``None`` is a real, ordinary state, not a gap in the data: P1.3's 251
+        imported books have never been located, and *remove from shelf* returns
+        a copy to it deliberately (UI_PLAN §5).
+        """
+        return None if self.shelf_id is None else (self.shelf_id, self.depth or 1)
 
 
 @dataclass(frozen=True)
@@ -271,6 +312,7 @@ def new_book(
     author: str = "",
     status: Status = Status.AUTO,
     shelf_id: str | None = None,
+    depth: int | None = None,
     provenance: tuple[Provenance, ...] = (),
     label: str = "",
     added_at: str | None = None,
@@ -287,6 +329,7 @@ def new_book(
         status=status,
         label=label,
         shelf_id=shelf_id,
+        depth=depth,
         provenance=tuple(provenance),
     )
     return Book(
@@ -305,6 +348,7 @@ def add_copy(
     copy_id: str,
     label: str = "",
     shelf_id: str | None = None,
+    depth: int | None = None,
     status: Status = Status.MANUAL,
     fields: CopyFields = CopyFields(),
 ) -> Book:
@@ -319,6 +363,7 @@ def add_copy(
         status=status,
         label=label,
         shelf_id=shelf_id,
+        depth=depth,
         fields=fields,
     )
     return replace(book, copies=book.copies + (extra,))
@@ -336,13 +381,14 @@ def observe(
     Resolution order, straight out of §5.4's fire/never-fire table:
 
       1. an explicit ``copy_id`` — the user already answered the prompt;
-      2. a copy already standing on ``prov.shelf_id`` — same shelf, same copy,
-         never ask;
+      2. a copy already standing at ``prov.location`` — same shelf AND same
+         depth, same copy, never ask;
       3. the book's ONLY copy, if it has never been located — adopt it (this
          is also the path P1.3's legacy import takes, where sightings carry no
          shelf at all);
-      4. otherwise :class:`AmbiguousCopy` — a different shelf, or more than
-         one candidate. The domain refuses to guess; P2.4 asks.
+      4. otherwise :class:`AmbiguousCopy` — a different shelf, **a different
+         row of the same shelf** (§5.7 #3), or more than one candidate. The
+         domain refuses to guess; P2.4 asks.
 
     Appending is idempotent per ``(run_id, spine_id)``, so replaying a read
     does not inflate a copy's history. That is idempotency, not overwriting —
@@ -355,13 +401,19 @@ def observe(
     if prov.sighting not in seen:
         provenance = provenance + (prov,)
 
+    # Adopting an unshelved copy is the only relink a read may perform; moving
+    # a copy that already stands somewhere is the §5.4 prompt. Shelf and depth
+    # move TOGETHER — adopting one without the other would locate the copy on
+    # the right shelf at whatever row it last remembered.
+    located = target.location if target.location is not None else prov.location
+    shelf_id, depth = located if located is not None else (None, None)
+
     updated = replace(
         target,
         provenance=provenance,
         status=Status.merge(target.status, status),
-        # Adopting an unshelved copy is the only relink a read may perform;
-        # moving a copy that already stands somewhere is the §5.4 prompt.
-        shelf_id=target.shelf_id if target.shelf_id is not None else prov.shelf_id,
+        shelf_id=shelf_id,
+        depth=depth,
     )
     return _with_copy(book, updated)
 
@@ -403,8 +455,11 @@ def remove_from_shelf(book: Book, copy_id: str) -> Book:
     longer claims a location. Deleting from the library is a different,
     separately-confirmed action, and it lives in the store because it removes
     a row rather than changing one.
+
+    Shelf and depth are cleared together: a depth left behind names a row of
+    nothing, and it would be inherited by the next shelf this copy lands on.
     """
-    return _with_copy(book, replace(book.copy(copy_id), shelf_id=None))
+    return _with_copy(book, replace(book.copy(copy_id), shelf_id=None, depth=None))
 
 
 def edit_copy(
@@ -470,6 +525,39 @@ def set_work_fields(book: Book, **changes: object) -> Book:
 
 # --- internals ------------------------------------------------------------
 
+def _normalize_location(obj: "Copy | Provenance") -> None:
+    """A location is ``(shelf, depth)`` together, or it is absent (§5.7).
+
+    Two halves of one rule, and both are load-bearing:
+
+      - **located ⇒ a depth.** A copy on a shelf with ``depth=None`` and one on
+        the same shelf at ``depth=1`` are the same physical place, but compared
+        field-by-field they read as two — which would make §5.4's prompt fire
+        on a book that never moved. Front row is depth 1, always;
+      - **unlocated ⇒ no depth.** A depth with no shelf names a row of nothing.
+        It is a wiring bug, so it raises rather than being quietly dropped —
+        the likely cause is clearing ``shelf_id`` without clearing ``depth``,
+        and a silent drop would make *remove from shelf* look correct while it
+        leaked the old row into the next place the copy stands.
+
+    Written with ``object.__setattr__`` because these are frozen — the point of
+    freezing is that operations return new objects (§5.2's append-never-
+    overwrite), and normalising at construction is not a mutation of anything a
+    caller can observe.
+    """
+    if obj.shelf_id is None:
+        if obj.depth is not None:
+            raise DomainError(
+                f"{type(obj).__name__} has depth {obj.depth} but no shelf; "
+                "a depth without a shelf is not a location (§5.7)"
+            )
+        return
+    if obj.depth is None:
+        object.__setattr__(obj, "depth", 1)
+    elif obj.depth < 1:
+        raise DomainError("depth is 1-based")
+
+
 def _with_copy(book: Book, updated: Copy) -> Book:
     """Replace one copy in place, preserving order. Order is meaningful:
     copy #1 is the original, and the UI lists them as the owner acquired
@@ -485,14 +573,21 @@ def _resolve_copy(book: Book, prov: Provenance, copy_id: str | None) -> Copy:
     if copy_id is not None:
         return book.copy(copy_id)
 
-    if prov.shelf_id is not None:
-        on_shelf = [c for c in book.copies if c.shelf_id == prov.shelf_id]
-        if len(on_shelf) == 1:
-            return on_shelf[0]
-        if len(on_shelf) > 1:
+    # Compared as a whole (shelf, depth), never shelf alone: §5.7 #3 puts "a
+    # different row of the same shelf" in the ASK column of §5.4's firing
+    # table, because a different row IS a different physical location and the
+    # same title appearing at depth 1 and depth 2 is exactly the another-copy
+    # question. Matching on shelf alone would answer it silently, and answer it
+    # "already listed" — relinking a copy that never moved and losing the
+    # second one.
+    if prov.location is not None:
+        here = [c for c in book.copies if c.location == prov.location]
+        if len(here) == 1:
+            return here[0]
+        if len(here) > 1:
             raise AmbiguousCopy(
-                f"book {book.id} has {len(on_shelf)} copies on shelf "
-                f"{prov.shelf_id}; ask which one (§5.4)"
+                f"book {book.id} has {len(here)} copies at {prov.location}; "
+                "ask which one (§5.4)"
             )
 
     # Only a book with a SINGLE, never-located copy is adopted silently. Once
@@ -503,6 +598,6 @@ def _resolve_copy(book: Book, prov: Provenance, copy_id: str | None) -> Copy:
         return book.copies[0]
 
     raise AmbiguousCopy(
-        f"book {book.id} was seen on shelf {prov.shelf_id!r} but its "
+        f"book {book.id} was seen at {prov.location!r} but its "
         f"{book.copy_count} copy/copies are elsewhere; ask which one (§5.4)"
     )

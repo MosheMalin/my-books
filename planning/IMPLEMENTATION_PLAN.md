@@ -54,9 +54,54 @@ belongs.
 Interim location, before the map: the shelf's own label. Honest and enough. The
 map later gives it structure and the "where is it" highlight.
 
-**[OPEN]** If reconciliation should also wait for the map, then pillar 2 shrinks
-to captures + review and pillar 6 grows. Say so and I'll move it — the split
-above is the low-regret reading, not a decided one.
+**[DECIDED 2026-08-07]** The split above stands, and reconciliation stays in
+pillar 2 — with one amendment: **shelf identity is FREE, so the label is
+optional**. A shelf must exist and be re-findable, not be described. An unnamed
+shelf is identified by the image it came from, which the owner recognises
+without a caption; naming it and any other location information is optional,
+and the real binding still waits for pillar 6.
+
+So the interim-location row of the table above is weaker than it read: the
+label is *an* answer to "where is it?" when someone bothers to type one, not
+the mechanism that makes pillar 2 work. What makes pillar 2 work is that a
+capture can name a shelf id at all.
+
+Consequence for P2.2: a photo filed without a shelf must still get one, so the
+intake path creates a shelf per capture by default.
+
+**One image = one shelf is a placeholder, and MERGE is the exit (owner, 2026-08-07).**
+Without the map there is nothing to bind several photos of one physical shelf
+together, so each image gets its own shelf identity and that is honest. Once
+the map exists (pillar 6), the owner must be able to **merge several shelf
+identities into one physical shelf** — that is the gesture the map makes
+natural, because on a drawing you can see that two of them are the same piece
+of wood.
+
+That is deferred work, but it constrains what may be built before it. The
+constraint, stated so it is not discovered at pillar 6:
+
+> **Nothing may treat a shelf id as a permanent, one-to-one handle on a
+> physical shelf.** It is one *identity*, and identities merge.
+
+Concretely, for pillars 2–5:
+
+- `Copy.shelf_id` is a pointer that a merge REPOINTS. Fine, as long as nothing
+  caches or derives from it in a way a repoint cannot reach;
+- `Provenance.shelf_id` is history and must NOT be rewritten — a sighting
+  happened against the shelf that existed then. So a merge needs an **alias**
+  from the retired identity to the surviving one, not a mass update. Same shape
+  as P7.1's alias table for shared book identity, and for the same reason:
+  retrofitting identity onto records that assumed it was permanent is the
+  expensive version;
+- reconciliation (P2.3) diffs per `(shelf, depth)`. Its inputs must stay
+  resolvable through an alias, or every read recorded before a merge becomes
+  unreadable after it;
+- **no automatic merging.** Two photos overlapping is not evidence they are one
+  shelf — the same books can sit on two shelves, and §5.4 already refuses to
+  guess at exactly this kind of ambiguity. A human merges, on the map.
+
+Not built now. Pillar 6 owns the operation; pillars 2–5 owe it only the
+property that a shelf id can be retired without losing what pointed at it.
 
 ### 1.2 Cost and BYO keys move after login **[DECIDED]**
 
@@ -396,6 +441,7 @@ still running untouched alongside.
 | # | Item | Size |
 |---|---|---|
 | **P6.1** | **Address domain**: Place → Bookcase → `col` / `level`, shelves bound to addresses, `Copy` location rendered as `place · case · col · shelf · row` (§1.1). The naming lint (H5) lands here. Existing shelves keep their labels and gain addresses; nothing migrates twice because the fields were null, not absent. | M |
+| **P6.1b** | **Shelf merge** (§1.1, owner 2026-08-07): several shelf identities → one physical shelf, by hand on the map, never automatically. Repoints `Copy.shelf_id`, leaves an **alias** for the retired identity so append-only provenance and pre-merge reads stay resolvable. This is the exit from pillar 2's placeholder "one image = one shelf". | M |
 | **P6.2** | **POC A** — freehand sketch straightened into a clean orthogonal schematic (§7). The straightening is the whole bet; a wobbly canvas is not the target. | M |
 | **P6.3** | **POC B** — bookcase photo → shelf levels proposed by `segment.py`'s existing band signal, confirmed by hand. Free, deterministic, already tuned. | S |
 | **P6.4** | **Pick and build**, incl. the hybrid the vision anticipates (B feeds A: detect a case from its photo, drag the block onto the room plan); "where is it" highlight incl. back-row; stale-row surfacing. Explicitly **not** room-photo → floor plan: perspective, occlusion and scale make it unreliable and it is a paid call per attempt (`UI_PLAN` §3 flag). | L |

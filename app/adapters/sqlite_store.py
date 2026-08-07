@@ -30,11 +30,13 @@ from typing import Iterator
 from app.adapters.migrations import migrate
 from app.domain import (
     Book,
+    Capture,
     Copy,
     CopyFields,
     Lending,
     LibraryRef,
     Provenance,
+    Shelf,
     Status,
     WorkFields,
 )
@@ -44,6 +46,9 @@ from app.ports.store import (
     BookPage,
     BookSort,
     DuplicateBookKey,
+    DuplicateCaptureSlot,
+    ShelfNotEmpty,
+    UnknownShelf,
     WrongLibrary,
 )
 
@@ -59,35 +64,50 @@ _ORDER_BY = {
 }
 
 
-class SqliteBookStore:
-    """Implements ``app.ports.store.BookStore``."""
+@contextmanager
+def _open(path: Path) -> Iterator[sqlite3.Connection]:
+    conn = sqlite3.connect(str(path), timeout=10.0)
+    try:
+        conn.row_factory = sqlite3.Row
+        # ON by connection, not by database: SQLite defaults it OFF, and
+        # without it the copies/provenance cascades silently do nothing
+        # and `delete` leaves orphans behind.
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA journal_mode = WAL")
+        yield conn
+    finally:
+        conn.close()
 
-    def __init__(self, path: str | Path) -> None:
+
+class _SqliteStore:
+    """The file, the pragmas and the migration — shared by both aggregates.
+
+    Not an abstraction over the stores; just the three lines that would
+    otherwise be copied and drift. Each store still implements its own port.
+    """
+
+    def __init__(self, path: str | Path, *, kind: str) -> None:
         if str(path) == ":memory:":
             # Would silently "work" and lose everything: a connection per
             # operation means each call would get its own empty database.
-            # MemoryBookStore is the in-memory implementation.
+            # The Memory* stores are the in-memory implementations.
             raise ValueError(
-                "SqliteBookStore needs a file; use MemoryBookStore for RAM"
+                f"{kind} needs a file; use the in-memory store for RAM"
             )
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             migrate(conn)
 
-    @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(str(self.path), timeout=10.0)
-        try:
-            conn.row_factory = sqlite3.Row
-            # ON by connection, not by database: SQLite defaults it OFF, and
-            # without it the copies/provenance cascades silently do nothing
-            # and `delete` leaves orphans behind.
-            conn.execute("PRAGMA foreign_keys = ON")
-            conn.execute("PRAGMA journal_mode = WAL")
-            yield conn
-        finally:
-            conn.close()
+        return _open(self.path)
+
+
+class SqliteBookStore(_SqliteStore):
+    """Implements ``app.ports.store.BookStore``."""
+
+    def __init__(self, path: str | Path) -> None:
+        super().__init__(path, kind="SqliteBookStore")
 
     # --- BookStore -------------------------------------------------------
 
@@ -242,6 +262,190 @@ class SqliteBookStore:
             ).fetchone()[0])
 
 
+class SqliteShelfStore(_SqliteStore):
+    """Implements ``app.ports.store.ShelfStore``.
+
+    Shares the file with :class:`SqliteBookStore` — one database, two
+    aggregates — and the same connection-per-operation rule, for the same
+    reason (FastAPI's threadpool). It migrates on construction too, so
+    whichever store is built first brings the file up to date and the other
+    finds it current.
+    """
+
+    def __init__(self, path: str | Path) -> None:
+        super().__init__(path, kind="SqliteShelfStore")
+
+    # --- shelves ---------------------------------------------------------
+
+    def save_shelf(self, library: LibraryRef, shelf: Shelf) -> None:
+        if shelf.library_id != library.id:
+            raise WrongLibrary(
+                f"shelf {shelf.id} belongs to {shelf.library_id!r}, "
+                f"not {library.id!r}"
+            )
+        with self._connect() as conn:
+            with conn:
+                # INSERT OR REPLACE is safe HERE, unlike on books: the only
+                # unique key is the primary key, so a conflict can only be this
+                # same shelf. (On books it would resolve a book_key collision by
+                # deleting somebody else's record.) But it would fire the
+                # captures cascade on the delete half, so an explicit UPSERT it
+                # is — a rename must not destroy the shelf's photos.
+                conn.execute(
+                    "INSERT INTO shelves (id, library_id, label, depth_count,"
+                    " virtual, created_at) VALUES (?,?,?,?,?,?)"
+                    " ON CONFLICT(id) DO UPDATE SET label=excluded.label,"
+                    " depth_count=excluded.depth_count,"
+                    " virtual=excluded.virtual,"
+                    " created_at=excluded.created_at"
+                    " WHERE shelves.library_id = excluded.library_id",
+                    (shelf.id, library.id, shelf.label, shelf.depth_count,
+                     int(shelf.virtual), shelf.created_at),
+                )
+
+    def get_shelf(self, library: LibraryRef, shelf_id: str) -> Shelf | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM shelves WHERE id = ? AND library_id = ?",
+                (shelf_id, library.id),
+            ).fetchone()
+        return _load_shelf(row) if row else None
+
+    def list_shelves(
+        self,
+        library: LibraryRef,
+        *,
+        include_virtual: bool = False,
+    ) -> tuple[Shelf, ...]:
+        clause, params = self._scope(library, include_virtual)
+        with self._connect() as conn:
+            # Mirrors `Shelf.sort_key`: named shelves alphabetically, then
+            # unnamed ones oldest-first. COALESCE so a NULL created_at sorts
+            # with the empty ones rather than by SQLite's NULL rules.
+            rows = conn.execute(
+                f"SELECT * FROM shelves WHERE {clause}"
+                " ORDER BY label, COALESCE(created_at, ''), id",
+                params,
+            ).fetchall()
+        return tuple(_load_shelf(r) for r in rows)
+
+    def count_shelves(
+        self, library: LibraryRef, *, include_virtual: bool = False
+    ) -> int:
+        clause, params = self._scope(library, include_virtual)
+        with self._connect() as conn:
+            return int(conn.execute(
+                f"SELECT COUNT(*) FROM shelves WHERE {clause}", params
+            ).fetchone()[0])
+
+    @staticmethod
+    def _scope(library: LibraryRef, include_virtual: bool) -> tuple[str, tuple]:
+        if include_virtual:
+            return "library_id = ?", (library.id,)
+        return "library_id = ? AND virtual = 0", (library.id,)
+
+    def delete_shelf(self, library: LibraryRef, shelf_id: str) -> bool:
+        with self._connect() as conn:
+            if not conn.execute(
+                "SELECT 1 FROM shelves WHERE id = ? AND library_id = ?",
+                (shelf_id, library.id),
+            ).fetchone():
+                return False
+            if conn.execute(
+                "SELECT 1 FROM captures WHERE shelf_id = ? AND library_id = ?",
+                (shelf_id, library.id),
+            ).fetchone():
+                raise ShelfNotEmpty(
+                    f"shelf {shelf_id} still has captures; deleting it would "
+                    "destroy the record a re-read diffs against (§5.6)"
+                )
+            with conn:
+                cur = conn.execute(
+                    "DELETE FROM shelves WHERE id = ? AND library_id = ?",
+                    (shelf_id, library.id),
+                )
+            return cur.rowcount > 0
+
+    # --- captures --------------------------------------------------------
+
+    def save_capture(self, library: LibraryRef, capture: Capture) -> None:
+        if capture.library_id != library.id:
+            raise WrongLibrary(
+                f"capture {capture.id} belongs to {capture.library_id!r}, "
+                f"not {library.id!r}"
+            )
+        with self._connect() as conn:
+            # Checked in Python rather than left to the foreign key, because
+            # the FK cannot express "in THIS library" — a capture pointing at
+            # another tenant's shelf satisfies it perfectly.
+            if not conn.execute(
+                "SELECT 1 FROM shelves WHERE id = ? AND library_id = ?",
+                (capture.shelf_id, library.id),
+            ).fetchone():
+                raise UnknownShelf(
+                    f"no shelf {capture.shelf_id!r} in library {library.id!r}"
+                )
+            try:
+                with conn:
+                    conn.execute(
+                        'INSERT INTO captures (id, shelf_id, library_id, depth,'
+                        ' "order", image_id, captured_at) VALUES (?,?,?,?,?,?,?)'
+                        ' ON CONFLICT(id) DO UPDATE SET'
+                        ' shelf_id=excluded.shelf_id, depth=excluded.depth,'
+                        ' "order"=excluded."order", image_id=excluded.image_id,'
+                        ' captured_at=excluded.captured_at'
+                        ' WHERE captures.library_id = excluded.library_id',
+                        (capture.id, capture.shelf_id, library.id,
+                         capture.depth, capture.order, capture.image_id,
+                         capture.captured_at),
+                    )
+            except sqlite3.IntegrityError as exc:
+                # Named by columns, not by index, same as books.book_key:
+                #   "UNIQUE constraint failed: captures.shelf_id, ..."
+                if "captures.shelf_id" in str(exc):
+                    raise DuplicateCaptureSlot(
+                        f"another capture already holds {capture.slot} (§5.3)"
+                    ) from exc
+                raise
+
+    def get_capture(self, library: LibraryRef, capture_id: str) -> Capture | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM captures WHERE id = ? AND library_id = ?",
+                (capture_id, library.id),
+            ).fetchone()
+        return _load_capture(row) if row else None
+
+    def list_captures(
+        self,
+        library: LibraryRef,
+        shelf_id: str,
+        *,
+        depth: int | None = None,
+    ) -> tuple[Capture, ...]:
+        clause = "library_id = ? AND shelf_id = ?"
+        params: list[object] = [library.id, shelf_id]
+        if depth is not None:
+            clause += " AND depth = ?"
+            params.append(depth)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f'SELECT * FROM captures WHERE {clause}'
+                ' ORDER BY depth, "order", id',
+                params,
+            ).fetchall()
+        return tuple(_load_capture(r) for r in rows)
+
+    def delete_capture(self, library: LibraryRef, capture_id: str) -> bool:
+        with self._connect() as conn:
+            with conn:
+                cur = conn.execute(
+                    "DELETE FROM captures WHERE id = ? AND library_id = ?",
+                    (capture_id, library.id),
+                )
+            return cur.rowcount > 0
+
+
 # --- row <-> entity -------------------------------------------------------
 #
 # `list` loads copies and provenance per book, so a 50-row page is ~101
@@ -271,10 +475,11 @@ def _insert_book(conn: sqlite3.Connection, library: LibraryRef, book: Book) -> N
     for position, copy in enumerate(book.copies):
         conn.execute(
             "INSERT INTO copies (id, book_id, library_id, position, status,"
-            " label, shelf_id, tags, condition, acquired_at, lending,"
-            " lent_out) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            " label, shelf_id, depth, tags, condition, acquired_at, lending,"
+            " lent_out) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (copy.id, book.id, library.id, position, copy.status.value,
-             copy.label, copy.shelf_id, json.dumps(list(copy.fields.tags)),
+             copy.label, copy.shelf_id, copy.depth,
+             json.dumps(list(copy.fields.tags)),
              copy.fields.condition, copy.fields.acquired_at,
              json.dumps(asdict(copy.lending)) if copy.lending else None,
              # The SAME predicate `Lending.is_out` uses, kept in a comment
@@ -286,8 +491,9 @@ def _insert_book(conn: sqlite3.Connection, library: LibraryRef, book: Book) -> N
         for seq, p in enumerate(copy.provenance):
             conn.execute(
                 "INSERT INTO provenance (copy_id, seq, run_id, spine_id,"
-                " shelf_id, captured_at) VALUES (?,?,?,?,?,?)",
-                (copy.id, seq, p.run_id, p.spine_id, p.shelf_id, p.captured_at),
+                " shelf_id, captured_at, depth) VALUES (?,?,?,?,?,?,?)",
+                (copy.id, seq, p.run_id, p.spine_id, p.shelf_id, p.captured_at,
+                 p.depth),
             )
 
 
@@ -315,11 +521,35 @@ def _load_book(conn: sqlite3.Connection, row: sqlite3.Row) -> Book:
     )
 
 
+def _load_shelf(row: sqlite3.Row) -> Shelf:
+    return Shelf(
+        id=row["id"],
+        library_id=row["library_id"],
+        label=row["label"],
+        depth_count=row["depth_count"],
+        virtual=bool(row["virtual"]),
+        created_at=row["created_at"],
+    )
+
+
+def _load_capture(row: sqlite3.Row) -> Capture:
+    return Capture(
+        id=row["id"],
+        shelf_id=row["shelf_id"],
+        library_id=row["library_id"],
+        depth=row["depth"],
+        order=row["order"],
+        image_id=row["image_id"],
+        captured_at=row["captured_at"],
+    )
+
+
 def _load_copy(conn: sqlite3.Connection, row: sqlite3.Row) -> Copy:
     provenance = tuple(
         Provenance(
             run_id=p["run_id"], spine_id=p["spine_id"],
             shelf_id=p["shelf_id"], captured_at=p["captured_at"],
+            depth=p["depth"],
         )
         for p in conn.execute(
             "SELECT * FROM provenance WHERE copy_id = ? ORDER BY seq",
@@ -332,6 +562,7 @@ def _load_copy(conn: sqlite3.Connection, row: sqlite3.Row) -> Copy:
         status=Status(row["status"]),
         label=row["label"],
         shelf_id=row["shelf_id"],
+        depth=row["depth"],
         provenance=provenance,
         fields=CopyFields(
             tags=tuple(json.loads(row["tags"])),

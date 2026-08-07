@@ -15,8 +15,10 @@ Two rules shape every signature here:
     ``app/domain`` — a store that could write a Copy independently would be a
     second path to creating one, and §5.1 says there is exactly one.
 
-Deliberately NOT here: full-text search (P1.5 — it needs a measured mechanism,
-not a guessed one) and shelf queries (P2.1 owns Shelf).
+Deliberately NOT here: reconciliation (P2.3 — a pure function over a shelf's
+state and a read's claims, so it belongs in the domain and needs no port) and
+blob storage (P3.5's ``BlobStore``; a capture's ``image_id`` is a reference,
+and multi-MB JPEGs are exactly what D1 keeps out of the database file).
 """
 from __future__ import annotations
 
@@ -24,7 +26,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol
 
-from app.domain import Book, LibraryRef, Status
+from app.domain import Book, Capture, LibraryRef, Shelf, Status
 
 
 class StoreError(Exception):
@@ -46,6 +48,34 @@ class WrongLibrary(StoreError):
 
     Never a user error — always a wiring bug, and the kind that writes one
     tenant's data into another's. It raises loudly rather than being coerced.
+    """
+
+
+class UnknownShelf(StoreError):
+    """A capture names a shelf that does not exist in this library.
+
+    A foreign-key violation in relational terms, but raised by name because the
+    likely cause is a client passing a shelf id from another library — which
+    §4.2 says must look like absence, not like a permission error.
+    """
+
+
+class DuplicateCaptureSlot(StoreError):
+    """Two captures claiming one ``(shelf, depth, order)`` (§5.3).
+
+    That triple IS a capture's identity, so allowing two would make a shelf's
+    book order ambiguous — and the ambiguity would surface much later, as a
+    reconciliation diff that reorders itself between reads.
+    """
+
+
+class ShelfNotEmpty(StoreError):
+    """Deleting a shelf that still holds evidence.
+
+    §5.6's whole direction is that nothing is destroyed automatically, and a
+    shelf's captures are the record a re-read diffs against. So deletion is for
+    the shelf typed by mistake, not for clearing one out — and emptying it
+    first is a deliberate, separately-confirmed action.
     """
 
 
@@ -154,3 +184,97 @@ class BookStore(Protocol):
 
     def count(self, library: LibraryRef) -> int:
         """Books in this library. Cheap enough to call on every page."""
+
+
+class ShelfStore(Protocol):
+    """Persistence for Shelf and Capture. All methods library-scoped (H2).
+
+    A **separate port from** :class:`BookStore`, not extra methods on it. The
+    two aggregates have independent lifetimes: a shelf exists before any book
+    is on it, and a copy leaving a shelf (``remove_from_shelf``) changes the
+    book and not the shelf. Merging them would also mean a Postgres adapter had
+    to port both at once, which is precisely the coupling D1 is avoiding.
+
+    Captures live here rather than in a store of their own because a capture
+    is meaningless without its shelf — its identity IS ``(shelf, depth, order)``
+    (§5.3) — and because "the captures of this shelf at this depth" is the
+    query P2.3's reconciliation runs.
+    """
+
+    # --- shelves ---------------------------------------------------------
+
+    def save_shelf(self, library: LibraryRef, shelf: Shelf) -> None:
+        """Insert or replace. Raises :class:`WrongLibrary` on a mismatch."""
+
+    def get_shelf(self, library: LibraryRef, shelf_id: str) -> Shelf | None:
+        """By id, or ``None``. A shelf in another library reads as ``None`` —
+        same 404-not-403 reasoning as :meth:`BookStore.get` (§4.2)."""
+
+    def list_shelves(
+        self,
+        library: LibraryRef,
+        *,
+        include_virtual: bool = False,
+    ) -> tuple[Shelf, ...]:
+        """Every shelf, ordered by label.
+
+        **Virtual shelves are excluded by default** — the wishlist holds books
+        the owner does not own, so counting it among the shelves inflates both
+        the shelf list and the apparent size of the library (§6). The caller
+        that wants it says so; nobody gets it by forgetting a filter.
+
+        Not paged: a personal library has tens of shelves, not thousands, and
+        the shelves screen shows them all. If that ever stops being true the
+        change is additive.
+        """
+
+    def count_shelves(self, library: LibraryRef, *, include_virtual: bool = False) -> int:
+        """How many shelves. Excludes the wishlist by default, as above."""
+
+    def delete_shelf(self, library: LibraryRef, shelf_id: str) -> bool:
+        """Remove a shelf that holds no captures. Returns False if absent.
+
+        Raises :class:`ShelfNotEmpty` when captures exist. Deliberately *not* a
+        cascade: cascading would delete the photographic record a re-read diffs
+        against, and §5.6 says a shelf's book list is durable state.
+
+        ⚠ Copies still pointing at this shelf are NOT cleared here — they live
+        in the other aggregate, and a store may not reach across. The caller
+        clears them with ``remove_from_shelf`` first; P2.2 owns that sequence
+        in the API, where both stores are in hand.
+        """
+
+    # --- captures --------------------------------------------------------
+
+    def save_capture(self, library: LibraryRef, capture: Capture) -> None:
+        """Insert or replace one photo of one shelf at one depth.
+
+        Raises :class:`WrongLibrary` on a mismatch, :class:`UnknownShelf` if
+        the shelf does not exist in this library — a capture whose shelf is
+        absent is a read with nothing to reconcile against — and
+        :class:`DuplicateCaptureSlot` if another capture already holds this
+        ``(shelf, depth, order)``.
+        """
+
+    def get_capture(self, library: LibraryRef, capture_id: str) -> Capture | None:
+        """By id, or ``None``."""
+
+    def list_captures(
+        self,
+        library: LibraryRef,
+        shelf_id: str,
+        *,
+        depth: int | None = None,
+    ) -> tuple[Capture, ...]:
+        """A shelf's captures in ``(depth, order)`` order.
+
+        ``depth`` narrows to one row front-to-back. That parameter is the whole
+        reason this method exists in this shape: §5.6's not-seen rule and the
+        diff view are **per depth**, and §5.7 #2 forbids overlap-dedup across
+        depths — a caller that could only fetch "all captures of this shelf"
+        would have to re-derive the scoping every time, and P2.3 is where
+        getting it wrong is expensive.
+        """
+
+    def delete_capture(self, library: LibraryRef, capture_id: str) -> bool:
+        """Remove one capture. Returns False if it wasn't there."""

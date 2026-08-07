@@ -31,10 +31,11 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from app.adapters.memory_store import MemoryBookStore
+from app.adapters.memory_store import MemoryBookStore, MemoryShelfStore
 from app.adapters.migrations import SCHEMA_VERSION, current_version, migrate
-from app.adapters.sqlite_store import SqliteBookStore
+from app.adapters.sqlite_store import SqliteBookStore, SqliteShelfStore
 from app.domain import (
+    Capture,
     LibraryRef,
     Provenance,
     Status,
@@ -43,14 +44,20 @@ from app.domain import (
     edit,
     lend,
     new_book,
+    new_capture,
+    new_shelf,
     observe,
     remove_from_shelf,
+    rename_shelf,
     return_copy,
 )
 from app.ports.store import (
     BookPage,
     BookSort,
     DuplicateBookKey,
+    DuplicateCaptureSlot,
+    ShelfNotEmpty,
+    UnknownShelf,
     WrongLibrary,
 )
 
@@ -58,11 +65,23 @@ LIB = LibraryRef("lib-a", "Library A")
 OTHER = LibraryRef("lib-b", "Library B")
 
 CONTRACT: list = []
+SHELF_CONTRACT: list = []
 
 
 def contract(fn):
-    """Mark a function as part of the spec. It receives a fresh store."""
+    """Mark a function as part of the BookStore spec. Gets a fresh store."""
     CONTRACT.append(fn)
+    return fn
+
+
+def shelf_contract(fn):
+    """Mark a function as part of the ShelfStore spec (P2.1).
+
+    A second list rather than a flag on the first: the two ports have separate
+    implementations, and a shelf case handed a BookStore would fail for the
+    wrong reason.
+    """
+    SHELF_CONTRACT.append(fn)
     return fn
 
 
@@ -543,6 +562,204 @@ def every_store_method_takes_a_library(store):
         assert hasattr(store, name), f"{type(store).__name__} lacks {name}()"
 
 
+# --- the shelf spec (P2.1) ------------------------------------------------
+#
+# A second contract list, because these run against the ShelfStore
+# implementations rather than the BookStore ones. Same discipline: one spec,
+# every implementation, so P2.1's shelf model is as portable as P1.2's books.
+
+def _sh(n: int = 1, *, library: LibraryRef = LIB, **kw):
+    args = dict(id=f"sh{n}", library_id=library.id, label=f"מדף {n}")
+    args.update(kw)
+    return new_shelf(**args)
+
+
+@shelf_contract
+def saves_and_reads_back_a_shelf(store):
+    store.save_shelf(LIB, _sh(1, depth_count=2, created_at="2026-08-07"))
+    got = store.get_shelf(LIB, "sh1")
+    assert got is not None
+    assert (got.label, got.depth_count, got.created_at) == ("מדף 1", 2, "2026-08-07")
+    assert store.get_shelf(LIB, "nope") is None
+
+
+@shelf_contract
+def the_wishlist_is_excluded_from_shelf_listings_by_default(store):
+    """P2.1's named rule. The default has to be exclusion, not a filter the
+    caller remembers: the wishlist holds books the owner does not own, so a
+    forgotten filter inflates both the shelf list and the apparent size of the
+    library — and it inflates them silently."""
+    store.save_shelf(LIB, _sh(1))
+    store.save_shelf(LIB, _sh(2, id="wish", label="משאלות", virtual=True))
+
+    assert [s.id for s in store.list_shelves(LIB)] == ["sh1"]
+    assert store.count_shelves(LIB) == 1
+    assert {s.id for s in store.list_shelves(LIB, include_virtual=True)} == {
+        "sh1", "wish"}
+    assert store.count_shelves(LIB, include_virtual=True) == 2
+
+
+@shelf_contract
+def shelves_are_listed_in_a_total_order(store):
+    """Same reasoning as the book sorts: two shelves labelled the same must
+    still order identically on every call, or the shelves screen reshuffles
+    between renders. Inserted in DESCENDING id order so a missing tiebreaker
+    cannot pass on insertion order alone."""
+    for n in (3, 2, 1):
+        store.save_shelf(LIB, _sh(n, label="מדף"))
+    assert [s.id for s in store.list_shelves(LIB)] == ["sh1", "sh2", "sh3"]
+
+
+@shelf_contract
+def unnamed_shelves_are_ordered_by_creation_not_by_id(store):
+    """Labels are optional (owner's call), so early on most shelves share the
+    empty one — and every implementation has to put them in the same place, or
+    the shelves screen reorders itself when the datastore changes. The rule
+    lives in `Shelf.sort_key`; adapters mirror it, they do not invent it.
+
+    Inserted so that id order, insertion order and the correct order all
+    differ, which is the only arrangement that can catch a wrong tiebreaker.
+    """
+    store.save_shelf(LIB, _sh(1, label="", created_at="2026-08-05"))
+    store.save_shelf(LIB, _sh(2, label="אכסדרה", created_at="2026-08-01"))
+    store.save_shelf(LIB, _sh(3, label="", created_at="2026-08-02"))
+    assert [s.id for s in store.list_shelves(LIB)] == ["sh3", "sh1", "sh2"]
+
+
+@shelf_contract
+def renaming_a_shelf_keeps_its_captures(store):
+    """The label is the whole of a book's location until pillar 6, so it gets
+    edited often. A save that replaced the row by delete-then-insert would
+    cascade the captures away — and take the record a re-read diffs against
+    (§5.6) with it."""
+    shelf = _sh(1)
+    store.save_shelf(LIB, shelf)
+    store.save_capture(LIB, new_capture(shelf, id="cap1"))
+
+    store.save_shelf(LIB, rename_shelf(shelf, "מדף אחר"))
+    assert store.get_shelf(LIB, "sh1").label == "מדף אחר"
+    assert [c.id for c in store.list_captures(LIB, "sh1")] == ["cap1"]
+
+
+@shelf_contract
+def captures_come_back_in_depth_then_order(store):
+    """§5.3: captures are ordered so a shelf's book list has a sensible
+    sequence, and keyed by depth so two photos of physically different scenes
+    are never one sequence."""
+    shelf = _sh(1, depth_count=2)
+    store.save_shelf(LIB, shelf)
+    for cap_id, depth, order in (("b1", 2, 1), ("a2", 1, 1), ("b0", 2, 0),
+                                 ("a1", 1, 0)):
+        store.save_capture(LIB, new_capture(shelf, id=cap_id, depth=depth,
+                                            order=order))
+    assert [c.id for c in store.list_captures(LIB, "sh1")] == [
+        "a1", "a2", "b0", "b1"]
+
+
+@shelf_contract
+def captures_can_be_fetched_for_one_depth_alone(store):
+    """The parameter §5.6 and §5.7 #1 need. Re-reading only the front row of a
+    three-row shelf must compare against that row — comparing against the
+    whole shelf would flag two thirds of its books as possibly missing on
+    every single re-read, and §5.7 #2 forbids merging overlaps across
+    depths."""
+    shelf = _sh(1, depth_count=3)
+    store.save_shelf(LIB, shelf)
+    store.save_capture(LIB, new_capture(shelf, id="front", depth=1))
+    store.save_capture(LIB, new_capture(shelf, id="middle", depth=2))
+    store.save_capture(LIB, new_capture(shelf, id="back", depth=3))
+
+    assert [c.id for c in store.list_captures(LIB, "sh1", depth=2)] == ["middle"]
+    assert len(store.list_captures(LIB, "sh1")) == 3
+
+
+@shelf_contract
+def two_captures_cannot_hold_one_slot(store):
+    """(shelf, depth, order) IS a capture's identity (§5.3). Two in one slot
+    make a shelf's book order ambiguous, and the ambiguity would surface much
+    later as a reconciliation diff that reorders itself between reads.
+
+    Re-saving the SAME capture into its own slot is an update, not a clash."""
+    shelf = _sh(1)
+    store.save_shelf(LIB, shelf)
+    store.save_capture(LIB, new_capture(shelf, id="cap1", order=0))
+    store.save_capture(LIB, new_capture(shelf, id="cap1", order=0,
+                                        image_id="img-2"))
+    assert store.get_capture(LIB, "cap1").image_id == "img-2"
+
+    _raises(DuplicateCaptureSlot, store.save_capture, LIB,
+            new_capture(shelf, id="cap2", order=0))
+
+
+@shelf_contract
+def a_capture_cannot_name_a_shelf_that_is_not_here(store):
+    """Including — especially — a shelf id from another library. §4.2 says a
+    foreign record reads as ABSENT, so this is the same answer either way and
+    the route above it cannot leak existence."""
+    store.save_shelf(OTHER, _sh(1, library=OTHER))
+    ghost = Capture(id="cap1", shelf_id="sh1", library_id=LIB.id)
+    _raises(UnknownShelf, store.save_capture, LIB, ghost)
+    assert store.get_capture(LIB, "cap1") is None
+
+
+@shelf_contract
+def deleting_a_shelf_with_captures_is_refused_not_cascaded(store):
+    """§5.6's direction, at the store: nothing is destroyed automatically. A
+    cascade here would delete the photographic record a re-read diffs against,
+    on a misclick. Deletion is for the shelf typed by mistake."""
+    shelf = _sh(1)
+    store.save_shelf(LIB, shelf)
+    assert store.delete_shelf(LIB, "sh2") is False, "deleted something absent"
+
+    store.save_capture(LIB, new_capture(shelf, id="cap1"))
+    _raises(ShelfNotEmpty, store.delete_shelf, LIB, "sh1")
+    assert store.get_shelf(LIB, "sh1") is not None
+
+    assert store.delete_capture(LIB, "cap1") is True
+    assert store.delete_shelf(LIB, "sh1") is True
+    assert store.get_shelf(LIB, "sh1") is None
+
+
+@shelf_contract
+def a_shelf_in_another_library_reads_as_absent(store):
+    """The isolation rule the API's 404-not-403 answer rests on (§4.2, P3.3).
+    Written now against two library refs even though the app resolves one."""
+    shelf = _sh(1)
+    store.save_shelf(LIB, shelf)
+    store.save_capture(LIB, new_capture(shelf, id="cap1"))
+
+    assert store.get_shelf(OTHER, "sh1") is None
+    assert store.get_capture(OTHER, "cap1") is None
+    assert store.list_shelves(OTHER) == ()
+    assert store.list_captures(OTHER, "sh1") == ()
+    assert store.count_shelves(OTHER) == 0
+    assert store.delete_shelf(OTHER, "sh1") is False
+    assert store.delete_capture(OTHER, "cap1") is False
+    assert store.get_shelf(LIB, "sh1") is not None, "a foreign call reached in"
+
+
+@shelf_contract
+def saving_a_shelf_into_the_wrong_library_is_refused_loudly(store):
+    _raises(WrongLibrary, store.save_shelf, OTHER, _sh(1, library=LIB))
+    assert store.count_shelves(OTHER) == 0
+
+
+@shelf_contract
+def every_shelf_store_method_takes_a_library(store):
+    """H2 by signature, same as the book store's — a method added later
+    without a library scope fails here, before it has callers."""
+    import inspect
+
+    from app.ports.store import ShelfStore
+
+    for name, member in vars(ShelfStore).items():
+        if name.startswith("_") or not callable(member):
+            continue
+        params = list(inspect.signature(member).parameters)
+        assert params[:2] == ["self", "library"], (name, params)
+        assert hasattr(store, name), f"{type(store).__name__} lacks {name}()"
+
+
 # --- registration ---------------------------------------------------------
 
 @contextmanager
@@ -559,7 +776,23 @@ def _sqlite_store():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+@contextmanager
+def _memory_shelf_store():
+    yield MemoryShelfStore()
+
+
+@contextmanager
+def _sqlite_shelf_store():
+    tmp = tempfile.mkdtemp(prefix="booksnap-shelf-")
+    try:
+        yield SqliteShelfStore(Path(tmp) / "books.db")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 IMPLEMENTATIONS = (("memory", _memory_store), ("sqlite", _sqlite_store))
+SHELF_IMPLEMENTATIONS = (("memory", _memory_shelf_store),
+                         ("sqlite", _sqlite_shelf_store))
 
 
 def _bind(fn, factory, name):
@@ -576,6 +809,11 @@ def _bind(fn, factory, name):
 
 for _label, _factory in IMPLEMENTATIONS:
     for _fn in CONTRACT:
+        _name = f"test_{_fn.__name__}__{_label}"
+        globals()[_name] = _bind(_fn, _factory, _name)
+
+for _label, _factory in SHELF_IMPLEMENTATIONS:
+    for _fn in SHELF_CONTRACT:
         _name = f"test_{_fn.__name__}__{_label}"
         globals()[_name] = _bind(_fn, _factory, _name)
 
@@ -665,6 +903,11 @@ def test_a_v1_database_upgrades_and_backfills_its_derived_columns():
         assert [b.id for b in store.search(LIB, "כופרים").items] == ["b1"]
         assert store.get(LIB, "b1").title == "מלכי הכופרים"
         assert store.list(LIB, lent_out=False).total == 1
+        # v5: the copy predates shelves entirely, so it must read back
+        # UNLOCATED — not "on shelf None at depth 1", which the domain refuses
+        # anyway, and not at a depth with no shelf.
+        assert store.get(LIB, "b1").copies[0].location is None
+        assert SqliteShelfStore(path).list_shelves(LIB) == ()
 
         # A book saved AFTER the upgrade must interleave with the migrated
         # ones, not sort into its own group — the failure mode of a backfill
@@ -679,6 +922,81 @@ def test_a_v1_database_upgrades_and_backfills_its_derived_columns():
                         lent_at="2026-08-01")
         store.save(LIB, migrated)
         assert store.list(LIB, lent_out=True).total == 1
+
+
+def test_a_v5_database_upgrades_its_shelf_index_in_place():
+    """v6 exists as a separate step rather than an edit to v5 because v5 had
+    already run on the owner's real work/product.db — anything importing
+    `app.main` opens and migrates it, and `tools/api_contract.py` does. An
+    edited v5 would never re-run there, so the real database would keep the old
+    index while every fresh clone got the new one, and the two would disagree
+    about where unnamed shelves sort.
+
+    This asserts the upgrade path that fact requires: a database stopped at v5
+    reaches SCHEMA_VERSION and comes out ordering by the full sort key.
+    """
+    import sqlite3
+
+    from app.adapters.migrations import MIGRATIONS
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "v5.db"
+        conn = sqlite3.connect(str(path))
+        try:
+            for version, step in MIGRATIONS:
+                if version > 5:
+                    break
+                if isinstance(step, str):
+                    conn.executescript(step)
+                else:
+                    step(conn)
+            conn.execute("PRAGMA user_version = 5")
+            conn.commit()
+            assert current_version(conn) == 5
+            index = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE name = 'shelves_by_label'"
+            ).fetchone()[0]
+            assert "created_at" not in index, "the fixture is not really v5"
+        finally:
+            conn.close()
+
+        store = SqliteShelfStore(path)          # migrates on construction
+        conn = sqlite3.connect(str(path))
+        try:
+            assert current_version(conn) == SCHEMA_VERSION
+            index = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE name = 'shelves_by_label'"
+            ).fetchone()[0]
+            assert "created_at" in index, "v6 did not replace the index"
+        finally:
+            conn.close()
+
+        store.save_shelf(LIB, _sh(1, label="", created_at="2026-08-05"))
+        store.save_shelf(LIB, _sh(2, label="", created_at="2026-08-02"))
+        assert [s.id for s in store.list_shelves(LIB)] == ["sh2", "sh1"]
+
+
+def test_deleting_a_shelf_never_touches_the_books_that_stood_on_it():
+    """Two aggregates, one file — so the cascade has to be checked, not
+    assumed. §5.6's direction is that a book is never removed automatically;
+    if `shelves` cascaded into `copies`, deleting a mistyped shelf would delete
+    every book on it, and the destructive direction is exactly the one the
+    whole reconciliation design refuses to take.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "books.db"
+        books, shelves = SqliteBookStore(path), SqliteShelfStore(path)
+        shelves.save_shelf(LIB, _sh(1))
+        books.save(LIB, _book(1, shelf_id="sh1"))
+
+        assert shelves.delete_shelf(LIB, "sh1") is True
+        kept = books.get(LIB, "b1")
+        assert kept is not None, "deleting a shelf deleted its books"
+        # The copy still names the shelf it stood on: clearing it is
+        # `remove_from_shelf`, a domain operation, and P2.2 owns the sequence
+        # in the API where both stores are in hand. Asserted so the gap is a
+        # recorded decision rather than a surprise.
+        assert kept.copies[0].shelf_id == "sh1"
 
 
 def test_deleting_a_book_leaves_no_orphan_rows():
