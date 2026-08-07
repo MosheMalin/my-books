@@ -47,6 +47,7 @@ from app.adapters.sqlite_store import (
     SqliteShelfStore,
 )
 from app.domain import (
+    Alternative,
     Capture,
     Claim,
     ClaimTier,
@@ -857,6 +858,36 @@ def saves_and_reads_back_a_read_with_its_claims(store):
     got = store.get_read(LIB, "rd1")
     assert got == r, "the read (with its claims) did not survive the round trip"
     assert got.claims[0].box == (1, 2, 3, 4)
+
+
+@read_contract
+def a_claims_alternatives_survive_the_round_trip(store):
+    """P2.7's "why?" data — ranked runners-up from explain() — is not just an
+    in-memory convenience: it has to come back from SQLite too (v10), or the
+    review UI's why? panel is empty for every read served from a real file."""
+    r = _read(1)
+    r = append_claim(r, Claim(
+        id="cl1", spine_id="sp1", capture_id="cap1", title="מלכי הכופרים",
+        tier=ClaimTier.AUTO, score=91.0,
+        alternatives=(
+            Alternative(title="ספינות מן המערב", author="פול קארני", score=61.2),
+            Alternative(title="הכופרים", author="", score=40.0,
+                       reason="title similarity 40 < 47"),
+        ),
+    ))
+    # A claim with NO alternatives (explain() found nothing, or the engine had
+    # no OCR text) must round-trip as an empty tuple, not None/error — the
+    # common case, so it is worth its own claim in the same read.
+    r = append_claim(r, Claim(id="cl2", spine_id="sp2", capture_id="cap1"))
+    store.save_read(LIB, r)
+
+    got = store.get_read(LIB, "rd1")
+    assert got.claims[0].alternatives == (
+        Alternative(title="ספינות מן המערב", author="פול קארני", score=61.2),
+        Alternative(title="הכופרים", author="", score=40.0,
+                   reason="title similarity 40 < 47"),
+    )
+    assert got.claims[1].alternatives == ()
 
 
 @read_contract

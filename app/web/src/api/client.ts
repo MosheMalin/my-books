@@ -9,7 +9,7 @@
  * `tools/api_contract.py --check` fails the commit if the generated types are
  * stale relative to the server.
  */
-import type { paths } from './schema'
+import type { components, paths } from './schema'
 
 /** All paths are versioned server-side (H3); the client never builds a URL
  *  by hand, so it cannot accidentally call an unversioned endpoint. */
@@ -224,3 +224,113 @@ export const returnCopy = (bookId: string, copyId: string, opts?: ApiOptions) =>
  *  browser handle Content-Disposition is what makes "Save as…" work. */
 export const exportUrl = (format: 'csv' | 'json'): string =>
   `/api/v1/books/export?format=${format}`
+
+// --- capture: images, shelves, captures, reads (P2.7) -----------------------
+//
+// Straight off `components['schemas']`, the same generated source as every
+// type above — the `paths[P]` extraction `BookPatch`/`BookCreate` use reads
+// no better here and adds a layer of indirection for paths this file never
+// calls through `apiGet`/`send`'s literal-path generics (image upload is
+// multipart; reads are nested under a dynamic `shelf_id`). Still the SAME
+// contract: a DTO rename in `app/api/dto.py` breaks this file at compile
+// time either way.
+
+export type Shelf = components['schemas']['ShelfDTO']
+export type ShelfCreate = components['schemas']['ShelfCreate']
+export type CaptureDTO = components['schemas']['CaptureDTO']
+export type CaptureCreate = components['schemas']['CaptureCreate']
+export type CapturePatch = components['schemas']['CapturePatch']
+export type CaptureBinding = components['schemas']['CaptureBinding']
+export type ImageDTO = components['schemas']['ImageDTO']
+export type ReadCreate = components['schemas']['ReadCreate']
+export type ReadDTO = components['schemas']['ReadDTO']
+export type ClaimDTO = components['schemas']['ClaimDTO']
+export type AlternativeDTO = components['schemas']['AlternativeDTO']
+export type DiffDTO = components['schemas']['DiffDTO']
+export type ClaimOutcomeDTO = components['schemas']['ClaimOutcomeDTO']
+export type NotSeenEntryDTO = components['schemas']['NotSeenEntryDTO']
+export type ApplyDiffRequest = components['schemas']['ApplyDiffRequest']
+export type AnswerIn = components['schemas']['AnswerIn']
+
+/** GET by a path this file builds itself (a dynamic `shelf_id`/`read_id`
+ *  segment `apiGet`'s literal-key generic cannot express) — same request
+ *  shape as `apiGet`, just not keyed by a `paths` literal. `getBook` above
+ *  predates this and inlines the same few lines once; two more call sites
+ *  below is what earns it a name. */
+async function getJson<T>(path: string, opts: ApiOptions = {}): Promise<T> {
+  const doFetch = opts.fetchImpl ?? globalThis.fetch
+  const res = await doFetch(path, {
+    headers: { Accept: 'application/json' },
+    ...(opts.signal ? { signal: opts.signal } : {}),
+  })
+  if (!res.ok) throw new ApiError(res.status, path, `GET ${path}: ${res.status}`)
+  return (await res.json()) as T
+}
+
+export const listShelves = (opts: ApiOptions = {}): Promise<Shelf[]> =>
+  apiGet('/api/v1/shelves', opts)
+
+export const addShelfDepth = (shelfId: string, opts?: ApiOptions): Promise<Shelf> =>
+  send('POST', `/api/v1/shelves/${encodeURIComponent(shelfId)}/depths`,
+       undefined, opts) as Promise<Shelf>
+
+/**
+ * Store a photo's bytes. Multipart, so it bypasses `send()`'s JSON body —
+ * everything else (headers, error mapping) matches it exactly.
+ */
+export async function uploadImage(
+  file: File | Blob,
+  filename: string,
+  opts: ApiOptions = {},
+): Promise<ImageDTO> {
+  const doFetch = opts.fetchImpl ?? globalThis.fetch
+  const body = new FormData()
+  body.append('file', file, filename)
+  body.append('filename', filename)
+  const headers: Record<string, string> = { Accept: 'application/json' }
+  if (opts.libraryId) headers['X-Booksnap-Library'] = opts.libraryId
+  const path = '/api/v1/images'
+  const res = await doFetch(path, {
+    method: 'POST', headers, body,
+    ...(opts.signal ? { signal: opts.signal } : {}),
+  })
+  if (!res.ok) {
+    throw new ApiError(res.status, path, `POST ${path} failed: ${res.status}`)
+  }
+  return (await res.json()) as ImageDTO
+}
+
+export const createCapture = (payload: CaptureCreate, opts?: ApiOptions) =>
+  send('POST', '/api/v1/captures', payload, opts) as Promise<CaptureBinding>
+
+export const patchCapture = (
+  captureId: string, payload: CapturePatch, opts?: ApiOptions,
+) => send('PATCH', `/api/v1/captures/${encodeURIComponent(captureId)}`,
+         payload, opts) as Promise<CaptureBinding>
+
+const readsPath = (shelfId: string, tail = '') =>
+  `/api/v1/shelves/${encodeURIComponent(shelfId)}/reads${tail}`
+
+export const startRead = (
+  shelfId: string, payload: ReadCreate, opts?: ApiOptions,
+) => send('POST', readsPath(shelfId), payload, opts) as Promise<ReadDTO>
+
+export const getRead = (
+  shelfId: string, readId: string, opts: ApiOptions = {},
+): Promise<ReadDTO> =>
+  getJson(readsPath(shelfId, `/${encodeURIComponent(readId)}`), opts)
+
+export const stopRead = (
+  shelfId: string, readId: string, opts?: ApiOptions,
+) => send('POST', readsPath(shelfId, `/${encodeURIComponent(readId)}/stop`),
+         undefined, opts) as Promise<ReadDTO>
+
+export const getDiff = (
+  shelfId: string, readId: string, opts: ApiOptions = {},
+): Promise<DiffDTO> =>
+  getJson(readsPath(shelfId, `/${encodeURIComponent(readId)}/diff`), opts)
+
+export const applyDiff = (
+  shelfId: string, readId: string, payload: ApplyDiffRequest, opts?: ApiOptions,
+) => send('POST', readsPath(shelfId, `/${encodeURIComponent(readId)}/apply`),
+         payload, opts) as Promise<DiffDTO>

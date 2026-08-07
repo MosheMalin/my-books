@@ -651,6 +651,32 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * AlternativeDTO
+         * @description One ranked runner-up `booksnap.match.explain()` considered for a
+         *     claim's OCR text (P2.7) — what the review UI's "why?" panel renders.
+         *     ``reason`` is empty for a candidate that passed the matcher's own gates
+         *     (a real runner-up) and names the gate that refused one that didn't.
+         */
+        AlternativeDTO: {
+            /**
+             * Author
+             * @default
+             */
+            author: string;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+            /**
+             * Score
+             * @default 0
+             */
+            score: number;
+            /** Title */
+            title: string;
+        };
+        /**
          * AnswerIn
          * @description One human response to one still-open (``needs_decision``) claim.
          */
@@ -874,6 +900,11 @@ export interface components {
          * @description What one read asserts about one spine (`app.domain.read.Claim`).
          */
         ClaimDTO: {
+            /**
+             * Alternatives
+             * @description Ranked runners-up from explain(), for the review UI's 'why?' — never the accepted match itself. Empty when the engine had no OCR text or no explain() to ask (a structured fallback provider).
+             */
+            alternatives?: components["schemas"]["AlternativeDTO"][];
             /**
              * Author
              * @default

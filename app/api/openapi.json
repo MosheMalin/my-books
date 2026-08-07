@@ -1,6 +1,35 @@
 {
   "components": {
     "schemas": {
+      "AlternativeDTO": {
+        "description": "One ranked runner-up `booksnap.match.explain()` considered for a\nclaim's OCR text (P2.7) — what the review UI's \"why?\" panel renders.\n``reason`` is empty for a candidate that passed the matcher's own gates\n(a real runner-up) and names the gate that refused one that didn't.",
+        "properties": {
+          "author": {
+            "default": "",
+            "title": "Author",
+            "type": "string"
+          },
+          "reason": {
+            "default": "",
+            "title": "Reason",
+            "type": "string"
+          },
+          "score": {
+            "default": 0.0,
+            "title": "Score",
+            "type": "number"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "title": "AlternativeDTO",
+        "type": "object"
+      },
       "AnswerIn": {
         "description": "One human response to one still-open (``needs_decision``) claim.",
         "properties": {
@@ -405,6 +434,14 @@
       "ClaimDTO": {
         "description": "What one read asserts about one spine (`app.domain.read.Claim`).",
         "properties": {
+          "alternatives": {
+            "description": "Ranked runners-up from explain(), for the review UI's 'why?' — never the accepted match itself. Empty when the engine had no OCR text or no explain() to ask (a structured fallback provider).",
+            "items": {
+              "$ref": "#/components/schemas/AlternativeDTO"
+            },
+            "title": "Alternatives",
+            "type": "array"
+          },
           "author": {
             "default": "",
             "title": "Author",

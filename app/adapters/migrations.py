@@ -380,6 +380,23 @@ CREATE INDEX duplicate_questions_by_library
     ON duplicate_questions (library_id, opened_at, id);
 """
 
+# --- v10: ranked alternatives on a claim (P2.7, "why?") --------------------
+#
+# `booksnap.match.explain()`'s ranked runners-up, computed once at read time
+# (`BooksnapReader._alternatives`) and stored alongside the claim they
+# explain — never recomputed on demand, because a live "why?" click against
+# an NLI-backed catalog would be a second network-shaped call for every
+# question a human asks (CLAUDE.md's "deterministic first" cost philosophy).
+# Read time already has the catalog open for the SAME query text, so this is
+# free (a disk cache hit at worst); a later on-demand endpoint would not be.
+#
+# Pure SQL, no backfill: rows written before this migration simply have no
+# alternatives (NULL -> `()`), same as `crop_key`/`box`/`catalog_id` already
+# being nullable on claims that predate P2.3's crops.
+_V10 = """
+ALTER TABLE claims ADD COLUMN alternatives TEXT;  -- JSON array, or NULL
+"""
+
 # A step is either SQL to execute or a callable to run — both inside the same
 # once-only transaction. Callables exist because a derived column whose rule
 # lives in the domain must be backfilled BY that rule, not by a re-statement
@@ -394,6 +411,7 @@ MIGRATIONS: tuple[tuple[int, str | Step], ...] = (
     (7, _V7),
     (8, _V8),
     (9, _V9),
+    (10, _V10),
 )
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]

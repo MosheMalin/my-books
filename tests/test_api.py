@@ -45,7 +45,7 @@ from app.adapters.memory_store import (
 from app.api import deps
 from app.api.app import create_app
 from app.domain import LibraryRef, Status, new_book
-from app.ports.reader import ReadClaim
+from app.ports.reader import ReadAlternative, ReadClaim
 
 TEST_LIBRARY = LibraryRef(id="lib-test", label="Test library")
 
@@ -1084,7 +1084,11 @@ def test_a_read_runs_via_a_stub_reader_and_produces_claims():
         reader._claims = [
             ReadClaim(spine_id="sp1", capture_id=cap_id, text="קריאה גולמית",
                      title="מלכי הכופרים", author="פול קארני", tier="auto",
-                     score=91.0, crop=_png((10, 40)), box=(1, 2, 3, 4)),
+                     score=91.0, crop=_png((10, 40)), box=(1, 2, 3, 4),
+                     alternatives=[
+                         ReadAlternative(title="ספינות מן המערב",
+                                        author="פול קארני", score=61.2),
+                     ]),
             ReadClaim(spine_id="sp2", capture_id=cap_id, tier="unmatched"),
         ]
 
@@ -1108,9 +1112,16 @@ def test_a_read_runs_via_a_stub_reader_and_produces_claims():
         assert auto["crop_key"], "the crop was not stored/keyed"
         assert c.get(f"{API_PREFIX}/images/{auto['crop_key']}/full"
                      ).status_code == 200
+        # P2.7's "why?" data rides on the claim itself (see the module
+        # docstring's cost reasoning) — GET .../reads/{id} is its only route.
+        assert auto["alternatives"] == [
+            {"title": "ספינות מן המערב", "author": "פול קארני", "score": 61.2,
+             "reason": ""},
+        ]
 
         unmatched = next(cl for cl in body["claims"] if cl["tier"] == "unmatched")
         assert unmatched["crop_key"] is None
+        assert unmatched["alternatives"] == []
 
         # The list endpoint is a SUMMARY — status and a count, no claims.
         listed = c.get(f"{API_PREFIX}/shelves/{shelf_id}/reads").json()

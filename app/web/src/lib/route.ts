@@ -3,9 +3,10 @@
  * because a hash route needs no server rewrite rule — FastAPI serves one
  * index.html and the client does the rest.
  *
- * Two routes today:
+ * Three routes today:
  *   #/library            the Books tab
  *   #/book/<id>          the book surface, promoted to a full page
+ *   #/capture            the Capture tab (P2.7)
  *
  * The book DRAWER is deliberately not a route. It is an overlay on top of an
  * untouched list (§5), so putting it in the URL would make Back close it
@@ -18,11 +19,13 @@ import { useCallback, useEffect, useState } from 'react'
 export type Route =
   | { name: 'library' }
   | { name: 'book'; id: string }
+  | { name: 'capture' }
 
 export function parseHash(hash: string): Route {
   const path = hash.replace(/^#\/?/, '').split('?')[0] ?? ''
   const [head, arg] = path.split('/')
   if (head === 'book' && arg) return { name: 'book', id: decodeURIComponent(arg) }
+  if (head === 'capture') return { name: 'capture' }
   return { name: 'library' }
 }
 
@@ -31,6 +34,7 @@ export function bookHash(id: string): string {
 }
 
 export const LIBRARY_HASH = '#/library'
+export const CAPTURE_HASH = '#/capture'
 
 export function useRoute(): {
   route: Route

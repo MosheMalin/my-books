@@ -70,6 +70,7 @@ from app.domain.reconcile import (
     reconcile,
 )
 from app.domain.read import (
+    Alternative,
     Claim,
     ClaimTier,
     Read,
@@ -96,6 +97,7 @@ from app.domain.shelf import (
 from app.domain.text import author_sort_key, book_key, normalize
 
 __all__ = [
+    "Alternative",
     "AmbiguousCopy",
     "Book",
     "Capture",

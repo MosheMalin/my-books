@@ -18,7 +18,17 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from app.domain import Book, Capture, Claim, Copy, Lending, Provenance, Read, Shelf
+from app.domain import (
+    Alternative,
+    Book,
+    Capture,
+    Claim,
+    Copy,
+    Lending,
+    Provenance,
+    Read,
+    Shelf,
+)
 from app.ports.blobs import Blob
 
 
@@ -377,6 +387,23 @@ class CaptureBinding(BaseModel):
 
 # --- reads and claims (P2.4) -----------------------------------------------
 
+class AlternativeDTO(BaseModel):
+    """One ranked runner-up `booksnap.match.explain()` considered for a
+    claim's OCR text (P2.7) — what the review UI's "why?" panel renders.
+    ``reason`` is empty for a candidate that passed the matcher's own gates
+    (a real runner-up) and names the gate that refused one that didn't."""
+
+    title: str
+    author: str = ""
+    score: float = 0.0
+    reason: str = ""
+
+    @classmethod
+    def of(cls, a: Alternative) -> "AlternativeDTO":
+        return cls(title=a.title, author=a.author, score=a.score,
+                   reason=a.reason)
+
+
 class ClaimDTO(BaseModel):
     """What one read asserts about one spine (`app.domain.read.Claim`)."""
 
@@ -399,6 +426,13 @@ class ClaimDTO(BaseModel):
         default=None,
         description="[x0,y0,x1,y1] within the source capture image, or null.",
     )
+    alternatives: list[AlternativeDTO] = Field(
+        default_factory=list,
+        description="Ranked runners-up from explain(), for the review UI's "
+                    "'why?' — never the accepted match itself. Empty when the "
+                    "engine had no OCR text or no explain() to ask (a "
+                    "structured fallback provider).",
+    )
 
     @classmethod
     def of(cls, c: Claim) -> "ClaimDTO":
@@ -407,6 +441,7 @@ class ClaimDTO(BaseModel):
             title=c.title, author=c.author, tier=c.tier.value, score=c.score,
             catalog_id=c.catalog_id, crop_key=c.crop_key,
             box=list(c.box) if c.box is not None else None,
+            alternatives=[AlternativeDTO.of(a) for a in c.alternatives],
         )
 
 

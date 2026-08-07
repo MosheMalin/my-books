@@ -24,16 +24,22 @@ from typing import Any, Callable, Sequence
 
 from booksnap.catalog import LocalCatalog
 from booksnap.config import CONFIG, REPO_ROOT
+from booksnap.match import explain
 from booksnap.pipeline import Pipeline
 
 from app.domain import LibraryRef
 from app.ports.blobs import BlobStore
-from app.ports.reader import ReadClaim, ReadRequest
+from app.ports.reader import ReadAlternative, ReadClaim, ReadRequest
 
 # booksnap.types.Match.tier -> this port's lower-case vocabulary. A spine
 # with no match at all (`match is None`) is "unmatched", handled below rather
 # than in this table.
 _TIER = {"AUTO": "auto", "REVIEW": "review"}
+
+# How many ranked candidates the review UI's "why?" panel gets per claim.
+# explain()'s own default (6) minus the winner, kept modest — this rides on
+# every claim in a Read's JSON, so it is payload, not just computation.
+_MAX_ALTERNATIVES = 5
 
 
 class BooksnapReader:
@@ -108,8 +114,37 @@ class BooksnapReader:
                     catalog_id=match.catalog_id if match else None,
                     crop=crop,
                     box=(rec.spine.x0, rec.spine.y0, rec.spine.x1, rec.spine.y1),
+                    alternatives=self._alternatives(rec, catalog, match),
                 ))
             return claims
+
+    @staticmethod
+    def _alternatives(rec, catalog, match) -> tuple[ReadAlternative, ...]:
+        """Ranked runners-up for one spine's OCR text, for the review UI's
+        "why?" (P2.7, UI_PLAN §4).
+
+        Re-runs `booksnap.match.explain()` against the SAME query text
+        `pipe.run` already sent this `catalog` — for `NLICatalog` that means
+        `catalog.candidates(text)` answers from its on-disk query cache
+        (CLAUDE.md), never a second live lookup, which is what keeps this
+        free under the "deterministic first" cost philosophy. No OCR text, no
+        candidates to explain.
+        """
+        if rec.ocr is None or not rec.ocr.text:
+            return ()
+        info = explain(rec.ocr.text, catalog, limit=_MAX_ALTERNATIVES + 1)
+        winner_id = match.catalog_id if match else None
+        out = []
+        for c in info["candidates"]:
+            if winner_id is not None and c["id"] == winner_id:
+                continue   # the accepted match is shown as the claim itself
+            out.append(ReadAlternative(
+                title=c["title"], author=c["author"], score=c["score"],
+                reason=c["rejected"] or "",
+            ))
+            if len(out) >= _MAX_ALTERNATIVES:
+                break
+        return tuple(out)
 
     def code_version(self) -> dict[str, Any]:
         """Git sha + dirty flag — same shape and reasoning as

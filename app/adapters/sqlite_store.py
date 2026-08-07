@@ -29,6 +29,7 @@ from typing import Iterator
 
 from app.adapters.migrations import migrate
 from app.domain import (
+    Alternative,
     Book,
     Capture,
     Claim,
@@ -837,12 +838,17 @@ def _insert_read(conn: sqlite3.Connection, library: LibraryRef, read: Read) -> N
     for position, claim in enumerate(read.claims):
         conn.execute(
             "INSERT INTO claims (id, read_id, position, spine_id, capture_id,"
-            " text, title, author, tier, score, catalog_id, crop_key, box)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " text, title, author, tier, score, catalog_id, crop_key, box,"
+            " alternatives) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (claim.id, read.id, position, claim.spine_id, claim.capture_id,
              claim.text, claim.title, claim.author, claim.tier.value,
              claim.score, claim.catalog_id, claim.crop_key,
-             json.dumps(list(claim.box)) if claim.box is not None else None),
+             json.dumps(list(claim.box)) if claim.box is not None else None,
+             json.dumps([
+                 {"title": a.title, "author": a.author, "score": a.score,
+                  "reason": a.reason}
+                 for a in claim.alternatives
+             ]) if claim.alternatives else None),
         )
 
 
@@ -854,6 +860,9 @@ def _load_read(conn: sqlite3.Connection, row: sqlite3.Row) -> Read:
             tier=ClaimTier(c["tier"]), score=c["score"],
             catalog_id=c["catalog_id"], crop_key=c["crop_key"],
             box=tuple(json.loads(c["box"])) if c["box"] else None,
+            alternatives=tuple(
+                Alternative(**a) for a in json.loads(c["alternatives"])
+            ) if c["alternatives"] else (),
         )
         for c in conn.execute(
             "SELECT * FROM claims WHERE read_id = ? ORDER BY position",

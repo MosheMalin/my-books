@@ -91,7 +91,10 @@ app/
     src/lib/        books.tsx (the store), i18n.tsx (he/en + dir), route.ts
     src/books/      Tab 1: Toolbar, FilterBar, Feed, AddBookModal
     src/book/       the book surface: ONE renderer, drawer + page mounts
-    src/styles/     tokens / base / books — palette ported from the mock
+    src/capture/    Tab 3: useCapture.ts, intake rows, review panel + claim
+                    row/why?/§5.4 prompt (P2.7)
+    src/styles/     tokens / base / books / capture — palette ported from
+                    the mock
 ```
 
 Two applications coexist through pillars 1–2, by design (plan H1/D2,
@@ -506,20 +509,20 @@ names to run a subset (`python tests/run_all.py test_api`).
 | `test_core.py` | 52 | matcher / normalize / evidence gates |
 | `test_integrations.py` | 24 | catalog + fallback adapters, fully mocked/offline |
 | `test_domain.py` | 92 | the VISION rules that can be silently reversed |
-| `test_store_contract.py` | 167 | one store spec × every implementation + isolation |
+| `test_store_contract.py` | 169 | one store spec × every implementation + isolation |
 | `test_reconcile_apply.py` | 20 | `app.reconcile_apply` writing a `Diff` through real stores |
 | `test_legacy_import.py` | 21 | `work/*.json` → entities, against a committed fixture |
 | `test_search.py` | 15 | Hebrew search, against 24 real queries on the real 251 books |
 | `test_layering.py` | 9 | the one-way import rules (plan H1) |
 | `test_api.py` | 78 | `/api/v1` shapes + the versioning/tenancy meta-tests |
 
-478 python tests as of P2.6 (+50 since P2.5: 17 new cases in `test_domain.py`
-— the fire/never-fire table's four rows plus its self-consistency and
-out-of-scope checks, the two cheap wins, the durable queue entity — the
-`DuplicateQueue` contract (9 cases × 2 implementations, plus the `book_ids`
-filter and the v8→v9 migration test), 6 new cases in `test_reconcile_apply.py`
-for the queue's open/close bookkeeping, and 6 new `test_api.py` cases for the
-`/duplicates` router and the Books tab's `?duplicates=true` filter).
+480 python tests as of P2.7 (+2 since P2.6: the `alternatives` field the
+Capture tab's "why?" needs — `booksnap.match.explain()`'s ranked runners-up,
+threaded through `Reader`/`Claim`/`ClaimDTO`/schema v10 — round-trips through
+`SqliteReadStore` and `MemoryReadStore` alike, so it is one new
+`@read_contract` case × two implementations, not a hand-picked SQLite-only
+test. `test_api.py` gained coverage for the same field on the existing
+stub-reader test rather than a new one, so it does not move the count).
 No pytest dependency, deliberately — the repo has never had one and the
 accuracy gate runs on bare python. Counts grow with each run's fixes; the
 commit log is the history (`SESSION_NOTES.md` was a one-time handoff and is
@@ -1260,6 +1263,127 @@ library-scale. Same "measure before indexing" stance `app.domain.search`
 documents for its own linear scan; revisit only if that assumption is ever
 measured wrong.
 
+## The Capture tab (P2.7)
+
+The last item of the "capture a shelf and review it" arc: drop zone → a row
+per photo with shelf + depth assigned inline → mode selector → run/stop with
+live progress → inline review of every claim (crop, tier, diff badge, ✓/✕ or
+the §5.4 three-way prompt, *why?*). `app/web/src/capture/` — `useCapture.ts`
+(all the state and API orchestration), `CaptureTab.tsx`/`CaptureRow.tsx`
+(intake), `ReviewPanel.tsx`/`ClaimRow.tsx` (review). A two-button `<nav>` was
+added to the app bar (`App.tsx`, `#/capture` in `route.ts`) — the first time
+the product has had more than one tab.
+
+**The intake queue is SESSION state, not a server resource.** Every dropped
+photo becomes a real `Image` + `Capture` the moment it uploads (P2.2/P2.3
+already made that durable), but nothing in P2.1–P2.6 built a "list every
+capture nobody has read yet" index — a shelf's captures are only listable BY
+shelf. So the queue this tab renders lives in `useCapture`'s own state, not a
+fetch; a page refresh loses its ordering/selection, though nothing already
+uploaded is lost — it is simply not re-listed here. Building that index is a
+P2.8 (shelf view) concern, not this tab's.
+
+**A read is scoped to exactly one (shelf, depth) — `new_read`'s own rule —
+and the intake selection is a per-PHOTO convenience layered on top of that,
+not a new unit of work.** `POST /shelves/{id}/reads` always reads EVERY
+capture filed at that shelf+depth, checked or not (§5.7 #1 forbids a partial
+read of one row). `start()` turns the checked photos into the DISTINCT
+`(shelf, depth)` pairs they touch and starts one read per pair — checking one
+photo of a pair queues its siblings too. That is the domain's own
+granularity, not a shortcut invented here, and multiple pairs run as
+multiple independent review panels, stacked in the right column.
+
+**Claims commit automatically; only `needs_decision` rows ask for a click —
+and every answer, including the automatic commit, is a REAL network call,
+not a local stage-then-batch.** The first plan here was to batch ✓/✕/3-way
+answers locally and send them in one `POST .../apply`, on the theory that
+`apply_diff` persists `added`/`corrected`/`unchanged` UNCONDITIONALLY on
+every call and repeated calls would duplicate provenance. **That theory was
+wrong, and worth recording because it is the non-obvious part:**
+`Provenance.sighting` is `(run_id, spine_id)` and `observe()`
+(`app/domain/book.py`) skips appending when that pair is already present, so
+replaying the SAME read's `apply` is idempotent — a claim already turned into
+a `Book` reconciles as `unchanged` on the next call rather than a fresh
+`new_book` (a fresh id would be the real duplication risk; reconciling
+against CURRENT state is what prevents it). That is what makes `commitDiff`
+safe to call automatically the instant a read settles (with an EMPTY answers
+list — `reconcile()` already decided those buckets, there is nothing to wait
+for a click on) and `answerClaim` safe to fire immediately per ✓/✕/3-way
+click rather than staged. Simpler code, and a more honest UI: the reviewer
+never has to trust an unlabelled "Apply" button to know whether their read
+actually landed on the shelf.
+
+**"Alternatives"/*why?* — `booksnap.match.explain()`, threaded end to end,
+computed at READ time.** `app/domain/read.py:Alternative`,
+`app/ports/reader.py:ReadAlternative`, `ClaimDTO.alternatives`, and SQLite
+schema **v10** (`claims.alternatives`, nullable JSON, no backfill — same
+shape as every claim column that predates it). `BooksnapReader._alternatives`
+re-runs `explain()` against the SAME query text `pipe.run` already sent the
+catalog for that spine, which is why this is free rather than a second
+lookup: `NLICatalog` caches responses on disk by query (CLAUDE.md, "External
+integrations"), so `catalog.candidates(text)` a second time for the identical
+text is a cache hit, not a live call. Deliberately NOT a
+`GET .../claims/{id}/explain` endpoint computed on demand — that would mean a
+live catalog round trip every time a human clicks *why?*, which is exactly
+the cost the "deterministic first" philosophy asks this codebase to avoid
+paying twice.
+
+**"Alternatives" is READ-ONLY, not "one-click acceptable" (UI_PLAN §4's own
+phrase) — a deliberate, reported scope cut.** The domain has no operation to
+re-point an already-classified claim at a different catalog candidate;
+building one (a new `reconcile()` outcome, a new `AnswerKind`, a write path)
+is a real domain addition, not a UI tweak, and out of this item's size. The
+ranked list still renders inside *why?* for transparency (title, author,
+score, and the gate `explain()` refused it on, verbatim — those reason
+strings are ENGLISH always, hardcoded in `booksnap/match.py`, and are shown
+as-is rather than mistranslated by guessing at their meaning). No accept
+button is drawn next to a candidate — absent, not a button that does nothing.
+
+**The *"פתחו את המדף →"* chip (UI_PLAN §4) is also left out**, for the same
+"absent, not disabled" reason: it links to `#/map/<shelfId>`, and neither a
+map tab nor a shelf-detail route exists yet (P2.8/pillar 6). The sentence
+under it — confirming here is a shortcut, the shelf is the durable home — is
+plain text with no link, and still says the true thing.
+
+**Depth reassignment always resets to row 1.** Moving a photo to a different
+shelf (`assignShelf`) sends `depth: 1` explicitly rather than keeping
+whatever row it was on — the target shelf may not have declared as many rows
+as the one the photo is leaving, and the server answers an undeclared depth
+with a 409 (§5.7), not a clamp. 1 always exists.
+
+**Multiple unnamed shelves are visually identical in the shelf `<select>`.**
+Verified live: dropping two photos with no shelf named creates two shelves
+that both read "לא משויך" in the picker, distinguished only by their (hidden)
+id. Honest given P2.1's own rule that identity is free and an unnamed shelf
+is normally shown by its photo, which a flat `<option>` list cannot do — a
+miniature elevation/thumbnail picker is UI_PLAN §7's "still open" problem
+(§8, "clicking the target cell... not built"), not this item's to solve.
+
+Traps found while verifying in the browser:
+
+⚠ **`getComputedStyle` is not reliable while the Browser pane is not
+displayed — for STATIC properties too, not only running transitions.** A
+`.badge` element (`display: inline-block` in `books.css`) read back as
+`display: block` while the pane was backgrounded; re-querying the identical
+selector match confirmed only one rule affects `display` and it says
+`inline-block`, and the value read correctly the moment the pane was visible
+again. CLAUDE.md's existing transition warning undersold this — treat ANY
+`getComputedStyle` read while the pane is backgrounded as unverified, not
+only ones involving `getAnimations()`.
+
+⚠ **A synthetic canvas image is enough to verify the upload → capture →
+shelf → depth → run wiring live, but not enough to populate a claim row.**
+`segment_image` found zero spine candidates on a flat-colour test JPEG, so
+the real engine ran end to end (Tesseract, real HTTP, real SQLite) and
+produced a genuine, correctly-rendered EMPTY diff — but no claim ever reached
+`ClaimRow`. Getting a populated row live needs a real shelf photo, and
+`spines` mode costs ~10-20s **per detected spine** (CLAUDE.md, "Legacy spines
+mode"), which was not paid for in this session — the populated-row rendering
+(tier/diff badges, the §5.4 prompt, *why?*'s alternatives table) is instead
+covered by `CaptureTab.test.tsx`'s fixture-driven tests, mutation-checked.
+Re-verify visually the next time a real multi-spine read is run through this
+UI.
+
 ## Author sort, and why it needed a schema version
 
 "Sort by author" means the SHELF order — by surname. Sorting the stored string
@@ -1391,16 +1515,24 @@ arrive in P2.1. The importer reports them loudly rather than dropping them —
 until P2.3 lands, a re-read could re-add those books.
 
 Client ring (needs `npm install --prefix app/web` once):
-`npm --prefix app/web run test` (vitest + React Testing Library, **34 tests**
-as of P2.6) and `npm --prefix app/web run typecheck`. Test what encodes a
+`npm --prefix app/web run test` (vitest + React Testing Library, **43 tests**
+as of P2.7) and `npm --prefix app/web run typecheck`. Test what encodes a
 *decision*, not layout and not DTO plumbing — same standard as the Python
-rings. The suite mocks `fetch`, never `useBooks`: the store, the request-id
-race guard and the paging arithmetic are exactly what needs exercising.
-Mutation-checked — ten reversed decisions (dropped race guard, missing
+rings. The suite mocks `fetch`, never `useBooks`/`useCapture`: the store, the
+request-id race guard and the paging arithmetic are exactly what needs
+exercising, and the Capture tab's own fake server (`capture/captureHarness.ts`)
+does not reimplement `reconcile()`/`apply_diff` either — each test hands it
+the exact `DiffDTO` a `POST .../apply` call should answer with, the way the
+Python API ring injects a `StubReader`.
+Mutation-checked — fourteen reversed decisions (dropped race guard, missing
 `.rtl-safe`, edit not abandoned on book change, delete without confirmation,
 409 clearing the form, focus not restored, drawer left open on promote,
 sort direction surviving a key change, tags not trimmed/blanks-dropped, the
-`duplicates` filter dropped from the request — P2.6) each fail a named test.
+`duplicates` filter dropped from the request — P2.6; "add a row behind" hidden
+until a shelf is already stacked, ✓/✕ shown for every `needs_decision` reason
+instead of only `review_tier_new_book`, an alternative given a one-click
+accept button, a freshly-uploaded photo not auto-selected — P2.7) each fail a
+named test.
 
 ⚠ **This ring cannot see CSS.** jsdom computes no cascade, so every finding
 in the "traps" list above was invisible here and had to be caught in a real
