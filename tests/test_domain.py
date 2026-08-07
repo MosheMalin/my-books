@@ -47,6 +47,7 @@ from app.domain import (
     new_shelf,
     observe,
     remove_from_shelf,
+    rename_shelf,
     return_copy,
     set_work_fields,
 )
@@ -455,11 +456,40 @@ def test_depth_is_never_called_row_or_band_in_the_shelf_module():
     )
 
 
-def test_a_shelf_must_have_a_label_because_it_is_the_location():
-    """Until the map, the label is the whole of a book's location (§1.1). A
-    blank one means every book on the shelf answers "where is it?" with
-    nothing, and the shelf list becomes a column of empty rows."""
-    _raises(DomainError, _shelf, label="   ")
+def test_a_shelf_needs_no_label_because_identity_is_free():
+    """Owner's call, 2026-08-07, reversing the earlier reading that made the
+    label the interim location and therefore mandatory. A shelf must exist and
+    be re-findable; it does not have to be described. An unnamed one is shown
+    by the image it came from, which the owner recognises without a caption.
+
+    The rule this protects is that capture never becomes a two-step action:
+    requiring a label to file the first photo buys an interim answer to "where
+    is it?" that pillar 6 replaces anyway.
+    """
+    anonymous = _shelf(label="")
+    assert anonymous.is_named is False
+    assert rename_shelf(anonymous, "סלון").is_named is True
+    # And back — a label the owner no longer wants is not worth keeping just
+    # to avoid an empty string.
+    assert rename_shelf(rename_shelf(anonymous, "סלון"), "").is_named is False
+
+
+def test_unnamed_shelves_order_by_when_they_were_photographed():
+    """With labels optional, most early shelves share the empty one — so
+    "sorted by label" would be a block of visually identical rows in id order,
+    which is arbitrary to the person reading it. Creation order at least
+    matches the sequence they were photographed in.
+
+    Named shelves still come first and alphabetically: a shelf someone
+    bothered to name is one they will look for by name.
+    """
+    order = sorted(
+        [_shelf(id="c", label="", created_at="2026-08-03"),
+         _shelf(id="a", label="", created_at="2026-08-05"),
+         _shelf(id="named", label="סלון", created_at="2026-08-01")],
+        key=lambda s: s.sort_key,
+    )
+    assert [s.id for s in order] == ["c", "a", "named"]
 
 
 def test_depth_is_declared_and_a_capture_cannot_invent_one():

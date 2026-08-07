@@ -11,11 +11,16 @@ implicit:
 
 So there is deliberately **no place, no bookcase, no col, no level** in this
 module. A capture has to record *which shelf it is a photo of* or a re-read has
-nothing to diff against (§5.6) — that needs an id and a label, not a drawing.
-Until the map exists, a shelf's label *is* its location, and §1.1 calls that
-"honest and enough". ``tests/test_domain.py`` asserts the absence structurally,
+nothing to diff against (§5.6) — and that needs an **id**, not a drawing and
+not even a name. ``tests/test_domain.py`` asserts the absence structurally,
 because the tempting mistake is to add ``bookcase`` here "while we're at it"
 and then have two places that own an address.
+
+**Identity here is free** (owner's call, 2026-08-07): a shelf must exist and be
+re-findable, and that is all. An unnamed shelf is shown by the image it came
+from — the owner recognises a photo of their own bookshelf without a caption.
+Naming it, and any other location information, is optional and stays optional;
+the real binding waits for pillar 6.
 
 **Depth stays with identity.** §5.7 is explicit that depth cannot be detected —
 nothing in a photo says "this is the row behind", the front books are simply
@@ -60,9 +65,21 @@ class VirtualShelfHasNoDepth(DomainError):
 
 @dataclass(frozen=True)
 class Shelf:
-    """The durable thing users think about — *"living room, case 2, third
-    shelf"* (§5.3). Free text, typed by the owner; the map gives it structure
-    later without changing what it is.
+    """The durable thing a re-read diffs against (§5.3).
+
+    **The label is OPTIONAL** (owner's call, 2026-08-07). A shelf's identity is
+    free: it needs to exist and be re-findable, not to be described. Until the
+    map arrives a shelf that was never named is shown by the image it came
+    from, which the owner already recognises — a photo of a bookshelf is a
+    picture of that bookshelf. So *"living room, case 2, third shelf"* is
+    something you may type, not a toll you pay before the first photo can be
+    filed. Optional location information stays optional; the real binding
+    waits for pillar 6.
+
+    That is a real reversal of the earlier reading, where the label WAS the
+    interim location and therefore mandatory. It matters because a required
+    label makes capture a two-step action forever, to buy an interim answer to
+    "where is it?" that pillar 6 replaces anyway.
 
     ``virtual`` marks the wishlist: a real list of books, kept alongside the
     shelves because that is where the user looks for it, but not a physical
@@ -71,14 +88,12 @@ class Shelf:
 
     id: str
     library_id: str
-    label: str
+    label: str = ""
     depth_count: int = 1
     virtual: bool = False
     created_at: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.label.strip():
-            raise DomainError("a shelf must have a label")
         if not self.library_id:
             raise DomainError("a shelf must belong to a library (H2)")
         if self.depth_count < 1:
@@ -87,6 +102,29 @@ class Shelf:
             raise VirtualShelfHasNoDepth(
                 f"shelf {self.id} is virtual; depth is physical (§5.7)"
             )
+
+    @property
+    def is_named(self) -> bool:
+        """Whether the owner has described this shelf.
+
+        The UI needs the distinction because an unnamed shelf is shown by its
+        capture instead — and because "name this shelf" is a prompt worth
+        offering once, not a field worth blocking on.
+        """
+        return bool(self.label.strip())
+
+    @property
+    def sort_key(self) -> tuple[str, str, str]:
+        """Named shelves alphabetically, then unnamed ones oldest-first.
+
+        Ordering unnamed shelves by ``created_at`` rather than letting them
+        clump under one blank label matters more than it looks: early on most
+        shelves are unnamed, so "sorted by label" would otherwise mean a block
+        of visually identical rows in id order — which is arbitrary to the
+        person reading it. Creation order at least matches the sequence they
+        photographed them in. ``id`` last, so the order is total.
+        """
+        return (self.label.strip(), self.created_at or "", self.id)
 
     @property
     def depths(self) -> tuple[int, ...]:
@@ -164,14 +202,17 @@ def new_shelf(
     *,
     id: str,
     library_id: str,
-    label: str,
+    label: str = "",
     depth_count: int = 1,
     virtual: bool = False,
     created_at: str | None = None,
 ) -> Shelf:
-    """A shelf the owner declared. Default one row deep — the common case, and
-    §5.7 says the second row must be an explicit action rather than a number
-    the user is asked for up front."""
+    """A shelf. The label is optional — see :class:`Shelf`.
+
+    Default one row deep, and §5.7 says the second row must be an explicit
+    action rather than a number the user is asked for up front. Same shape of
+    decision as the label: nothing is demanded before the first photo.
+    """
     return Shelf(
         id=id,
         library_id=library_id,
@@ -183,8 +224,9 @@ def new_shelf(
 
 
 def rename_shelf(shelf: Shelf, label: str) -> Shelf:
-    """Fix the label. Until pillar 6 this is the whole of a book's location, so
-    it is edited far more often than a structured address would be."""
+    """Name a shelf, or fix the name. Also the path back to unnamed — passing
+    ``""`` is legal, because a label the owner no longer wants is not worth
+    keeping just to avoid an empty string."""
     return replace(shelf, label=label)
 
 

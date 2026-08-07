@@ -493,15 +493,15 @@ names to run a subset (`python tests/run_all.py test_api`).
 |---|---|---|
 | `test_core.py` | 52 | matcher / normalize / evidence gates |
 | `test_integrations.py` | 24 | catalog + fallback adapters, fully mocked/offline |
-| `test_domain.py` | 44 | the VISION rules that can be silently reversed |
-| `test_store_contract.py` | 106 | one store spec × every implementation + isolation |
+| `test_domain.py` | 45 | the VISION rules that can be silently reversed |
+| `test_store_contract.py` | 109 | one store spec × every implementation + isolation |
 | `test_legacy_import.py` | 21 | `work/*.json` → entities, against a committed fixture |
 | `test_search.py` | 15 | Hebrew search, against 24 real queries on the real 251 books |
 | `test_layering.py` | 9 | the one-way import rules (plan H1) |
 | `test_api.py` | 38 | `/api/v1` shapes + the versioning/tenancy meta-tests |
 
-309 python tests as of P2.1 (the +36 since P1.7 are shelf identity and depth:
-11 domain rules, and the shelf-store spec run against both implementations).
+313 python tests as of P2.1 (the +40 since P1.7 are shelf identity and depth:
+12 domain rules, and the shelf-store spec run against both implementations).
 No pytest dependency, deliberately — the repo has never had one and the
 accuracy gate runs on bare python. Counts grow with each run's fixes; the
 commit log is the history (`SESSION_NOTES.md` was a one-time handoff and is
@@ -679,12 +679,30 @@ only; the `/api/v1/shelves` routes land with P2.2, where the intake UI
 consumes them.
 
 **There is deliberately no place, bookcase, col or level.** Plan §1.1 splits
-shelf IDENTITY (pillar 2 — an id, a label the owner types, a declared depth)
-from shelf ADDRESS (pillar 6 — the map, the geometry, the "where is it"
-highlight). Until the map exists the label *is* the location, which §1.1 calls
-"honest and enough". `test_a_shelf_carries_no_address_only_identity` asserts
-the absence structurally, because the tempting mistake is to add `bookcase`
-here "while we're at it" and end up with two modules owning an address.
+shelf IDENTITY (pillar 2 — an id, an optional label, a declared depth) from
+shelf ADDRESS (pillar 6 — the map, the geometry, the "where is it" highlight).
+`test_a_shelf_carries_no_address_only_identity` asserts the absence
+structurally, because the tempting mistake is to add `bookcase` here "while
+we're at it" and end up with two modules owning an address.
+
+**The label is OPTIONAL** — owner's call, 2026-08-07, settling plan §1.1's
+`[OPEN]` and reversing the earlier reading that made the label the interim
+location and therefore mandatory. *Identity is free*: a shelf must exist and be
+re-findable, not be described. An unnamed shelf is shown by the image it came
+from — the owner recognises a photo of their own bookshelf without a caption —
+and any location information stays optional, with the real binding waiting for
+pillar 6. The rule this protects is that **capture never becomes a two-step
+action**: demanding a label before the first photo can be filed buys an interim
+answer to "where is it?" that pillar 6 replaces anyway.
+
+Consequence worth knowing: with labels optional, most early shelves share the
+empty one, so "sorted by label" would be a block of visually identical rows in
+*id* order — arbitrary to whoever is reading it. `Shelf.sort_key` is
+`(label, created_at, id)`: named shelves first and alphabetically, then unnamed
+ones oldest-first, which at least matches the order they were photographed in.
+The rule lives in the domain and both adapters mirror it, same split as
+search's parse/score — an adapter that invents its own order is caught by the
+contract suite.
 
 ⚠ **Never call depth "row" or "band" in code** (VISION §5.7's named collision):
 `segment.py` already uses *band* for the horizontal rows found *within one
@@ -733,6 +751,16 @@ and clearing them is `remove_from_shelf` in the API layer where both stores
 are in hand (P2.2). `test_deleting_a_shelf_never_touches_the_books_that_stood_on_it`
 pins both halves.
 
+⚠ **Importing `app.main` MIGRATES the owner's real database.** The composition
+root opens `work/product.db` at import time, and `SqliteBookStore.__init__`
+runs `migrate()`. `tools/api_contract.py` imports `app.main` to generate the
+OpenAPI — so *running the contract check, or the pre-commit hook, advances the
+real file's schema*. Found the hard way: `work/product.db` was already at v5
+while v5 existed only on an unmerged branch. The consequence is that **"not
+shipped yet" is never a reason to edit a migration step in place** — by the
+time you check, it has usually run on the one database that matters. v6 is a
+separate step for exactly this reason, and a test pins the v5→v6 upgrade path.
+
 **Schema v5** adds `shelves`, `captures`, and `depth` on both `copies` and
 `provenance`. Pure SQL and no backfill, like v4 and unlike v3: every row at v4
 predates shelves entirely — the 251 imported books have `shelf_id IS NULL`, and
@@ -740,7 +768,9 @@ an unlocated copy has no depth, so NULL is already correct for all of them.
 `captures` carries a unique index on `(shelf_id, depth, "order")` because §5.3
 makes that triple a capture's identity; two in one slot would make a shelf's
 book order ambiguous, and the ambiguity would surface much later as a
-reconciliation diff that reorders itself between reads.
+reconciliation diff that reorders itself between reads. **v6** rebuilds
+`shelves_by_label` as `(library_id, virtual, label, created_at, id)` — the full
+sort key, once labels became optional.
 
 ⚠ **A redundantly-enforced rule survives mutation testing without being
 untested.** Two P2.1 mutations survived and both turned out to be a second

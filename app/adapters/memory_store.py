@@ -153,9 +153,10 @@ class MemoryShelfStore:
     ) -> tuple[Shelf, ...]:
         rows = [s for s in self._s(library).values()
                 if include_virtual or not s.virtual]
-        # `id` breaks ties for the same reason the book sorts carry it: two
-        # shelves labelled the same would otherwise order arbitrarily.
-        rows.sort(key=lambda s: (s.label, s.id))
+        # The domain owns the order (`Shelf.sort_key`), so this adapter and the
+        # SQL one cannot disagree about where unnamed shelves go — the same
+        # split as search's parse/score.
+        rows.sort(key=lambda s: s.sort_key)
         return tuple(rows)
 
     def count_shelves(

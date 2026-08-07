@@ -211,6 +211,31 @@ ALTER TABLE provenance ADD COLUMN depth INTEGER;
 CREATE INDEX copies_by_location ON copies (library_id, shelf_id, depth);
 """
 
+# --- v6: shelf labels are optional, so created_at orders them -------------
+#
+# The owner's call (2026-08-07): a shelf's identity is FREE — it must exist and
+# be re-findable, not be described. Naming one is optional and an unnamed shelf
+# is shown by the image it came from.
+#
+# No column change is needed for that. `label TEXT NOT NULL` already accepts
+# '', which is what an unnamed shelf stores, and every insert supplies the
+# column — so the missing DEFAULT is unreachable. What DOES change is the
+# order: with most early shelves sharing the empty label, `(… label, id)` sorts
+# them by an id that means nothing to the reader. `created_at` at least matches
+# the order they were photographed in.
+#
+# ⚠ This is a SEPARATE step rather than an edit to v5, even though v5 shipped
+# only on its own branch — because "shipped" turned out to include the owner's
+# real work/product.db. Anything that imports `app.main` (the composition root)
+# opens it and migrates it, and `tools/api_contract.py` imports `app.main`. So
+# running the contract check is enough to advance the real database, and an
+# edited v5 would never re-run on it.
+_V6 = """
+DROP INDEX shelves_by_label;
+CREATE INDEX shelves_by_label
+    ON shelves (library_id, virtual, label, created_at, id);
+"""
+
 # A step is either SQL to execute or a callable to run — both inside the same
 # once-only transaction. Callables exist because a derived column whose rule
 # lives in the domain must be backfilled BY that rule, not by a re-statement
@@ -221,6 +246,7 @@ MIGRATIONS: tuple[tuple[int, str | Step], ...] = (
     (3, _v3),
     (4, _V4),
     (5, _V5),
+    (6, _V6),
 )
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]

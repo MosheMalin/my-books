@@ -611,6 +611,22 @@ def shelves_are_listed_in_a_total_order(store):
 
 
 @shelf_contract
+def unnamed_shelves_are_ordered_by_creation_not_by_id(store):
+    """Labels are optional (owner's call), so early on most shelves share the
+    empty one — and every implementation has to put them in the same place, or
+    the shelves screen reorders itself when the datastore changes. The rule
+    lives in `Shelf.sort_key`; adapters mirror it, they do not invent it.
+
+    Inserted so that id order, insertion order and the correct order all
+    differ, which is the only arrangement that can catch a wrong tiebreaker.
+    """
+    store.save_shelf(LIB, _sh(1, label="", created_at="2026-08-05"))
+    store.save_shelf(LIB, _sh(2, label="אכסדרה", created_at="2026-08-01"))
+    store.save_shelf(LIB, _sh(3, label="", created_at="2026-08-02"))
+    assert [s.id for s in store.list_shelves(LIB)] == ["sh3", "sh1", "sh2"]
+
+
+@shelf_contract
 def renaming_a_shelf_keeps_its_captures(store):
     """The label is the whole of a book's location until pillar 6, so it gets
     edited often. A save that replaced the row by delete-then-insert would
@@ -906,6 +922,58 @@ def test_a_v1_database_upgrades_and_backfills_its_derived_columns():
                         lent_at="2026-08-01")
         store.save(LIB, migrated)
         assert store.list(LIB, lent_out=True).total == 1
+
+
+def test_a_v5_database_upgrades_its_shelf_index_in_place():
+    """v6 exists as a separate step rather than an edit to v5 because v5 had
+    already run on the owner's real work/product.db — anything importing
+    `app.main` opens and migrates it, and `tools/api_contract.py` does. An
+    edited v5 would never re-run there, so the real database would keep the old
+    index while every fresh clone got the new one, and the two would disagree
+    about where unnamed shelves sort.
+
+    This asserts the upgrade path that fact requires: a database stopped at v5
+    reaches SCHEMA_VERSION and comes out ordering by the full sort key.
+    """
+    import sqlite3
+
+    from app.adapters.migrations import MIGRATIONS
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "v5.db"
+        conn = sqlite3.connect(str(path))
+        try:
+            for version, step in MIGRATIONS:
+                if version > 5:
+                    break
+                if isinstance(step, str):
+                    conn.executescript(step)
+                else:
+                    step(conn)
+            conn.execute("PRAGMA user_version = 5")
+            conn.commit()
+            assert current_version(conn) == 5
+            index = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE name = 'shelves_by_label'"
+            ).fetchone()[0]
+            assert "created_at" not in index, "the fixture is not really v5"
+        finally:
+            conn.close()
+
+        store = SqliteShelfStore(path)          # migrates on construction
+        conn = sqlite3.connect(str(path))
+        try:
+            assert current_version(conn) == SCHEMA_VERSION
+            index = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE name = 'shelves_by_label'"
+            ).fetchone()[0]
+            assert "created_at" in index, "v6 did not replace the index"
+        finally:
+            conn.close()
+
+        store.save_shelf(LIB, _sh(1, label="", created_at="2026-08-05"))
+        store.save_shelf(LIB, _sh(2, label="", created_at="2026-08-02"))
+        assert [s.id for s in store.list_shelves(LIB)] == ["sh2", "sh1"]
 
 
 def test_deleting_a_shelf_never_touches_the_books_that_stood_on_it():

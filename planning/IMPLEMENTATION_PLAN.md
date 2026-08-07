@@ -54,9 +54,22 @@ belongs.
 Interim location, before the map: the shelf's own label. Honest and enough. The
 map later gives it structure and the "where is it" highlight.
 
-**[OPEN]** If reconciliation should also wait for the map, then pillar 2 shrinks
-to captures + review and pillar 6 grows. Say so and I'll move it — the split
-above is the low-regret reading, not a decided one.
+**[DECIDED 2026-08-07]** The split above stands, and reconciliation stays in
+pillar 2 — with one amendment: **shelf identity is FREE, so the label is
+optional**. A shelf must exist and be re-findable, not be described. An unnamed
+shelf is identified by the image it came from, which the owner recognises
+without a caption; naming it and any other location information is optional,
+and the real binding still waits for pillar 6.
+
+So the interim-location row of the table above is weaker than it read: the
+label is *an* answer to "where is it?" when someone bothers to type one, not
+the mechanism that makes pillar 2 work. What makes pillar 2 work is that a
+capture can name a shelf id at all.
+
+Consequence for P2.2: a photo filed without a shelf must still get one, so the
+intake path creates a shelf per capture by default. Whether two photos of one
+physical shelf should be merged into a single shelf — and by what gesture — is
+a real question that lands there, not here.
 
 ### 1.2 Cost and BYO keys move after login **[DECIDED]**
 

@@ -319,8 +319,12 @@ class SqliteShelfStore(_SqliteStore):
     ) -> tuple[Shelf, ...]:
         clause, params = self._scope(library, include_virtual)
         with self._connect() as conn:
+            # Mirrors `Shelf.sort_key`: named shelves alphabetically, then
+            # unnamed ones oldest-first. COALESCE so a NULL created_at sorts
+            # with the empty ones rather than by SQLite's NULL rules.
             rows = conn.execute(
-                f"SELECT * FROM shelves WHERE {clause} ORDER BY label, id",
+                f"SELECT * FROM shelves WHERE {clause}"
+                " ORDER BY label, COALESCE(created_at, ''), id",
                 params,
             ).fetchall()
         return tuple(_load_shelf(r) for r in rows)
