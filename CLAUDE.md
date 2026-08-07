@@ -496,16 +496,17 @@ names to run a subset (`python tests/run_all.py test_api`).
 |---|---|---|
 | `test_core.py` | 52 | matcher / normalize / evidence gates |
 | `test_integrations.py` | 24 | catalog + fallback adapters, fully mocked/offline |
-| `test_domain.py` | 46 | the VISION rules that can be silently reversed |
-| `test_store_contract.py` | 109 | one store spec × every implementation + isolation |
+| `test_domain.py` | 54 | the VISION rules that can be silently reversed |
+| `test_store_contract.py` | 130 | one store spec × every implementation + isolation |
 | `test_legacy_import.py` | 21 | `work/*.json` → entities, against a committed fixture |
 | `test_search.py` | 15 | Hebrew search, against 24 real queries on the real 251 books |
 | `test_layering.py` | 9 | the one-way import rules (plan H1) |
-| `test_api.py` | 55 | `/api/v1` shapes + the versioning/tenancy meta-tests |
+| `test_api.py` | 64 | `/api/v1` shapes + the versioning/tenancy meta-tests |
 
-331 python tests as of P2.3 (+58 since P1.7: shelf identity and depth, the
-shelf-store spec against both implementations, the shelves/captures routes,
-and image upload/serving).
+369 python tests as of P2.4 (+38 since P2.3: the Read/Claim rules — scoped to
+one shelf+depth, a stop is not a failure, claims are append-only — the
+read-store spec against both implementations, and the reads API driven by a
+stub engine).
 No pytest dependency, deliberately — the repo has never had one and the
 accuracy gate runs on bare python. Counts grow with each run's fixes; the
 commit log is the history (`SESSION_NOTES.md` was a one-time handoff and is
@@ -895,6 +896,107 @@ up serving a private key file.
 the stores cannot see each other's aggregates, and reference counting is
 P3.5's. A capture whose image was deleted shows a missing picture rather than
 disappearing. Recorded, not accidental.
+
+## Reading (P2.4)
+
+`Reader` port (`app/ports/reader.py`) + `BooksnapReader`
+(`app/adapters/booksnap_reader.py`, over `booksnap.Pipeline`), `JobRunner`
+port (`app/ports/jobs.py`) + `InProcessJobRunner`
+(`app/adapters/inprocess_jobs.py`), the `Read`/`Claim` entities
+(`app/domain/read.py`), `ReadStore` (in `app/ports/store.py`, alongside
+`BookStore`/`ShelfStore`) + its memory/sqlite adapters (schema **v7**), and
+`/api/v1/shelves/{shelf_id}/reads` — start, poll, stop, list history, get one
+read with its claims. This is the item that turns "photograph a shelf" into
+"books land in the library" — P2.5 (reconciliation) and P2.6 (copy
+resolution) both consume a finished `Read`'s claims; nothing before this item
+produced any.
+
+**Strangle, don't refactor, literally.** `BooksnapReader` does not import
+`booksnap.server` — the layering test only forbids that from `app/api`, but
+the plan's instruction is unconditional, so `_build_catalog` /
+`_build_fallback` / `_build_page_reader` are COPIED, not shared. Deliberately
+NARROWER than the tuning server's version: only the `local` and `nli` catalog
+backends are wired, not the experimental Simania/Rebooks/Booksefer chain
+(`BOOKSNAP_CATALOG_BACKEND=simania`) — that chain is prototype-grade and not
+part of the measured baseline this file documents, and copying untested
+surface into the product for no product benefit is the wrong trade. Promote
+it here the same way a new retrieval source gets promoted into
+`_build_catalog`'s own baseline: after a measured win, not by default.
+
+**No module-level job dict, on purpose — this is the whole point of the
+item.** `InProcessJobRunner` keeps every job's lock, stop event, state and
+progress on `self._jobs`, keyed by job id. Two `InProcessJobRunner()`s (one
+per app, e.g. two tests) never see each other's jobs — contrast
+`booksnap/server.py`'s module-level `_job` dict and `_stop_event`, which is
+exactly the shape H2/§1.3 forbids for the product (two members starting a
+read would overwrite each other's job). `tests/test_api.py`'s
+`test_no_module_level_mutable_state_in_api` is the meta-test that would catch
+a regression back to a module global, and it already covers every file under
+`app/`, so nothing new had to be added to it.
+
+**Claims are saved once, not incrementally.** The job glue
+(`app/api/routers/reads.py:_job`) calls the Reader, builds every domain
+`Claim` in memory, then calls `ReadStore.save_read` exactly once — either
+when the read finishes, stops, or fails. "Per-image progress" (plan wording)
+is served by a SEPARATE, unpersisted channel: `JobRunner.status(job_id)`
+returns whatever dict the Reader last reported through `JobHandle`, and
+`GET .../reads/{id}` merges it into the response only while `status ==
+"running"`. Two consequences worth knowing:
+  - a crash mid-read loses the claims already produced in memory (they were
+    never written), UNLESS the exception path runs — which it does, because
+    the job's `try/except` calls `fail_read` with whatever claims had already
+    been `append_claim`-ed onto the in-memory `Read` before the exception,
+    then saves that. So a genuine engine crash is NOT silently lost; only a
+    hard process kill (not a Python exception) would lose it, same exposure
+    as the tuning server's own job;
+  - polling mid-read never sees partial CLAIMS, only partial PROGRESS. If a
+    future review screen needs to show claims as they arrive rather than
+    after the whole depth finishes, that is an incremental-save change to
+    `_job`, not a port change — `ReadStore.save_read` already replaces the
+    aggregate whole, so calling it more often costs nothing structurally.
+
+**`ReadStore` does not validate `shelf_id` the way `ShelfStore.save_capture`
+validates a capture's.** A capture's `shelf_id` is client-supplied and must
+be policed (§4.2 — a forged foreign shelf id must not silently attach); a
+Read's is not, because the ONLY constructor, `new_read(shelf, captures, ...)`,
+takes an already-loaded `Shelf` and rejects any capture that doesn't belong to
+it (§5.7 #1, mutation-checked — see below). By the time a caller has a `Read`
+object to save, its `shelf_id` is already known-good, so re-validating it in
+the store would duplicate a guarantee the domain gives for free. Documented as
+a ⚠ in `app.ports.store.ReadStore` and in the v7 migration comment, because it
+is the one place this port's shape looks inconsistent with `ShelfStore`'s
+until you know why.
+
+**Two DTOs, not one.** `ReadSummaryDTO` (status, `claim_count`, no claims) for
+`GET .../reads`; `ReadDTO` (everything, claims included) for start/get/stop.
+The plan's own wording splits them — "list a shelf's reads" vs. "get one read
+with its claims" — and a shelf's history screen (P2.8) has no reason to pull
+every claim of every past read just to render a row of status + counts.
+
+**`ReadDTO.progress` is never persisted.** It is populated only from
+`JobRunner.status(read_id).progress` while the stored read is still
+`"running"`; once the read settles, `progress` is `null` in every response.
+Keeping it live-only avoids a second place (the stored `Read`) that could
+disagree with the job runner about whether a read is actually still going —
+the two would drift the moment a crash left one updated and not the other.
+
+⚠ **A read at an undeclared depth, or with captures at the wrong depth, is
+checked in TWO places and that is deliberate, not redundant.** The router
+calls `shelf.check_depth(body.depth)` before even fetching captures (for the
+clearer 409 message), and `new_read` re-checks depth AND shelf identity on
+every capture it is handed (for the mutation-checked domain guarantee, §5.7
+#1). Removing either check independently still leaves the other one standing
+— confirmed by mutation-checking them separately in `app/domain/read.py`
+(temporarily deleting each `if` block, running `test_domain.py`, seeing the
+named rule test fail, then restoring it).
+
+⚠ **A capture with no uploaded photo is skipped, not fatal, but "every
+capture at this depth has no photo" IS a 409.** P2.2's recorded gap (a
+capture can exist before `POST /images` ever names it) means `ReadRequest`s
+are built only from captures that have an `image_id`; the router refuses to
+even submit a job if that list would be empty, because a read that silently
+produces zero claims looks like the engine failed, not like nothing was ever
+uploaded.
 
 ## Author sort, and why it needed a schema version
 

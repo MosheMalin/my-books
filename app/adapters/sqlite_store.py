@@ -31,11 +31,15 @@ from app.adapters.migrations import migrate
 from app.domain import (
     Book,
     Capture,
+    Claim,
+    ClaimTier,
     Copy,
     CopyFields,
     Lending,
     LibraryRef,
     Provenance,
+    Read,
+    ReadStatus,
     Shelf,
     Status,
     WorkFields,
@@ -446,6 +450,70 @@ class SqliteShelfStore(_SqliteStore):
             return cur.rowcount > 0
 
 
+class SqliteReadStore(_SqliteStore):
+    """Implements ``app.ports.store.ReadStore``.
+
+    Shares the file with the other two stores — one database, three
+    aggregates now — for the same reason ``SqliteShelfStore`` does: a capture
+    and the reads it feeds must never end up in different places.
+    """
+
+    def __init__(self, path: str | Path) -> None:
+        super().__init__(path, kind="SqliteReadStore")
+
+    def save_read(self, library: LibraryRef, read: Read) -> None:
+        if read.library_id != library.id:
+            raise WrongLibrary(
+                f"read {read.id} belongs to {read.library_id!r}, "
+                f"not {library.id!r}"
+            )
+        with self._connect() as conn:
+            with conn:
+                # DELETE + INSERT, like books — not the shelf's upsert. A
+                # shelf's upsert exists to protect its captures from a
+                # cascade on rename; nothing points AT a read's row except its
+                # own claims, and ON DELETE CASCADE clears those correctly
+                # before they are re-inserted below, so replace-whole is both
+                # safe and simpler here.
+                conn.execute(
+                    "DELETE FROM reads WHERE id = ? AND library_id = ?",
+                    (read.id, library.id),
+                )
+                _insert_read(conn, library, read)
+
+    def get_read(self, library: LibraryRef, read_id: str) -> Read | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM reads WHERE id = ? AND library_id = ?",
+                (read_id, library.id),
+            ).fetchone()
+            return _load_read(conn, row) if row else None
+
+    def list_reads(
+        self,
+        library: LibraryRef,
+        shelf_id: str,
+        *,
+        depth: int | None = None,
+    ) -> tuple[Read, ...]:
+        clause = "library_id = ? AND shelf_id = ?"
+        params: list[object] = [library.id, shelf_id]
+        if depth is not None:
+            clause += " AND depth = ?"
+            params.append(depth)
+        with self._connect() as conn:
+            # Most-recent-first (started_at DESC), id DESC as the tiebreaker
+            # for a total order — same reasoning as every other listing here:
+            # two reads started in the same clock second must still page
+            # consistently.
+            rows = conn.execute(
+                f"SELECT * FROM reads WHERE {clause}"
+                " ORDER BY started_at DESC, id DESC",
+                params,
+            ).fetchall()
+            return tuple(_load_read(conn, r) for r in rows)
+
+
 # --- row <-> entity -------------------------------------------------------
 #
 # `list` loads copies and provenance per book, so a 50-row page is ~101
@@ -570,4 +638,58 @@ def _load_copy(conn: sqlite3.Connection, row: sqlite3.Row) -> Copy:
             acquired_at=row["acquired_at"],
         ),
         lending=Lending(**json.loads(row["lending"])) if row["lending"] else None,
+    )
+
+
+def _insert_read(conn: sqlite3.Connection, library: LibraryRef, read: Read) -> None:
+    conn.execute(
+        "INSERT INTO reads (id, library_id, shelf_id, depth, capture_ids,"
+        " mode, status, code_version, config, started_at, finished_at, error)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        (read.id, library.id, read.shelf_id, read.depth,
+         json.dumps(list(read.capture_ids)), read.mode, read.status.value,
+         json.dumps(read.code_version) if read.code_version is not None else None,
+         json.dumps(read.config) if read.config is not None else None,
+         read.started_at, read.finished_at, read.error),
+    )
+    for position, claim in enumerate(read.claims):
+        conn.execute(
+            "INSERT INTO claims (id, read_id, position, spine_id, capture_id,"
+            " text, title, author, tier, score, catalog_id, crop_key, box)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (claim.id, read.id, position, claim.spine_id, claim.capture_id,
+             claim.text, claim.title, claim.author, claim.tier.value,
+             claim.score, claim.catalog_id, claim.crop_key,
+             json.dumps(list(claim.box)) if claim.box is not None else None),
+        )
+
+
+def _load_read(conn: sqlite3.Connection, row: sqlite3.Row) -> Read:
+    claims = tuple(
+        Claim(
+            id=c["id"], spine_id=c["spine_id"], capture_id=c["capture_id"],
+            text=c["text"], title=c["title"], author=c["author"],
+            tier=ClaimTier(c["tier"]), score=c["score"],
+            catalog_id=c["catalog_id"], crop_key=c["crop_key"],
+            box=tuple(json.loads(c["box"])) if c["box"] else None,
+        )
+        for c in conn.execute(
+            "SELECT * FROM claims WHERE read_id = ? ORDER BY position",
+            (row["id"],),
+        ).fetchall()
+    )
+    return Read(
+        id=row["id"],
+        library_id=row["library_id"],
+        shelf_id=row["shelf_id"],
+        depth=row["depth"],
+        capture_ids=tuple(json.loads(row["capture_ids"])),
+        mode=row["mode"],
+        status=ReadStatus(row["status"]),
+        claims=claims,
+        code_version=json.loads(row["code_version"]) if row["code_version"] else None,
+        config=json.loads(row["config"]) if row["config"] else None,
+        started_at=row["started_at"],
+        finished_at=row["finished_at"],
+        error=row["error"],
     )

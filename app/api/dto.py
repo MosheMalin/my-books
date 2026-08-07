@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from app.domain import Book, Capture, Copy, Lending, Provenance, Shelf
+from app.domain import Book, Capture, Claim, Copy, Lending, Provenance, Read, Shelf
 from app.ports.blobs import Blob
 
 
@@ -372,4 +372,116 @@ class CaptureBinding(BaseModel):
     shelf: ShelfDTO
     shelf_created: bool = Field(
         description="True when no shelf_id was given and one was made.",
+    )
+
+
+# --- reads and claims (P2.4) -----------------------------------------------
+
+class ClaimDTO(BaseModel):
+    """What one read asserts about one spine (`app.domain.read.Claim`)."""
+
+    id: str
+    spine_id: str
+    capture_id: str
+    text: str = Field(description="The raw OCR/read text for this spine.")
+    title: str = ""
+    author: str = ""
+    tier: str = Field(description="auto | review | unmatched.")
+    score: float = 0.0
+    catalog_id: str | None = None
+    crop_key: str | None = Field(
+        default=None,
+        description="BlobStore key of the spine crop, if the engine produced "
+                    "one. Fetch its picture at GET /images/{crop_key}/thumb"
+                    "|full — the same endpoint every other photo uses.",
+    )
+    box: list[int] | None = Field(
+        default=None,
+        description="[x0,y0,x1,y1] within the source capture image, or null.",
+    )
+
+    @classmethod
+    def of(cls, c: Claim) -> "ClaimDTO":
+        return cls(
+            id=c.id, spine_id=c.spine_id, capture_id=c.capture_id, text=c.text,
+            title=c.title, author=c.author, tier=c.tier.value, score=c.score,
+            catalog_id=c.catalog_id, crop_key=c.crop_key,
+            box=list(c.box) if c.box is not None else None,
+        )
+
+
+class ReadSummaryDTO(BaseModel):
+    """One row of a shelf's read history — no claims, no config. Listing a
+    shelf's reads is a history view (§5.6's "history as diffs" surface, once
+    P2.8 builds it); it does not need every claim of every past read to
+    render a row."""
+
+    id: str
+    shelf_id: str
+    depth: int
+    mode: str
+    status: str
+    claim_count: int
+    started_at: str | None = None
+    finished_at: str | None = None
+    error: str | None = None
+
+    @classmethod
+    def of(cls, r: Read) -> "ReadSummaryDTO":
+        return cls(
+            id=r.id, shelf_id=r.shelf_id, depth=r.depth, mode=r.mode,
+            status=r.status.value, claim_count=len(r.claims),
+            started_at=r.started_at, finished_at=r.finished_at, error=r.error,
+        )
+
+
+class ReadDTO(BaseModel):
+    """One read, in full — returned by start/get/stop, never by the list.
+
+    ``config`` is the full tunable snapshot from `app.domain.read.Read` —
+    included for the same audit reason the tuning server exposes its own run
+    config, not because a review screen needs to render it.
+    """
+
+    id: str
+    shelf_id: str
+    depth: int
+    capture_ids: list[str]
+    mode: str
+    status: str
+    code_version: dict | None = None
+    config: dict | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    error: str | None = None
+    claims: list[ClaimDTO] = Field(default_factory=list)
+    progress: dict | None = Field(
+        default=None,
+        description="Live progress while running (image N of M, spines "
+                    "read) — NOT persisted; comes from the job runner and is "
+                    "null once the read has a terminal status.",
+    )
+
+    @classmethod
+    def of(cls, r: Read, *, progress: dict | None = None) -> "ReadDTO":
+        return cls(
+            id=r.id, shelf_id=r.shelf_id, depth=r.depth,
+            capture_ids=list(r.capture_ids), mode=r.mode, status=r.status.value,
+            code_version=r.code_version, config=r.config,
+            started_at=r.started_at, finished_at=r.finished_at, error=r.error,
+            claims=[ClaimDTO.of(c) for c in r.claims], progress=progress,
+        )
+
+
+class ReadCreate(BaseModel):
+    """Start a read of one shelf at one depth."""
+
+    depth: int = Field(default=1, ge=1)
+    mode: str = Field(
+        default="spines",
+        description="Engine mode: 'spines' (Tesseract, free, ~10s/spine), "
+                    "'fullpage' (Google Vision) or 'llmpage' (Claude vision, "
+                    "the engine's own current default per CLAUDE.md). Passed "
+                    "straight through to booksnap.Pipeline.run — modes are "
+                    "the engine's own, not redefined here.",
     )

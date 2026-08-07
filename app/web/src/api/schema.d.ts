@@ -443,6 +443,82 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/shelves/{shelf_id}/reads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Reads
+         * @description A shelf's reads, most recent first.
+         */
+        get: operations["list_reads_api_v1_shelves__shelf_id__reads_get"];
+        put?: never;
+        /**
+         * Start Read
+         * @description Start reading a shelf at one depth.
+         *
+         *     **202**, not 201 or 200: the read keeps running after this call returns,
+         *     and the body is a snapshot of "just started" — poll ``GET`` to watch it
+         *     settle into ``done``/``stopped``/``failed``.
+         */
+        post: operations["start_read_api_v1_shelves__shelf_id__reads_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/shelves/{shelf_id}/reads/{read_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Read
+         * @description One read, with every claim it produced so far. While the read is still
+         *     ``running`` the live progress from the job runner rides along in
+         *     ``progress`` — the stored claims themselves only land once the read
+         *     settles (see ``_job`` below).
+         */
+        get: operations["get_read_api_v1_shelves__shelf_id__reads__read_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/shelves/{shelf_id}/reads/{read_id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stop
+         * @description Cooperative stop. **202**: the request is accepted, not honoured yet —
+         *     the worker notices between spines (the same shape as ``Pipeline.run``'s
+         *     ``should_stop``), so the read this returns may still say ``running``;
+         *     poll ``GET`` until it settles to ``stopped``. The claims already
+         *     collected are kept — a stopped read is a real partial result, not a
+         *     failure (§ app.domain.read).
+         */
+        post: operations["stop_api_v1_shelves__shelf_id__reads__read_id__stop_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -639,6 +715,55 @@ export interface components {
             shelf_id?: string | null;
         };
         /**
+         * ClaimDTO
+         * @description What one read asserts about one spine (`app.domain.read.Claim`).
+         */
+        ClaimDTO: {
+            /**
+             * Author
+             * @default
+             */
+            author: string;
+            /**
+             * Box
+             * @description [x0,y0,x1,y1] within the source capture image, or null.
+             */
+            box?: number[] | null;
+            /** Capture Id */
+            capture_id: string;
+            /** Catalog Id */
+            catalog_id?: string | null;
+            /**
+             * Crop Key
+             * @description BlobStore key of the spine crop, if the engine produced one. Fetch its picture at GET /images/{crop_key}/thumb|full — the same endpoint every other photo uses.
+             */
+            crop_key?: string | null;
+            /** Id */
+            id: string;
+            /**
+             * Score
+             * @default 0
+             */
+            score: number;
+            /** Spine Id */
+            spine_id: string;
+            /**
+             * Text
+             * @description The raw OCR/read text for this spine.
+             */
+            text: string;
+            /**
+             * Tier
+             * @description auto | review | unmatched.
+             */
+            tier: string;
+            /**
+             * Title
+             * @default
+             */
+            title: string;
+        };
+        /**
          * CopyCreate
          * @description *"I have another copy"* (§5.1) — the only path that creates a second
          *     physical object. No ``shelf_id`` here: shelves don't exist until P2.1, so
@@ -828,6 +953,95 @@ export interface components {
              * @description Server package version.
              */
             version: string;
+        };
+        /**
+         * ReadCreate
+         * @description Start a read of one shelf at one depth.
+         */
+        ReadCreate: {
+            /**
+             * Depth
+             * @default 1
+             */
+            depth: number;
+            /**
+             * Mode
+             * @description Engine mode: 'spines' (Tesseract, free, ~10s/spine), 'fullpage' (Google Vision) or 'llmpage' (Claude vision, the engine's own current default per CLAUDE.md). Passed straight through to booksnap.Pipeline.run — modes are the engine's own, not redefined here.
+             * @default spines
+             */
+            mode: string;
+        };
+        /**
+         * ReadDTO
+         * @description One read, in full — returned by start/get/stop, never by the list.
+         *
+         *     ``config`` is the full tunable snapshot from `app.domain.read.Read` —
+         *     included for the same audit reason the tuning server exposes its own run
+         *     config, not because a review screen needs to render it.
+         */
+        ReadDTO: {
+            /** Capture Ids */
+            capture_ids: string[];
+            /** Claims */
+            claims?: components["schemas"]["ClaimDTO"][];
+            /** Code Version */
+            code_version?: {
+                [key: string]: unknown;
+            } | null;
+            /** Config */
+            config?: {
+                [key: string]: unknown;
+            } | null;
+            /** Depth */
+            depth: number;
+            /** Error */
+            error?: string | null;
+            /** Finished At */
+            finished_at?: string | null;
+            /** Id */
+            id: string;
+            /** Mode */
+            mode: string;
+            /**
+             * Progress
+             * @description Live progress while running (image N of M, spines read) — NOT persisted; comes from the job runner and is null once the read has a terminal status.
+             */
+            progress?: {
+                [key: string]: unknown;
+            } | null;
+            /** Shelf Id */
+            shelf_id: string;
+            /** Started At */
+            started_at?: string | null;
+            /** Status */
+            status: string;
+        };
+        /**
+         * ReadSummaryDTO
+         * @description One row of a shelf's read history — no claims, no config. Listing a
+         *     shelf's reads is a history view (§5.6's "history as diffs" surface, once
+         *     P2.8 builds it); it does not need every claim of every past read to
+         *     render a row.
+         */
+        ReadSummaryDTO: {
+            /** Claim Count */
+            claim_count: number;
+            /** Depth */
+            depth: number;
+            /** Error */
+            error?: string | null;
+            /** Finished At */
+            finished_at?: string | null;
+            /** Id */
+            id: string;
+            /** Mode */
+            mode: string;
+            /** Shelf Id */
+            shelf_id: string;
+            /** Started At */
+            started_at?: string | null;
+            /** Status */
+            status: string;
         };
         /**
          * ShelfCreate
@@ -1813,6 +2027,139 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ShelfDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_reads_api_v1_shelves__shelf_id__reads_get: {
+        parameters: {
+            query?: {
+                /** @description Narrow to one row front-to-back — §5.7 #1 scopes a read's history to the depth it actually covered. */
+                depth?: number | null;
+            };
+            header?: never;
+            path: {
+                shelf_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReadSummaryDTO"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_read_api_v1_shelves__shelf_id__reads_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shelf_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReadCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReadDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_read_api_v1_shelves__shelf_id__reads__read_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shelf_id: string;
+                read_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReadDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stop_api_v1_shelves__shelf_id__reads__read_id__stop_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shelf_id: string;
+                read_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReadDTO"];
                 };
             };
             /** @description Validation Error */

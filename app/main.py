@@ -32,9 +32,11 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from app.adapters.booksnap_reader import BooksnapReader
 from app.adapters.dev_identity import DevPrincipal, SystemClock, UuidIdGen
 from app.adapters.disk_blobs import DiskBlobStore
-from app.adapters.sqlite_store import SqliteBookStore, SqliteShelfStore
+from app.adapters.inprocess_jobs import InProcessJobRunner
+from app.adapters.sqlite_store import SqliteBookStore, SqliteReadStore, SqliteShelfStore
 from app.api.app import create_app
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -70,18 +72,29 @@ def build() -> object:
     # the signature does not change, which is the point of the stub.
     principal = DevPrincipal()
     path = db_path()
+    blobs = DiskBlobStore(blob_root())
     return create_app(
         principal_provider=lambda: principal,
         book_store=SqliteBookStore(path),
-        # The SAME file, two aggregates. Separate ports because their
-        # lifetimes are independent (a shelf exists before any book is on it),
-        # separate stores because a Postgres move should not have to port both
-        # at once — but one database, so a capture and the books it produces
+        # The SAME file, three aggregates now. Separate ports because their
+        # lifetimes are independent (a shelf exists before any book is on it;
+        # a read is created, runs, and settles), separate stores because a
+        # Postgres move should not have to port all three at once — but one
+        # database, so a capture, the reads of it and the books they produce
         # cannot end up in different places.
         shelf_store=SqliteShelfStore(path),
+        read_store=SqliteReadStore(path),
         # Bytes on disk, keys in rows (D1). The layout is already P3.5's, so
         # pillar 3 inherits retention and orphan work, not a path migration.
-        blob_store=DiskBlobStore(blob_root()),
+        blob_store=blobs,
+        # BooksnapReader wraps booksnap.Pipeline (P2.4) — it needs the SAME
+        # blob store to turn a capture's image_id into bytes the engine can
+        # read, and to save the spine crops a read produces.
+        reader=BooksnapReader(blob_store=blobs),
+        # In-process, single-user (P2.4; P3.4 replaces it with a real queue).
+        # One instance here, on the composition root, is what H2/§1.3 asks
+        # for — every job's state lives on THIS object, never a module global.
+        job_runner=InProcessJobRunner(),
         clock=SystemClock(),
         id_gen=UuidIdGen(),
         web_dist=WEB_DIST,

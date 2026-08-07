@@ -25,10 +25,14 @@ sys.path.insert(0, str(REPO_ROOT))
 from app.domain import (
     AmbiguousCopy,
     Book,
+    Claim,
+    ClaimTier,
     CopyAlreadyLentOut,
     CopyNotLentOut,
     DomainError,
     Provenance,
+    ReadAlreadyFinished,
+    ReadStatus,
     Shelf,
     Status,
     UnknownCopy,
@@ -36,21 +40,26 @@ from app.domain import (
     VirtualShelfHasNoDepth,
     add_copy,
     add_depth,
+    append_claim,
     approve,
     capture_onto_a_new_shelf,
     book_key,
     counts_toward_library,
     edit,
     edit_copy,
+    fail_read,
+    finish_read,
     lend,
     new_book,
     new_capture,
+    new_read,
     new_shelf,
     observe,
     remove_from_shelf,
     rename_shelf,
     return_copy,
     set_work_fields,
+    stop_read,
 )
 
 LIB = "lib-1"
@@ -608,6 +617,111 @@ def test_a_read_adopts_shelf_and_depth_together():
     assert b.copy("c1").location is None
     b = observe(b, Provenance("r1", "sp1", shelf_id="sh7", depth=3))
     assert b.copy("c1").location == ("sh7", 3)
+
+
+# --- P2.4: Read and Claim ---------------------------------------------------
+
+def _claim(n: int = 1, **kw) -> Claim:
+    args = dict(id=f"cl{n}", spine_id=f"sp{n}", capture_id="cap1")
+    args.update(kw)
+    return Claim(**args)
+
+
+def test_a_read_is_scoped_to_one_shelf_and_depth_or_it_is_refused():
+    """§5.7 #1: "not seen in this read" is only meaningful against the row
+    that was actually photographed. A capture from another shelf, or another
+    row of this one, must not be able to enter a single Read — both are
+    checked, and independently, so a change that keeps only one half would
+    still be caught."""
+    shelf = _shelf(depth_count=2)
+    here = new_capture(shelf, id="cap1", depth=1)
+    other_depth = new_capture(shelf, id="cap2", depth=2)
+    other_shelf = new_capture(_shelf(id="sh2"), id="cap3", depth=1)
+
+    new_read(shelf, [here], id="r1", depth=1, mode="spines")   # the good case
+
+    e = _raises(DomainError, new_read, shelf, [here, other_depth],
+                id="r2", depth=1, mode="spines")
+    assert "depth" in str(e)
+    e = _raises(DomainError, new_read, shelf, [here, other_shelf],
+                id="r3", depth=1, mode="spines")
+    assert "shelf" in str(e)
+
+
+def test_a_read_needs_at_least_one_capture():
+    shelf = _shelf()
+    _raises(DomainError, new_read, shelf, [], id="r1", depth=1, mode="spines")
+
+
+def test_a_read_at_an_undeclared_depth_is_refused():
+    """Same rule `new_capture` already enforces (§5.7), reached the same way:
+    `new_read` takes the Shelf and checks depth against it, so an undeclared
+    row cannot enter through this door either."""
+    shelf = _shelf()   # depth_count=1
+    here = new_capture(shelf, id="cap1", depth=1)
+    _raises(UnknownDepth, new_read, shelf, [here], id="r1", depth=2, mode="spines")
+
+
+def test_a_stopped_read_keeps_its_claims_and_is_not_a_failure():
+    """Pipeline.run's own contract, echoed at the domain level: a stopped
+    read is a REAL partial result. `error` must stay unset, and the claims
+    collected before the stop must survive exactly as `finish_read` would
+    leave them."""
+    shelf = _shelf()
+    cap = new_capture(shelf, id="cap1")
+    r = new_read(shelf, [cap], id="r1", depth=1, mode="spines")
+    r = append_claim(r, _claim(1))
+    r = append_claim(r, _claim(2))
+
+    stopped = stop_read(r, finished_at="2026-08-07T12:00:00+00:00")
+    assert stopped.status is ReadStatus.STOPPED
+    assert stopped.error is None
+    assert [c.id for c in stopped.claims] == ["cl1", "cl2"], \
+        "a stop must not discard the claims already collected"
+
+
+def test_a_failed_read_keeps_its_claims_and_records_why():
+    shelf = _shelf()
+    cap = new_capture(shelf, id="cap1")
+    r = new_read(shelf, [cap], id="r1", depth=1, mode="spines")
+    r = append_claim(r, _claim(1))
+
+    failed = fail_read(r, error="no engine credentials",
+                       finished_at="2026-08-07T12:00:00+00:00")
+    assert failed.status is ReadStatus.FAILED
+    assert failed.error == "no engine credentials"
+    assert len(failed.claims) == 1, "a failure must not discard prior claims"
+
+
+def test_claims_cannot_be_appended_after_a_read_finishes():
+    """The rule that makes a Read's claims append-only, all the way to the
+    end of its life: once terminal, nothing may add more evidence to it —
+    reconciliation and copy resolution both read a FINISHED read's claims as
+    a fixed snapshot."""
+    shelf = _shelf()
+    cap = new_capture(shelf, id="cap1")
+    r = new_read(shelf, [cap], id="r1", depth=1, mode="spines")
+    done = finish_read(r, finished_at="2026-08-07T12:00:00+00:00")
+
+    _raises(ReadAlreadyFinished, append_claim, done, _claim(9))
+    _raises(ReadAlreadyFinished, finish_read, done,
+            finished_at="2026-08-07T12:00:01+00:00")
+    _raises(ReadAlreadyFinished, stop_read, done,
+            finished_at="2026-08-07T12:00:01+00:00")
+    _raises(ReadAlreadyFinished, fail_read, done, error="x",
+            finished_at="2026-08-07T12:00:01+00:00")
+
+
+def test_a_claim_names_its_spine_and_capture():
+    _raises(DomainError, Claim, id="cl1", spine_id="", capture_id="cap1")
+    _raises(DomainError, Claim, id="cl1", spine_id="sp1", capture_id="")
+
+
+def test_claim_tier_defaults_to_unmatched():
+    """A claim always exists once a spine was read — even one the matcher had
+    nothing to say about — so it needs a real tier value rather than a null
+    one standing in for "no match"."""
+    assert _claim().tier is ClaimTier.UNMATCHED
 
 
 if __name__ == "__main__":
