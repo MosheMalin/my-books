@@ -68,6 +68,7 @@ app/
     sqlite_store.py  the real one (D1); connection per operation, WAL
     memory_store.py  the API ring's store, and the contract's 2nd implementation
     migrations.py    versioned schema via PRAGMA user_version (H6)
+    legacy_import.py work/*.json -> entities; I/O and PURE mapping split
   api/          FastAPI routers under /api/v1 + DTOs. THIN — no rules
   api/openapi.json          committed contract, regenerated, never hand-edited
   main.py       the composition root — the ONE file allowed to cross layers
@@ -472,10 +473,11 @@ names to run a subset (`python tests/run_all.py test_api`).
 | `test_integrations.py` | 24 | catalog + fallback adapters, fully mocked/offline |
 | `test_domain.py` | 22 | the VISION rules that can be silently reversed |
 | `test_store_contract.py` | 52 | one store spec × every implementation + isolation |
+| `test_legacy_import.py` | 21 | `work/*.json` → entities, against a committed fixture |
 | `test_layering.py` | 9 | the one-way import rules (plan H1) |
 | `test_api.py` | 9 | `/api/v1` shapes + the versioning/tenancy meta-tests |
 
-168 total as of P1.2. No pytest dependency, deliberately — the repo has never
+189 total as of P1.3. No pytest dependency, deliberately — the repo has never
 had one and the accuracy gate runs on bare python. Counts grow with each run's
 fixes; SESSION_NOTES.md tracks the history.
 
@@ -504,6 +506,44 @@ cases, and each only in the adapter that was broken.
 NO tiebreaker at all — Python's sort is stable and dicts keep insertion order.
 The committed test inserts in DESCENDING id order for exactly that reason.
 Found by mutation testing, not by review.
+
+## Legacy import (`work/` → the product store)
+
+```bash
+python tools/import_legacy.py --dry-run          # report only, nothing written
+python tools/import_legacy.py --db work/product.db
+python tools/import_legacy.py --export-fixture   # refresh fixtures/legacy/
+```
+
+Measured on the real data: **251 books → 117 approved, 110 auto, 24 manual**,
+one copy and one provenance entry each, ~296KB SQLite. Re-running is a clean
+no-op. Four things here are not obvious and are each pinned by a test:
+
+- **stored keys are RECOMPUTED, never trusted.** 30 of the 251 keys in
+  `library.json` predate the geresh fix in `normalize()` (`צ רלס סטרוס` vs
+  today's `צרלס סטרוס`). Imported verbatim they would carry a key no future
+  lookup could produce. Re-keying yields 251 distinct keys, zero collisions —
+  but a collision would be *reported*, not silently resolved;
+- **`store.json`'s `runs` is a DICT keyed by run_id**, not a list. Reading it
+  as a list fails silently: iterating a dict yields strings, an `isinstance`
+  guard drops them all, and every hand-typed book quietly loses its date. The
+  committed fixture caught this;
+- **manual adds are identified by `source.manual`, not by the `owner-fb-`
+  spine prefix.** 9 of the 24 use `manual-<timestamp>`, and `owner-fb-` also
+  covers 5 books that were *replaced* rather than typed;
+- **"already present" is checked by id AND key, and the id is the load-bearing
+  half.** Once a title is edited the key changes, so a key-only check reads as
+  absent and re-saves under the same deterministic id — replacing the
+  correction with the original text.
+
+`source.replaced` (5 books) imports as `approved`, not `manual`: a human chose
+from ranked alternatives, but the text is the catalog's. Constant
+`REPLACED_STATUS` if that judgement should flip.
+
+⚠ **14 rejected claims are NOT migrated.** §5.6 says a rejected book must not
+be re-added by a later run; a rejection is scoped to a *shelf*, and shelves
+arrive in P2.1. The importer reports them loudly rather than dropping them —
+until P2.3 lands, a re-read could re-add those books.
 
 Client ring (needs `npm install --prefix app/web` once):
 `npm --prefix app/web run test` (vitest + React Testing Library) and

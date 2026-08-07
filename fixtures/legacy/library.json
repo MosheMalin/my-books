@@ -1,0 +1,90 @@
+{
+ "books": {
+  "גנב הקוונטומ|האנו רג ניאמי": {
+   "title": "גנב הקוונטום",
+   "author": "האנו רג'ניאמי",
+   "status": "approved",
+   "source": {
+    "run_id": "54bd7aa4ed7e",
+    "spine_id": "owner-fb-גנב הקוונטום",
+    "manual": true
+   }
+  },
+  "אקסלרנדו|צ רלס סטרוס": {
+   "title": "אקסלרנדו",
+   "author": "צ'רלס סטרוס",
+   "status": "approved",
+   "source": {
+    "run_id": "54bd7aa4ed7e",
+    "spine_id": "owner-fb-אקסלרנדו",
+    "manual": true
+   }
+  },
+  "שלושה ימימ בספטמבר|רונ יניב": {
+   "title": "שלושה ימים בספטמבר",
+   "author": "רון יניב",
+   "status": "approved",
+   "source": {
+    "run_id": "54bd7aa4ed7e",
+    "spine_id": "owner-fb-שלושה ימים בספטמבר",
+    "manual": true
+   }
+  },
+  "העננ השחור|פרד הויל": {
+   "title": "הענן השחור",
+   "author": "פרד הויל",
+   "status": "approved",
+   "source": {
+    "run_id": "8725965a7509",
+    "spine_id": "manual-1786050722680",
+    "manual": true
+   }
+  },
+  "וורקרוס|מרי לו": {
+   "title": "וורקרוס",
+   "author": "מרי לו",
+   "status": "approved",
+   "source": {
+    "run_id": "77cbcc9fb886",
+    "spine_id": "owner-fb-וורקרוס",
+    "replaced": "וורקרוס"
+   }
+  },
+  "גבירה וערפל|גולדמנ אודליה מחבר": {
+   "title": "גבירה וערפל",
+   "author": "גולדמן, אודליה מחבר",
+   "status": "auto",
+   "source": {
+    "run_id": "77cbcc9fb886",
+    "spine_id": "45516a826910_b0_s01"
+   }
+  },
+  "אגמ הצללימ|רוני גלבפיש": {
+   "title": "אגם הצללים",
+   "author": "רוני גלבפיש",
+   "status": "auto",
+   "source": {
+    "run_id": "77cbcc9fb886",
+    "spine_id": "45516a826910_b0_s02"
+   }
+  },
+  "העסק המשפחתי|צ רלס סטרוס": {
+   "title": "העסק המשפחתי",
+   "author": "צ'רלס סטרוס",
+   "status": "approved",
+   "source": {
+    "run_id": "54bd7aa4ed7e",
+    "spine_id": "56b1710d5c3c_b0_s00"
+   }
+  },
+  "המשפחה הנסתרת|צ רלס סטרוס": {
+   "title": "המשפחה הנסתרת",
+   "author": "צ'רלס סטרוס",
+   "status": "approved",
+   "source": {
+    "run_id": "54bd7aa4ed7e",
+    "spine_id": "56b1710d5c3c_b0_s01"
+   }
+  }
+ }
+}

@@ -1,0 +1,146 @@
+{
+ "runs": {
+  "54bd7aa4ed7e": {
+   "run_id": "54bd7aa4ed7e",
+   "run_no": 13,
+   "label": "",
+   "note": "",
+   "started_at": "2026-08-05T19:46:36+00:00",
+   "finished_at": "2026-08-05T19:50:17+00:00",
+   "status": "completed",
+   "error": null,
+   "duration_s": 220.8,
+   "code_version": {
+    "sha": "9b102e5",
+    "branch": "main",
+    "dirty": false
+   },
+   "catalog": {
+    "backend": "simania+nli+rebooks+booksefer",
+    "entries": null,
+    "note": "on-empty cascade, precise source first"
+   },
+   "mode": "llmpage",
+   "image_ids": [
+    "56b1710d5c3c"
+   ],
+   "image_names": [
+    "IMG_8131.jpeg"
+   ],
+   "fallback": {
+    "provider": "google_vision"
+   }
+  },
+  "77cbcc9fb886": {
+   "run_id": "77cbcc9fb886",
+   "run_no": 14,
+   "label": "",
+   "note": "",
+   "started_at": "2026-08-05T20:21:42+00:00",
+   "finished_at": "2026-08-05T20:26:26+00:00",
+   "status": "completed",
+   "error": null,
+   "duration_s": 284.0,
+   "code_version": {
+    "sha": "6cda485",
+    "branch": "main",
+    "dirty": false
+   },
+   "catalog": {
+    "backend": "library+simania+nli+rebooks+booksefer",
+    "entries": null,
+    "note": "confirmed library union, then on-empty cascade"
+   },
+   "mode": "llmpage",
+   "image_ids": [
+    "45516a826910"
+   ],
+   "image_names": [
+    "IMG_8134.jpeg"
+   ],
+   "fallback": {
+    "provider": "google_vision"
+   }
+  },
+  "8725965a7509": {
+   "run_id": "8725965a7509",
+   "run_no": 18,
+   "label": "",
+   "note": "",
+   "started_at": "2026-08-06T13:40:00+00:00",
+   "finished_at": "2026-08-06T13:55:13+00:00",
+   "status": "completed",
+   "error": null,
+   "duration_s": 912.8,
+   "code_version": {
+    "sha": "bf05664",
+    "branch": "main",
+    "dirty": true
+   },
+   "catalog": {
+    "backend": "library+simania+nli+rebooks+booksefer",
+    "entries": null,
+    "note": "confirmed library union, then on-empty cascade"
+   },
+   "mode": "llmpage",
+   "image_ids": [
+    "8411124d8630",
+    "6056b05d8214",
+    "2ccdd9d5d1f4"
+   ],
+   "image_names": [
+    "IMG_8139.jpeg",
+    "IMG_8140.jpeg",
+    "IMG_8141.jpeg"
+   ],
+   "fallback": {
+    "provider": "google_vision"
+   }
+  }
+ },
+ "images": {
+  "56b1710d5c3c": {
+   "id": "56b1710d5c3c",
+   "name": "IMG_8131.jpeg",
+   "path": "D:\\Moshe\\git\\my-books\\work\\library\\56b1710d5c3c.jpeg",
+   "width": 5712,
+   "height": 4284,
+   "uploaded_at": "2026-08-05T19:45:23+00:00",
+   "status": "done",
+   "error": null,
+   "summary": {
+    "spines": 35,
+    "auto": 17,
+    "review": 2,
+    "unmatched": 16,
+    "matched": 19,
+    "ocr_ms_total": 0,
+    "ocr_ms_median": 0
+   },
+   "latest_run_id": "54bd7aa4ed7e",
+   "processed_at": "2026-08-05T19:50:17+00:00"
+  },
+  "45516a826910": {
+   "id": "45516a826910",
+   "name": "IMG_8134.jpeg",
+   "path": "D:\\Moshe\\git\\my-books\\work\\library\\45516a826910.jpeg",
+   "width": 5712,
+   "height": 4284,
+   "uploaded_at": "2026-08-05T19:45:24+00:00",
+   "status": "done",
+   "error": null,
+   "summary": {
+    "spines": 42,
+    "auto": 19,
+    "review": 8,
+    "unmatched": 15,
+    "matched": 27,
+    "ocr_ms_total": 0,
+    "ocr_ms_median": 0
+   },
+   "latest_run_id": "77cbcc9fb886",
+   "processed_at": "2026-08-05T20:26:26+00:00"
+  }
+ },
+ "next_run_no": 1
+}
