@@ -1,0 +1,118 @@
+# -*- coding: utf-8 -*-
+"""Versioned schema migrations. Code, and tested (plan H6).
+
+A runner from the FIRST schema, not from the first schema change — retrofitting
+one means the first production database is the one with no upgrade path, and
+that database is the one holding the owner's 251 real books.
+
+Mechanism is SQLite's own ``PRAGMA user_version``: an integer in the file
+header, so there is no bookkeeping table and no chance of the bookkeeping and
+the schema disagreeing. Each step runs once, in order, inside a transaction.
+
+Rules for adding a step:
+  - APPEND, never edit a shipped one. An edited step has already run on the
+    owner's file and will never run again;
+  - each step is idempotent-by-version, not idempotent-by-SQL — the runner
+    guarantees once-only, so ``CREATE TABLE`` needs no ``IF NOT EXISTS``
+    (and shouldn't have it: it would hide a real ordering bug).
+"""
+from __future__ import annotations
+
+import sqlite3
+
+# --- v1: books, copies, provenance ---------------------------------------
+#
+# Shape from VISION §5.2. Copies and provenance are real tables rather than
+# JSON on the book row because they get QUERIED — "who has my books" (P1.7),
+# books on a shelf (P2.5), "not seen in the last 3 reads" (§5.6). D1's "JSON
+# columns" note is about run/config snapshots, which are document-shaped; this
+# is not.
+_V1 = """
+CREATE TABLE books (
+    id             TEXT PRIMARY KEY,
+    library_id     TEXT NOT NULL,
+    title          TEXT NOT NULL,
+    author         TEXT NOT NULL DEFAULT '',
+    norm_title     TEXT NOT NULL,
+    norm_author    TEXT NOT NULL,
+    book_key       TEXT NOT NULL,
+    shared_book_id TEXT,
+    rating         INTEGER,
+    notes          TEXT NOT NULL DEFAULT '',
+    read_status    TEXT,
+    added_at       TEXT
+);
+
+-- §5.1: one Book per {title, author} PER LIBRARY. Declaring it in the schema
+-- means a bug in the app cannot produce two, and the store can turn the
+-- constraint violation into a decision (merge?) instead of a silent overwrite.
+CREATE UNIQUE INDEX books_library_key ON books (library_id, book_key);
+
+-- Every read index leads with library_id: a tenant-scoped query must never
+-- have to scan another tenant's rows to skip them.
+CREATE INDEX books_by_title  ON books (library_id, norm_title, id);
+CREATE INDEX books_by_author ON books (library_id, norm_author, norm_title, id);
+CREATE INDEX books_by_added  ON books (library_id, added_at, id);
+
+CREATE TABLE copies (
+    id          TEXT PRIMARY KEY,
+    book_id     TEXT NOT NULL REFERENCES books (id) ON DELETE CASCADE,
+    library_id  TEXT NOT NULL,
+    position    INTEGER NOT NULL,       -- copy #1 is the original (§5.1 order)
+    status      TEXT NOT NULL,          -- auto | approved | manual
+    label       TEXT NOT NULL DEFAULT '',
+    shelf_id    TEXT,                   -- NULL = removed from shelf, not deleted
+    tags        TEXT NOT NULL DEFAULT '[]',
+    condition   TEXT NOT NULL DEFAULT '',
+    acquired_at TEXT,
+    lending     TEXT                    -- JSON, or NULL when never lent
+);
+
+CREATE INDEX copies_of_book   ON copies (book_id, position);
+CREATE INDEX copies_by_shelf  ON copies (library_id, shelf_id);
+
+CREATE TABLE provenance (
+    copy_id     TEXT NOT NULL REFERENCES copies (id) ON DELETE CASCADE,
+    seq         INTEGER NOT NULL,
+    run_id      TEXT NOT NULL,
+    spine_id    TEXT NOT NULL,
+    shelf_id    TEXT,
+    captured_at TEXT,
+    PRIMARY KEY (copy_id, seq)
+);
+
+-- Idempotent appends (§5.2): the same (run, spine) may be replayed and must
+-- not inflate a copy's history. The domain enforces it too; this makes it
+-- impossible rather than merely correct.
+CREATE UNIQUE INDEX provenance_sighting ON provenance (copy_id, run_id, spine_id);
+"""
+
+MIGRATIONS: tuple[tuple[int, str], ...] = (
+    (1, _V1),
+)
+
+SCHEMA_VERSION = MIGRATIONS[-1][0]
+
+
+def current_version(conn: sqlite3.Connection) -> int:
+    return int(conn.execute("PRAGMA user_version").fetchone()[0])
+
+
+def migrate(conn: sqlite3.Connection) -> int:
+    """Bring ``conn`` up to :data:`SCHEMA_VERSION`. Returns the new version.
+
+    Safe to call on every connect: already-applied steps are skipped, so this
+    is how the store guarantees a usable file without a separate setup command
+    someone can forget to run.
+    """
+    version = current_version(conn)
+    for target, sql in MIGRATIONS:
+        if target <= version:
+            continue
+        with conn:  # one transaction per step
+            conn.executescript(sql)
+            # PRAGMA does not take bound parameters; `target` is an int from
+            # this module's own tuple, never from input.
+            conn.execute(f"PRAGMA user_version = {int(target)}")
+        version = target
+    return version

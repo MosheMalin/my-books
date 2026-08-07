@@ -63,8 +63,11 @@ app/
   domain/       entities + rules. pure Python, no I/O, no framework
     book.py       Book/Copy/Status/Provenance + the rules (VISION §5.1-5.6)
     text.py       book_key() over booksnap.catalog.normalize — NOT a copy
-  ports/        Protocols: Principal, Clock, IdGen (BookStore… as they land)
-  adapters/     implementations (dev identity today; sqlite/disk/queue later)
+  ports/        Protocols: Principal, Clock, IdGen, BookStore
+  adapters/     implementations behind the ports
+    sqlite_store.py  the real one (D1); connection per operation, WAL
+    memory_store.py  the API ring's store, and the contract's 2nd implementation
+    migrations.py    versioned schema via PRAGMA user_version (H6)
   api/          FastAPI routers under /api/v1 + DTOs. THIN — no rules
   api/openapi.json          committed contract, regenerated, never hand-edited
   main.py       the composition root — the ONE file allowed to cross layers
@@ -468,10 +471,11 @@ names to run a subset (`python tests/run_all.py test_api`).
 | `test_core.py` | 52 | matcher / normalize / evidence gates |
 | `test_integrations.py` | 24 | catalog + fallback adapters, fully mocked/offline |
 | `test_domain.py` | 22 | the VISION rules that can be silently reversed |
+| `test_store_contract.py` | 52 | one store spec × every implementation + isolation |
 | `test_layering.py` | 9 | the one-way import rules (plan H1) |
 | `test_api.py` | 9 | `/api/v1` shapes + the versioning/tenancy meta-tests |
 
-116 total as of P1.1. No pytest dependency, deliberately — the repo has never
+168 total as of P1.2. No pytest dependency, deliberately — the repo has never
 had one and the accuracy gate runs on bare python. Counts grow with each run's
 fixes; SESSION_NOTES.md tracks the history.
 
@@ -483,6 +487,23 @@ structural rather than behavioural, which is the more valuable kind here:
 also constrains the reconciliation code that P2.3 will add to the same
 package), and `normalize()` may not be re-implemented in `app/domain`. Add
 rules there, not assertions about dataclass plumbing.
+
+**`test_store_contract.py` is ONE spec run against EVERY implementation** —
+24 cases × (`MemoryBookStore`, `SqliteBookStore`) + 4 sqlite-specific. Adding
+an adapter (Postgres) means adding one line to `IMPLEMENTATIONS`; that is what
+makes D1's datastore choice a swap rather than a leap. It carries the
+**tenant-isolation** suite too, already running against two library refs even
+though the app resolves one until pillar 3 — §4.2's "a foreign record reads as
+ABSENT" is a store property, and no route can answer 404-not-403 unless it
+holds here. Mutation-checked: eight planted bugs (dropped library scope in
+get/delete/list, `foreign_keys` left at SQLite's OFF default, the unique index
+removed, missing wrong-library check, missing sort tiebreaker) each fail named
+cases, and each only in the adapter that was broken.
+
+⚠ A paging test that inserts in id order and checks for duplicates passes with
+NO tiebreaker at all — Python's sort is stable and dicts keep insertion order.
+The committed test inserts in DESCENDING id order for exactly that reason.
+Found by mutation testing, not by review.
 
 Client ring (needs `npm install --prefix app/web` once):
 `npm --prefix app/web run test` (vitest + React Testing Library) and
