@@ -132,9 +132,32 @@ def test_domain_is_pure():
     """No framework, no driver, no other app layer — domain is testable in ms."""
     bad = _violations(
         "app/domain",
-        FRAMEWORKS | DRIVERS | {"app.ports", "app.adapters", "app.api", "booksnap"},
+        FRAMEWORKS | DRIVERS | {"app.ports", "app.adapters", "app.api"},
         "app/domain must be pure Python (H1)",
     )
+    assert not bad, "\n".join(bad)
+
+
+def test_domain_reaches_into_the_core_only_for_normalize():
+    """``app/domain -> booksnap`` is DOWNWARD and legal (H1's diagram puts the
+    core below the domain; only ``booksnap -> app`` is forbidden). P1.1 uses
+    it deliberately: the product's search keys must be produced by the same
+    ``normalize()`` the matcher uses, or the two drift.
+
+    But only that. ``booksnap.catalog`` is stdlib-only and pure; the pipeline,
+    the OCR modules and the server are not, and importing one of them here
+    would put cv2/tesseract behind a 'milliseconds, no I/O' rule test.
+    """
+    ALLOWED = {"booksnap.catalog"}
+    bad = []
+    for f in _py_files("app/domain"):
+        for name, lineno in _imports(f):
+            if name == "booksnap" or name.startswith("booksnap."):
+                if name not in ALLOWED:
+                    bad.append(
+                        f"{_module_path(f)}:{lineno} imports {name} — "
+                        f"app/domain may import only {sorted(ALLOWED)}"
+                    )
     assert not bad, "\n".join(bad)
 
 

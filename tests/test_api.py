@@ -191,9 +191,14 @@ def test_no_module_level_mutable_state_in_api():
                                   ast.ListComp, ast.SetComp)):
                 targets = node.targets if isinstance(node, ast.Assign) else [node.target]
                 names = [t.id for t in targets if isinstance(t, ast.Name)]
-                # SHOUTING_CASE constants are immutable by convention and are
-                # not the failure mode (a per-request cache is).
-                if any(not n.isupper() for n in names):
+                # Exempt by convention, because neither is the failure mode
+                # this test exists for (a per-request cache or registry):
+                #   SHOUTING_CASE — constants, not written to at runtime;
+                #   __dunder__    — module protocol, e.g. __all__.
+                def _exempt(n: str) -> bool:
+                    return n.isupper() or (n.startswith("__") and n.endswith("__"))
+
+                if any(not _exempt(n) for n in names):
                     offenders.append(
                         f"{f.relative_to(REPO_ROOT).as_posix()}:{node.lineno} {names}"
                     )

@@ -1,31 +1,60 @@
 # -*- coding: utf-8 -*-
 """Entities and rules. Pure Python: no I/O, no framework, no driver imports.
 
-Empty at P1.0 by design — the scaffolding item deliberately ships no domain
-model (see IMPLEMENTATION_PLAN §4, P1.0 "no behaviour"). Book/Copy arrive in
-P1.1, Shelf/Capture in P2.1.
+The one import that leaves this package is ``normalize()`` from the
+recognition core — see ``app/domain/text.py`` for why duplicating it would be
+the worse choice. Shelf/Capture arrive in P2.1, reconciliation in P2.3.
 
-The one thing that already lives here is the vocabulary for tenancy, because
-H2 says every persisted record carries a library reference from the first
-write — so the type it travels as must exist before the first write does.
+Rules that live here because they must be testable in milliseconds and must
+never be silently reversed (plan H5):
+
+  - the matcher never auto-creates a copy .............. §5.1  book.observe
+  - an approved book is never demoted by a worse re-read  §5.6  Status.merge
+  - *remove from shelf* != *delete from library* ....... UI §5  remove_from_shelf
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from app.domain.book import (
+    AmbiguousCopy,
+    Book,
+    Copy,
+    CopyFields,
+    DomainError,
+    Lending,
+    Provenance,
+    Status,
+    UnknownCopy,
+    WorkFields,
+    add_copy,
+    approve,
+    edit,
+    new_book,
+    observe,
+    remove_from_shelf,
+    set_work_fields,
+)
+from app.domain.library import LibraryRef
+from app.domain.text import book_key, normalize
 
-
-@dataclass(frozen=True)
-class LibraryRef:
-    """The tenant key. Every store method and every persisted record takes one.
-
-    A separate type rather than a bare ``str`` on purpose: it makes the
-    "library-scoped" signature visible at every call site, and it makes the
-    day a library gains an owning account (P3.1) a change to one class.
-    """
-
-    id: str
-    label: str = ""
-
-    def __post_init__(self) -> None:
-        if not self.id:
-            raise ValueError("LibraryRef.id must be non-empty")
+__all__ = [
+    "AmbiguousCopy",
+    "Book",
+    "Copy",
+    "CopyFields",
+    "DomainError",
+    "Lending",
+    "LibraryRef",
+    "Provenance",
+    "Status",
+    "UnknownCopy",
+    "WorkFields",
+    "add_copy",
+    "approve",
+    "book_key",
+    "edit",
+    "new_book",
+    "normalize",
+    "observe",
+    "remove_from_shelf",
+    "set_work_fields",
+]

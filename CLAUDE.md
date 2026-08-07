@@ -61,6 +61,8 @@ OCR across cores and run the fallback in a separate queue.
 ```
 app/
   domain/       entities + rules. pure Python, no I/O, no framework
+    book.py       Book/Copy/Status/Provenance + the rules (VISION §5.1-5.6)
+    text.py       book_key() over booksnap.catalog.normalize — NOT a copy
   ports/        Protocols: Principal, Clock, IdGen (BookStore… as they land)
   adapters/     implementations (dev identity today; sqlite/disk/queue later)
   api/          FastAPI routers under /api/v1 + DTOs. THIN — no rules
@@ -84,6 +86,12 @@ Rules that are enforced mechanically, not by intention
   product bug cannot move a baseline number;
 - `app/api/*` never imports `app/adapters/*` — the rule that keeps the
   datastore choice (plan D1) a swap rather than a rewrite;
+- `app/domain/*` imports **`booksnap.catalog` and nothing else** from the
+  core. That direction is legal (only `booksnap → app` is banned) and it is
+  used on purpose: the product's search keys come from the *same*
+  `normalize()` the matcher uses, because two normalizers drift. Importing
+  the pipeline or the OCR modules there would put cv2/tesseract behind a
+  "milliseconds, no I/O" rule test, so it is blocked;
 - every `/api/v1` route resolves its library through the single function
   `app/api/deps.py:current_library`, and every API route is under `/api/v1`.
   Both are meta-tests over *all* routes, so they keep holding as routes are
@@ -459,12 +467,22 @@ names to run a subset (`python tests/run_all.py test_api`).
 |---|---|---|
 | `test_core.py` | 52 | matcher / normalize / evidence gates |
 | `test_integrations.py` | 24 | catalog + fallback adapters, fully mocked/offline |
-| `test_layering.py` | 8 | the one-way import rules (plan H1) |
+| `test_domain.py` | 22 | the VISION rules that can be silently reversed |
+| `test_layering.py` | 9 | the one-way import rules (plan H1) |
 | `test_api.py` | 9 | `/api/v1` shapes + the versioning/tenancy meta-tests |
 
-93 total as of P1.0. No pytest dependency, deliberately — the repo has never
+116 total as of P1.1. No pytest dependency, deliberately — the repo has never
 had one and the accuracy gate runs on bare python. Counts grow with each run's
 fixes; SESSION_NOTES.md tracks the history.
+
+**`test_domain.py` is not coverage** — it is one test per sentence of VISION
+that someone could plausibly "fix" later, and every one was verified to FAIL
+when its rule is reversed (mutation-checked, not assumed). Two of them are
+structural rather than behavioural, which is the more valuable kind here:
+`Copy()` may be constructed only in `new_book`/`add_copy` (an AST walk, so it
+also constrains the reconciliation code that P2.3 will add to the same
+package), and `normalize()` may not be re-implemented in `app/domain`. Add
+rules there, not assertions about dataclass plumbing.
 
 Client ring (needs `npm install --prefix app/web` once):
 `npm --prefix app/web run test` (vitest + React Testing Library) and
