@@ -33,11 +33,14 @@ from app.domain import (
     DEFAULT_RESOLUTION,
     Decision,
     DecisionKind,
+    DepthStatus,
+    DiffSummary,
     DomainError,
     DuplicateQuestion,
     FireDecision,
     Provenance,
     PromptKind,
+    Read,
     ReadAlreadyFinished,
     ReadStatus,
     Shelf,
@@ -53,6 +56,7 @@ from app.domain import (
     capture_onto_a_new_shelf,
     book_key,
     counts_toward_library,
+    depth_staleness,
     edit,
     edit_copy,
     fail_read,
@@ -63,6 +67,7 @@ from app.domain import (
     new_capture,
     new_read,
     new_shelf,
+    not_seen_streak,
     observe,
     open_or_refresh,
     pick_default_copy,
@@ -73,6 +78,8 @@ from app.domain import (
     return_copy,
     set_work_fields,
     stop_read,
+    summarize,
+    with_diff_summary,
 )
 
 LIB = "lib-1"
@@ -1268,6 +1275,214 @@ def test_duplicate_question_requires_a_shelf_and_a_positive_depth():
            shelf_id="sh1", depth=0, book_key="k|a", read_id="r1",
            spine_id="sp1", claim_title="t", claim_author="a",
            existing_book_id="b1", opened_at="2026-08-01T00:00:00Z")
+
+
+# --- P2.8: the diff summary snapshot (§5.5/§5.6) ---------------------------
+
+def test_summarize_captures_the_headline_counts_from_a_real_diff():
+    """The plan's own example, literally: reconcile() -> summarize() must
+    read as "+3 added · 1 corrected · 12 unchanged · 1 not seen" for a diff
+    shaped that way. Built from a real `reconcile()` call, not a hand-typed
+    Diff, so this also exercises the wiring between the two functions."""
+    shelf = _rshelf(depth_count=2)
+    here = new_book(id="b1", library_id=LIB, title="מלכי הכופרים",
+                    author="פול קארני", copy_id="c1", shelf_id="sh1", depth=1)
+    missing = new_book(id="b2", library_id=LIB, title="ספר שלא נקרא",
+                       author="", copy_id="c2", shelf_id="sh1", depth=1)
+    books = {here.key: here, missing.key: missing}
+    claims = [_rclaim(), _rclaim(2, title="ספר חדש", author="סופר")]
+    diff = reconcile(shelf, 1, claims, books, [], read_id="r1")
+
+    summary = summarize(diff)
+    assert summary == DiffSummary(added=1, unchanged=1, not_seen=1)
+    assert summary.corrected == 0 and summary.needs_decision == 0
+
+
+def test_with_diff_summary_attaches_it_to_the_read():
+    r = new_read(_shelf(), [new_capture(_shelf(), id="cap1")], id="r1",
+                depth=1, mode="spines")
+    r = finish_read(r, finished_at="2026-08-07T12:00:00+00:00")
+    summarised = with_diff_summary(r, DiffSummary(added=3, corrected=1,
+                                                  unchanged=12, not_seen=1))
+    assert summarised.diff_summary == DiffSummary(added=3, corrected=1,
+                                                   unchanged=12, not_seen=1)
+    # The ORIGINAL read is untouched — same frozen-dataclass discipline as
+    # every other domain operation (§5.2's "operations return a NEW object").
+    assert r.diff_summary is None
+
+
+# --- P2.8: not_seen_streak — the soft badge, never a removal (§5.6) --------
+#
+# `app.domain.history.not_seen_streak` derives a display count from a copy's
+# own append-only provenance and a shelf's read archive. It has no way to
+# remove anything (see the module docstring) — the removal rule itself is
+# `reconcile()`'s (already covered above); these tests are about the COUNT.
+
+def _hread(n: int, *, depth: int = 1, status: ReadStatus = ReadStatus.DONE,
+          finished_at: str) -> Read:
+    shelf = _rshelf(depth_count=3)
+    cap = new_capture(shelf, id=f"hcap{n}", depth=depth)
+    r = new_read(shelf, [cap], id=f"hr{n}", depth=depth, mode="spines",
+                started_at=finished_at)
+    if status is ReadStatus.DONE:
+        r = finish_read(r, finished_at=finished_at)
+    elif status is ReadStatus.STOPPED:
+        r = stop_read(r, finished_at=finished_at)
+    elif status is ReadStatus.FAILED:
+        r = fail_read(r, error="boom", finished_at=finished_at)
+    return r
+
+
+def _copy_at(book: Book, copy_id: str = "c1") -> "Copy":
+    return next(c for c in book.copies if c.id == copy_id)
+
+
+def test_not_seen_streak_is_zero_when_the_most_recent_read_saw_it():
+    r1 = _hread(1, finished_at="2026-08-01T00:00:00+00:00")
+    book = observe(
+        new_book(id="b1", library_id=LIB, title="ספר", author="", copy_id="c1"),
+        Provenance(run_id="hr1", spine_id="sp1", shelf_id="sh1", depth=1,
+                  captured_at="2026-08-01T00:00:00+00:00"),
+    )
+    assert not_seen_streak(_copy_at(book), "sh1", 1, [r1]) == 0
+
+
+def test_not_seen_streak_counts_consecutive_misses_and_stops_at_a_hit():
+    """The badge's whole point: two reads in a row that did not reconfirm
+    the copy, a THIRD read that did, further back — the streak counts only
+    the run of misses since the last real sighting, not every read ever."""
+    seen = _hread(1, finished_at="2026-08-01T00:00:00+00:00")
+    miss1 = _hread(2, finished_at="2026-08-02T00:00:00+00:00")
+    miss2 = _hread(3, finished_at="2026-08-03T00:00:00+00:00")
+    book = observe(
+        new_book(id="b1", library_id=LIB, title="ספר", author="", copy_id="c1"),
+        Provenance(run_id="hr1", spine_id="sp1", shelf_id="sh1", depth=1,
+                  captured_at="2026-08-01T00:00:00+00:00"),
+    )
+    streak = not_seen_streak(_copy_at(book), "sh1", 1, [seen, miss1, miss2])
+    assert streak == 2, "expected exactly the two most recent misses"
+
+
+def test_not_seen_streak_is_scoped_to_the_depth_read():
+    """§5.7 #1, carried into the badge: a front-row re-read must not age a
+    copy that stands in the row behind. A miss at depth 2 must not count
+    against a copy located at depth 1, and vice versa."""
+    front_miss = _hread(1, depth=1, finished_at="2026-08-02T00:00:00+00:00")
+    back_miss = _hread(2, depth=2, finished_at="2026-08-02T00:00:00+00:00")
+    seen_at_depth_1 = _hread(3, depth=1, finished_at="2026-08-01T00:00:00+00:00")
+    book = observe(
+        new_book(id="b1", library_id=LIB, title="ספר", author="", copy_id="c1"),
+        Provenance(run_id="hr3", spine_id="sp1", shelf_id="sh1", depth=1,
+                  captured_at="2026-08-01T00:00:00+00:00"),
+    )
+    copy = _copy_at(book)
+    assert not_seen_streak(copy, "sh1", 1, [front_miss, back_miss, seen_at_depth_1]) == 1
+    # A copy that has NEVER stood at depth 2 has nothing to have missed there.
+    assert not_seen_streak(copy, "sh1", 2, [front_miss, back_miss, seen_at_depth_1]) == 0
+
+
+def test_not_seen_streak_ignores_reads_from_before_the_copy_stood_here():
+    """A copy placed on the shelf yesterday must not inherit a streak from
+    photographs taken long before it arrived — those reads say nothing
+    about it."""
+    old_read = _hread(1, finished_at="2020-01-01T00:00:00+00:00")
+    book = observe(
+        new_book(id="b1", library_id=LIB, title="ספר", author="", copy_id="c1"),
+        Provenance(run_id="hr9", spine_id="sp1", shelf_id="sh1", depth=1,
+                  captured_at="2026-08-01T00:00:00+00:00"),
+    )
+    assert not_seen_streak(_copy_at(book), "sh1", 1, [old_read]) == 0
+
+
+def test_not_seen_streak_excludes_a_failed_read():
+    """A read that blew up mid-spine produced no reliable evidence either
+    way — it must neither extend nor reset the streak."""
+    seen = _hread(1, finished_at="2026-08-01T00:00:00+00:00")
+    failed = _hread(2, status=ReadStatus.FAILED,
+                    finished_at="2026-08-02T00:00:00+00:00")
+    book = observe(
+        new_book(id="b1", library_id=LIB, title="ספר", author="", copy_id="c1"),
+        Provenance(run_id="hr1", spine_id="sp1", shelf_id="sh1", depth=1,
+                  captured_at="2026-08-01T00:00:00+00:00"),
+    )
+    assert not_seen_streak(_copy_at(book), "sh1", 1, [seen, failed]) == 0
+
+
+def test_not_seen_streak_never_touches_the_copy_it_is_about():
+    """The mutation-check the plan asks for by name: a function computing
+    this badge must have no path to removal at all. Asserted the only way a
+    PURE function can be — the input copy is bit-for-bit unchanged after
+    computing even a long miss streak, and the function returns a plain int,
+    never a Book/Copy a careless caller could mistake for "already updated"."""
+    reads = [_hread(n, finished_at=f"2026-08-{n:02d}T00:00:00+00:00")
+            for n in range(1, 6)]
+    book = new_book(id="b1", library_id=LIB, title="ספר", author="",
+                    copy_id="c1", shelf_id="sh1", depth=1,
+                    provenance=(Provenance(run_id="hr0", spine_id="sp1",
+                                          shelf_id="sh1", depth=1,
+                                          captured_at="2026-07-01T00:00:00+00:00"),))
+    copy_before = _copy_at(book)
+    streak = not_seen_streak(copy_before, "sh1", 1, reads)
+    assert streak == 5
+    assert _copy_at(book) == copy_before, "computing the badge mutated the copy"
+
+
+# --- P2.8: depth_staleness — the shelf's soft staleness line (UI_PLAN §3) --
+
+def test_depth_staleness_flags_a_never_read_row_and_leaves_the_freshest_alone():
+    front = _hread(1, depth=1, finished_at="2026-08-05T00:00:00+00:00")
+    statuses = {s.depth: s for s in depth_staleness(3, [front])}
+    assert statuses[1] == DepthStatus(depth=1, last_read_at="2026-08-05T00:00:00+00:00",
+                                      is_stale=False)
+    assert statuses[2].last_read_at is None and statuses[2].is_stale
+    assert statuses[3].last_read_at is None and statuses[3].is_stale
+
+
+def test_depth_staleness_flags_a_row_read_less_recently_than_the_freshest():
+    old = _hread(1, depth=1, finished_at="2026-03-11T00:00:00+00:00")
+    fresh = _hread(2, depth=2, finished_at="2026-08-05T00:00:00+00:00")
+    statuses = {s.depth: s for s in depth_staleness(2, [old, fresh])}
+    assert statuses[1].is_stale, "an older-than-the-freshest row must read as stale"
+    assert not statuses[2].is_stale
+
+
+def test_depth_staleness_all_fresh_when_every_row_was_read_together():
+    same_time = "2026-08-05T00:00:00+00:00"
+    r1 = _hread(1, depth=1, finished_at=same_time)
+    r2 = _hread(2, depth=2, finished_at=same_time)
+    statuses = depth_staleness(2, [r1, r2])
+    assert all(not s.is_stale for s in statuses)
+
+
+def test_depth_staleness_ignores_a_failed_read():
+    failed = _hread(1, depth=1, status=ReadStatus.FAILED,
+                    finished_at="2026-08-05T00:00:00+00:00")
+    statuses = {s.depth: s for s in depth_staleness(1, [failed])}
+    assert statuses[1].last_read_at is None, \
+        "a failed read must not count as evidence the row was read"
+
+
+def test_depth_staleness_never_mentions_row_or_band_in_the_module():
+    """§5.7's naming discipline, carried into the new module the same way
+    `test_depth_is_never_called_row_or_band_in_the_shelf_module` already
+    enforces it for `app/domain/shelf.py` — prose may say "row"; identifiers
+    must not."""
+    import app.domain.history as history_module
+
+    source = Path(history_module.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.arg):
+            names.add(node.arg)
+        elif isinstance(node, ast.Name):
+            names.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            names.add(node.attr)
+    for bad in ("row", "band"):
+        assert bad not in names, f"{bad!r} used as an identifier in history.py"
 
 
 if __name__ == "__main__":

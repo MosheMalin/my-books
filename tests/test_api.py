@@ -44,7 +44,7 @@ from app.adapters.memory_store import (
 )
 from app.api import deps
 from app.api.app import create_app
-from app.domain import LibraryRef, Status, new_book
+from app.domain import LibraryRef, Provenance, Status, new_book
 from app.ports.reader import ReadAlternative, ReadClaim
 
 TEST_LIBRARY = LibraryRef(id="lib-test", label="Test library")
@@ -1646,6 +1646,226 @@ def test_a_question_whose_book_was_deleted_meanwhile_is_409_and_cleaned_up():
                   json={"kind": "already_listed"})
         assert r.status_code == 409, r.text
         assert c.get(f"{API_PREFIX}/duplicates").json() == []
+
+
+# --- P2.8: the shelf-detail screen ------------------------------------------
+
+def test_shelf_overview_shows_no_staleness_signal_before_any_read_ever_happened():
+    """The depth bar is always visible, even at `depth_count` 1 (§5.7) — and
+    with nothing read yet at all, there is no fresher sibling to be stale
+    against, so the soft line must stay quiet rather than flag the only row
+    a shelf has."""
+    with _blobs() as blobs:
+        c = TestClient(_app(blobs=blobs, reader=StubReader()))
+        shelf = c.post(f"{API_PREFIX}/shelves", json={"label": "סלון"}).json()
+
+        overview = c.get(f"{API_PREFIX}/shelves/{shelf['id']}/overview").json()
+        assert overview["depths"] == [
+            {"depth": 1, "last_read_at": None, "is_stale": False},
+        ]
+        assert overview["last_read_at"] is None
+
+
+def test_shelf_overview_flags_a_row_stale_relative_to_its_read_sibling():
+    """UI_PLAN §3's own example, ` "rows 2, 3 not read since 11.3.2026"` —
+    staleness is relative to the shelf's OWN freshest row, never a clock."""
+    with _blobs() as blobs:
+        c = TestClient(_app(blobs=blobs, reader=StubReader()))
+        shelf_id, cap_id = _read_shelf_and_capture(c)
+        c.post(f"{API_PREFIX}/shelves/{shelf_id}/depths")  # now 2 rows deep
+        read_id = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
+                         json={"depth": 1}).json()["id"]
+        _wait_until_settled(c, shelf_id, read_id)
+
+        overview = c.get(f"{API_PREFIX}/shelves/{shelf_id}/overview").json()
+        by_depth = {d["depth"]: d for d in overview["depths"]}
+        assert by_depth[1]["last_read_at"] is not None
+        assert by_depth[1]["is_stale"] is False
+        assert by_depth[2]["last_read_at"] is None
+        assert by_depth[2]["is_stale"] is True
+        assert overview["last_read_at"] == by_depth[1]["last_read_at"]
+
+
+def test_shelf_overview_for_an_absent_shelf_is_404():
+    with _blobs() as blobs:
+        c = TestClient(_app(blobs=blobs, reader=StubReader()))
+        assert c.get(f"{API_PREFIX}/shelves/nope/overview").status_code == 404
+
+
+def test_shelf_books_lists_only_the_books_located_at_the_requested_depth():
+    """§5.7 #1, at the API's own door: a shelf's books are per DEPTH, never
+    a mixed list of two physical rows."""
+    with _blobs() as blobs:
+        store = MemoryBookStore()
+        shelves = MemoryShelfStore()
+        c = TestClient(_app(store=store, shelves=shelves, blobs=blobs,
+                            reader=StubReader()))
+        shelf = c.post(f"{API_PREFIX}/shelves", json={"label": "סלון"}).json()
+        c.post(f"{API_PREFIX}/shelves/{shelf['id']}/depths")  # 2 rows
+
+        store.save(TEST_LIBRARY, new_book(
+            id="b1", library_id=TEST_LIBRARY.id, title="קדמי", author="",
+            copy_id="c1", shelf_id=shelf["id"], depth=1))
+        store.save(TEST_LIBRARY, new_book(
+            id="b2", library_id=TEST_LIBRARY.id, title="אחורי", author="",
+            copy_id="c2", shelf_id=shelf["id"], depth=2))
+
+        front = c.get(f"{API_PREFIX}/shelves/{shelf['id']}/books",
+                      params={"depth": 1}).json()
+        assert [b["id"] for b in front] == ["b1"]
+        back = c.get(f"{API_PREFIX}/shelves/{shelf['id']}/books",
+                     params={"depth": 2}).json()
+        assert [b["id"] for b in back] == ["b2"]
+
+
+def test_shelf_books_at_an_undeclared_depth_is_409():
+    with _blobs() as blobs:
+        c = TestClient(_app(blobs=blobs, reader=StubReader()))
+        shelf = c.post(f"{API_PREFIX}/shelves", json={}).json()
+        r = c.get(f"{API_PREFIX}/shelves/{shelf['id']}/books", params={"depth": 2})
+        assert r.status_code == 409, r.text
+
+
+def test_shelf_books_for_an_absent_shelf_is_404():
+    with _blobs() as blobs:
+        c = TestClient(_app(blobs=blobs, reader=StubReader()))
+        assert c.get(f"{API_PREFIX}/shelves/nope/books").status_code == 404
+
+
+def test_shelf_books_orders_by_the_engines_own_spine_index_when_available():
+    """No true physical position is stored (see `_physical_order_key`'s own
+    docstring); the best available proxy is the spine id's numeric suffix,
+    numeric so spine 10 does not sort before spine 2, and a copy with no
+    spine at all (a manual add) sorts last rather than first."""
+    with _blobs() as blobs:
+        store = MemoryBookStore()
+        c = TestClient(_app(store=store, blobs=blobs, reader=StubReader()))
+        shelf = c.post(f"{API_PREFIX}/shelves", json={}).json()
+
+        store.save(TEST_LIBRARY, new_book(
+            id="b10", library_id=TEST_LIBRARY.id, title="עשירי", author="",
+            copy_id="b10c", shelf_id=shelf["id"], depth=1,
+            provenance=(Provenance(run_id="r1", spine_id="IMG_1_b0_s10",
+                                   shelf_id=shelf["id"], depth=1),)))
+        store.save(TEST_LIBRARY, new_book(
+            id="b2", library_id=TEST_LIBRARY.id, title="שני", author="",
+            copy_id="b2c", shelf_id=shelf["id"], depth=1,
+            provenance=(Provenance(run_id="r1", spine_id="IMG_1_b0_s02",
+                                   shelf_id=shelf["id"], depth=1),)))
+        store.save(TEST_LIBRARY, new_book(
+            id="bx", library_id=TEST_LIBRARY.id, title="בלי שדרה", author="",
+            copy_id="bxc", shelf_id=shelf["id"], depth=1))  # no provenance
+
+        got = c.get(f"{API_PREFIX}/shelves/{shelf['id']}/books",
+                    params={"depth": 1}).json()
+        assert [b["id"] for b in got] == ["b2", "b10", "bx"]
+
+
+def test_shelf_books_reports_a_not_seen_streak_and_never_removes_the_book():
+    """§5.6's central rule, exercised through the door a careless "cleanup"
+    feature would most plausibly be added to: two re-reads in a row that do
+    not reconfirm a book must grow its badge to 2, and MUST NOT touch the
+    book itself — it is listed exactly as before, and still fetchable
+    directly from the store the endpoint reads from."""
+    with _blobs() as blobs:
+        store = MemoryBookStore()
+        shelves = MemoryShelfStore()
+        reads_store = MemoryReadStore()
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_store,
+                            blobs=blobs, reader=StubReader()))
+        shelf_id, cap_id = _read_shelf_and_capture(c)
+
+        read_a = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
+                        json={"depth": 1}).json()["id"]
+        _wait_until_settled(c, shelf_id, read_a)
+        store.save(TEST_LIBRARY, new_book(
+            id="b1", library_id=TEST_LIBRARY.id, title="ספר קבוע", author="",
+            copy_id="c1", shelf_id=shelf_id, depth=1,
+            provenance=(Provenance(run_id=read_a, spine_id="sp1",
+                                   shelf_id=shelf_id, depth=1,
+                                   captured_at="2026-08-01T00:00:00+00:00"),),
+        ))
+
+        # Two re-reads of the SAME (shelf, depth); the (stub) engine finds
+        # nothing either time -- two consecutive misses.
+        for _ in range(2):
+            read_id = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
+                             json={"depth": 1}).json()["id"]
+            _wait_until_settled(c, shelf_id, read_id)
+
+        books = c.get(f"{API_PREFIX}/shelves/{shelf_id}/books",
+                      params={"depth": 1}).json()
+        assert len(books) == 1, "the book was removed after being unseen twice"
+        assert books[0]["id"] == "b1"
+        assert books[0]["copies"][0]["not_seen_streak"] == 2
+        assert store.get(TEST_LIBRARY, "b1") is not None, \
+            "computing the badge must not have touched the store"
+
+
+def test_a_finished_read_carries_a_diff_summary_and_it_is_archived_not_repainted():
+    """§5.5's headline example, end to end: a read that added one book must
+    say so — in its own GET, in the shelf's history list — and that count
+    must survive `apply` unchanged, because the book it added being "already
+    here" from now on is not the same statement as "this read added it"."""
+    with _blobs() as blobs:
+        store = MemoryBookStore()
+        shelves = MemoryShelfStore()
+        reads_store = MemoryReadStore()
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_store,
+                            blobs=blobs, reader=StubReader()))
+        shelf_id, cap_id = _read_shelf_and_capture(c)
+
+        reader = StubReader([ReadClaim(spine_id="sp1", capture_id=cap_id,
+                                       title="ספר חדש", tier="auto", score=90.0)])
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_store,
+                            blobs=blobs, reader=reader))
+        read_id = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
+                         json={"depth": 1}).json()["id"]
+        body = _wait_until_settled(c, shelf_id, read_id)
+        assert body["diff_summary"] == {
+            "added": 1, "corrected": 0, "unchanged": 0, "needs_decision": 0,
+            "not_seen": 0, "rejected": 0, "ignored": 0,
+        }
+
+        listed = c.get(f"{API_PREFIX}/shelves/{shelf_id}/reads").json()
+        assert listed[0]["diff_summary"]["added"] == 1
+
+        c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/apply",
+              json={"answers": []})
+        after_apply = c.get(
+            f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}").json()
+        assert after_apply["diff_summary"]["added"] == 1, (
+            "the archived snapshot must not repaint itself once the book it "
+            "added is, correctly, 'already here' on every later look"
+        )
+
+
+def test_a_stopped_or_failed_read_summary_is_none_or_reflects_the_partial_claims():
+    """A `failed` read has no reliable diff to freeze (its claims may be an
+    arbitrary partial slice from whatever blew up); a `stopped` one is a
+    real partial result (§ app.domain.read) and gets a real summary over
+    whatever it did collect."""
+    with _blobs() as blobs:
+        shelves = MemoryShelfStore()
+        reads_store = MemoryReadStore()
+        setup = TestClient(_app(blobs=blobs, shelves=shelves, reads=reads_store))
+        img_key = setup.post(f"{API_PREFIX}/images",
+                             files={"file": ("a.png", _png(), "image/png")}
+                             ).json()["key"]
+        made = setup.post(f"{API_PREFIX}/captures", json={"image_id": img_key}).json()
+        shelf_id, cap_id = made["shelf"]["id"], made["capture"]["id"]
+
+        reader = SlowStubReader(capture_id=cap_id, steps=200, step_s=0.01)
+        c = TestClient(_app(blobs=blobs, shelves=shelves, reads=reads_store,
+                            reader=reader))
+        read_id = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
+                         json={"depth": 1}).json()["id"]
+        time.sleep(0.05)
+        c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/stop")
+        body = _wait_until_settled(c, shelf_id, read_id, timeout=3.0)
+        assert body["status"] == "stopped"
+        assert body["diff_summary"] is not None
+        assert body["diff_summary"]["added"] == len(body["claims"])
 
 
 if __name__ == "__main__":

@@ -23,36 +23,66 @@ piece of furniture, so nothing here may treat a shelf id as permanent.
 """
 from __future__ import annotations
 
+import re
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app.api.deps import current_library, get_clock, get_id_gen, get_shelf_store
+from app.api.deps import (
+    current_library,
+    get_book_store,
+    get_clock,
+    get_id_gen,
+    get_read_store,
+    get_shelf_store,
+)
 from app.api.dto import (
+    BookDTO,
     CaptureBinding,
     CaptureCreate,
     CaptureDTO,
     CapturePatch,
+    DepthStatusDTO,
     ShelfCreate,
     ShelfDTO,
+    ShelfOverviewDTO,
     ShelfPatch,
 )
 from app.domain import (
+    Book,
     Capture,
+    Copy,
     LibraryRef,
     Shelf,
     add_depth,
     capture_onto_a_new_shelf,
+    depth_staleness,
     new_capture,
     new_shelf,
+    not_seen_streak,
     rename_shelf,
 )
 from app.domain.shelf import UnknownDepth
 from app.ports import Clock, IdGen
 from app.ports.store import (
+    BookStore,
     DuplicateCaptureSlot,
+    ReadStore,
     ShelfNotEmpty,
     ShelfStore,
     UnknownShelf,
 )
+
+# One shelf view at a time (a personal library's own §6 sizes), and no
+# shelf/depth filter on BookStore.list (P2.5 chose not to add one — see
+# reads.py's own `_FULL_LIBRARY_SCAN_LIMIT`) — so `shelf_books` below accepts
+# the same honest O(library) trade rather than inventing a second, divergent
+# narrowing strategy for a query this rare.
+_FULL_LIBRARY_SCAN_LIMIT = 100_000
+
+# The engine's own spine ids encode a left-to-right position within a band
+# (`IMG_1234_b0_s07`, `segment.py`) — the closest thing to a stored physical
+# order that exists today. See `_physical_order_key`.
+_SPINE_INDEX = re.compile(r"(\d+)\s*$")
 
 router = APIRouter(prefix="/shelves", tags=["shelves"])
 # Captures get their own root because binding MOVES one between shelves: a
@@ -232,6 +262,90 @@ def list_shelf_captures(
     _load(store, library, shelf_id)   # 404 for a foreign or absent shelf
     return [CaptureDTO.of(c)
             for c in store.list_captures(library, shelf_id, depth=depth)]
+
+
+# --- the shelf-detail screen (P2.8, UI_PLAN §3 level 3) --------------------
+
+@router.get("/{shelf_id}/overview", response_model=ShelfOverviewDTO)
+def shelf_overview(
+    shelf_id: str,
+    library: LibraryRef = Depends(current_library),
+    store: ShelfStore = Depends(get_shelf_store),
+    reads: ReadStore = Depends(get_read_store),
+) -> ShelfOverviewDTO:
+    """Declared depth, plus the soft staleness line (UI_PLAN §3: *"rows 2, 3
+    not read since 11.3.2026"*) — every declared row, whether or not it was
+    ever read, so the depth bar can show ALL of them (§5.7: always visible,
+    even at ``depth_count`` 1)."""
+    shelf = _load(store, library, shelf_id)
+    all_reads = reads.list_reads(library, shelf_id)  # every depth, not narrowed
+    statuses = [DepthStatusDTO.of(s)
+               for s in depth_staleness(shelf.depth_count, all_reads)]
+    return ShelfOverviewDTO.of(
+        shelf, capture_count=len(store.list_captures(library, shelf_id)),
+        depths=statuses,
+    )
+
+
+def _physical_order_key(book: Book, copy: Copy) -> tuple[bool, int, str, str]:
+    """Best-effort left-to-right order for "books at a depth" (UI_PLAN §3).
+
+    No TRUE physical position is stored anywhere yet: a claim's bounding box
+    (`Claim.box`) lives only on the live read that produced it (P2.4) and is
+    never carried onto a `Copy`/`Provenance` once applied. So this proxies
+    from the engine's own spine id, which already encodes a left-to-right
+    index within its band (``IMG_1234_b0_s07``) — parsed numerically so
+    spine 2 sorts before spine 10, not after. A copy with no spine id at all
+    (a manual add, or a legacy import with no spine — CLAUDE.md's P1.3 note)
+    sorts after everything that has one, title as the final tiebreak so the
+    order is at least stable and alphabetic rather than arbitrary.
+    """
+    spine_id = copy.last_seen.spine_id if copy.last_seen else ""
+    match = _SPINE_INDEX.search(spine_id)
+    index = int(match.group(1)) if match else -1
+    return (spine_id == "", index, spine_id, book.title)
+
+
+@router.get("/{shelf_id}/books", response_model=list[BookDTO])
+def shelf_books(
+    shelf_id: str,
+    depth: int = Query(
+        1, ge=1,
+        description="Which row front-to-back (§5.7 #1 — there is no "
+                    "'every depth' view of a shelf's books; a mixed list "
+                    "would conflate two different physical locations).",
+    ),
+    library: LibraryRef = Depends(current_library),
+    store: ShelfStore = Depends(get_shelf_store),
+    books: BookStore = Depends(get_book_store),
+    reads: ReadStore = Depends(get_read_store),
+) -> list[BookDTO]:
+    """The books standing at ONE (shelf, depth), in physical order (best
+    effort — see :func:`_physical_order_key`), each copy annotated with its
+    own soft *"not seen in the last N reads"* streak (§5.6 option 2, scoped
+    to this depth per §5.7 #1 — `app.domain.history.not_seen_streak`).
+
+    This is the durable list of §5.6: a book stays here until a human removes
+    it (``remove_from_shelf``), never because a read failed to reconfirm it.
+    """
+    shelf = _load(store, library, shelf_id)
+    try:
+        shelf.check_depth(depth)
+    except UnknownDepth as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+    all_books = books.list(library, limit=_FULL_LIBRARY_SCAN_LIMIT).items
+    here: list[tuple[Book, Copy]] = [
+        (b, c) for b in all_books for c in b.copies
+        if c.location == (shelf_id, depth)
+    ]
+    here.sort(key=lambda pair: _physical_order_key(*pair))
+
+    shelf_reads = reads.list_reads(library, shelf_id, depth=depth)
+    return [
+        BookDTO.of(b, streaks={c.id: not_seen_streak(c, shelf_id, depth, shelf_reads)})
+        for b, c in here
+    ]
 
 
 # --- captures -------------------------------------------------------------

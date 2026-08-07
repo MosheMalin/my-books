@@ -397,6 +397,28 @@ _V10 = """
 ALTER TABLE claims ADD COLUMN alternatives TEXT;  -- JSON array, or NULL
 """
 
+# --- v11: a read's diff summary snapshot (P2.8, §5.5/§5.6) -----------------
+#
+# Headline diff counts (added/corrected/unchanged/needs_decision/not_seen/
+# rejected/ignored), captured ONCE when a read settles into done or stopped
+# — never recomputed later. `app.reconcile_apply`'s own diff endpoints
+# deliberately recompute `reconcile()` fresh against CURRENT library state on
+# every call (never cached — see `diff_for`'s docstring), which is right for
+# the ONE active, not-yet-applied read every review screen shows. A read's
+# place in HISTORY is a different question: recomputing an ALREADY-APPLIED
+# read's diff today would show it as "0 added, N unchanged" forever — the
+# books it added are, by definition, already there the moment you ask again
+# — silently erasing the very history this column exists to keep. So it is a
+# snapshot, the same shape as a run's own config snapshot (CLAUDE.md, "Run
+# history": "THIS IS THE EXPERIMENT VARIABLE"). See `app.domain.read.DiffSummary`.
+#
+# Pure SQL, no backfill: rows written before this migration simply have no
+# summary (NULL) — the shelf history view shows them without one rather than
+# inventing a number nobody measured, same shape as v10's `alternatives`.
+_V11 = """
+ALTER TABLE reads ADD COLUMN diff_summary TEXT;  -- JSON object, or NULL
+"""
+
 # A step is either SQL to execute or a callable to run — both inside the same
 # once-only transaction. Callables exist because a derived column whose rule
 # lives in the domain must be backfilled BY that rule, not by a re-statement
@@ -412,6 +434,7 @@ MIGRATIONS: tuple[tuple[int, str | Step], ...] = (
     (8, _V8),
     (9, _V9),
     (10, _V10),
+    (11, _V11),
 )
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]

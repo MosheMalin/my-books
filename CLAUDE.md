@@ -62,7 +62,10 @@ app/
   domain/       entities + rules. pure Python, no I/O, no framework
     book.py       Book/Copy/Status/Provenance + the rules (VISION §5.1-5.6)
     shelf.py      Shelf/Capture — identity and depth, no address (P2.1)
+    read.py       Read/Claim + DiffSummary — the archive a history row reads (P2.4/P2.8)
     reconcile.py  reconcile(): a read's claims -> Diff, pure (P2.5, §5.6)
+    history.py    not_seen_streak() + depth_staleness() — the badge/staleness
+                  rules derived from a copy's provenance + a shelf's reads (P2.8)
     copy_resolution.py  the §5.4 fire table, the queue entity, the two cheap
                   wins (P2.6)
     text.py       book_key() over booksnap.catalog.normalize — NOT a copy
@@ -93,8 +96,10 @@ app/
     src/book/       the book surface: ONE renderer, drawer + page mounts
     src/capture/    Tab 3: useCapture.ts, intake rows, review panel + claim
                     row/why?/§5.4 prompt (P2.7)
-    src/styles/     tokens / base / books / capture — palette ported from
-                    the mock
+    src/shelf/      the shelf-detail screen: useShelfDetail.ts, ShelfPage.tsx,
+                    ReadHistory.tsx — mounted at #/map/<shelfId> (P2.8)
+    src/styles/     tokens / base / books / capture / shelf — palette ported
+                    from the mock (shelf.css has no mock reference; see P2.8)
 ```
 
 Two applications coexist through pillars 1–2, by design (plan H1/D2,
@@ -508,25 +513,24 @@ names to run a subset (`python tests/run_all.py test_api`).
 |---|---|---|
 | `test_core.py` | 52 | matcher / normalize / evidence gates |
 | `test_integrations.py` | 24 | catalog + fallback adapters, fully mocked/offline |
-| `test_domain.py` | 92 | the VISION rules that can be silently reversed |
-| `test_store_contract.py` | 169 | one store spec × every implementation + isolation |
+| `test_domain.py` | 105 | the VISION rules that can be silently reversed |
+| `test_store_contract.py` | 171 | one store spec × every implementation + isolation |
 | `test_reconcile_apply.py` | 20 | `app.reconcile_apply` writing a `Diff` through real stores |
 | `test_legacy_import.py` | 21 | `work/*.json` → entities, against a committed fixture |
 | `test_search.py` | 15 | Hebrew search, against 24 real queries on the real 251 books |
 | `test_layering.py` | 9 | the one-way import rules (plan H1) |
-| `test_api.py` | 78 | `/api/v1` shapes + the versioning/tenancy meta-tests |
+| `test_api.py` | 88 | `/api/v1` shapes + the versioning/tenancy meta-tests |
 
-480 python tests as of P2.7 (+2 since P2.6: the `alternatives` field the
-Capture tab's "why?" needs — `booksnap.match.explain()`'s ranked runners-up,
-threaded through `Reader`/`Claim`/`ClaimDTO`/schema v10 — round-trips through
-`SqliteReadStore` and `MemoryReadStore` alike, so it is one new
-`@read_contract` case × two implementations, not a hand-picked SQLite-only
-test. `test_api.py` gained coverage for the same field on the existing
-stub-reader test rather than a new one, so it does not move the count).
-No pytest dependency, deliberately — the repo has never had one and the
-accuracy gate runs on bare python. Counts grow with each run's fixes; the
-commit log is the history (`SESSION_NOTES.md` was a one-time handoff and is
-gone — session scratch belongs in `notes/`, which is gitignored).
+505 python tests as of P2.8 (+25 since P2.7: the diff-summary snapshot and
+the not-seen-streak/staleness rules — `app.domain.history` (new module),
+`DiffSummary`/`summarize`/`with_diff_summary` in `read.py`/`reconcile.py`,
+schema **v11** — and the two new endpoints, `GET /shelves/{id}/overview` and
+`GET /shelves/{id}/books`, in `test_domain.py`/`test_store_contract.py`/
+`test_api.py`; see "Shelf view + read history (P2.8)"). No pytest
+dependency, deliberately — the repo has never had one and the accuracy gate
+runs on bare python. Counts grow with each run's fixes; the commit log is
+the history (`SESSION_NOTES.md` was a one-time handoff and is gone —
+session scratch belongs in `notes/`, which is gitignored).
 
 **`test_domain.py` is not coverage** — it is one test per sentence of VISION
 that someone could plausibly "fix" later, and every one was verified to FAIL
@@ -1384,6 +1388,156 @@ covered by `CaptureTab.test.tsx`'s fixture-driven tests, mutation-checked.
 Re-verify visually the next time a real multi-spine read is run through this
 UI.
 
+## Shelf view + read history (P2.8)
+
+The last item of the run→shelf inversion (§5.5/§5.6): a shelf's own screen —
+photo, last-read date, a soft staleness line, the ALWAYS-visible depth bar
+(§5.7), the durable list of books at the selected depth (never auto-pruned),
+and read history as diffs. This *is* the history UI; there is still no run
+list anywhere (§5.5's "not a user-facing concept" holds all the way through).
+Mounted at `#/map/<shelfId>` — UI_PLAN §3's own deep-link shape, reused now
+even though the Map tab's levels 1-2 don't exist yet (pillar 6): this screen
+*is* "level 3", so when the map arrives it gains an entry point into this
+same screen rather than a second shelf-detail surface. Reachable today from
+the Capture tab's *"open the shelf →"* chip (P2.7 left it out on purpose,
+named exactly this item as the reason) and by direct URL.
+`app/web/src/shelf/` — `useShelfDetail.ts` (state), `ShelfPage.tsx` (the
+screen), `ReadHistory.tsx` (the diffs list).
+
+**The hard design question was NOT the UI — it was what a "read history diff"
+even means once the read that produced it is old.** `app.reconcile_apply`'s
+own diff endpoints (P2.5) deliberately recompute `reconcile()` fresh against
+CURRENT library state on every call, and say so in their own docstring — the
+right answer for the ONE active, not-yet-applied read every review screen
+shows. Reusing that same "recompute, never cache" idiom for HISTORY is wrong:
+recompute an already-applied read's diff today and every `added` claim now
+classifies as `unchanged` — the book it added is, by definition, already
+standing at that (shelf, depth) the moment you ask again — which would
+silently repaint "this read added 3 books" into "this read changed nothing"
+the instant the read was reviewed, forever. So `app.domain.read.DiffSummary`
+is a SNAPSHOT: seven plain counts, computed once by `reads.py`'s own `_job`
+closure right after a read settles into `done`/`stopped` (never for `failed`
+— its claims may be an arbitrary partial slice from whatever blew up), and
+persisted on the `Read` itself (`Read.diff_summary`, SQLite schema **v11**,
+nullable JSON, no backfill — same shape as v10's `alternatives`). Verified
+live end to end: applying an already-summarised read's diff afterward does
+not change its history row's counts (`test_a_finished_read_carries_a_diff_
+summary_and_it_is_archived_not_repainted`).
+
+**The not-seen streak (§5.6 option 2, deliberately deferred by P2.5 — its own
+docstring says so) is derived from a copy's OWN provenance, not from
+re-running `reconcile()` across the archive.** `app/domain/history.py` (new
+module — `reconcile.py`'s docstring explicitly reserves this for P2.8) adds
+`not_seen_streak(copy, shelf_id, depth, reads)`: each `Provenance` entry
+already names the read (`run_id`) that produced it, so "was this copy
+reconfirmed by read R" is a plain set-membership check requiring no
+library-wide state reconstruction. Counts backward from the shelf's most
+recent terminal reads of that EXACT (shelf, depth) — scoped per §5.7 #1, so a
+front-row re-read cannot age a copy standing in the row behind, mutation-
+checked (`test_not_seen_streak_is_scoped_to_the_depth_read` fails if the depth
+filter is dropped) — and stops counting at the first read that reconfirmed
+it, or at a read that predates the copy's own first sighting there (a copy
+placed last week must not inherit a streak from photos taken in March). A
+read with no sighting at this (shelf, depth) AT ALL returns 0 rather than
+counting every read as a miss — the real caller (`shelf_books`) only ever
+asks about a copy it already found located here, so an empty case is
+defensive, not the normal path. **The function has no way to remove
+anything** — it takes reads and a copy, returns an int — so the "never
+auto-remove" rule (§5.6's central one) cannot be reversed HERE; it lives in
+`reconcile._not_seen_here` (P2.5) exactly as strict as before. The
+mutation-check the plan asked for by name was done at the door someone would
+actually add a "cleanup" bug: `GET /shelves/{id}/books` was temporarily
+edited to delete a book once its streak reached 2, confirmed
+`test_shelf_books_reports_a_not_seen_streak_and_never_removes_the_book`
+failed, then reverted.
+
+**Physical order has no real data to draw on yet, so it is a documented
+proxy, not a guess dressed up as a fact.** A claim's bounding box
+(`Claim.box`) lives only on the live `Read` that produced it (P2.4) and is
+never carried onto a `Copy`/`Provenance` once applied — there is no persisted
+X-coordinate for "books at a depth" to sort by. `shelves.py:_physical_order_key`
+instead parses the numeric suffix off the engine's own spine id
+(`IMG_1234_b0_s07` already encodes a left-to-right position within its band,
+`segment.py`), numerically so spine 10 does not sort before spine 2, with a
+title fallback for anything with no spine at all (a manual add, or a legacy
+import). Honest, not exact: two captures of one row (§5.3) or a corrected
+relink would need a real position to order perfectly, which nothing stores
+today. Revisit if `Claim.box` ever gets a home on `Provenance`.
+
+**Staleness is relative to the shelf's own freshest row, never a clock.**
+`app/domain/history.py:depth_staleness` flags a depth `is_stale` only when
+another depth of the SAME shelf was read more recently — a shelf nobody has
+ever photographed shows no staleness signal at all (there is nothing fresher
+to be stale against), which reads as honestly quiet rather than nagging about
+a feature the owner hasn't started using. UI_PLAN §3's own example
+("rows 2, 3 not read since 11.3.2026") is rendered by joining each stale
+depth's own clause (`stale_since`/`stale_never`) with `·` — a design call
+where the plan specified content but not exact phrasing, made explicit here
+because it is a joined sentence, not literal grouped text.
+
+**`GET /shelves/{id}/books`, `GET /shelves/{id}/overview` — both new, both
+accept the SAME O(library) trade `reads.py`'s diff endpoints already made**
+(no `shelf_id`/`depth` filter exists on `BookStore.list` — P2.5 chose not to
+add one), rather than inventing a second, divergent narrowing strategy for a
+query this rare (one shelf view at a time). `CopyDTO.not_seen_streak` and
+`BookDTO.of(..., streaks=)` are additive optional fields — every other call
+site of `BookDTO.of` simply doesn't pass `streaks`, so the badge is `null`
+everywhere except the one endpoint that has a shelf's read archive in hand.
+
+**Read history is scoped to the SELECTED depth, not the whole shelf.**
+`GET /shelves/{id}/reads?depth=N` already existed (P2.4); the UI simply always
+passes the depth bar's current selection. Mixing two rows' diffs in one list
+would be exactly the §5.7 #1 mistake the rest of this item goes out of its
+way to avoid — a diff is per-depth, or it is nonsense (§5.7 #1, verbatim).
+
+**No `run_no`.** `app.domain.read.Read` has no human-numbered handle, unlike
+the tuning server's own runs (CLAUDE.md, "Run history") — §5.5 is explicit
+that a run is not a user-facing concept, and this product's `Read` was built
+that way from P2.4, so there was nothing to hide here. `ReadHistory.tsx`
+renders a date and the engine mode, never an id. Asserted live and in the
+client ring (`queryByText(/run/i)` finds nothing in a history row).
+
+Traps found while verifying in the browser (`work/product.db`/
+`work/product_blobs` snapshotted before, restored after — the DB carries the
+owner's real 250 imported books, not a fixture):
+
+⚠ **Live data for "books at a depth" cannot come from the API alone — there
+is deliberately no endpoint that places a book at a location directly.**
+Every legitimate path is a read + `apply` (P2.5) or a §5.4 decision replay;
+a synthetic photo produces zero claims (P2.7's own finding, confirmed
+again — `segment_image` found nothing on a flat test PNG), and a real
+multi-spine photo was not paid for in this session either. Verification used
+the SAME adapters the server uses (`SqliteBookStore.save`,
+`SqliteReadStore.save_read`, called directly with real `Provenance`/`Read`
+objects, not through HTTP) to seed three books at one depth with different
+not-seen streaks (0/1/2) and a genuinely stale, never-read second row — this
+is code-identical to what `apply_diff` would have written, just without
+paying for OCR. One REAL read was also run through the actual engine
+(`mode=spines` against a synthetic image) to confirm the failed-read path
+live: `status=failed`, `diff_summary=null`, exactly as designed.
+
+⚠ **`get_page_text` only reads `<main>` — the book drawer renders as a
+sibling of it (`App.tsx` mounts it outside `<main>`, deliberately, so it
+survives a tab change), so a page-text check after clicking a shelf row
+shows the shelf screen UNCHANGED even though the drawer opened correctly
+underneath.** Caught by checking `document.querySelector('[class*=drawer]')`'s
+own class list (`"drawer on"`) instead. Worth knowing for the next screen
+that opens the drawer from somewhere new.
+
+⚠ **The Browser pane did not composite frames this session** (`computer`
+screenshot timed out every time), so — per CLAUDE.md's own existing warning
+that `getComputedStyle` lies while backgrounded — every visual check here
+used DOM structure instead: `className`/`getAttribute` reads (which are not
+paint-dependent) for `dir`/`lang`/`.rtl-safe`/badge text/depth-bar `.on`/
+`.dot` state, confirmed against `get_page_text` content in both languages.
+That is real verification of markup and wiring, but it is NOT a verification
+that the CSS actually paints correctly (spacing, the photo's aspect ratio,
+dark-mode contrast) — `shelf.css` was written using only existing CSS custom
+properties (`var(--review)`, `var(--line)`, etc.), the same tokens every
+other screen already proves work in both themes, but that is inference from
+the token system, not a rendered screenshot. Re-verify visually the next
+time the pane composites.
+
 ## Author sort, and why it needed a schema version
 
 "Sort by author" means the SHELF order — by surname. Sorting the stored string
@@ -1515,24 +1669,27 @@ arrive in P2.1. The importer reports them loudly rather than dropping them —
 until P2.3 lands, a re-read could re-add those books.
 
 Client ring (needs `npm install --prefix app/web` once):
-`npm --prefix app/web run test` (vitest + React Testing Library, **43 tests**
-as of P2.7) and `npm --prefix app/web run typecheck`. Test what encodes a
+`npm --prefix app/web run test` (vitest + React Testing Library, **55 tests**
+as of P2.8) and `npm --prefix app/web run typecheck`. Test what encodes a
 *decision*, not layout and not DTO plumbing — same standard as the Python
-rings. The suite mocks `fetch`, never `useBooks`/`useCapture`: the store, the
-request-id race guard and the paging arithmetic are exactly what needs
-exercising, and the Capture tab's own fake server (`capture/captureHarness.ts`)
-does not reimplement `reconcile()`/`apply_diff` either — each test hands it
-the exact `DiffDTO` a `POST .../apply` call should answer with, the way the
-Python API ring injects a `StubReader`.
-Mutation-checked — fourteen reversed decisions (dropped race guard, missing
+rings. The suite mocks `fetch`, never `useBooks`/`useCapture`/`useShelfDetail`:
+the store, the request-id race guard and the paging arithmetic are exactly
+what needs exercising, and the Capture/shelf fake servers
+(`capture/captureHarness.ts`, `shelf/shelfHarness.ts`) do not reimplement
+`reconcile()`/`apply_diff`/`not_seen_streak`/`depth_staleness` either — each
+test hands back the exact overview/books/diff a call should answer with, the
+way the Python API ring injects a `StubReader`.
+Mutation-checked — sixteen reversed decisions (dropped race guard, missing
 `.rtl-safe`, edit not abandoned on book change, delete without confirmation,
 409 clearing the form, focus not restored, drawer left open on promote,
 sort direction surviving a key change, tags not trimmed/blanks-dropped, the
 `duplicates` filter dropped from the request — P2.6; "add a row behind" hidden
 until a shelf is already stacked, ✓/✕ shown for every `needs_decision` reason
 instead of only `review_tier_new_book`, an alternative given a one-click
-accept button, a freshly-uploaded photo not auto-selected — P2.7) each fail a
-named test.
+accept button, a freshly-uploaded photo not auto-selected — P2.7; the depth
+bar hidden at `depth_count` 1, a book title rendered without `.rtl-safe`,
+the *"open the shelf →"* chip dropped from the review panel header — P2.8)
+each fail a named test.
 
 ⚠ **This ring cannot see CSS.** jsdom computes no cascade, so every finding
 in the "traps" list above was invisible here and had to be caught in a real

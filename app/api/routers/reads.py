@@ -52,6 +52,8 @@ from app.domain import (
     new_read,
     reconcile,
     stop_read,
+    summarize,
+    with_diff_summary,
 )
 from app.domain.book import DomainError
 from app.domain.shelf import UnknownDepth
@@ -105,6 +107,8 @@ def start_read(
     reader: Reader = Depends(get_reader),
     jobs: JobRunner = Depends(get_job_runner),
     blobs: BlobStore = Depends(get_blob_store),
+    books: BookStore = Depends(get_book_store),
+    decisions: DecisionStore = Depends(get_decision_store),
     clock: Clock = Depends(get_clock),
     ids: IdGen = Depends(get_id_gen),
 ) -> ReadDTO:
@@ -145,8 +149,8 @@ def start_read(
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     reads.save_read(library, read)
 
-    jobs.submit(read.id, _job(read, library, captures, reads, reader, blobs,
-                              ids, clock))
+    jobs.submit(read.id, _job(read, shelf, library, captures, reads, reader,
+                              blobs, books, decisions, ids, clock))
     return ReadDTO.of(read)
 
 
@@ -324,11 +328,14 @@ def apply_read_diff(
 
 def _job(
     read: Read,
+    shelf: Shelf,
     library: LibraryRef,
     captures: Sequence[Capture],
     reads: ReadStore,
     reader: Reader,
     blobs: BlobStore,
+    books: BookStore,
+    decisions: DecisionStore,
     ids: IdGen,
     clock: Clock,
 ):
@@ -371,6 +378,21 @@ def _job(
                 if handle.should_stop()
                 else finish_read(current, finished_at=clock.now_iso())
             )
+            # P2.8's snapshot (§5.5/§5.6): one reconcile() call, right now,
+            # against the library exactly as it stood before this read's own
+            # `apply` (if any) has had a chance to touch it — the archived
+            # "what did THIS read change" a history row shows forever. NOT
+            # taken for a `failed` read: `current.claims` may be an arbitrary
+            # partial slice from whatever blew up mid-spine, and a summary
+            # over that is not evidence worth freezing.
+            if current.status in (ReadStatus.DONE, ReadStatus.STOPPED):
+                library_books = {b.key: b for b in
+                                 books.list(library, limit=_FULL_LIBRARY_SCAN_LIMIT).items}
+                decision_rows = decisions.list_decisions(library, read.shelf_id,
+                                                          read.depth)
+                diff = reconcile(shelf, read.depth, current.claims,
+                                 library_books, decision_rows, read_id=current.id)
+                current = with_diff_summary(current, summarize(diff))
         except Exception as exc:
             # A read is a real record of an attempt even when the attempt
             # failed (a bad catalog, no engine credentials, ...) — see

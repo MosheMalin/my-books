@@ -159,6 +159,24 @@ const HE = {
     dup_default_note: 'ברירת המחדל: אותו עותק',
     staged_note: 'סומן — יוחל בלחיצה על "החלה על המדף"',
     run_failed: 'הקריאה נכשלה',
+    open_shelf: 'פתחו את המדף →',
+
+    // --- shelf detail (P2.8, UI_PLAN §3 level 3) ---
+    shelf_not_found: 'המדף לא נמצא',
+    shelf_untitled_photo_alt: 'תמונת המדף',
+    shelf_last_read: (date: string) => `נקרא לאחרונה ב-${date}`,
+    shelf_never_read: 'המדף הזה עדיין לא נקרא',
+    stale_since: (row: string, date: string) => `${row} — לא נקרא מאז ${date}`,
+    stale_never: (row: string) => `${row} — מעולם לא נקרא`,
+    depth_bar_label: 'שורות המדף',
+    shelf_books_title: 'הספרים בשורה זו',
+    shelf_books_empty: 'אין ספרים ידועים בשורה הזו',
+    not_seen_streak_one: 'לא נראה בקריאה האחרונה — עדיין שם?',
+    not_seen_streak_n: (n: number) => `לא נראה ב-${n} הקריאות האחרונות — עדיין שם?`,
+    shelf_history_title: 'היסטוריית קריאות',
+    shelf_history_empty: 'אין עדיין קריאות למדף הזה',
+    read_failed_short: 'נכשלה',
+    read_stopped_short: 'נעצרה',
   lang: 'EN',
 }
 
@@ -303,6 +321,24 @@ const EN: Strings = {
     dup_default_note: 'Default: the listed copy',
     staged_note: 'staged — applied when you click "Apply to shelf"',
     run_failed: 'The read failed',
+    open_shelf: 'Open the shelf →',
+
+    // --- shelf detail (P2.8, UI_PLAN §3 level 3) ---
+    shelf_not_found: 'Shelf not found',
+    shelf_untitled_photo_alt: 'Shelf photo',
+    shelf_last_read: (date: string) => `Last read ${date}`,
+    shelf_never_read: 'This shelf has never been read',
+    stale_since: (row: string, date: string) => `${row} — not read since ${date}`,
+    stale_never: (row: string) => `${row} — never read`,
+    depth_bar_label: 'Shelf rows',
+    shelf_books_title: 'Books on this row',
+    shelf_books_empty: 'No known books on this row',
+    not_seen_streak_one: 'Not seen in the last read — still there?',
+    not_seen_streak_n: (n: number) => `Not seen in the last ${n} reads — still there?`,
+    shelf_history_title: 'Read history',
+    shelf_history_empty: 'No reads of this shelf yet',
+    read_failed_short: 'failed',
+    read_stopped_short: 'stopped',
   lang: 'עב',
 }
 

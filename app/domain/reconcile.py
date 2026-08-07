@@ -48,7 +48,7 @@ from enum import Enum
 from typing import Mapping, Sequence
 
 from app.domain.book import Book, Copy, DomainError
-from app.domain.read import Claim, ClaimTier
+from app.domain.read import Claim, ClaimTier, DiffSummary
 from app.domain.shelf import Shelf
 from app.domain.text import book_key
 
@@ -444,3 +444,22 @@ def _not_seen_here(
             if copy.location == here and copy.id not in reconfirmed_copy_ids:
                 out.append(NotSeenEntry(book=book, copy_id=copy.id))
     return tuple(out)
+
+
+# --- the P2.8 snapshot -------------------------------------------------------
+
+def summarize(diff: Diff) -> DiffSummary:
+    """Headline counts for `app.domain.read.Read.diff_summary` — see
+    :class:`~app.domain.read.DiffSummary` for why these are captured once, by
+    the caller that just finished a read, rather than derived again later
+    from a re-run of :func:`reconcile`. Deliberately a plain count of each
+    bucket's length, nothing more: the `ClaimOutcome`\\ s themselves already
+    live on the read that produced them (``Read.claims``); this is only the
+    number a history row needs to render.
+    """
+    return DiffSummary(
+        added=len(diff.added), corrected=len(diff.corrected),
+        unchanged=len(diff.unchanged), needs_decision=len(diff.needs_decision),
+        not_seen=len(diff.not_seen), rejected=len(diff.rejected),
+        ignored=len(diff.ignored),
+    )

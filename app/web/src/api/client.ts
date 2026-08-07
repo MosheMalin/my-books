@@ -244,6 +244,8 @@ export type CaptureBinding = components['schemas']['CaptureBinding']
 export type ImageDTO = components['schemas']['ImageDTO']
 export type ReadCreate = components['schemas']['ReadCreate']
 export type ReadDTO = components['schemas']['ReadDTO']
+export type ReadSummaryDTO = components['schemas']['ReadSummaryDTO']
+export type DiffSummaryDTO = components['schemas']['DiffSummaryDTO']
 export type ClaimDTO = components['schemas']['ClaimDTO']
 export type AlternativeDTO = components['schemas']['AlternativeDTO']
 export type DiffDTO = components['schemas']['DiffDTO']
@@ -251,6 +253,8 @@ export type ClaimOutcomeDTO = components['schemas']['ClaimOutcomeDTO']
 export type NotSeenEntryDTO = components['schemas']['NotSeenEntryDTO']
 export type ApplyDiffRequest = components['schemas']['ApplyDiffRequest']
 export type AnswerIn = components['schemas']['AnswerIn']
+export type ShelfOverviewDTO = components['schemas']['ShelfOverviewDTO']
+export type DepthStatusDTO = components['schemas']['DepthStatusDTO']
 
 /** GET by a path this file builds itself (a dynamic `shelf_id`/`read_id`
  *  segment `apiGet`'s literal-key generic cannot express) — same request
@@ -269,6 +273,15 @@ async function getJson<T>(path: string, opts: ApiOptions = {}): Promise<T> {
 
 export const listShelves = (opts: ApiOptions = {}): Promise<Shelf[]> =>
   apiGet('/api/v1/shelves', opts)
+
+export const listShelfCaptures = (
+  shelfId: string, depth?: number, opts: ApiOptions = {},
+): Promise<CaptureDTO[]> =>
+  getJson(
+    `/api/v1/shelves/${encodeURIComponent(shelfId)}/captures` +
+    (depth !== undefined ? `?depth=${depth}` : ''),
+    opts,
+  )
 
 export const addShelfDepth = (shelfId: string, opts?: ApiOptions): Promise<Shelf> =>
   send('POST', `/api/v1/shelves/${encodeURIComponent(shelfId)}/depths`,
@@ -334,3 +347,23 @@ export const applyDiff = (
   shelfId: string, readId: string, payload: ApplyDiffRequest, opts?: ApiOptions,
 ) => send('POST', readsPath(shelfId, `/${encodeURIComponent(readId)}/apply`),
          payload, opts) as Promise<DiffDTO>
+
+export const listReadHistory = (
+  shelfId: string, depth: number, opts: ApiOptions = {},
+): Promise<ReadSummaryDTO[]> =>
+  getJson(`${readsPath(shelfId)}?depth=${depth}`, opts)
+
+// --- the shelf-detail screen (P2.8) -----------------------------------------
+
+export const getShelf = (shelfId: string, opts: ApiOptions = {}): Promise<Shelf> =>
+  getJson(`/api/v1/shelves/${encodeURIComponent(shelfId)}`, opts)
+
+export const getShelfOverview = (
+  shelfId: string, opts: ApiOptions = {},
+): Promise<ShelfOverviewDTO> =>
+  getJson(`/api/v1/shelves/${encodeURIComponent(shelfId)}/overview`, opts)
+
+export const getShelfBooks = (
+  shelfId: string, depth: number, opts: ApiOptions = {},
+): Promise<Book[]> =>
+  getJson(`/api/v1/shelves/${encodeURIComponent(shelfId)}/books?depth=${depth}`, opts)

@@ -53,6 +53,7 @@ from app.domain import (
     ClaimTier,
     Decision,
     DecisionKind,
+    DiffSummary,
     DuplicateQuestion,
     LibraryRef,
     Provenance,
@@ -72,6 +73,7 @@ from app.domain import (
     rename_shelf,
     return_copy,
     stop_read,
+    with_diff_summary,
 )
 from app.ports.store import (
     BookPage,
@@ -888,6 +890,28 @@ def a_claims_alternatives_survive_the_round_trip(store):
                    reason="title similarity 40 < 47"),
     )
     assert got.claims[1].alternatives == ()
+
+
+@read_contract
+def a_reads_diff_summary_survives_the_round_trip(store):
+    """P2.8's snapshot (§5.5/§5.6) is not just an in-memory convenience: a
+    shelf's read history has to come back from SQLite too (v11), or the
+    history view's headline counts are blank for every read served from a
+    real file. A read with none set (the common case — running/failed
+    reads, and every read that predates v11) must round-trip as ``None``,
+    not a default-zeroed summary that would misreport as "0 added"."""
+    r = _read(1)
+    r = finish_read(r, finished_at="2026-08-07T12:05:00+00:00")
+    r = with_diff_summary(r, DiffSummary(added=3, corrected=1, unchanged=12,
+                                         not_seen=1))
+    store.save_read(LIB, r)
+
+    got = store.get_read(LIB, "rd1")
+    assert got.diff_summary == DiffSummary(added=3, corrected=1, unchanged=12,
+                                           not_seen=1)
+
+    store.save_read(LIB, _read(2))  # never summarised
+    assert store.get_read(LIB, "rd2").diff_summary is None
 
 
 @read_contract

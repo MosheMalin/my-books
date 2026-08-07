@@ -16,6 +16,8 @@ an HTTP layer exists.
 """
 from __future__ import annotations
 
+from typing import Mapping
+
 from pydantic import BaseModel, Field
 
 from app.domain import (
@@ -24,6 +26,8 @@ from app.domain import (
     Capture,
     Claim,
     Copy,
+    DepthStatus,
+    DiffSummary,
     Lending,
     Provenance,
     Read,
@@ -116,9 +120,18 @@ class CopyDTO(BaseModel):
         description="Length of the provenance list; the list itself is on the "
                     "book detail, not in every row.",
     )
+    not_seen_streak: int | None = Field(
+        default=None,
+        description="Consecutive most-recent reads of this copy's OWN "
+                    "(shelf, depth) that did not reconfirm it (§5.6's soft "
+                    "badge, never a removal — app.domain.history.not_seen_"
+                    "streak). Populated only by GET /shelves/{id}/books, "
+                    "which has that shelf's read archive in hand; null "
+                    "everywhere else, including an unlocated copy.",
+    )
 
     @classmethod
-    def of(cls, c: Copy) -> "CopyDTO":
+    def of(cls, c: Copy, *, not_seen_streak: int | None = None) -> "CopyDTO":
         return cls(
             id=c.id,
             status=c.status.value,
@@ -131,6 +144,7 @@ class CopyDTO(BaseModel):
             lending=LendingDTO.of(c.lending) if c.lending else None,
             last_seen=SightingDTO.of(c.last_seen) if c.last_seen else None,
             sighting_count=len(c.provenance),
+            not_seen_streak=not_seen_streak,
         )
 
 
@@ -167,7 +181,11 @@ class BookDTO(BaseModel):
     copies: list[CopyDTO]
 
     @classmethod
-    def of(cls, b: Book) -> "BookDTO":
+    def of(cls, b: Book, *, streaks: Mapping[str, int] | None = None) -> "BookDTO":
+        """``streaks`` maps a copy id to its ``not_seen_streak`` (P2.8) — a
+        book-list caller never passes it (no shelf/depth in view), so every
+        copy's badge is simply absent there, exactly as intended."""
+        streaks = streaks or {}
         return cls(
             id=b.id,
             title=b.title,
@@ -179,7 +197,8 @@ class BookDTO(BaseModel):
             shared_book_id=b.shared_book_id,
             work=WorkFieldsDTO(rating=b.work.rating, notes=b.work.notes,
                                read_status=b.work.read_status),
-            copies=[CopyDTO.of(c) for c in b.copies],
+            copies=[CopyDTO.of(c, not_seen_streak=streaks.get(c.id))
+                    for c in b.copies],
         )
 
 
@@ -288,6 +307,50 @@ class ShelfPatch(BaseModel):
     explicit declaration rather than a number to nudge."""
 
     label: str | None = None
+
+
+class DepthStatusDTO(BaseModel):
+    """One row's last-read date, for the shelf-detail screen's soft
+    staleness line (UI_PLAN §3: *"rows 2, 3 not read since 11.3.2026"*) —
+    see ``app.domain.history.depth_staleness``."""
+
+    depth: int
+    last_read_at: str | None = Field(
+        default=None, description="Null if this row has never been read.",
+    )
+    is_stale: bool = Field(
+        description="Read less recently than this SHELF's own freshest row "
+                    "— never against a clock, and never automatic beyond "
+                    "this soft line (§5.7's own closing note).",
+    )
+
+    @classmethod
+    def of(cls, s: DepthStatus) -> "DepthStatusDTO":
+        return cls(depth=s.depth, last_read_at=s.last_read_at, is_stale=s.is_stale)
+
+
+class ShelfOverviewDTO(BaseModel):
+    """The shelf-detail screen's header data (UI_PLAN §3, level 3): declared
+    depth, per-row last-read dates and the staleness line they imply. Books
+    themselves are a separate call (``GET /shelves/{id}/books``) — this is
+    the shelf's own state, not its contents, the same split ``BookDetail``
+    keeps from the list."""
+
+    shelf: ShelfDTO
+    depths: list[DepthStatusDTO]
+    last_read_at: str | None = Field(
+        default=None,
+        description="The freshest read across EVERY depth, or null if this "
+                    "shelf has never been read at all.",
+    )
+
+    @classmethod
+    def of(cls, shelf: Shelf, *, capture_count: int,
+           depths: list[DepthStatusDTO]) -> "ShelfOverviewDTO":
+        freshest = max((d.last_read_at for d in depths if d.last_read_at),
+                       default=None)
+        return cls(shelf=ShelfDTO.of(shelf, capture_count=capture_count),
+                   depths=depths, last_read_at=freshest)
 
 
 class CaptureDTO(BaseModel):
@@ -445,11 +508,32 @@ class ClaimDTO(BaseModel):
         )
 
 
+class DiffSummaryDTO(BaseModel):
+    """Headline diff counts, captured once when a read settles — see
+    ``app.domain.read.DiffSummary`` for why this is a SNAPSHOT and must never
+    be recomputed to "freshen" it. This is the plan's own example rendered
+    literally: ``+3 added · 1 corrected · 12 unchanged · 1 not seen``."""
+
+    added: int = 0
+    corrected: int = 0
+    unchanged: int = 0
+    needs_decision: int = 0
+    not_seen: int = 0
+    rejected: int = 0
+    ignored: int = 0
+
+    @classmethod
+    def of(cls, s: DiffSummary) -> "DiffSummaryDTO":
+        return cls(added=s.added, corrected=s.corrected, unchanged=s.unchanged,
+                   needs_decision=s.needs_decision, not_seen=s.not_seen,
+                   rejected=s.rejected, ignored=s.ignored)
+
+
 class ReadSummaryDTO(BaseModel):
     """One row of a shelf's read history — no claims, no config. Listing a
-    shelf's reads is a history view (§5.6's "history as diffs" surface, once
-    P2.8 builds it); it does not need every claim of every past read to
-    render a row."""
+    shelf's reads is a history view (§5.6's "history as diffs" surface,
+    P2.8); it does not need every claim of every past read to render a row.
+    """
 
     id: str
     shelf_id: str
@@ -460,6 +544,13 @@ class ReadSummaryDTO(BaseModel):
     started_at: str | None = None
     finished_at: str | None = None
     error: str | None = None
+    diff_summary: DiffSummaryDTO | None = Field(
+        default=None,
+        description="Null while running, for a failed read, or for a read "
+                    "that finished before this column existed (v10 and "
+                    "earlier) — the history row shows it without one rather "
+                    "than inventing a number nobody measured.",
+    )
 
     @classmethod
     def of(cls, r: Read) -> "ReadSummaryDTO":
@@ -467,6 +558,8 @@ class ReadSummaryDTO(BaseModel):
             id=r.id, shelf_id=r.shelf_id, depth=r.depth, mode=r.mode,
             status=r.status.value, claim_count=len(r.claims),
             started_at=r.started_at, finished_at=r.finished_at, error=r.error,
+            diff_summary=DiffSummaryDTO.of(r.diff_summary)
+            if r.diff_summary is not None else None,
         )
 
 
@@ -496,6 +589,12 @@ class ReadDTO(BaseModel):
                     "read) — NOT persisted; comes from the job runner and is "
                     "null once the read has a terminal status.",
     )
+    diff_summary: DiffSummaryDTO | None = Field(
+        default=None,
+        description="Same snapshot as ReadSummaryDTO's — see there. Carried "
+                    "here too so a single read fetched on its own (e.g. from "
+                    "a history row) does not need a second call.",
+    )
 
     @classmethod
     def of(cls, r: Read, *, progress: dict | None = None) -> "ReadDTO":
@@ -505,6 +604,8 @@ class ReadDTO(BaseModel):
             code_version=r.code_version, config=r.config,
             started_at=r.started_at, finished_at=r.finished_at, error=r.error,
             claims=[ClaimDTO.of(c) for c in r.claims], progress=progress,
+            diff_summary=DiffSummaryDTO.of(r.diff_summary)
+            if r.diff_summary is not None else None,
         )
 
 
