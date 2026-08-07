@@ -65,14 +65,17 @@ app/
     text.py       book_key() over booksnap.catalog.normalize — NOT a copy
     search.py     Hebrew search SEMANTICS: parse + rank, pure and portable
   ports/        Protocols: Principal, Clock, IdGen, BookStore, ShelfStore
+    blobs.py      BlobStore — image bytes, keys in rows (D1)
   adapters/     implementations behind the ports
     sqlite_store.py  the real one (D1); connection per operation, WAL
+    disk_blobs.py    uploaded photos; content-addressed, EXIF-normalised
     memory_store.py  the API ring's store, and the contract's 2nd implementation
     migrations.py    versioned schema via PRAGMA user_version (H6)
     legacy_import.py work/*.json -> entities; I/O and PURE mapping split
   api/          FastAPI routers under /api/v1 + DTOs. THIN — no rules
     routers/meta.py   service + library identity
     routers/books.py  list / get / patch / delete / manual add / export
+    routers/shelves.py  shelves + captures; the capture→shelf binding (P2.2)
   api/openapi.json          committed contract, regenerated, never hand-edited
   main.py       the composition root — the ONE file allowed to cross layers
   web/          React + Vite + TS client; talks only to /api/v1
@@ -493,15 +496,16 @@ names to run a subset (`python tests/run_all.py test_api`).
 |---|---|---|
 | `test_core.py` | 52 | matcher / normalize / evidence gates |
 | `test_integrations.py` | 24 | catalog + fallback adapters, fully mocked/offline |
-| `test_domain.py` | 45 | the VISION rules that can be silently reversed |
+| `test_domain.py` | 46 | the VISION rules that can be silently reversed |
 | `test_store_contract.py` | 109 | one store spec × every implementation + isolation |
 | `test_legacy_import.py` | 21 | `work/*.json` → entities, against a committed fixture |
 | `test_search.py` | 15 | Hebrew search, against 24 real queries on the real 251 books |
 | `test_layering.py` | 9 | the one-way import rules (plan H1) |
-| `test_api.py` | 38 | `/api/v1` shapes + the versioning/tenancy meta-tests |
+| `test_api.py` | 55 | `/api/v1` shapes + the versioning/tenancy meta-tests |
 
-313 python tests as of P2.1 (the +40 since P1.7 are shelf identity and depth:
-12 domain rules, and the shelf-store spec run against both implementations).
+331 python tests as of P2.3 (+58 since P1.7: shelf identity and depth, the
+shelf-store spec against both implementations, the shelves/captures routes,
+and image upload/serving).
 No pytest dependency, deliberately — the repo has never had one and the
 accuracy gate runs on bare python. Counts grow with each run's fixes; the
 commit log is the history (`SESSION_NOTES.md` was a one-time handoff and is
@@ -803,6 +807,94 @@ because `Shelf.__post_init__` rejects the same state, and the sqlite shelf
 *other* line of each pair IS caught. Worth knowing before reading a survivor
 as a missing test — the question to ask is "what else enforces this?", and
 only if nothing does is it a gap.
+
+## Capture → shelf binding (P2.2, API half)
+
+`/api/v1/shelves` (list/create/get/patch/delete, `POST .../depths`,
+`GET .../captures`) and `/api/v1/captures` (create/get/patch/delete). The
+client half — the intake UI that assigns shelf and depth inline — is still to
+come.
+
+**The binding is that `POST /captures` may omit `shelf_id`, and then a fresh
+unnamed shelf is created for the photo.** That is not a convenience: a capture
+with no shelf is a read with nothing to reconcile against (§5.6), so *"assign
+it later"* is deliberately not a state the model offers, and *Unassigned* on
+screen means *not yet named*. The rule lives in
+`app/domain/shelf.py:capture_onto_a_new_shelf`, not in the router, so it is
+testable in the domain ring and mutation-checked.
+
+- **the response returns the capture AND its shelf** (`CaptureBinding`). When
+  the shelf was auto-created the client has no other way to learn its id, and
+  a second round trip to discover the thing you just implicitly made is the
+  kind of gap that gets papered over with a client-side guess. Same reasoning
+  as the copy routes returning the whole `BookDTO`;
+- **`captures` has its own root, not `/shelves/{id}/captures/{id}`.** Binding
+  MOVES a capture between shelves, and nesting would make "change the shelf" a
+  change of the resource's own address;
+- **`order` is computed, not supplied** — intake is "photograph it left to
+  right", so a caller with its own opinion is two clients waiting to disagree.
+  A capture moved to another shelf or row is appended there rather than
+  inheriting a position that would collide;
+- **"add a row behind" is its own endpoint**, not a settable `depth_count`, so
+  a client cannot jump to 5 and leave three rows nobody photographed;
+- an undeclared depth is **409 naming the declared depth**, never a silent
+  clamp to 1: filing a photo at a row that does not exist would hand
+  reconciliation a location with no counterpart in the room.
+
+## Images are real (P2.3)
+
+`BlobStore` port (`app/ports/blobs.py`) + `DiskBlobStore`, and
+`/api/v1/images` — upload, metadata, `/full`, `/thumb`, delete.
+`Capture.image_id` now holds a real key. Bytes live on disk with the key in a
+row (D1); the product **never** reads the tuning server's `work/runs/`, and its
+photos go under `work/product_blobs` (`BOOKSNAP_BLOBS`).
+
+The layout is **already P3.5's**: `libraries/<library_id>/blobs/<ab>/<sha>.<ext>`.
+Pillar 3 inherits retention, purge and orphan collection rather than a path
+migration.
+
+- **content-addressed.** The key IS the SHA-256 of the stored bytes, so
+  re-uploading a photo after a browser refresh writes nothing and returns the
+  same key (§12.3 #13) — the normal case with a camera roll, not an edge one.
+  It also means a URL built from a key can be cached forever, since different
+  bytes can never reuse one;
+- **upload and binding are two calls.** `POST /images` then `POST /captures`.
+  One multipart call that did both reads tidier and is worse in the flow that
+  happens: twelve photos dropped at once, shelf and depth decided while looking
+  at the thumbnails;
+- **validation is decoding.** The filename and the declared content type are
+  both the client's own claim; a store that believes them serves whatever was
+  really uploaded back under an image content type;
+- **variants are a cache, owned by the adapter.** `read(variant="thumb")`
+  re-derives a missing rendition rather than reporting it absent — on screen
+  "no thumbnail yet" and "this photo is gone" look identical and only one is a
+  real problem. Rendering sits behind the port because `app/api/*` may not
+  import `app/adapters/*`, and a first draft of the route did exactly that.
+
+⚠ **EXIF orientation is applied at STORE time, not at display time.** Phone
+photos carry a rotation flag; `cv2.imread` honours it, PIL does not unless
+asked, and browsers honour it inconsistently. Left alone, the engine reads an
+upright shelf while the review grid shows it on its side — and the person
+reviewing reasonably concludes the reader is broken. Normalising once, up
+front, is what makes the pixels the engine sees and the pixels on screen the
+same. It also makes the hash agree: the same photo uploaded upright and
+rotated is one key, not two. Bytes that need no correction are stored
+**untouched** — a JPEG round-tripped through PIL loses quality for nothing, and
+accuracy is measured on the pixels the engine is given.
+
+⚠ **A variant carries its own extension, not the original's.** Every rendition
+is a JPEG, so deriving the variant path from the key's extension writes JPEG
+bytes into a `~thumb.png`, which is then served as `image/png` and renders as a
+broken image. Found by a test, not by review.
+
+⚠ **A blob key arrives in a URL, so it is validated, never joined.** `<64 hex>.<ext>`
+or nothing — `../` in a path segment is how a store that just concatenates ends
+up serving a private key file.
+
+⚠ Deleting an image does **not** check whether a capture still points at it —
+the stores cannot see each other's aggregates, and reference counting is
+P3.5's. A capture whose image was deleted shows a missing picture rather than
+disappearing. Recorded, not accidental.
 
 ## Author sort, and why it needed a schema version
 

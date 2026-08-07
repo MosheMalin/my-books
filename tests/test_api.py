@@ -17,7 +17,11 @@ Built with a stub principal, so nothing here depends on the dev adapter.
 """
 from __future__ import annotations
 
+import io
+import shutil
 import sys
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import quote
 
@@ -28,7 +32,8 @@ from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from app import API_PREFIX, __version__
-from app.adapters.memory_store import MemoryBookStore
+from app.adapters.disk_blobs import DiskBlobStore
+from app.adapters.memory_store import MemoryBookStore, MemoryShelfStore
 from app.api import deps
 from app.api.app import create_app
 from app.domain import LibraryRef, Status, new_book
@@ -68,14 +73,55 @@ class StubPrincipal:
         return self._library
 
 
-def _app(principal: StubPrincipal | None = None, store=None):
+def _app(principal: StubPrincipal | None = None, store=None, shelves=None,
+         blobs=None):
     p = principal or StubPrincipal()
     return create_app(
         principal_provider=lambda: p,
         book_store=store if store is not None else MemoryBookStore(),
+        shelf_store=shelves if shelves is not None else MemoryShelfStore(),
+        blob_store=blobs,
         clock=StubClock(),
         id_gen=SeqIdGen(),
     )
+
+
+@contextmanager
+def _blobs():
+    """A real DiskBlobStore on a temp dir.
+
+    Not a stub: the whole point of P2.3 is that the bytes survive a round trip
+    and come back decodable, and a fake that returns whatever it was handed
+    would assert nothing about the part that can actually be wrong.
+    """
+    tmp = tempfile.mkdtemp(prefix="booksnap-blobs-")
+    try:
+        yield DiskBlobStore(tmp)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _png(size=(40, 30), colour=(200, 30, 30)) -> bytes:
+    from PIL import Image
+
+    out = io.BytesIO()
+    Image.new("RGB", size, colour).save(out, format="PNG")
+    return out.getvalue()
+
+
+def _jpeg(size=(40, 30), *, orientation: int | None = None) -> bytes:
+    """A JPEG, optionally carrying an EXIF rotation flag like a phone photo."""
+    from PIL import Image
+
+    img = Image.new("RGB", size, (30, 90, 200))
+    out = io.BytesIO()
+    if orientation is None:
+        img.save(out, format="JPEG")
+    else:
+        exif = img.getexif()
+        exif[0x0112] = orientation
+        img.save(out, format="JPEG", exif=exif)
+    return out.getvalue()
 
 
 def _seed(store, library: LibraryRef, *titles: str, status=Status.AUTO,
@@ -586,6 +632,338 @@ def test_no_module_level_mutable_state_in_api():
                         f"{f.relative_to(REPO_ROOT).as_posix()}:{node.lineno} {names}"
                     )
     assert not offenders, "module-level mutable state: " + "; ".join(offenders)
+
+
+# --- shelves and captures (P2.2) -----------------------------------------
+
+def test_a_photo_with_no_shelf_still_gets_one():
+    """The binding, and the item's whole point. A capture with no shelf is a
+    read with nothing to reconcile against (§5.6), so "assign it later" is not
+    a state the model offers — the photo lands on a fresh UNNAMED shelf, and
+    *Unassigned* on screen means not yet named.
+
+    The response carries the shelf as well as the capture: when the shelf was
+    auto-created the client has no other way to learn its id.
+    """
+    c = TestClient(_app())
+    r = c.post(f"{API_PREFIX}/captures", json={"image_id": "IMG_6082"})
+    assert r.status_code == 201, r.text
+    body = r.json()
+
+    assert body["shelf_created"] is True
+    assert body["shelf"]["label"] == "", "an auto-created shelf was named"
+    assert body["shelf"]["depth_count"] == 1
+    assert body["capture"]["shelf_id"] == body["shelf"]["id"]
+    assert body["capture"]["depth"] == 1
+    assert body["capture"]["image_id"] == "IMG_6082"
+
+    listed = c.get(f"{API_PREFIX}/shelves").json()
+    assert [s["id"] for s in listed] == [body["shelf"]["id"]]
+    assert listed[0]["capture_count"] == 1
+
+
+def test_a_photo_can_name_an_existing_shelf_and_appends_after_the_last():
+    """Several captures of one shelf are ordered (§5.3), and the order is
+    computed rather than asked for: intake is "photograph it left to right",
+    so a caller supplying its own number is two clients waiting to disagree."""
+    c = TestClient(_app())
+    shelf = c.post(f"{API_PREFIX}/shelves", json={"label": "סלון"}).json()
+
+    first = c.post(f"{API_PREFIX}/captures",
+                   json={"shelf_id": shelf["id"], "image_id": "a"}).json()
+    second = c.post(f"{API_PREFIX}/captures",
+                    json={"shelf_id": shelf["id"], "image_id": "b"}).json()
+
+    assert first["shelf_created"] is False
+    assert [first["capture"]["order"], second["capture"]["order"]] == [0, 1]
+    got = c.get(f"{API_PREFIX}/shelves/{shelf['id']}/captures").json()
+    assert [x["image_id"] for x in got] == ["a", "b"]
+
+
+def test_a_photo_cannot_be_filed_at_a_row_that_was_never_declared():
+    """§5.7: depth is declared, never detected. A 409 naming the declared
+    depth, not a silent clamp to 1 — filing a photo at a row that does not
+    exist gives reconciliation a location with no counterpart in the room."""
+    c = TestClient(_app())
+    shelf = c.post(f"{API_PREFIX}/shelves", json={}).json()
+
+    r = c.post(f"{API_PREFIX}/captures",
+               json={"shelf_id": shelf["id"], "depth": 2})
+    assert r.status_code == 409, r.text
+    assert "2" in r.json()["detail"]
+
+    deeper = c.post(f"{API_PREFIX}/shelves/{shelf['id']}/depths").json()
+    assert deeper["depth_count"] == 2
+    ok = c.post(f"{API_PREFIX}/captures",
+                json={"shelf_id": shelf["id"], "depth": 2})
+    assert ok.status_code == 201, ok.text
+
+
+def test_rebinding_a_photo_moves_it_and_gives_it_a_fresh_position():
+    """The inline assignment the intake UI performs. A photo moved to another
+    shelf keeps no memory of where it sat on the old one — an inherited order
+    would collide with whatever already occupies that slot."""
+    c = TestClient(_app())
+    auto = c.post(f"{API_PREFIX}/captures", json={"image_id": "a"}).json()
+    target = c.post(f"{API_PREFIX}/shelves", json={"label": "מטבח"}).json()
+    c.post(f"{API_PREFIX}/captures",
+           json={"shelf_id": target["id"], "image_id": "resident"})
+
+    moved = c.patch(f"{API_PREFIX}/captures/{auto['capture']['id']}",
+                    json={"shelf_id": target["id"]})
+    assert moved.status_code == 200, moved.text
+    assert moved.json()["capture"]["shelf_id"] == target["id"]
+    assert moved.json()["capture"]["order"] == 1, "it collided with the resident"
+
+    # The shelf it left is now empty, and therefore deletable.
+    assert c.delete(f"{API_PREFIX}/shelves/{auto['shelf']['id']}"
+                    ).status_code == 204
+
+
+def test_naming_a_shelf_is_optional_in_both_directions():
+    """Identity is free (owner's call): a shelf may be created unnamed, named
+    later, and un-named again. `""` is a legal value, not a missing one."""
+    c = TestClient(_app())
+    shelf = c.post(f"{API_PREFIX}/shelves", json={}).json()
+    assert shelf["label"] == ""
+
+    named = c.patch(f"{API_PREFIX}/shelves/{shelf['id']}",
+                    json={"label": "סלון, כוננית 2"}).json()
+    assert named["label"] == "סלון, כוננית 2"
+
+    cleared = c.patch(f"{API_PREFIX}/shelves/{shelf['id']}",
+                      json={"label": ""}).json()
+    assert cleared["label"] == "", "clearing a label was treated as absent"
+
+
+def test_a_shelf_with_photos_cannot_be_deleted():
+    """§5.6 at the HTTP edge: 409, not a cascade. Its captures are the record
+    a re-read diffs against, and destroying them on a misclick is exactly the
+    destructive direction the whole design refuses."""
+    c = TestClient(_app())
+    made = c.post(f"{API_PREFIX}/captures", json={"image_id": "a"}).json()
+    shelf_id = made["shelf"]["id"]
+
+    r = c.delete(f"{API_PREFIX}/shelves/{shelf_id}")
+    assert r.status_code == 409, r.text
+    assert c.get(f"{API_PREFIX}/shelves/{shelf_id}").status_code == 200
+
+    assert c.delete(f"{API_PREFIX}/captures/{made['capture']['id']}"
+                    ).status_code == 204
+    assert c.delete(f"{API_PREFIX}/shelves/{shelf_id}").status_code == 204
+
+
+def test_the_wishlist_is_absent_from_the_shelf_list_unless_asked_for():
+    c = TestClient(_app())
+    c.post(f"{API_PREFIX}/shelves", json={"label": "סלון"})
+    wish = c.post(f"{API_PREFIX}/shelves",
+                  json={"label": "משאלות", "virtual": True}).json()
+
+    assert wish["id"] not in [s["id"] for s in
+                             c.get(f"{API_PREFIX}/shelves").json()]
+    assert wish["id"] in [
+        s["id"] for s in
+        c.get(f"{API_PREFIX}/shelves", params={"include_virtual": True}).json()
+    ]
+    # And it never gains a row behind — it is not furniture.
+    assert c.post(f"{API_PREFIX}/shelves/{wish['id']}/depths"
+                  ).status_code == 409
+
+
+def test_a_shelf_in_another_library_is_404_not_403():
+    """§4.2: absent and forbidden are the same answer, so the API cannot leak
+    which shelf ids exist in someone else's library."""
+    shared = MemoryShelfStore()
+    mine = TestClient(_app(shelves=shared))
+    theirs = TestClient(_app(
+        StubPrincipal(LibraryRef("lib-other", "Other"), "p-other"),
+        shelves=shared,
+    ))
+    made = mine.post(f"{API_PREFIX}/captures", json={"image_id": "a"}).json()
+    shelf_id, cap_id = made["shelf"]["id"], made["capture"]["id"]
+
+    assert theirs.get(f"{API_PREFIX}/shelves/{shelf_id}").status_code == 404
+    assert theirs.get(f"{API_PREFIX}/captures/{cap_id}").status_code == 404
+    assert theirs.delete(f"{API_PREFIX}/shelves/{shelf_id}").status_code == 404
+    assert theirs.get(f"{API_PREFIX}/shelves").json() == []
+    # Filing a photo onto a foreign shelf is the same answer, not a 403.
+    assert theirs.post(f"{API_PREFIX}/captures",
+                       json={"shelf_id": shelf_id}).status_code == 404
+    assert mine.get(f"{API_PREFIX}/shelves/{shelf_id}").status_code == 200
+
+
+# --- images (P2.3) --------------------------------------------------------
+
+def test_a_photo_round_trips_and_comes_back_decodable():
+    """The item in one test: bytes in, bytes out, still an image. Dimensions
+    come back too, so the review grid can reserve an aspect ratio before the
+    picture arrives instead of reflowing on every tile."""
+    from PIL import Image
+
+    with _blobs() as blobs:
+        c = TestClient(_app(blobs=blobs))
+        r = c.post(f"{API_PREFIX}/images",
+                   files={"file": ("IMG_6082.png", _png((40, 30)), "image/png")})
+        assert r.status_code == 201, r.text
+        meta = r.json()
+        assert (meta["width"], meta["height"]) == (40, 30)
+        assert meta["content_type"] == "image/png"
+        assert meta["filename"] == "IMG_6082.png"
+
+        full = c.get(f"{API_PREFIX}/images/{meta['key']}/full")
+        assert full.status_code == 200
+        assert Image.open(io.BytesIO(full.content)).size == (40, 30)
+
+        thumb = c.get(f"{API_PREFIX}/images/{meta['key']}/thumb")
+        assert thumb.status_code == 200
+        assert thumb.headers["content-type"] == "image/jpeg"
+        assert Image.open(io.BytesIO(thumb.content)).size[0] <= 480
+
+
+def test_uploading_the_same_photo_twice_stores_it_once():
+    """§12.3 #13. Re-uploading after a browser refresh is the NORMAL case with
+    a camera roll, not an edge one — so the second attempt must cost a hash
+    rather than a duplicate, and hand back the same key."""
+    with _blobs() as blobs:
+        c = TestClient(_app(blobs=blobs))
+        data = _png()
+        first = c.post(f"{API_PREFIX}/images",
+                       files={"file": ("a.png", data, "image/png")}).json()
+        again = c.post(f"{API_PREFIX}/images",
+                       files={"file": ("b.png", data, "image/png")}).json()
+
+        assert first["key"] == again["key"]
+        stored = list((Path(blobs.root)).rglob("*.png"))
+        assert len(stored) == 1, f"stored twice: {stored}"
+        # The filename follows the LATEST upload — same photo, but this time
+        # the name may be the better one.
+        assert c.get(f"{API_PREFIX}/images/{first['key']}"
+                     ).json()["filename"] == "b.png"
+
+
+def test_a_rotated_phone_photo_is_stored_upright():
+    """Phone photos carry an EXIF rotation flag. `cv2.imread` honours it and
+    PIL does not unless asked, so left alone the engine would read an upright
+    shelf while the review grid showed it on its side — and the person
+    reviewing would reasonably conclude the reader was broken.
+
+    Normalising at STORE time is what makes those two agree, and it is also why
+    the same photo uploaded upright and rotated must not store twice: identical
+    pixels, one key.
+    """
+    from PIL import Image
+
+    with _blobs() as blobs:
+        c = TestClient(_app(blobs=blobs))
+        # orientation 6 = rotate 90°: a 40x30 image displays as 30x40.
+        r = c.post(f"{API_PREFIX}/images",
+                   files={"file": ("p.jpg", _jpeg((40, 30), orientation=6),
+                                   "image/jpeg")})
+        meta = r.json()
+        assert (meta["width"], meta["height"]) == (30, 40), \
+            "EXIF orientation was not applied at store time"
+
+        served = Image.open(io.BytesIO(
+            c.get(f"{API_PREFIX}/images/{meta['key']}/full").content))
+        assert served.size == (30, 40)
+        assert served.getexif().get(0x0112) in (None, 1), \
+            "the stored bytes still carry a rotation flag"
+
+
+def test_a_file_that_is_not_an_image_is_refused_by_decoding_it():
+    """Never by trusting the filename or the declared content type — both are
+    the client's own claim, and a store that believes them will serve whatever
+    was really uploaded back to a browser under an image content type."""
+    with _blobs() as blobs:
+        c = TestClient(_app(blobs=blobs))
+        r = c.post(f"{API_PREFIX}/images",
+                   files={"file": ("shelf.jpg", b"#!/bin/sh\nrm -rf /",
+                                   "image/jpeg")})
+        assert r.status_code == 415, r.text
+
+
+def test_a_key_cannot_escape_the_library_directory():
+    """The key arrives in a URL. `../` in a path segment is how a store that
+    just joins strings ends up serving somebody's private key file, so a key is
+    validated as `<64 hex>.<ext>` rather than trusted."""
+    with _blobs() as blobs:
+        c = TestClient(_app(blobs=blobs))
+        for evil in ("..%2f..%2fproduct.db", "....%2f%2fetc%2fpasswd.jpg"):
+            r = c.get(f"{API_PREFIX}/images/{evil}/full")
+            assert r.status_code == 404, (evil, r.status_code)
+
+
+def test_a_photo_in_another_library_is_404_not_403():
+    """§4.2 again, and here it also means one tenant cannot read another's
+    photos by guessing a hash they happen to know."""
+    with _blobs() as blobs:
+        mine = TestClient(_app(blobs=blobs))
+        theirs = TestClient(_app(
+            StubPrincipal(LibraryRef("lib-other", "Other"), "p-other"),
+            blobs=blobs,
+        ))
+        key = mine.post(f"{API_PREFIX}/images",
+                        files={"file": ("a.png", _png(), "image/png")}
+                        ).json()["key"]
+
+        assert theirs.get(f"{API_PREFIX}/images/{key}").status_code == 404
+        assert theirs.get(f"{API_PREFIX}/images/{key}/full").status_code == 404
+        assert theirs.get(f"{API_PREFIX}/images/{key}/thumb").status_code == 404
+        assert theirs.delete(f"{API_PREFIX}/images/{key}").status_code == 404
+        assert mine.get(f"{API_PREFIX}/images/{key}/full").status_code == 200
+
+
+def test_a_missing_thumbnail_is_re_derived_rather_than_reported_absent():
+    """A variant is a CACHE. On screen "no thumbnail yet" and "this photo is
+    gone" look identical, and only one of them is a real problem — so a
+    deleted rendition must cost a re-render, not a broken tile."""
+    with _blobs() as blobs:
+        c = TestClient(_app(blobs=blobs))
+        key = c.post(f"{API_PREFIX}/images",
+                     files={"file": ("a.png", _png(), "image/png")}
+                     ).json()["key"]
+        cached = list(Path(blobs.root).rglob("*~thumb.jpg"))
+        assert cached, "no thumbnail was cached at upload"
+        for f in cached:
+            f.unlink()
+
+        assert c.get(f"{API_PREFIX}/images/{key}/thumb").status_code == 200
+        assert list(Path(blobs.root).rglob("*~thumb.jpg")), "not re-cached"
+
+
+def test_deleting_a_photo_takes_its_renditions_with_it():
+    """Variants are a cache OF this original. A stale rendition surviving a
+    delete means a wrong picture on a screen, which is worse than the directory
+    scan that prevents it."""
+    with _blobs() as blobs:
+        c = TestClient(_app(blobs=blobs))
+        key = c.post(f"{API_PREFIX}/images",
+                     files={"file": ("a.png", _png(), "image/png")}
+                     ).json()["key"]
+
+        assert c.delete(f"{API_PREFIX}/images/{key}").status_code == 204
+        assert list(Path(blobs.root).rglob("*~thumb.jpg")) == []
+        assert c.get(f"{API_PREFIX}/images/{key}/full").status_code == 404
+        assert c.delete(f"{API_PREFIX}/images/{key}").status_code == 404
+
+
+def test_a_capture_can_carry_the_key_of_an_uploaded_photo():
+    """The join P2.3 exists for: upload returns a key, and the capture that
+    files the photo onto a shelf references it. Two calls, deliberately — the
+    owner drops twelve photos and decides shelf and depth while looking at the
+    thumbnails."""
+    with _blobs() as blobs:
+        c = TestClient(_app(blobs=blobs))
+        key = c.post(f"{API_PREFIX}/images",
+                     files={"file": ("IMG_6082.png", _png(), "image/png")}
+                     ).json()["key"]
+
+        made = c.post(f"{API_PREFIX}/captures", json={"image_id": key}).json()
+        assert made["capture"]["image_id"] == key
+        assert made["shelf_created"] is True
+        # And the bytes are reachable from what the capture carries.
+        assert c.get(f"{API_PREFIX}/images/{made['capture']['image_id']}/thumb"
+                     ).status_code == 200
 
 
 if __name__ == "__main__":

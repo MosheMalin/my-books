@@ -37,6 +37,7 @@ from app.domain import (
     add_copy,
     add_depth,
     approve,
+    capture_onto_a_new_shelf,
     book_key,
     counts_toward_library,
     edit,
@@ -517,6 +518,26 @@ def test_the_wishlist_is_not_furniture_and_does_not_count():
     _raises(VirtualShelfHasNoDepth, add_depth, wish)
     _raises(VirtualShelfHasNoDepth, _shelf,
             id="w2", label="x", virtual=True, depth_count=2)
+
+
+def test_a_photo_that_names_no_shelf_still_gets_one():
+    """P2.2's binding rule, in the domain rather than a router because it is a
+    decision: EVERY capture has a shelf identity from the moment it exists. A
+    photo with no shelf is a read with nothing to reconcile against (§5.6), so
+    "assign it later" is deliberately not a state the model offers.
+
+    The shelf comes out unnamed and one row deep — identity is free, so nothing
+    is demanded before the first photo can be filed.
+    """
+    shelf, capture = capture_onto_a_new_shelf(
+        shelf_id="sh1", library_id=LIB, capture_id="cap1",
+        image_id="IMG_6082", captured_at="2026-08-07",
+    )
+    assert capture.shelf_id == shelf.id, "the photo was not bound to its shelf"
+    assert shelf.is_named is False
+    assert shelf.depth_count == 1
+    assert capture.slot == ("sh1", 1, 0)
+    assert capture.image_id == "IMG_6082"
 
 
 def test_a_capture_is_identified_by_shelf_depth_and_order():

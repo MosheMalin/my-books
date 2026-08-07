@@ -171,6 +171,159 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/captures": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Capture
+         * @description File a photo — with a shelf if one is named, on a fresh one if not.
+         *
+         *     Returns BOTH the capture and its shelf: when the shelf was auto-created the
+         *     client has no other way to learn its id, and a second round trip to
+         *     discover the thing you just implicitly made is what gets papered over with
+         *     a client-side guess.
+         */
+        post: operations["create_capture_api_v1_captures_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/captures/{capture_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Capture */
+        get: operations["get_capture_api_v1_captures__capture_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete Capture */
+        delete: operations["delete_capture_api_v1_captures__capture_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Bind Capture
+         * @description Move a photo to another shelf, another row, or another position.
+         *
+         *     This is the inline assignment the intake UI performs. Moving to a shelf
+         *     that is not one row deeper than the caller thinks is a **409** naming the
+         *     declared depth, not a silent clamp: filing a photo at a row that does not
+         *     exist would give reconciliation a location with no counterpart in the room.
+         */
+        patch: operations["bind_capture_api_v1_captures__capture_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/images": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload Image
+         * @description Store a photo. **Idempotent by content** — the same bytes return the
+         *     same key and write nothing the second time, so a re-upload after a browser
+         *     refresh costs a hash rather than a duplicate (§12.3 #13).
+         *
+         *     ``201`` either way. A conditional ``200``-if-present would leak whether
+         *     somebody has already uploaded this exact photo, and the client has nothing
+         *     to do differently.
+         */
+        post: operations["upload_image_api_v1_images_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/images/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Image
+         * @description Metadata without the bytes — size, dimensions, original filename.
+         */
+        get: operations["get_image_api_v1_images__key__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete Image
+         * @description Remove a photo and its renditions.
+         *
+         *     ⚠ Does NOT check whether a capture still points at it — the stores cannot
+         *     see each other's aggregates, and reference counting is P3.5's. Until then
+         *     this is for a photo uploaded by mistake, and a capture whose image was
+         *     deleted shows a missing picture rather than disappearing.
+         */
+        delete: operations["delete_image_api_v1_images__key__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/images/{key}/full": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Full
+         * @description The stored photo, EXIF already applied — the same pixels the engine
+         *     reads, which is what makes a review screen trustworthy.
+         */
+        get: operations["get_full_api_v1_images__key__full_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/images/{key}/thumb": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Thumb
+         * @description A JPEG thumbnail for the review grid.
+         *
+         *     Whether it was cached at upload or derived just now is the adapter's
+         *     business — this route asks for a variant and gets bytes. Keeping the
+         *     rendering behind the port is also what keeps the API layer out of the
+         *     image-processing business, which the layering test forbids outright.
+         */
+        get: operations["get_thumb_api_v1_images__key__thumb_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/meta": {
         parameters: {
             query?: never;
@@ -188,10 +341,126 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/shelves": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Shelves
+         * @description Every shelf, named ones first and alphabetically, then unnamed ones
+         *     oldest-first. Not paged — a personal library has tens of shelves.
+         */
+        get: operations["list_shelves_api_v1_shelves_get"];
+        put?: never;
+        /**
+         * Create Shelf
+         * @description Declare a shelf up front. Every field is optional (identity is free).
+         *
+         *     Depth is not settable here on purpose — a shelf starts one row deep and
+         *     gains rows through :func:`add_a_row_behind`, because §5.7 makes the second
+         *     row a declaration rather than a number to guess at during creation.
+         */
+        post: operations["create_shelf_api_v1_shelves_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/shelves/{shelf_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Shelf */
+        get: operations["get_shelf_api_v1_shelves__shelf_id__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete Shelf
+         * @description Remove a shelf that holds no photos. **409** if it does.
+         *
+         *     Not a cascade: its captures are the record a re-read diffs against (§5.6).
+         *     This is for the shelf created by mistake, not for clearing one out.
+         */
+        delete: operations["delete_shelf_api_v1_shelves__shelf_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Patch Shelf
+         * @description Name a shelf, or clear the name — ``""`` is a legal value, not a
+         *     missing one, because a label the owner no longer wants should not be kept
+         *     just to avoid an empty string.
+         */
+        patch: operations["patch_shelf_api_v1_shelves__shelf_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/shelves/{shelf_id}/captures": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Shelf Captures */
+        get: operations["list_shelf_captures_api_v1_shelves__shelf_id__captures_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/shelves/{shelf_id}/depths": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add A Row Behind
+         * @description *"Add a row behind this one"* (§5.7) — the declaration that cannot be
+         *     detected, because nothing in a photo says "this is the row behind"; the
+         *     front books are simply absent.
+         *
+         *     Its own endpoint rather than a ``depth_count`` field so the client cannot
+         *     set it to 5 in one step and leave three rows nobody photographed. Refused
+         *     on the wishlist, which has no behind.
+         */
+        post: operations["add_a_row_behind_api_v1_shelves__shelf_id__depths_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** Body_upload_image_api_v1_images_post */
+        Body_upload_image_api_v1_images_post: {
+            /**
+             * File
+             * @description The photo. Decoded to validate it.
+             */
+            file: string;
+            /**
+             * Filename
+             * @description Original name, for the review screen. Falls back to the upload's own name; never used to decide the format.
+             * @default
+             */
+            filename: string;
+        };
         /**
          * BookCreate
          * @description Add a book the reader never found. Lands as ``manual`` with one copy.
@@ -286,6 +555,90 @@ export interface components {
          */
         BookSort: "title" | "author" | "recently_added";
         /**
+         * CaptureBinding
+         * @description What :meth:`create` produced — the photo AND the shelf it landed on.
+         *
+         *     Both, never just the capture: when the shelf was auto-created the client
+         *     has no other way to learn its id, and a second round trip to discover the
+         *     thing you just implicitly made is the sort of gap that gets papered over
+         *     with a client-side guess. Same reasoning as the copy routes returning the
+         *     whole ``BookDTO``.
+         */
+        CaptureBinding: {
+            capture: components["schemas"]["CaptureDTO"];
+            shelf: components["schemas"]["ShelfDTO"];
+            /**
+             * Shelf Created
+             * @description True when no shelf_id was given and one was made.
+             */
+            shelf_created: boolean;
+        };
+        /**
+         * CaptureCreate
+         * @description File a photo.
+         *
+         *     ``shelf_id`` is optional and that is the point of P2.2: a photo that names
+         *     no shelf gets a fresh unnamed one, because a capture with no shelf is a
+         *     read with nothing to reconcile against (§5.6). *"Unassigned"* on screen
+         *     means *not yet named*, never *not yet filed*.
+         */
+        CaptureCreate: {
+            /**
+             * Depth
+             * @default 1
+             */
+            depth: number;
+            /** Image Id */
+            image_id?: string | null;
+            /**
+             * Order
+             * @description Omit to append after the last photo at this shelf+depth.
+             */
+            order?: number | null;
+            /** Shelf Id */
+            shelf_id?: string | null;
+        };
+        /**
+         * CaptureDTO
+         * @description One photo of part of a shelf, keyed by ``(shelf, depth, order)``.
+         */
+        CaptureDTO: {
+            /** Captured At */
+            captured_at?: string | null;
+            /**
+             * Depth
+             * @description Which row front-to-back. 1-based.
+             */
+            depth: number;
+            /** Id */
+            id: string;
+            /**
+             * Image Id
+             * @description Reference, never bytes — blobs live behind BlobStore (P3.5). Also what identifies an unnamed shelf on screen.
+             */
+            image_id?: string | null;
+            /**
+             * Order
+             * @description Position among this shelf+depth's photos, left-to-right or right-to-left per the shelf's reading direction.
+             */
+            order: number;
+            /** Shelf Id */
+            shelf_id: string;
+        };
+        /**
+         * CapturePatch
+         * @description Re-bind a photo: move it to another shelf, another row, or another
+         *     position. This is the inline assignment the intake UI performs.
+         */
+        CapturePatch: {
+            /** Depth */
+            depth?: number | null;
+            /** Order */
+            order?: number | null;
+            /** Shelf Id */
+            shelf_id?: string | null;
+        };
+        /**
          * CopyCreate
          * @description *"I have another copy"* (§5.1) — the only path that creates a second
          *     physical object. No ``shelf_id`` here: shelves don't exist until P2.1, so
@@ -317,6 +670,11 @@ export interface components {
              * @default
              */
             condition: string;
+            /**
+             * Depth
+             * @description Row front-to-back. A located copy always has one; an unlocated copy has neither shelf nor depth (§5.7).
+             */
+            depth?: number | null;
             /** Id */
             id: string;
             /**
@@ -358,6 +716,43 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /**
+         * ImageDTO
+         * @description A stored photo. Bytes are served from ``/images/{key}/full|thumb``.
+         */
+        ImageDTO: {
+            /** Content Type */
+            content_type: string;
+            /**
+             * Filename
+             * @description Original name, for the review screen only.
+             * @default
+             */
+            filename: string;
+            /**
+             * Height
+             * @description Dimensions of the stored, upright image — so the grid can reserve the right aspect ratio before the bytes arrive.
+             * @default 0
+             */
+            height: number;
+            /**
+             * Key
+             * @description Storage key AND content hash. Re-uploading the same photo returns this same key, so a URL built from it can be cached forever — different bytes can never reuse it.
+             */
+            key: string;
+            /** Sha256 */
+            sha256: string;
+            /**
+             * Size
+             * @description Bytes as STORED, after EXIF normalisation.
+             */
+            size: number;
+            /**
+             * Width
+             * @default 0
+             */
+            width: number;
         };
         /**
          * LendRequest
@@ -435,17 +830,79 @@ export interface components {
             version: string;
         };
         /**
+         * ShelfCreate
+         * @description Declare a shelf. Every field optional — see :class:`ShelfDTO.label`.
+         */
+        ShelfCreate: {
+            /**
+             * Label
+             * @default
+             */
+            label: string;
+            /**
+             * Virtual
+             * @default false
+             */
+            virtual: boolean;
+        };
+        /**
+         * ShelfDTO
+         * @description A shelf's identity. No address — that is pillar 6 (plan §1.1).
+         */
+        ShelfDTO: {
+            /**
+             * Capture Count
+             * @description Photos filed against this shelf, across every depth.
+             */
+            capture_count: number;
+            /** Created At */
+            created_at?: string | null;
+            /**
+             * Depth Count
+             * @description Rows front-to-back, declared by the owner — never detected (§5.7). 1 unless a row behind was added.
+             */
+            depth_count: number;
+            /** Id */
+            id: string;
+            /**
+             * Label
+             * @description Optional. Empty is normal: identity is free, so a shelf is never required to be named. An unnamed one is shown by the image it came from.
+             * @default
+             */
+            label: string;
+            /**
+             * Virtual
+             * @description The wishlist. Excluded from shelf listings by default.
+             */
+            virtual: boolean;
+        };
+        /**
+         * ShelfPatch
+         * @description Name a shelf, or clear the name. ``depth_count`` is deliberately NOT
+         *     here: adding a row behind is its own endpoint, because §5.7 makes it an
+         *     explicit declaration rather than a number to nudge.
+         */
+        ShelfPatch: {
+            /** Label */
+            label?: string | null;
+        };
+        /**
          * SightingDTO
          * @description One entry of a copy's append-only provenance (§5.2).
          */
         SightingDTO: {
             /** Captured At */
             captured_at?: string | null;
+            /**
+             * Depth
+             * @description Which row front-to-back (§5.7). Travels WITH shelf_id — both null or both set.
+             */
+            depth?: number | null;
             /** Run Id */
             run_id: string;
             /**
              * Shelf Id
-             * @description Null until the map exists (§1.1) — the UI hides it.
+             * @description Where this sighting happened. Null for the 251 imported books, whose recorded evidence is only run+spine.
              */
             shelf_id?: string | null;
             /** Spine Id */
@@ -841,6 +1298,289 @@ export interface operations {
             };
         };
     };
+    create_capture_api_v1_captures_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CaptureCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaptureBinding"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_capture_api_v1_captures__capture_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                capture_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaptureDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_capture_api_v1_captures__capture_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                capture_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    bind_capture_api_v1_captures__capture_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                capture_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CapturePatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaptureBinding"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_image_api_v1_images_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_image_api_v1_images_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImageDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_image_api_v1_images__key__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImageDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_image_api_v1_images__key__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_full_api_v1_images__key__full_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_thumb_api_v1_images__key__thumb_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_meta_api_v1_meta_get: {
         parameters: {
             query?: never;
@@ -857,6 +1597,231 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MetaResponse"];
+                };
+            };
+        };
+    };
+    list_shelves_api_v1_shelves_get: {
+        parameters: {
+            query?: {
+                /** @description Include the wishlist. Excluded by default: it holds books the owner does not own, so counting it inflates both the shelf list and the apparent size of the library. */
+                include_virtual?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShelfDTO"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_shelf_api_v1_shelves_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ShelfCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShelfDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_shelf_api_v1_shelves__shelf_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shelf_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShelfDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_shelf_api_v1_shelves__shelf_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shelf_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_shelf_api_v1_shelves__shelf_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shelf_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ShelfPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShelfDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_shelf_captures_api_v1_shelves__shelf_id__captures_get: {
+        parameters: {
+            query?: {
+                /** @description Narrow to one row front-to-back. §5.6's not-seen rule and the diff view are per depth, and §5.7 #2 forbids merging overlaps across depths. */
+                depth?: number | null;
+            };
+            header?: never;
+            path: {
+                shelf_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaptureDTO"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_a_row_behind_api_v1_shelves__shelf_id__depths_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shelf_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShelfDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

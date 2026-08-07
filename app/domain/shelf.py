@@ -270,6 +270,41 @@ def new_capture(
     )
 
 
+def capture_onto_a_new_shelf(
+    *,
+    shelf_id: str,
+    library_id: str,
+    capture_id: str,
+    image_id: str | None = None,
+    captured_at: str | None = None,
+) -> tuple[Shelf, Capture]:
+    """A photo that names no shelf still gets one (P2.2).
+
+    This is the binding rule, and it is here rather than in a router because
+    it is a decision, not plumbing: **every capture has a shelf identity, from
+    the moment it exists.** A photo with no shelf would be a read with nothing
+    to reconcile against (§5.6), so "assign it later" is not a state the data
+    model offers — the shelf is created unnamed, and *"Unassigned"* in the UI
+    means *not yet named*, not *not yet filed*.
+
+    Which is why the shelf comes out unnamed and one row deep: the owner's
+    call is that identity is FREE (see :class:`Shelf`). Nothing is asked before
+    the first photo can be filed, and both the name and the row behind it are
+    added later if they are ever wanted.
+
+    ⚠ One image = one shelf is a **placeholder**, not the target. Without the
+    map there is nothing to bind several photos of one physical shelf together;
+    pillar 6 provides the exit by merging shelf identities (plan P6.1b). That
+    is why nothing may treat a shelf id as a permanent handle on a piece of
+    furniture.
+    """
+    shelf = new_shelf(id=shelf_id, library_id=library_id,
+                      created_at=captured_at)
+    capture = new_capture(shelf, id=capture_id, image_id=image_id,
+                          captured_at=captured_at)
+    return shelf, capture
+
+
 def counts_toward_library(shelf: Shelf) -> bool:
     """Whether a shelf is part of "how many shelves do I have".
 

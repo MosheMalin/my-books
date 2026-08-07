@@ -394,19 +394,64 @@ screen drift, and the drift is invisible.
 them in Hebrew, fixes a title, and exports the library — with the tuning server
 still running untouched alongside.
 
-### Pillar 2 — Captures, shelf identity, reconciliation & review
+### Pillar 2 — Capture and detect (redefined 2026-08-07, owner)
 
-| # | Item | Size |
-|---|---|---|
-| **P2.1** | **Shelf identity + capture domain** (§1.1): `Shelf{id, label, depth_count}`, `Capture{shelf, depth, order}`, `Copy` located at `(shelf, depth)`, wishlist as `Shelf{virtual: true}`. No place, no bookcase, no col/level — those are pillar 6. Rule test: wishlist excluded from counts. | M |
-| **P2.2** | **Capture → shelf binding**: the intake UI assigns shelf + depth inline; *Unassigned* is a legal state; add-a-row-behind surfaced even at `depth_count` 1 (§5.7 — most users won't know it exists). | M |
-| **P2.3** | **Reconciliation engine** (§5.6) — a **pure function** `(shelf state, claims, decisions) → diff` producing added / corrected / unchanged / not-seen, **scoped to the depth read**. Highest-risk logic in the product and fully offline-testable; every pillar-2 rule in H5 gets its named test here. | L |
-| **P2.4** | **Copy resolution** (§5.4): the fire / never-fire table as an explicit decision table + tests; three answers; default already-listed; the **duplicates queue** as a filter on Books; the two cheap wins (a lent-out book reappears → "is it back?"; several copies → pick which). | M |
-| **P2.5** | **Shelf view + review UX**: books at a depth in physical order with the photo; the depth bar; inline review in Capture *and* the durable review on the shelf; read history as diffs (`+3 added · 1 corrected · 12 unchanged · 1 not seen`); soft "not seen in the last 3 reads" badge; alternatives table; `why?` wired to the existing `explain()`. | L |
-| **P2.6** | **Complete the inversion**: `/api/v1` has no run root; reads are `/shelves/{id}/reads`; run detail is reachable only through the audit surface. Test: no `/api/v1` route takes a `run_id` as its primary key. | S |
+**What this pillar is for.** At the end of it, the owner photographs a shelf in
+the *product*, the engine reads it, and the books land in the library — for a
+single user, with no tenants and no map. That is the product's core loop, and
+everything in pillars 3–7 is an amplifier on top of it.
 
-**Done when:** a shelf is photographed twice and the second read produces a
-*diff*, not a second result set — and nothing was auto-removed.
+Two things the redefinition settles, because the earlier breakdown quietly
+assumed both away:
+
+- **the map is not a prerequisite for anything here.** Pillar 6 could be cut
+  entirely and this would still be a viable product. Nothing in capture,
+  reading or reconciliation may wait on it or depend on it;
+- **capture belongs in pillar 2, not in "the client half of an item".** The
+  earlier P2.2 assumed the product would keep borrowing the tuning server's
+  upload-and-run path through pillars 1–2. That is what left the product with
+  captures it had no photos for. Uploading, reading and reviewing are the
+  pillar, so they are items.
+
+**Strangle, don't refactor — literally (owner's call).** The tuning server on
+`:8756` is the accuracy asset and stays untouched. The product does not import
+it, extend it, or move its code: it gets its **own** upload/run/review path,
+written against `booksnap`'s engine and *modelled on* `booksnap/server.py`
+rather than carved out of it. Two copies of that flow is the intended cost —
+H1's argument, and the reason the layering test exists.
+
+| # | Item | Size | State |
+|---|---|---|---|
+| **P2.1** | **Shelf identity + capture domain** (§1.1): `Shelf{id, label, depth_count, virtual}`, `Capture{shelf, depth, order}`, `Copy` located at `(shelf, depth)`. No place/bookcase/col/level — pillar 6. Identity is FREE: the label is optional. | M | **done** |
+| **P2.2** | **Capture intake**: `POST /captures` binds a photo to a shelf + depth, auto-creating an unnamed shelf when none is named. | M | **API done** |
+| **P2.3** | **Images are real**: a `BlobStore` port + a local-disk adapter, `POST /captures` accepting the file, thumb/full serving, hash-based upload idempotency, and delete. Single-user layout now; P3.5 re-keys it per tenant, which is a path change and not a rewrite. **This is what P2.2 was missing.** | M | |
+| **P2.4** | **Reading**: a `Reader` port + an adapter over `booksnap.Pipeline`, driven by an **in-process job runner with no module-level state** (the tuning server's global job dict is exactly what H2 forbids) — per-image progress, cooperative stop, and a `Read` persisted against `(shelf, depth)` with its claims, code version and config snapshot. Modes are the engine's own. | L | |
+| **P2.5** | **Reconciliation engine** (§5.6) — a **pure function** `(shelf state, claims, decisions) → diff` producing added / corrected / unchanged / not-seen, **scoped to the depth read**. Highest-risk logic in the product and fully offline-testable; every pillar-2 rule in H5 gets its named test here. | L | |
+| **P2.6** | **Copy resolution** (§5.4): the fire / never-fire table as an explicit decision table + tests; three answers; default already-listed; the **duplicates queue** as a filter on Books; the two cheap wins (a lent-out book reappears → "is it back?"; several copies → pick which). | M | |
+| **P2.7** | **The Capture tab**: drop zone → a row per photo with shelf + depth assigned inline (*Unassigned* = not yet named), add-a-row-behind surfaced even at `depth_count` 1 (§5.7 — most users won't know it exists), mode selector, run/stop, live progress, and inline review of each claim (crop, tier, diff badge, ✓/✕, alternatives, `why?`). | L | |
+| **P2.8** | **Shelf view + read history**: books at a depth in physical order with the photo; the depth bar; the durable review on the shelf; history as diffs (`+3 added · 1 corrected · 12 unchanged · 1 not seen`); soft "not seen in the last 3 reads" badge. | L | |
+| **P2.9** | **Complete the inversion**: `/api/v1` has no run root; reads are `/shelves/{id}/reads`; run detail is reachable only through the audit surface. Test: no `/api/v1` route takes a `run_id` as its primary key. | S | |
+
+**Done when:** the owner uploads a shelf photo in the product, presses read,
+and the books appear in his library — then re-photographs the same shelf and
+the second read produces a *diff*, not a second result set, with nothing
+auto-removed.
+
+**Explicitly NOT in this pillar**, so it cannot creep back in: tenants and
+policy (pillar 3 — one library, dev-resolved, as today), login (4), metering
+and BYO keys (5), the map and shelf addresses (6). The job runner is
+in-process and single-user on purpose; P3.4 replaces it with a real queue, and
+the port is what makes that a swap.
+
+**Seams this pillar must create, because pillar 3 lands on them:**
+
+- `BlobStore` — the product never reads `work/runs/`; the run archive is the
+  tuning server's, not a shared filesystem. P3.5 changes the key layout only;
+- `Reader` — so a test can read a shelf without cv2, tesseract or a paid API,
+  and so P5's cost work has one place to meter;
+- the job runner holds its state on an **instance**, never a module global.
+  Two members starting a read is a pillar-3 problem, but a module global is a
+  pillar-2 mistake.
 
 ### Pillar 3 — Tenants (and a backend that can hold two of them)
 
@@ -476,10 +521,16 @@ to be this late.
 
 ## 6. Risks on record
 
-1. **Two UIs for a while.** The tuning server and the product server coexist
-   through pillars 1–2. Deliberate (H1), but it means two mental models until
-   P2.6 lands. The alternative — refactoring the tuning surface first — risks
-   the accuracy loop, which is the actual asset.
+1. **Two UIs, and now two capture paths.** The tuning server and the product
+   coexist through pillar 2. Deliberate (H1), and the 2026-08-07 redefinition
+   sharpens it: the product gets its **own** upload/run/review flow modelled on
+   `booksnap/server.py` rather than carved out of it, so there are two
+   implementations of "photograph a shelf and read it" until the tuning
+   surface is retired. That duplication is the price of not putting the
+   accuracy loop — the actual asset — through a refactor. The mitigation is
+   that only the *engine* is shared, through a port: `booksnap.Pipeline` has
+   one implementation, and it is the part where a divergence would cost
+   accuracy.
 2. **Null locations are honest but visible.** Migrated books have no location
    until the map (§1.1), so "where is it" is unanswerable for the whole
    collection through pillars 1–5. Pillar 2 softens this — a typed shelf label
