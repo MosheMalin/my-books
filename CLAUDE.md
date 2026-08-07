@@ -695,6 +695,28 @@ pillar 6. The rule this protects is that **capture never becomes a two-step
 action**: demanding a label before the first photo can be filed buys an interim
 answer to "where is it?" that pillar 6 replaces anyway.
 
+⚠ **"One image = one shelf" is a PLACEHOLDER, and a shelf id is not a
+permanent handle on a piece of wood.** Without the map there is nothing to bind
+several photos of one physical shelf together, so intake gives each image its
+own shelf identity. Pillar 6 provides the exit: the owner merges several shelf
+identities into one physical shelf, by hand on the map, where you can *see*
+that two of them are the same shelf (plan P6.1b). Until then, the rule this
+puts on everything in pillars 2–5 is:
+
+> nothing may treat a shelf id as a permanent, one-to-one handle on a physical
+> shelf — it is one *identity*, and identities merge.
+
+So: `Copy.shelf_id` is a pointer a merge repoints, which is fine as long as
+nothing derives from it in a way a repoint cannot reach. `Provenance.shelf_id`
+is HISTORY and must not be rewritten — a sighting happened against the shelf
+that existed then — so a merge leaves an **alias** from the retired identity to
+the surviving one rather than mass-updating. Same shape as P7.1's alias table
+for shared book identity, and the same reasoning: retrofitting identity onto
+records that assumed it was permanent is the expensive version. And **no
+automatic merging** — two photos overlapping is not evidence they are one
+shelf (the same books can sit on two), which is the ambiguity §5.4 already
+refuses to guess at.
+
 Consequence worth knowing: with labels optional, most early shelves share the
 empty one, so "sorted by label" would be a block of visually identical rows in
 *id* order — arbitrary to whoever is reading it. `Shelf.sort_key` is
