@@ -440,8 +440,13 @@ BOOKSNAP_TESSDATA_FAST, BOOKSNAP_WORK.
 
 The product client is a separate, optional install — nothing in the
 recognition core or the tuning server needs it:
-`npm install --prefix app/web` (Node 22+). Skipping it only means the client
-half of the commit gate self-skips.
+`npm install --prefix app/web`. Skipping it only means the client half of the
+commit gate self-skips.
+
+**Node 24 LTS (>=24.15.0)** — declared in `app/web/package.json` `engines`, so
+npm says so rather than it being tribal knowledge. Node 22 is maintenance-only
+now; the floor is the active LTS line. Installed here from the official MSI
+(`winget install OpenJS.NodeJS.LTS`), not a version manager.
 
 ## Tests
 
