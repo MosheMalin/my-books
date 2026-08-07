@@ -34,6 +34,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from app.adapters.memory_store import (
     MemoryBookStore,
     MemoryDecisionStore,
+    MemoryDuplicateQueue,
     MemoryReadStore,
     MemoryShelfStore,
 )
@@ -41,6 +42,7 @@ from app.adapters.migrations import SCHEMA_VERSION, current_version, migrate
 from app.adapters.sqlite_store import (
     SqliteBookStore,
     SqliteDecisionStore,
+    SqliteDuplicateQueue,
     SqliteReadStore,
     SqliteShelfStore,
 )
@@ -50,6 +52,7 @@ from app.domain import (
     ClaimTier,
     Decision,
     DecisionKind,
+    DuplicateQuestion,
     LibraryRef,
     Provenance,
     Status,
@@ -86,6 +89,7 @@ CONTRACT: list = []
 SHELF_CONTRACT: list = []
 READ_CONTRACT: list = []
 DECISION_CONTRACT: list = []
+DUPLICATE_CONTRACT: list = []
 
 
 def contract(fn):
@@ -116,6 +120,13 @@ def decision_contract(fn):
     """Mark a function as part of the DecisionStore spec (P2.5). A fourth
     list, same reasoning as `shelf_contract`/`read_contract`."""
     DECISION_CONTRACT.append(fn)
+    return fn
+
+
+def duplicate_contract(fn):
+    """Mark a function as part of the DuplicateQueue spec (P2.6). A fifth
+    list, same reasoning as the others."""
+    DUPLICATE_CONTRACT.append(fn)
     return fn
 
 
@@ -434,6 +445,27 @@ def filters_by_lent_out(store):
     assert home == ["b2", "b3"], home
     # Omitted entirely: no filter, same as every other `list` param.
     assert store.list(LIB).total == 4
+
+
+@contract
+def filters_by_an_explicit_id_set(store):
+    """P2.6: the generic ``book_ids`` narrowing the Books tab's "duplicates
+    to resolve" filter is composed on top of, at the API layer — this store
+    knows nothing about a DuplicateQuestion, only how to restrict to an id
+    set. Sort/paging still apply on top of it."""
+    store.save(LIB, _book(1))
+    store.save(LIB, _book(2))
+    store.save(LIB, _book(3))
+
+    got = sorted(b.id for b in store.list(LIB, book_ids=("b1", "b3")).items)
+    assert got == ["b1", "b3"], got
+    # An explicit EMPTY set means "nothing", not "no filter" — the whole
+    # point of the distinction from `book_ids=None` (an empty queue must
+    # page as zero books).
+    empty = store.list(LIB, book_ids=())
+    assert empty.items == () and empty.total == 0
+    # Omitted entirely: no filter, same as every other `list` param.
+    assert store.list(LIB, book_ids=None).total == 3
 
 
 # --- search (P1.5) --------------------------------------------------------
@@ -1026,6 +1058,117 @@ def every_decision_store_method_takes_a_library(store):
         assert hasattr(store, name), f"{type(store).__name__} lacks {name}()"
 
 
+# --- the duplicate queue spec (P2.6) ----------------------------------------
+#
+# A fifth contract list: the durable "duplicates to resolve" queue (§5.4).
+# Same identity shape as decisions on purpose — a question and its eventual
+# answer are two states of one fact — so most of this spec mirrors the
+# decision spec above line for line; the differences (whole-library listing,
+# no "changed mind", closing instead of replacing) are what earn it its own
+# tests rather than being folded into the decision spec.
+
+def _dq(*, id: str = "q1", shelf_id: str = "sh1", depth: int = 1,
+       book_key: str = "k|a", library: LibraryRef = LIB, **kw) -> DuplicateQuestion:
+    args = dict(
+        id=id, library_id=library.id, shelf_id=shelf_id, depth=depth,
+        book_key=book_key, read_id="r1", spine_id="sp1", claim_title="כותרת",
+        claim_author="מחבר", existing_book_id="b1",
+        opened_at="2026-08-07T12:00:00+00:00",
+    )
+    args.update(kw)
+    return DuplicateQuestion(**args)
+
+
+@duplicate_contract
+def saves_and_reads_back_a_question(store):
+    q = _dq()
+    store.save_question(LIB, q)
+    assert store.get_question(LIB, "sh1", 1, "k|a") == q
+
+
+@duplicate_contract
+def missing_question_reads_as_none(store):
+    assert store.get_question(LIB, "sh1", 1, "nope|nope") is None
+
+
+@duplicate_contract
+def re_saving_a_question_replaces_rather_than_accumulates(store):
+    """A refresh (the same question re-raised by a later read) must
+    overwrite the row at this key, not add a second one — the domain's
+    `open_or_refresh` is what decides WHAT survives a refresh
+    (`opened_at`/`id`); the store only needs to not duplicate the row."""
+    store.save_question(LIB, _dq(read_id="r1"))
+    store.save_question(LIB, _dq(read_id="r2"))
+    assert store.get_question(LIB, "sh1", 1, "k|a").read_id == "r2"
+    assert len(store.list_open_questions(LIB)) == 1
+
+
+@duplicate_contract
+def lists_every_open_question_across_the_whole_library_by_default(store):
+    """The shape the Books tab's "duplicates to resolve" filter needs
+    (P2.6): a queue entry is about a BOOK, not about which shelf happens to
+    be open, so listing with no ``shelf_id`` spans every shelf."""
+    store.save_question(LIB, _dq(id="q1", shelf_id="sh1", book_key="a|a"))
+    store.save_question(LIB, _dq(id="q2", shelf_id="sh2", book_key="b|b"))
+    got = {q.book_key for q in store.list_open_questions(LIB)}
+    assert got == {"a|a", "b|b"}
+
+
+@duplicate_contract
+def lists_can_narrow_to_one_shelf(store):
+    store.save_question(LIB, _dq(id="q1", shelf_id="sh1", book_key="a|a"))
+    store.save_question(LIB, _dq(id="q2", shelf_id="sh2", book_key="b|b"))
+    got = {q.book_key for q in store.list_open_questions(LIB, shelf_id="sh1")}
+    assert got == {"a|a"}
+
+
+@duplicate_contract
+def deleting_closes_a_question(store):
+    """Mirrors `delete_decision`'s "undo of a mis-click" shape, but for the
+    OPPOSITE trigger: this fires the moment an answer exists, not when one
+    is cleared. There is deliberately no "resolved" state to query — closed
+    means gone."""
+    store.save_question(LIB, _dq())
+    assert store.delete_question(LIB, "sh1", 1, "k|a") is True
+    assert store.get_question(LIB, "sh1", 1, "k|a") is None
+    assert store.list_open_questions(LIB) == ()
+    # Answering a question nobody skipped is the NORMAL case, not an error.
+    assert store.delete_question(LIB, "sh1", 1, "k|a") is False
+
+
+@duplicate_contract
+def a_foreign_question_reads_as_absent(store):
+    store.save_question(OTHER, _dq(library=OTHER))
+    assert store.get_question(LIB, "sh1", 1, "k|a") is None
+    assert store.list_open_questions(LIB) == ()
+    assert store.delete_question(LIB, "sh1", 1, "k|a") is False
+    assert store.get_question(OTHER, "sh1", 1, "k|a") is not None, \
+        "a foreign call reached in"
+
+
+@duplicate_contract
+def saving_a_question_into_the_wrong_library_is_refused_loudly(store):
+    _raises(WrongLibrary, store.save_question, OTHER, _dq(library=LIB))
+    assert store.get_question(OTHER, "sh1", 1, "k|a") is None
+    assert store.get_question(LIB, "sh1", 1, "k|a") is None, \
+        "the refused write leaked"
+
+
+@duplicate_contract
+def every_duplicate_queue_method_takes_a_library(store):
+    """H2 by signature, same as every other store's."""
+    import inspect
+
+    from app.ports.duplicates import DuplicateQueue
+
+    for name, member in vars(DuplicateQueue).items():
+        if name.startswith("_") or not callable(member):
+            continue
+        params = list(inspect.signature(member).parameters)
+        assert params[:2] == ["self", "library"], (name, params)
+        assert hasattr(store, name), f"{type(store).__name__} lacks {name}()"
+
+
 # --- registration ---------------------------------------------------------
 
 @contextmanager
@@ -1084,6 +1227,20 @@ def _sqlite_decision_store():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+@contextmanager
+def _memory_duplicate_queue():
+    yield MemoryDuplicateQueue()
+
+
+@contextmanager
+def _sqlite_duplicate_queue():
+    tmp = tempfile.mkdtemp(prefix="booksnap-duplicates-")
+    try:
+        yield SqliteDuplicateQueue(Path(tmp) / "books.db")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 IMPLEMENTATIONS = (("memory", _memory_store), ("sqlite", _sqlite_store))
 SHELF_IMPLEMENTATIONS = (("memory", _memory_shelf_store),
                          ("sqlite", _sqlite_shelf_store))
@@ -1091,6 +1248,8 @@ READ_IMPLEMENTATIONS = (("memory", _memory_read_store),
                         ("sqlite", _sqlite_read_store))
 DECISION_IMPLEMENTATIONS = (("memory", _memory_decision_store),
                             ("sqlite", _sqlite_decision_store))
+DUPLICATE_IMPLEMENTATIONS = (("memory", _memory_duplicate_queue),
+                             ("sqlite", _sqlite_duplicate_queue))
 
 
 def _bind(fn, factory, name):
@@ -1122,6 +1281,11 @@ for _label, _factory in READ_IMPLEMENTATIONS:
 
 for _label, _factory in DECISION_IMPLEMENTATIONS:
     for _fn in DECISION_CONTRACT:
+        _name = f"test_{_fn.__name__}__{_label}"
+        globals()[_name] = _bind(_fn, _factory, _name)
+
+for _label, _factory in DUPLICATE_IMPLEMENTATIONS:
+    for _fn in DUPLICATE_CONTRACT:
         _name = f"test_{_fn.__name__}__{_label}"
         globals()[_name] = _bind(_fn, _factory, _name)
 
@@ -1331,6 +1495,53 @@ def test_a_v6_database_upgrades_and_creates_the_reads_tables():
         r = append_claim(r, Claim(id="cl1", spine_id="sp1", capture_id="cap1"))
         store.save_read(LIB, r)
         assert store.get_read(LIB, "rd1").claims[0].id == "cl1"
+
+
+def test_a_v8_database_upgrades_and_creates_the_duplicate_questions_table():
+    """H6, same shape as the v6->v7 test above: v9 is pure SQL with no
+    backfill (P2.6 is brand new, so no row anywhere predates it), but the
+    CREATE TABLE itself has to be exercised against an upgrade path, not
+    only a fresh database."""
+    import sqlite3
+
+    from app.adapters.migrations import MIGRATIONS
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "v8.db"
+        conn = sqlite3.connect(str(path))
+        try:
+            for version, step in MIGRATIONS:
+                if version > 8:
+                    break
+                if isinstance(step, str):
+                    conn.executescript(step)
+                else:
+                    step(conn)
+            conn.execute("PRAGMA user_version = 8")
+            conn.commit()
+            assert current_version(conn) == 8
+            tables = {r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()}
+            assert "duplicate_questions" not in tables, \
+                "the fixture is not really v8"
+        finally:
+            conn.close()
+
+        store = SqliteDuplicateQueue(path)     # migrates on construction
+        conn = sqlite3.connect(str(path))
+        try:
+            assert current_version(conn) == SCHEMA_VERSION
+            tables = {r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()}
+            assert "duplicate_questions" in tables, "v9 did not create its table"
+        finally:
+            conn.close()
+
+        # And the store built on the upgraded file actually works.
+        store.save_question(LIB, _dq())
+        assert store.get_question(LIB, "sh1", 1, "k|a") is not None
 
 
 def test_deleting_a_shelf_never_touches_the_books_that_stood_on_it():

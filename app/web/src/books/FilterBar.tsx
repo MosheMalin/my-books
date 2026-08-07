@@ -1,13 +1,14 @@
 /**
  * The filter row.
  *
- * UI_PLAN §2 lists more chips than are here — shelf, ☆ wishlist,
- * כפילויות לבירור. Each needs an entity that does not exist yet (Shelf is
- * P2.1, the duplicates queue P2.4). They are ABSENT rather than disabled: a
+ * UI_PLAN §2 lists more chips than are here — shelf, ☆ wishlist. Each needs
+ * an entity that does not exist yet (Shelf is P2.1; the wishlist is a
+ * virtual Shelf, same dependency). They are ABSENT rather than disabled: a
  * greyed-out control that never becomes clickable reads as a bug, while a
  * control that is not there yet reads as a product that has not grown that
- * far. Lent-out graduated out of that list at P1.7 — it needed nothing this
- * tab didn't already have (a boolean filter on `list`, same shape as status).
+ * far. Lent-out graduated out of that list at P1.7, and כפילויות לבירור (the
+ * "duplicates to resolve" queue) at P2.6 — both needed nothing this tab
+ * didn't already have: a boolean filter on `list`, same shape as status.
  *
  * The author chip is reached by CLICKING an author, never typed (§2) — which
  * is why it appears here only once one is active.
@@ -20,10 +21,12 @@ export interface FilterBarProps {
   authorKey: string | null
   authorLabel: string | null
   lentOut: boolean
+  duplicates: boolean
   active: boolean
   onStatus: (status: StatusFilter) => void
   onClearAuthor: () => void
   onLentOut: (lentOut: boolean) => void
+  onDuplicates: (duplicates: boolean) => void
   onClearAll: () => void
 }
 
@@ -34,10 +37,12 @@ export function FilterBar({
   authorKey,
   authorLabel,
   lentOut,
+  duplicates,
   active,
   onStatus,
   onClearAuthor,
   onLentOut,
+  onDuplicates,
   onClearAll,
 }: FilterBarProps) {
   const { t } = useI18n()
@@ -66,6 +71,15 @@ export function FilterBar({
         onClick={() => onLentOut(!lentOut)}
       >
         {t.lent_only}
+      </button>
+
+      <button
+        type="button"
+        className={`chip${duplicates ? ' on' : ''}`}
+        aria-pressed={duplicates}
+        onClick={() => onDuplicates(!duplicates)}
+      >
+        {t.duplicates_only}
       </button>
 
       {authorKey && (

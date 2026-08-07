@@ -38,6 +38,7 @@ from app.adapters.inprocess_jobs import InProcessJobRunner
 from app.adapters.memory_store import (
     MemoryBookStore,
     MemoryDecisionStore,
+    MemoryDuplicateQueue,
     MemoryReadStore,
     MemoryShelfStore,
 )
@@ -82,7 +83,8 @@ class StubPrincipal:
 
 
 def _app(principal: StubPrincipal | None = None, store=None, shelves=None,
-         blobs=None, reads=None, reader=None, jobs=None, decisions=None):
+         blobs=None, reads=None, reader=None, jobs=None, decisions=None,
+         duplicates=None):
     p = principal or StubPrincipal()
     return create_app(
         principal_provider=lambda: p,
@@ -91,6 +93,7 @@ def _app(principal: StubPrincipal | None = None, store=None, shelves=None,
         blob_store=blobs,
         read_store=reads if reads is not None else MemoryReadStore(),
         decision_store=decisions if decisions is not None else MemoryDecisionStore(),
+        duplicate_queue=duplicates if duplicates is not None else MemoryDuplicateQueue(),
         reader=reader,
         job_runner=jobs if jobs is not None else InProcessJobRunner(),
         clock=StubClock(),
@@ -1500,6 +1503,138 @@ def test_diff_for_a_read_in_another_library_is_404_not_403():
             f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/apply",
             json={"answers": []},
         ).status_code == 404
+
+
+# --- the durable duplicates queue (P2.6, §5.4) ------------------------------
+
+def _ambiguous_read(blobs):
+    """A shelf/capture/read whose one claim collides with a book already
+    confirmed on ANOTHER shelf — the real §5.4 ambiguous case, settled and
+    ready for ``POST .../apply``. Mirrors `test_diff_asks_for_a_book_claimed_
+    on_another_shelf`'s own setup; factored out because every test below
+    needs it as its starting point, not its subject.
+
+    Returns ``(store, shelves, reads_store, duplicates, client, shelf_id,
+    read_id)``.
+    """
+    store = MemoryBookStore()
+    shelves = MemoryShelfStore()
+    reads_store = MemoryReadStore()
+    duplicates = MemoryDuplicateQueue()
+    c = TestClient(_app(store=store, shelves=shelves, reads=reads_store,
+                        blobs=blobs, duplicates=duplicates, reader=StubReader()))
+    shelf_id, cap_id = _read_shelf_and_capture(c)
+
+    store.save(TEST_LIBRARY, new_book(
+        id="b-elsewhere", library_id=TEST_LIBRARY.id, title="ספר אחר",
+        author="מחבר", copy_id="c-elsewhere", shelf_id="some-other-shelf",
+        depth=1,
+    ))
+    reader = StubReader([ReadClaim(spine_id="sp1", capture_id=cap_id,
+                                   title="ספר אחר", author="מחבר",
+                                   tier="auto", score=90.0)])
+    c = TestClient(_app(store=store, shelves=shelves, reads=reads_store,
+                        blobs=blobs, duplicates=duplicates, reader=reader))
+    read_id = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
+                     json={"depth": 1}).json()["id"]
+    _wait_until_settled(c, shelf_id, read_id)
+    return store, shelves, reads_store, duplicates, c, shelf_id, read_id
+
+
+def test_a_skipped_ambiguous_claim_appears_in_the_duplicates_queue():
+    with _blobs() as blobs:
+        _, _, _, _, c, shelf_id, read_id = _ambiguous_read(blobs)
+        c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/apply",
+              json={"answers": []})
+
+        got = c.get(f"{API_PREFIX}/duplicates").json()
+        assert len(got) == 1
+        q = got[0]
+        assert q["shelf_id"] == shelf_id and q["depth"] == 1
+        assert q["existing_book"]["id"] == "b-elsewhere"
+        assert q["claim_title"] == "ספר אחר"
+        assert q["prompt_kind"] == "three_way"
+        assert q["default_copy_id"] == "c-elsewhere"
+
+
+def test_the_books_duplicates_filter_returns_only_books_with_open_questions():
+    with _blobs() as blobs:
+        store, _, _, _, c, shelf_id, read_id = _ambiguous_read(blobs)
+        c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/apply",
+              json={"answers": []})
+        store.save(TEST_LIBRARY, new_book(
+            id="b-unrelated", library_id=TEST_LIBRARY.id, title="ספר שקט",
+            author="", copy_id="c-unrelated",
+        ))
+
+        page = c.get(f"{API_PREFIX}/books", params={"duplicates": "true"}).json()
+        assert [b["id"] for b in page["items"]] == ["b-elsewhere"]
+        # Omitted entirely: every book, same as any other filter (§6).
+        every = c.get(f"{API_PREFIX}/books").json()
+        assert {b["id"] for b in every["items"]} == {"b-elsewhere", "b-unrelated"}
+
+
+def test_answering_a_queued_question_relinks_and_closes_it():
+    with _blobs() as blobs:
+        store, _, _, _, c, shelf_id, read_id = _ambiguous_read(blobs)
+        c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/apply",
+              json={"answers": []})
+        question_id = c.get(f"{API_PREFIX}/duplicates").json()[0]["id"]
+
+        r = c.post(f"{API_PREFIX}/duplicates/{question_id}/answer",
+                  json={"kind": "already_listed"})
+        assert r.status_code == 200, r.text
+        assert r.json()["copies"][0]["shelf_id"] == shelf_id
+        assert store.count(TEST_LIBRARY) == 1, "already-listed must not duplicate the book"
+        assert c.get(f"{API_PREFIX}/duplicates").json() == []
+
+
+def test_skipping_a_queued_question_applies_the_safe_default():
+    """§5.4, verbatim: 'default when the question is skipped or the run is
+    never reviewed: already listed copy'. The end-to-end proof, over real
+    HTTP: reversing the default (`app.domain.copy_resolution.DEFAULT_RESOLUTION`)
+    to ANOTHER_COPY would make ``copy_count`` come back 2, not 1 — the
+    phantom-copy regression §5.1/§5.4 both exist to rule out."""
+    with _blobs() as blobs:
+        _, _, _, _, c, shelf_id, read_id = _ambiguous_read(blobs)
+        c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/apply",
+              json={"answers": []})
+        question_id = c.get(f"{API_PREFIX}/duplicates").json()[0]["id"]
+
+        r = c.post(f"{API_PREFIX}/duplicates/{question_id}/skip")
+        assert r.status_code == 200, r.text
+        book = r.json()
+        assert book["copy_count"] == 1
+        assert book["copies"][0]["shelf_id"] == shelf_id, "the copy was not relinked"
+        assert c.get(f"{API_PREFIX}/duplicates").json() == []
+
+
+def test_answering_or_skipping_an_unknown_question_is_404():
+    with _blobs() as blobs:
+        c = TestClient(_app(blobs=blobs))
+        r = c.post(f"{API_PREFIX}/duplicates/nope/answer",
+                  json={"kind": "already_listed"})
+        assert r.status_code == 404, r.text
+        assert c.post(f"{API_PREFIX}/duplicates/nope/skip").status_code == 404
+
+
+def test_a_question_whose_book_was_deleted_meanwhile_is_409_and_cleaned_up():
+    """Defence in depth: the queue stores a POINTER, not a snapshot (same
+    idiom as GET .../diff) — if the book it concerns is gone by the time a
+    human answers, re-deriving the outcome finds nothing to answer, and the
+    stale row must not be left to confuse the next listing."""
+    with _blobs() as blobs:
+        _, _, _, _, c, shelf_id, read_id = _ambiguous_read(blobs)
+        c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/apply",
+              json={"answers": []})
+        question_id = c.get(f"{API_PREFIX}/duplicates").json()[0]["id"]
+
+        assert c.delete(f"{API_PREFIX}/books/b-elsewhere").status_code == 204
+
+        r = c.post(f"{API_PREFIX}/duplicates/{question_id}/answer",
+                  json={"kind": "already_listed"})
+        assert r.status_code == 409, r.text
+        assert c.get(f"{API_PREFIX}/duplicates").json() == []
 
 
 if __name__ == "__main__":

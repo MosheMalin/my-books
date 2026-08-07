@@ -790,6 +790,111 @@
         "title": "DiffDTO",
         "type": "object"
       },
+      "DuplicateAnswerIn": {
+        "description": "A human's answer to one queued question — the SAME three-way\nvocabulary as §5.4's inline prompt (`app.reconcile_apply.AnswerKind`),\nminus ``confirm``/``reject``: a queued question is always\n``ambiguous_location`` (the review-tier \"is this a real book?\" question\nhas no standing queue — P2.6 is scoped to copy resolution only).",
+        "properties": {
+          "copy_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Which existing copy, for 'already_listed' when the book has more than one (§5.4). Omit to use the preselected default_copy_id.",
+            "title": "Copy Id"
+          },
+          "kind": {
+            "description": "already_listed | another_copy | wrong_book.",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "DuplicateAnswerIn",
+        "type": "object"
+      },
+      "DuplicateQuestionDTO": {
+        "description": "One open §5.4 ask, as the \"duplicates to resolve\" queue shows it.\n\n``existing_book`` and the two cheap-win fields are all computed FRESH\nagainst the book's CURRENT state on every read of this DTO — never\ncached on the stored question — same reasoning as `DiffDTO` being\nrecomputed on every call: the book may have gained a copy, been edited,\nor had its loan returned since the question was opened.",
+        "properties": {
+          "book_key": {
+            "title": "Book Key",
+            "type": "string"
+          },
+          "claim_author": {
+            "title": "Claim Author",
+            "type": "string"
+          },
+          "claim_title": {
+            "title": "Claim Title",
+            "type": "string"
+          },
+          "default_copy_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The preselected candidate for 'already listed' — no shelf assigned, else least-recently-seen (§5.4's second cheap win). A PRESELECTION only; never applied without a human choosing it, except via POST .../skip.",
+            "title": "Default Copy Id"
+          },
+          "depth": {
+            "title": "Depth",
+            "type": "integer"
+          },
+          "existing_book": {
+            "$ref": "#/components/schemas/BookDTO"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "lent_to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Populated only when prompt_kind is lent_out_return.",
+            "title": "Lent To"
+          },
+          "opened_at": {
+            "title": "Opened At",
+            "type": "string"
+          },
+          "prompt_kind": {
+            "description": "three_way | lent_out_return — the sharper question ('you lent this to X — is it back?') when the preselected candidate copy is currently lent out (§5.4's first cheap win).",
+            "title": "Prompt Kind",
+            "type": "string"
+          },
+          "shelf_id": {
+            "title": "Shelf Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "shelf_id",
+          "depth",
+          "book_key",
+          "claim_title",
+          "claim_author",
+          "existing_book",
+          "opened_at",
+          "prompt_kind"
+        ],
+        "title": "DuplicateQuestionDTO",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1437,7 +1542,7 @@
   "paths": {
     "/api/v1/books": {
       "get": {
-        "description": "One endpoint, two modes.\n\nSearching is not a filter on top of a sort — relevance IS the order, so a\n`sort` passed alongside `q` would be a promise the server cannot keep.\nIt is ignored rather than rejected: a UI that keeps a sort control on\nscreen while the user types should not start returning 400s mid-keystroke.",
+        "description": "One endpoint, two modes.\n\nSearching is not a filter on top of a sort — relevance IS the order, so a\n`sort` passed alongside `q` would be a promise the server cannot keep.\nIt is ignored rather than rejected: a UI that keeps a sort control on\nscreen while the user types should not start returning 400s mid-keystroke.\nThe `duplicates` filter is ignored during a search too, same as every\nother filter here — the two are ORTHOGONAL views (find a book vs. review\na queue), and combining them was never asked for.",
         "operationId": "list_books_api_v1_books_get",
         "parameters": [
           {
@@ -1529,6 +1634,18 @@
               ],
               "description": "True for the \"who has my books\" view: books with at least one copy currently lent out.",
               "title": "Lent Out"
+            }
+          },
+          {
+            "description": "True for the \"duplicates to resolve\" queue (§5.4, P2.6): only books with at least one still-open copy-resolution question.",
+            "in": "query",
+            "name": "duplicates",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "True for the \"duplicates to resolve\" queue (§5.4, P2.6): only books with at least one still-open copy-resolution question.",
+              "title": "Duplicates",
+              "type": "boolean"
             }
           },
           {
@@ -2187,6 +2304,128 @@
         "summary": "Bind Capture",
         "tags": [
           "captures"
+        ]
+      }
+    },
+    "/api/v1/duplicates": {
+      "get": {
+        "description": "Every open §5.4 ask across the whole library — what the Books tab's\n\"duplicates to resolve\" filter (``GET /books?duplicates=true``) narrows\nto, and what this screen answers or skips from.",
+        "operationId": "list_open_questions_api_v1_duplicates_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DuplicateQuestionDTO"
+                  },
+                  "title": "Response List Open Questions Api V1 Duplicates Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Open Questions",
+        "tags": [
+          "duplicates"
+        ]
+      }
+    },
+    "/api/v1/duplicates/{question_id}/answer": {
+      "post": {
+        "description": "A human's real answer — already listed / another copy / wrong book —\nto one queued question. Closes the queue row in the SAME write as the\n`Decision` it creates (``app.reconcile_apply``'s bookkeeping).",
+        "operationId": "answer_question_api_v1_duplicates__question_id__answer_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "question_id",
+            "required": true,
+            "schema": {
+              "title": "Question Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DuplicateAnswerIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Answer Question",
+        "tags": [
+          "duplicates"
+        ]
+      }
+    },
+    "/api/v1/duplicates/{question_id}/skip": {
+      "post": {
+        "description": "*\"Not now — use the safe default.\"* §5.4, verbatim: *\"Default when the\nquestion is skipped or the run is never reviewed: already listed copy —\none copy, relinked.\"* Distinct from simply NOT answering during\n``POST .../reads/{id}/apply`` (which leaves the question open in this\nsame queue for later) — this is the explicit \"stop asking about this\none\" action, and it always resolves to\n:data:`app.domain.copy_resolution.DEFAULT_RESOLUTION`, never to creating\na copy: reversing that default is exactly the mistake that invents a\nphantom object nobody asked for.",
+        "operationId": "skip_question_api_v1_duplicates__question_id__skip_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "question_id",
+            "required": true,
+            "schema": {
+              "title": "Question Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Skip Question",
+        "tags": [
+          "duplicates"
         ]
       }
     },
@@ -2908,7 +3147,7 @@
     },
     "/api/v1/shelves/{shelf_id}/reads/{read_id}/apply": {
       "post": {
-        "description": "Persist a read's diff (§5.6): every ``added``/``unchanged``/\n``corrected`` claim writes through unconditionally — those are rules\n`reconcile()` already settled, not questions — and ``body.answers``\nresolves whichever ``needs_decision`` claims the caller is answering now.\nAn unanswered one simply stays open; nothing is lost, it just shows up\nagain next time the diff is asked for (P2.6 owns making that durable\nacross sessions rather than per-call).\n\nReturns the diff RECOMPUTED after writing, so a resolved claim moves out\nof ``needs_decision`` in the same response that resolved it.",
+        "description": "Persist a read's diff (§5.6): every ``added``/``unchanged``/\n``corrected`` claim writes through unconditionally — those are rules\n`reconcile()` already settled, not questions — and ``body.answers``\nresolves whichever ``needs_decision`` claims the caller is answering now.\nAn unanswered ``ambiguous_location`` one is opened in the durable\n\"duplicates to resolve\" queue (P2.6, §5.4) rather than simply lost — see\n``GET /duplicates`` to answer it later, from the Books tab, without\nre-running anything.\n\nReturns the diff RECOMPUTED after writing, so a resolved claim moves out\nof ``needs_decision`` in the same response that resolved it.",
         "operationId": "apply_read_diff_api_v1_shelves__shelf_id__reads__read_id__apply_post",
         "parameters": [
           {

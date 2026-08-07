@@ -62,20 +62,29 @@ app/
   domain/       entities + rules. pure Python, no I/O, no framework
     book.py       Book/Copy/Status/Provenance + the rules (VISION §5.1-5.6)
     shelf.py      Shelf/Capture — identity and depth, no address (P2.1)
+    reconcile.py  reconcile(): a read's claims -> Diff, pure (P2.5, §5.6)
+    copy_resolution.py  the §5.4 fire table, the queue entity, the two cheap
+                  wins (P2.6)
     text.py       book_key() over booksnap.catalog.normalize — NOT a copy
     search.py     Hebrew search SEMANTICS: parse + rank, pure and portable
   ports/        Protocols: Principal, Clock, IdGen, BookStore, ShelfStore
     blobs.py      BlobStore — image bytes, keys in rows (D1)
+    decisions.py  DecisionStore — standing §5.4 answers (P2.5)
+    duplicates.py DuplicateQueue — the durable "duplicates to resolve" queue (P2.6)
   adapters/     implementations behind the ports
     sqlite_store.py  the real one (D1); connection per operation, WAL
     disk_blobs.py    uploaded photos; content-addressed, EXIF-normalised
     memory_store.py  the API ring's store, and the contract's 2nd implementation
     migrations.py    versioned schema via PRAGMA user_version (H6)
     legacy_import.py work/*.json -> entities; I/O and PURE mapping split
+  reconcile_apply.py  turns a classified Diff into writes (P2.5); also the
+                  P2.6 queue's open/close bookkeeping
   api/          FastAPI routers under /api/v1 + DTOs. THIN — no rules
     routers/meta.py   service + library identity
     routers/books.py  list / get / patch / delete / manual add / export
     routers/shelves.py  shelves + captures; the capture→shelf binding (P2.2)
+    routers/reads.py  start/poll/stop a read; diff/apply (P2.4/P2.5)
+    routers/duplicates.py  the durable queue: list/answer/skip (P2.6)
   api/openapi.json          committed contract, regenerated, never hand-edited
   main.py       the composition root — the ONE file allowed to cross layers
   web/          React + Vite + TS client; talks only to /api/v1
@@ -496,19 +505,21 @@ names to run a subset (`python tests/run_all.py test_api`).
 |---|---|---|
 | `test_core.py` | 52 | matcher / normalize / evidence gates |
 | `test_integrations.py` | 24 | catalog + fallback adapters, fully mocked/offline |
-| `test_domain.py` | 75 | the VISION rules that can be silently reversed |
-| `test_store_contract.py` | 146 | one store spec × every implementation + isolation |
-| `test_reconcile_apply.py` | 14 | `app.reconcile_apply` writing a `Diff` through real stores |
+| `test_domain.py` | 92 | the VISION rules that can be silently reversed |
+| `test_store_contract.py` | 167 | one store spec × every implementation + isolation |
+| `test_reconcile_apply.py` | 20 | `app.reconcile_apply` writing a `Diff` through real stores |
 | `test_legacy_import.py` | 21 | `work/*.json` → entities, against a committed fixture |
 | `test_search.py` | 15 | Hebrew search, against 24 real queries on the real 251 books |
 | `test_layering.py` | 9 | the one-way import rules (plan H1) |
-| `test_api.py` | 72 | `/api/v1` shapes + the versioning/tenancy meta-tests |
+| `test_api.py` | 78 | `/api/v1` shapes + the versioning/tenancy meta-tests |
 
-428 python tests as of P2.5 (+59 since P2.4: 21 new cases in `test_domain.py`
-— 18 named rule tests for `reconcile()` plus three for the new `relink_copy`
-domain operation — the `DecisionStore` contract (8 cases × 2 implementations),
-the whole new `test_reconcile_apply.py` module, and the diff/apply API
-surface).
+478 python tests as of P2.6 (+50 since P2.5: 17 new cases in `test_domain.py`
+— the fire/never-fire table's four rows plus its self-consistency and
+out-of-scope checks, the two cheap wins, the durable queue entity — the
+`DuplicateQueue` contract (9 cases × 2 implementations, plus the `book_ids`
+filter and the v8→v9 migration test), 6 new cases in `test_reconcile_apply.py`
+for the queue's open/close bookkeeping, and 6 new `test_api.py` cases for the
+`/duplicates` router and the Books tab's `?duplicates=true` filter).
 No pytest dependency, deliberately — the repo has never had one and the
 accuracy gate runs on bare python. Counts grow with each run's fixes; the
 commit log is the history (`SESSION_NOTES.md` was a one-time handoff and is
@@ -1017,7 +1028,7 @@ per case.
 location.** The plan's one-line summary undersells the inputs: §5.4's ask
 fires when a claimed book is already confirmed *somewhere else* in the
 library, so the pure function needs every book, keyed by `book_key`, not only
-this shelf's occupants. The caller (`app/api/routers/reads.py:_diff_for`)
+this shelf's occupants. The caller (`app/api/routers/reads.py:diff_for`)
 pays an honest O(library) `BookStore.list` scan per diff — the same trade
 `books.py`'s CSV export already makes with `EXPORT_MAX`, and the same one
 `app.domain.search` documents for its `LIKE` scan. Revisit if it is ever
@@ -1133,6 +1144,121 @@ only surfaced when an end-to-end apply test asserted the copy's `shelf_id`
 after the write. Recorded because it is the same shape of lesson
 P1.6/P1.7 already logged twice: a ring that cannot see the full round trip
 is not proof the round trip works.
+
+## Copy resolution (P2.6)
+
+§5.4's whole point is a prompt that fires RARELY — "or it becomes review
+fatigue and gets click-through-approved, which is worse than not having it."
+P2.5 already built the machinery that keeps it rare (`reconcile()`'s
+within-depth dedup and its `same_location`/`ambiguous_location` split); this
+item's job was to make the RULE that decides "ask or not" a first-class,
+tested artefact instead of something you'd have to read `reconcile.py`'s
+control flow to reconstruct, plus the parts P2.5 explicitly deferred: the
+queue that survives past one read, and the two cheap wins.
+
+**The fire table (`app/domain/copy_resolution.py:FIRE_TABLE`)** is data, not
+control flow — four `FireRule` rows, each naming a situation from §5.4's own
+table, the `ClaimOutcome.reason` `reconcile()` actually produces for it, and
+`ASK`/`NEVER_ASK`. `fires(reason)` is the load-bearing function: it is not
+just read by tests, `app.reconcile_apply`'s queue bookkeeping calls it too
+(`assert fires(outcome.reason) is FireDecision.ASK` guards the one branch
+that opens a queue entry), so a table edited without a matching change to
+`reconcile()` — or the reverse — trips an assertion instead of silently
+drifting apart. `fires()` **raises** for any reason outside the four rows
+(`review_tier_new_book`, `rejected`, `no_identity`, ...) rather than
+defaulting to `NEVER_ASK` — those answer a different question entirely (is
+this a real book? has a human already decided?), and guessing would make an
+unrecognised reason indistinguishable from one the table covered on purpose.
+Two of the four rows share one reason (`duplicate_within_depth` — "two
+spines, same run" and "overlapping captures" are mechanically the SAME
+collapse once a Read is scoped to one (shelf, depth)), and
+`test_fire_table_rows_sharing_a_reason_agree_with_each_other` pins that the
+table cannot contradict itself.
+
+**The durable queue (`DuplicateQuestion` + `app.ports.duplicates.DuplicateQueue`,
+schema v9).** P2.5's `needs_decision` is a snapshot of ONE read; a
+`DuplicateQuestion` is what survives after that read's response has come and
+gone. Identity is the SAME `(library, shelf, depth, book_key)` quadruple as
+`Decision` — a question and its eventual answer are two states of one fact —
+which is what makes closing it mechanical: answering (via
+`POST /reads/{id}/apply` OR the queue's own `/duplicates/{id}/answer`)
+deletes the row in the SAME write as the `Decision` it creates, and a repeat
+unanswered claim on a LATER read refreshes the existing row (`open_or_refresh`,
+pure) rather than piling up a second one — `opened_at` and the minted `id`
+both survive a refresh, so the queue doesn't lie about how long a question
+has been waiting and a client's open tab on it doesn't 404. There is
+deliberately no "resolved" state to query: closed means gone, same shape as
+`DecisionStore.delete_decision`'s "undo of a mis-click" but triggered by the
+opposite event.
+
+**The two cheap wins**, both in `copy_resolution.py` and both PRESELECTIONS
+a human still confirms or overrides — never applied on their own:
+
+  - `pick_default_copy` — "no shelf assigned, or the least-recently-seen."
+    Checked in that order even when a located copy was seen very recently and
+    the unlocated one never has been; a copy with NO provenance at all (an
+    "I have another copy" declaration that was never actually read) counts as
+    the most extreme case of "least recently seen" and sorts first among
+    located copies;
+  - `build_prompt` — swaps the plain three-way prompt for "you lent this to
+    Dana — is it back?" when `pick_default_copy`'s OWN candidate is
+    `Lending.is_out`. Sharing one candidate between the two wins is
+    deliberate (`test_build_prompt_only_checks_the_default_candidate_not_any_copy`
+    pins it): a different copy being lent out must not leak the sharper
+    question onto a prompt about an unrelated candidate.
+
+**`DEFAULT_RESOLUTION = DecisionKind.ALREADY_LISTED`** — §5.4 verbatim: "a
+missed duplicate is mildly wrong and trivially fixed later; an invented one
+is a phantom that rots silently." Consulted in exactly ONE place: the
+queue's explicit `POST /duplicates/{id}/skip` action ("not now — use the
+safe default"), which is deliberately NOT the same thing as leaving a claim
+unanswered during `POST /reads/{id}/apply` (that opens the durable question
+instead of resolving anything). Mutation-checked twice, at two different
+layers, because this is the rule a silent regression would be most expensive
+in: `test_default_resolution_is_already_listed` pins the constant, and
+`test_the_skip_default_relinks_rather_than_creating_a_second_copy` /
+`test_skipping_a_queued_question_applies_the_safe_default` (API, over real
+HTTP) prove the BEHAVIOUR — reversing the constant to `ANOTHER_COPY` makes
+`copy_count` come back 2, not 1, in both.
+
+**API** (`app/api/routers/duplicates.py`): `GET /duplicates` (whole-library
+listing — a queue entry is about a BOOK, not about which shelf happens to be
+open, so it is not nested under `/shelves/{id}`), `POST .../{id}/answer`,
+`POST .../{id}/skip`. Both mutating routes re-derive the exact `ClaimOutcome`
+a question was raised from by calling `reads.py`'s own `diff_for` (renamed
+from `_diff_for` so a second router can share it) against the stored
+`(shelf_id, read_id)` — the queue stores a POINTER, never a frozen snapshot,
+same "recompute against current reality" idiom as `GET .../diff`. If it no
+longer resolves to an open `ambiguous_location` outcome at that key (the
+book was deleted, or someone else already answered it a moment ago), the row
+is deleted right there and the caller gets a 409 rather than a confusing
+silent no-op.
+
+**The Books tab filter is a generic `book_ids` narrowing on `BookStore.list`,
+not a new aggregate join.** `BookStore` has no idea what a "duplicate
+question" is — that would put a second aggregate's shape inside a port that
+should only know about books — so `GET /books?duplicates=true` is composed
+at the API layer exactly the way `reads.py` already composes across four
+ports: list the open questions, collect their `existing_book_id`s, narrow
+`store.list(..., book_ids=...)`. An explicit EMPTY tuple means "match
+nothing" (an empty queue pages as zero books), which had to be handled
+before a query was even built — `book_ids=()` would otherwise compile to an
+invalid `IN ()` clause in SQLite. Client half: `BooksQuery.duplicates`, a
+plain boolean exactly like `lentOut` — same chip shape in `FilterBar`, same
+`toParams` mapping, same `filtersActive` inclusion. Deliberately did NOT
+build a client-side answer/skip screen in this item; the plan puts "inline
+review of each claim" in P2.7 (the Capture tab), and the filter is what the
+plan literally asked for here — a way to FIND the books, not yet a
+third UI for resolving them.
+
+⚠ **The linear scan in `_find_open` (`duplicates.py`) is deliberate, not an
+oversight.** Addressing one queued question by its minted id means scanning
+`list_open_questions(library)` rather than an indexed point lookup — correct
+because §5.4's whole design goal is that this list stays small (a firing
+rate this codebase is actively trying to keep near zero), never
+library-scale. Same "measure before indexing" stance `app.domain.search`
+documents for its own linear scan; revisit only if that assumption is ever
+measured wrong.
 
 ## Author sort, and why it needed a schema version
 
@@ -1265,16 +1391,16 @@ arrive in P2.1. The importer reports them loudly rather than dropping them —
 until P2.3 lands, a re-read could re-add those books.
 
 Client ring (needs `npm install --prefix app/web` once):
-`npm --prefix app/web run test` (vitest + React Testing Library, **33 tests**
-as of P1.7) and `npm --prefix app/web run typecheck`. Test what encodes a
+`npm --prefix app/web run test` (vitest + React Testing Library, **34 tests**
+as of P2.6) and `npm --prefix app/web run typecheck`. Test what encodes a
 *decision*, not layout and not DTO plumbing — same standard as the Python
 rings. The suite mocks `fetch`, never `useBooks`: the store, the request-id
 race guard and the paging arithmetic are exactly what needs exercising.
-Mutation-checked — nine reversed decisions (dropped race guard, missing
+Mutation-checked — ten reversed decisions (dropped race guard, missing
 `.rtl-safe`, edit not abandoned on book change, delete without confirmation,
 409 clearing the form, focus not restored, drawer left open on promote,
-sort direction surviving a key change, tags not trimmed/blanks-dropped) each
-fail a named test.
+sort direction surviving a key change, tags not trimmed/blanks-dropped, the
+`duplicates` filter dropped from the request — P2.6) each fail a named test.
 
 ⚠ **This ring cannot see CSS.** jsdom computes no cascade, so every finding
 in the "traps" list above was invisible here and had to be caught in a real

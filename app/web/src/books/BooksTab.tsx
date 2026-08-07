@@ -46,10 +46,12 @@ export function BooksTab({ onOpen }: { onOpen: (id: string) => void }) {
         authorKey={books.query.authorKey}
         authorLabel={authorLabel}
         lentOut={books.query.lentOut}
+        duplicates={books.query.duplicates}
         active={books.filtersActive}
         onStatus={(status: StatusFilter) => books.setQuery({ status })}
         onClearAuthor={() => books.setQuery({ authorKey: null })}
         onLentOut={(lentOut: boolean) => books.setQuery({ lentOut })}
+        onDuplicates={(duplicates: boolean) => books.setQuery({ duplicates })}
         onClearAll={books.resetQuery}
       />
 

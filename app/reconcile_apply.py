@@ -18,15 +18,21 @@ right home. It may import ``app.domain`` and ``app.ports``; it must NOT import
 ``app.adapters`` (H1's spirit — the day a Postgres adapter exists, this module
 must not care) and it is imported BY ``app.api`` routes, never the reverse.
 
-Two things this module explicitly does NOT do, matching `reconcile()`'s own
-documented boundaries:
+One thing this module explicitly does NOT do, matching `reconcile()`'s own
+documented boundary: it does not persist ``not_seen`` anywhere.
+Streak-counting across several reads is P2.8's, which has the read archive
+to count from.
 
-  - it does not persist ``not_seen`` anywhere. Streak-counting across several
-    reads is P2.8's, which has the read archive to count from;
-  - it does not make an unanswered ``needs_decision`` durable beyond this
-    call. The "duplicates to resolve" queue that survives across sessions is
-    P2.6's item — here, an entry with no matching :class:`Answer` is simply
-    left open, and the caller sees it again next time it asks for the diff.
+**The durable "duplicates to resolve" queue (P2.6, §5.4).** An unanswered
+``needs_decision`` claim reasoned ``ambiguous_location`` — the ONE situation
+:func:`app.domain.copy_resolution.fires` says §5.4's prompt should actually
+ask about — is opened (or refreshed) in the :class:`~app.ports.duplicates.DuplicateQueue`
+so a human can answer it later from the Books tab without re-running
+anything; the moment an answer resolves it (this call or a later one, via
+this same function or the queue's own "use the default" action), the
+matching row is deleted. ``duplicates=None`` skips this bookkeeping entirely
+— every REAL call site (the API layer) always provides one; tests that only
+care about the write itself, not the queue, may omit it.
 """
 from __future__ import annotations
 
@@ -38,17 +44,21 @@ from app.domain import (
     Decision,
     DecisionKind,
     Diff,
+    FireDecision,
     LibraryRef,
     Provenance,
     Status,
     add_copy,
+    fires,
     new_book,
     observe,
+    open_or_refresh,
     relink_copy,
 )
 from app.domain.book import DomainError
 from app.ports import Clock, IdGen
 from app.ports.decisions import DecisionStore
+from app.ports.duplicates import DuplicateQueue
 from app.ports.store import BookStore, ShelfStore
 
 
@@ -117,6 +127,7 @@ def apply_diff(
     decisions: DecisionStore,
     clock: Clock,
     ids: IdGen,
+    duplicates: DuplicateQueue | None = None,
     captured_at: str | None = None,
     answers: tuple[Answer, ...] = (),
 ) -> AppliedResult:
@@ -125,6 +136,9 @@ def apply_diff(
     ``captured_at`` becomes every fresh :class:`Provenance`'s timestamp;
     defaults to ``clock.now_iso()`` when the caller has no better value (a
     `Read` normally does — ``read.finished_at`` — and should pass it).
+
+    ``duplicates`` keeps the P2.6 queue in step (see the module docstring);
+    pass ``None`` to skip that bookkeeping entirely.
     """
     shelf = shelves.get_shelf(library, diff.shelf_id)
     if shelf is None:
@@ -187,8 +201,72 @@ def apply_diff(
             decisions.save_decision(library, decision)
             saved_decisions.append(decision)
 
+    if duplicates is not None:
+        _sync_duplicate_queue(diff, answers, duplicates, library=library,
+                              when=when, ids=ids)
+
     return AppliedResult(books_saved=tuple(saved),
                          decisions_saved=tuple(saved_decisions))
+
+
+# --- the P2.6 queue ----------------------------------------------------------
+
+def _sync_duplicate_queue(
+    diff: Diff,
+    answers: tuple[Answer, ...],
+    duplicates: DuplicateQueue,
+    *,
+    library: LibraryRef,
+    when: str,
+    ids: IdGen,
+) -> None:
+    """Keep the durable queue in step with what THIS call resolved.
+
+    Every still-open ``ambiguous_location`` claim (the one reason
+    :func:`fires` marks ASK — see the module docstring) with no matching
+    answer is opened or refreshed; one that WAS answered this call is
+    closed immediately, in the SAME write as the `Decision` that answered it,
+    so a queue row can never outlive its own answer even by one request.
+
+    Also sweeps ``corrected``/``rejected`` outcomes reasoned
+    ``relinked_by_decision``, ``new_copy_by_decision`` or ``wrong_book`` —
+    every one of those means a `Decision` now exists at that key (a REPLAY of
+    an earlier answer, or a fresh WRONG_BOOK), so no open row may survive at
+    it either, however that came to be. Defensive rather than load-bearing in
+    the common flow: the row was normally already deleted the first time the
+    decision was created.
+    """
+    answered_claim_ids = {a.claim_id for a in answers}
+
+    for outcome in diff.needs_decision:
+        if outcome.reason != "ambiguous_location":
+            continue  # review_tier_new_book -- a different question (§5.4
+                      # never applies), never a candidate for this queue.
+        assert fires(outcome.reason) is FireDecision.ASK, (
+            "FIRE_TABLE and reconcile()'s own classification have drifted "
+            f"apart for reason {outcome.reason!r}"
+        )
+        if outcome.claim.id in answered_claim_ids:
+            duplicates.delete_question(library, diff.shelf_id, diff.depth,
+                                       outcome.book_key)
+            continue
+        existing = duplicates.get_question(library, diff.shelf_id, diff.depth,
+                                           outcome.book_key)
+        question = open_or_refresh(
+            existing, new_id=ids.new_id(), library_id=library.id,
+            shelf_id=diff.shelf_id, depth=diff.depth, book_key=outcome.book_key,
+            read_id=diff.read_id, spine_id=outcome.claim.spine_id,
+            claim_title=outcome.claim.title, claim_author=outcome.claim.author,
+            existing_book_id=outcome.existing_book.id, when=when,
+            captured_at=when,
+        )
+        duplicates.save_question(library, question)
+
+    for outcome in (*diff.corrected, *diff.rejected):
+        if outcome.reason in ("relinked_by_decision", "new_copy_by_decision",
+                              "wrong_book"):
+            duplicates.delete_question(library, diff.shelf_id, diff.depth,
+                                       outcome.book_key)
 
 
 # --- per-outcome execution ---------------------------------------------------

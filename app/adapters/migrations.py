@@ -330,6 +330,56 @@ CREATE TABLE decisions (
 CREATE INDEX decisions_by_shelf ON decisions (library_id, shelf_id, depth);
 """
 
+# --- v9: the durable duplicates queue (P2.6, §5.4) ------------------------
+#
+# One open §5.4 ask, surviving past the read that raised it. Identity is the
+# SAME quadruple as `decisions` (library, shelf, depth, book_key) — a
+# question and its eventual answer are two states of one fact, so answering
+# it (an app.reconcile_apply write to `decisions`) deletes the matching row
+# here rather than marking it resolved; there is deliberately no "closed"
+# state to query, only "open or gone".
+#
+# Denormalised claim/book fields (`claim_title`, `claim_author`,
+# `existing_book_id`, `spine_id`, `read_id`) rather than a join back to
+# `claims`/`books`: the read that raised the question may be long settled by
+# the time a human opens the Books tab's queue, and re-deriving "what was
+# this claim about" would mean re-loading that whole read just to render one
+# row. Same trade `ClaimOutcome` makes for `reconcile()`'s own callers.
+#
+# Pure SQL, no backfill: this is a brand-new feature (P2.6), so no row
+# anywhere predates it — same shape as v4/v7/v8.
+_V9 = """
+CREATE TABLE duplicate_questions (
+    id               TEXT NOT NULL,
+    library_id       TEXT NOT NULL,
+    shelf_id         TEXT NOT NULL,
+    depth            INTEGER NOT NULL,
+    book_key         TEXT NOT NULL,
+    read_id          TEXT NOT NULL,
+    spine_id         TEXT NOT NULL,
+    claim_title      TEXT NOT NULL DEFAULT '',
+    claim_author     TEXT NOT NULL DEFAULT '',
+    existing_book_id TEXT NOT NULL,
+    opened_at        TEXT NOT NULL,
+    captured_at      TEXT,
+    PRIMARY KEY (library_id, shelf_id, depth, book_key)
+);
+
+-- The route addresses one question by its minted `id` (P2.6's API, same
+-- idiom as every other minted-id resource) — declared UNIQUE so a wiring bug
+-- that reused an id would raise loudly rather than silently answering the
+-- wrong question.
+CREATE UNIQUE INDEX duplicate_questions_by_id ON duplicate_questions (id);
+
+-- Leads with library_id like every other table (H2). No shelf_id in this
+-- one: the Books tab's "duplicates to resolve" filter (P2.6) asks across the
+-- WHOLE library — a queue entry is about a BOOK, not about which shelf
+-- happens to be open — so `opened_at` ordering is what every listing uses,
+-- narrowed to one shelf in Python/SQL WHERE only when a caller asks for it.
+CREATE INDEX duplicate_questions_by_library
+    ON duplicate_questions (library_id, opened_at, id);
+"""
+
 # A step is either SQL to execute or a callable to run — both inside the same
 # once-only transaction. Callables exist because a derived column whose rule
 # lives in the domain must be backfilled BY that rule, not by a re-statement
@@ -343,6 +393,7 @@ MIGRATIONS: tuple[tuple[int, str | Step], ...] = (
     (6, _V6),
     (7, _V7),
     (8, _V8),
+    (9, _V9),
 )
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]

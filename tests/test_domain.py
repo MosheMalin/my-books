@@ -23,16 +23,21 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from app.domain import (
+    FIRE_TABLE,
     AmbiguousCopy,
     Book,
     Claim,
     ClaimTier,
     CopyAlreadyLentOut,
     CopyNotLentOut,
+    DEFAULT_RESOLUTION,
     Decision,
     DecisionKind,
     DomainError,
+    DuplicateQuestion,
+    FireDecision,
     Provenance,
+    PromptKind,
     ReadAlreadyFinished,
     ReadStatus,
     Shelf,
@@ -44,12 +49,14 @@ from app.domain import (
     add_depth,
     append_claim,
     approve,
+    build_prompt,
     capture_onto_a_new_shelf,
     book_key,
     counts_toward_library,
     edit,
     edit_copy,
     fail_read,
+    fires,
     finish_read,
     lend,
     new_book,
@@ -57,6 +64,8 @@ from app.domain import (
     new_read,
     new_shelf,
     observe,
+    open_or_refresh,
+    pick_default_copy,
     reconcile,
     relink_copy,
     remove_from_shelf,
@@ -1034,6 +1043,231 @@ def test_a_claim_with_no_title_has_no_book_identity():
     assert not diff.added and not diff.unchanged and not diff.needs_decision
     assert len(diff.ignored) == 1
     assert diff.ignored[0].reason == "no_identity"
+
+
+# --- P2.6: copy resolution — the fire/never-fire table (§5.4) --------------
+#
+# One named test per row of FIRE_TABLE, each driving the REAL reconcile()
+# through the exact situation the row describes and cross-checking the
+# outcome's reason against fires() — so a table edited without a matching
+# change to reconcile() (or the reverse) is a loud mismatch here, not a
+# silent drift between documentation and behaviour.
+
+def test_fire_row_two_spines_same_shelf_same_run_never_asks():
+    shelf = _rshelf()
+    weak = _rclaim(1, capture_id="capA", score=70.0)
+    strong = _rclaim(2, capture_id="capA", score=91.0)
+    diff = reconcile(shelf, 1, [weak, strong], {}, [], read_id="r1")
+
+    assert len(diff.added) == 1, "the pair did not collapse to one outcome"
+    ignored = [o for o in diff.ignored if o.reason == "duplicate_within_depth"]
+    assert len(ignored) == 1
+    assert fires(ignored[0].reason) is FireDecision.NEVER_ASK
+
+
+def test_fire_row_same_shelf_and_depth_later_run_never_asks():
+    shelf = _rshelf()
+    here = new_book(id="b1", library_id=LIB, title="מלכי הכופרים",
+                    author="פול קארני", copy_id="c1", shelf_id="sh1", depth=1)
+    diff = reconcile(shelf, 1, [_rclaim()], {here.key: here}, [], read_id="r1")
+
+    assert len(diff.unchanged) == 1
+    assert not diff.needs_decision
+    assert fires(diff.unchanged[0].reason) is FireDecision.NEVER_ASK
+
+
+def test_fire_row_overlapping_captures_at_one_depth_never_asks():
+    """Two DIFFERENT captures (unlike the same-run row above, which uses one)
+    claiming the same book at one depth — §5.3's overlap dedup. Mechanically
+    the SAME collapse as the same-run row (both are `duplicate_within_depth`),
+    which is exactly what FIRE_TABLE says: two situations, one mechanism."""
+    shelf = _rshelf()
+    from_capture_a = _rclaim(1, capture_id="capA", score=80.0)
+    from_capture_b = _rclaim(2, capture_id="capB", score=85.0)
+    diff = reconcile(shelf, 1, [from_capture_a, from_capture_b], {}, [],
+                     read_id="r1")
+
+    assert len(diff.added) == 1
+    ignored = [o for o in diff.ignored if o.reason == "duplicate_within_depth"]
+    assert len(ignored) == 1
+    assert fires(ignored[0].reason) is FireDecision.NEVER_ASK
+
+
+def test_fire_row_a_different_shelf_row_or_library_asks():
+    shelf = _rshelf()
+    elsewhere = new_book(id="b1", library_id=LIB, title="מלכי הכופרים",
+                         author="פול קארני", copy_id="c1", shelf_id="sh9", depth=1)
+    diff = reconcile(shelf, 1, [_rclaim()], {elsewhere.key: elsewhere}, [],
+                     read_id="r1")
+
+    assert len(diff.needs_decision) == 1
+    outcome = diff.needs_decision[0]
+    assert outcome.reason == "ambiguous_location"
+    assert fires(outcome.reason) is FireDecision.ASK
+
+
+def test_fire_table_rows_sharing_a_reason_agree_with_each_other():
+    """Rows 1 and 3 both resolve through `duplicate_within_depth` — this
+    asserts the table itself is not self-contradictory, which is the thing
+    that would make fires() return a decision depending on which row a
+    caller happened to think of first."""
+    by_reason: dict[str, set] = {}
+    for rule in FIRE_TABLE:
+        by_reason.setdefault(rule.reconcile_reason, set()).add(rule.decision)
+    disagreements = {r: d for r, d in by_reason.items() if len(d) > 1}
+    assert not disagreements, f"FIRE_TABLE disagrees with itself: {disagreements}"
+
+
+def test_fires_refuses_a_reason_outside_the_table():
+    """review_tier_new_book is a REAL reconcile() reason, but it answers a
+    different question ("is this a real book?", not "which copy is this?")
+    and was never a candidate for §5.4's prompt. Silently returning
+    NEVER_ASK for it would be indistinguishable from the table having
+    covered it on purpose."""
+    _raises(DomainError, fires, "review_tier_new_book")
+    _raises(DomainError, fires, "no_identity")
+    _raises(DomainError, fires, "some_future_reason_nobody_wrote_yet")
+
+
+# --- P2.6: the two cheap wins (§5.4) ---------------------------------------
+
+def test_pick_default_copy_prefers_an_unlocated_copy():
+    """§5.4: 'default to the copy that has no shelf assigned' — checked
+    FIRST, ahead of recency, even when a located copy was seen very
+    recently and the unlocated one never has been."""
+    b = _book(shelf_id="sh1", depth=1)  # copy c1, located
+    b = add_copy(b, copy_id="c2")       # copy c2, never located
+    assert pick_default_copy(b).id == "c2"
+
+
+def test_pick_default_copy_falls_back_to_least_recently_seen():
+    """§5.4: '...or the least-recently-seen', once every copy has somewhere
+    to be — the copy whose last sighting is oldest is the one most likely
+    to be the object that just reappeared somewhere new."""
+    b = _book(shelf_id="sh1", depth=1)
+    b = add_copy(b, copy_id="c2", shelf_id="sh2", depth=1)
+    b = observe(b, Provenance("r-old", "sp-old", shelf_id="sh1", depth=1,
+                              captured_at="2020-01-01T00:00:00Z"), copy_id="c1")
+    b = observe(b, Provenance("r-new", "sp-new", shelf_id="sh2", depth=1,
+                              captured_at="2026-01-01T00:00:00Z"), copy_id="c2")
+    assert pick_default_copy(b).id == "c1", "the OLDER sighting should win"
+
+
+def test_pick_default_copy_treats_no_provenance_as_least_recently_seen():
+    """A copy declared by hand (P1.7's 'I have another copy') and never
+    actually read has no sighting at all — the extreme case of 'least
+    recently seen', so it must win over a located copy that HAS been seen,
+    however long ago."""
+    b = _book(shelf_id="sh1", depth=1)
+    b = observe(b, Provenance("r1", "sp1", shelf_id="sh1", depth=1,
+                              captured_at="2020-01-01T00:00:00Z"), copy_id="c1")
+    b = add_copy(b, copy_id="c2", shelf_id="sh2", depth=1)  # never read
+    assert pick_default_copy(b).id == "c2"
+
+
+def test_build_prompt_is_the_plain_three_way_by_default():
+    b = _book(shelf_id="sh1", depth=1)
+    prompt = build_prompt(b)
+    assert prompt.kind is PromptKind.THREE_WAY
+    assert prompt.candidate_copy_id == "c1"
+    assert prompt.lent_to is None
+
+
+def test_build_prompt_asks_the_sharper_question_when_the_candidate_is_lent_out():
+    """§5.4's first cheap win: 'if the existing copy is marked lent out and
+    now shows up on a shelf, ask the better question — you lent this to
+    Dana — is it back?'"""
+    b = _book(shelf_id="sh1", depth=1)
+    b = lend(b, "c1", lent_to="דנה", lent_at="2026-08-01T00:00:00Z")
+    prompt = build_prompt(b)
+    assert prompt.kind is PromptKind.LENT_OUT_RETURN
+    assert prompt.candidate_copy_id == "c1"
+    assert prompt.lent_to == "דנה"
+
+
+def test_build_prompt_ignores_a_returned_loan():
+    """A copy that WAS lent and has since come back must not trigger the
+    lent-out question — Lending.is_out, not merely Lending is not None, is
+    the check."""
+    b = _book(shelf_id="sh1", depth=1)
+    b = lend(b, "c1", lent_to="דנה", lent_at="2026-08-01T00:00:00Z")
+    b = return_copy(b, "c1", returned_at="2026-08-05T00:00:00Z")
+    prompt = build_prompt(b)
+    assert prompt.kind is PromptKind.THREE_WAY
+
+
+def test_build_prompt_only_checks_the_default_candidate_not_any_copy():
+    """A DIFFERENT copy being lent out must not leak the sharper question
+    onto a prompt about the unlocated candidate — the two cheap wins share
+    one candidate on purpose (build_prompt's own docstring), so a lent-out
+    copy that pick_default_copy would never pick must not change anything."""
+    b = _book(shelf_id="sh1", depth=1)
+    b = lend(b, "c1", lent_to="דנה", lent_at="2026-08-01T00:00:00Z")
+    b = add_copy(b, copy_id="c2")  # unlocated -- this is the default candidate
+    prompt = build_prompt(b)
+    assert prompt.kind is PromptKind.THREE_WAY
+    assert prompt.candidate_copy_id == "c2"
+
+
+# --- P2.6: the default when a question is skipped (§5.4) -------------------
+
+def test_default_resolution_is_already_listed():
+    """§5.4, verbatim: 'default when the question is skipped or the run is
+    never reviewed: already listed copy'. A missed duplicate is mildly
+    wrong and trivially fixed later; an invented one is a phantom that rots
+    silently — see test_reconcile_apply.py / test_api.py for the end-to-end
+    proof that using this default really does relink rather than duplicate;
+    this test pins the constant a reversal would have to change first."""
+    assert DEFAULT_RESOLUTION is DecisionKind.ALREADY_LISTED
+
+
+# --- P2.6: the durable queue entity -----------------------------------------
+
+def test_open_or_refresh_opens_a_fresh_question():
+    q = open_or_refresh(
+        None, new_id="q1", library_id=LIB, shelf_id="sh1", depth=1,
+        book_key="k|a", read_id="r1", spine_id="sp1", claim_title="t",
+        claim_author="a", existing_book_id="b1", when="2026-08-07T00:00:00Z",
+        captured_at="2026-08-01T00:00:00Z",
+    )
+    assert q.id == "q1"
+    assert q.opened_at == "2026-08-07T00:00:00Z"
+
+
+def test_open_or_refresh_preserves_the_original_id_and_opened_at():
+    """A re-skip on a LATER read of the same (shelf, depth, book_key) must
+    not reset how long the question has been waiting, and must not change
+    the URL a client may already have open on it."""
+    first = open_or_refresh(
+        None, new_id="q1", library_id=LIB, shelf_id="sh1", depth=1,
+        book_key="k|a", read_id="r1", spine_id="sp1", claim_title="t",
+        claim_author="a", existing_book_id="b1", when="2026-08-01T00:00:00Z",
+        captured_at="2026-08-01T00:00:00Z",
+    )
+    refreshed = open_or_refresh(
+        first, new_id="q2-should-be-ignored", library_id=LIB, shelf_id="sh1",
+        depth=1, book_key="k|a", read_id="r2", spine_id="sp9",
+        claim_title="t2", claim_author="a2", existing_book_id="b1",
+        when="2026-08-07T00:00:00Z", captured_at="2026-08-07T00:00:00Z",
+    )
+    assert refreshed.id == "q1", "the id must survive a refresh"
+    assert refreshed.opened_at == "2026-08-01T00:00:00Z", (
+        "opened_at must survive a refresh, not reset to the later read's time"
+    )
+    # But the claim context DOES update -- the LATEST sighting is what a
+    # human should see when they finally look at the queue.
+    assert refreshed.read_id == "r2" and refreshed.claim_title == "t2"
+
+
+def test_duplicate_question_requires_a_shelf_and_a_positive_depth():
+    _raises(DomainError, DuplicateQuestion, id="q1", library_id=LIB,
+           shelf_id="", depth=1, book_key="k|a", read_id="r1", spine_id="sp1",
+           claim_title="t", claim_author="a", existing_book_id="b1",
+           opened_at="2026-08-01T00:00:00Z")
+    _raises(DomainError, DuplicateQuestion, id="q1", library_id=LIB,
+           shelf_id="sh1", depth=0, book_key="k|a", read_id="r1",
+           spine_id="sp1", claim_title="t", claim_author="a",
+           existing_book_id="b1", opened_at="2026-08-01T00:00:00Z")
 
 
 if __name__ == "__main__":
