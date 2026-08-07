@@ -17,7 +17,7 @@ from fastapi import Depends
 
 from app.domain import LibraryRef
 from app.ports import Clock, IdGen, Principal
-from app.ports.store import BookStore
+from app.ports.store import BookStore, ShelfStore
 
 
 def get_principal() -> Principal:
@@ -43,6 +43,10 @@ def current_library(principal: Principal = Depends(get_principal)) -> LibraryRef
 
 def get_book_store() -> BookStore:
     raise RuntimeError("no BookStore bound; build the app via create_app")
+
+
+def get_shelf_store() -> ShelfStore:
+    raise RuntimeError("no ShelfStore bound; build the app via create_app")
 
 
 def get_clock() -> Clock:

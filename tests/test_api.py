@@ -28,7 +28,7 @@ from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from app import API_PREFIX, __version__
-from app.adapters.memory_store import MemoryBookStore
+from app.adapters.memory_store import MemoryBookStore, MemoryShelfStore
 from app.api import deps
 from app.api.app import create_app
 from app.domain import LibraryRef, Status, new_book
@@ -68,11 +68,12 @@ class StubPrincipal:
         return self._library
 
 
-def _app(principal: StubPrincipal | None = None, store=None):
+def _app(principal: StubPrincipal | None = None, store=None, shelves=None):
     p = principal or StubPrincipal()
     return create_app(
         principal_provider=lambda: p,
         book_store=store if store is not None else MemoryBookStore(),
+        shelf_store=shelves if shelves is not None else MemoryShelfStore(),
         clock=StubClock(),
         id_gen=SeqIdGen(),
     )
@@ -586,6 +587,164 @@ def test_no_module_level_mutable_state_in_api():
                         f"{f.relative_to(REPO_ROOT).as_posix()}:{node.lineno} {names}"
                     )
     assert not offenders, "module-level mutable state: " + "; ".join(offenders)
+
+
+# --- shelves and captures (P2.2) -----------------------------------------
+
+def test_a_photo_with_no_shelf_still_gets_one():
+    """The binding, and the item's whole point. A capture with no shelf is a
+    read with nothing to reconcile against (§5.6), so "assign it later" is not
+    a state the model offers — the photo lands on a fresh UNNAMED shelf, and
+    *Unassigned* on screen means not yet named.
+
+    The response carries the shelf as well as the capture: when the shelf was
+    auto-created the client has no other way to learn its id.
+    """
+    c = TestClient(_app())
+    r = c.post(f"{API_PREFIX}/captures", json={"image_id": "IMG_6082"})
+    assert r.status_code == 201, r.text
+    body = r.json()
+
+    assert body["shelf_created"] is True
+    assert body["shelf"]["label"] == "", "an auto-created shelf was named"
+    assert body["shelf"]["depth_count"] == 1
+    assert body["capture"]["shelf_id"] == body["shelf"]["id"]
+    assert body["capture"]["depth"] == 1
+    assert body["capture"]["image_id"] == "IMG_6082"
+
+    listed = c.get(f"{API_PREFIX}/shelves").json()
+    assert [s["id"] for s in listed] == [body["shelf"]["id"]]
+    assert listed[0]["capture_count"] == 1
+
+
+def test_a_photo_can_name_an_existing_shelf_and_appends_after_the_last():
+    """Several captures of one shelf are ordered (§5.3), and the order is
+    computed rather than asked for: intake is "photograph it left to right",
+    so a caller supplying its own number is two clients waiting to disagree."""
+    c = TestClient(_app())
+    shelf = c.post(f"{API_PREFIX}/shelves", json={"label": "סלון"}).json()
+
+    first = c.post(f"{API_PREFIX}/captures",
+                   json={"shelf_id": shelf["id"], "image_id": "a"}).json()
+    second = c.post(f"{API_PREFIX}/captures",
+                    json={"shelf_id": shelf["id"], "image_id": "b"}).json()
+
+    assert first["shelf_created"] is False
+    assert [first["capture"]["order"], second["capture"]["order"]] == [0, 1]
+    got = c.get(f"{API_PREFIX}/shelves/{shelf['id']}/captures").json()
+    assert [x["image_id"] for x in got] == ["a", "b"]
+
+
+def test_a_photo_cannot_be_filed_at_a_row_that_was_never_declared():
+    """§5.7: depth is declared, never detected. A 409 naming the declared
+    depth, not a silent clamp to 1 — filing a photo at a row that does not
+    exist gives reconciliation a location with no counterpart in the room."""
+    c = TestClient(_app())
+    shelf = c.post(f"{API_PREFIX}/shelves", json={}).json()
+
+    r = c.post(f"{API_PREFIX}/captures",
+               json={"shelf_id": shelf["id"], "depth": 2})
+    assert r.status_code == 409, r.text
+    assert "2" in r.json()["detail"]
+
+    deeper = c.post(f"{API_PREFIX}/shelves/{shelf['id']}/depths").json()
+    assert deeper["depth_count"] == 2
+    ok = c.post(f"{API_PREFIX}/captures",
+                json={"shelf_id": shelf["id"], "depth": 2})
+    assert ok.status_code == 201, ok.text
+
+
+def test_rebinding_a_photo_moves_it_and_gives_it_a_fresh_position():
+    """The inline assignment the intake UI performs. A photo moved to another
+    shelf keeps no memory of where it sat on the old one — an inherited order
+    would collide with whatever already occupies that slot."""
+    c = TestClient(_app())
+    auto = c.post(f"{API_PREFIX}/captures", json={"image_id": "a"}).json()
+    target = c.post(f"{API_PREFIX}/shelves", json={"label": "מטבח"}).json()
+    c.post(f"{API_PREFIX}/captures",
+           json={"shelf_id": target["id"], "image_id": "resident"})
+
+    moved = c.patch(f"{API_PREFIX}/captures/{auto['capture']['id']}",
+                    json={"shelf_id": target["id"]})
+    assert moved.status_code == 200, moved.text
+    assert moved.json()["capture"]["shelf_id"] == target["id"]
+    assert moved.json()["capture"]["order"] == 1, "it collided with the resident"
+
+    # The shelf it left is now empty, and therefore deletable.
+    assert c.delete(f"{API_PREFIX}/shelves/{auto['shelf']['id']}"
+                    ).status_code == 204
+
+
+def test_naming_a_shelf_is_optional_in_both_directions():
+    """Identity is free (owner's call): a shelf may be created unnamed, named
+    later, and un-named again. `""` is a legal value, not a missing one."""
+    c = TestClient(_app())
+    shelf = c.post(f"{API_PREFIX}/shelves", json={}).json()
+    assert shelf["label"] == ""
+
+    named = c.patch(f"{API_PREFIX}/shelves/{shelf['id']}",
+                    json={"label": "סלון, כוננית 2"}).json()
+    assert named["label"] == "סלון, כוננית 2"
+
+    cleared = c.patch(f"{API_PREFIX}/shelves/{shelf['id']}",
+                      json={"label": ""}).json()
+    assert cleared["label"] == "", "clearing a label was treated as absent"
+
+
+def test_a_shelf_with_photos_cannot_be_deleted():
+    """§5.6 at the HTTP edge: 409, not a cascade. Its captures are the record
+    a re-read diffs against, and destroying them on a misclick is exactly the
+    destructive direction the whole design refuses."""
+    c = TestClient(_app())
+    made = c.post(f"{API_PREFIX}/captures", json={"image_id": "a"}).json()
+    shelf_id = made["shelf"]["id"]
+
+    r = c.delete(f"{API_PREFIX}/shelves/{shelf_id}")
+    assert r.status_code == 409, r.text
+    assert c.get(f"{API_PREFIX}/shelves/{shelf_id}").status_code == 200
+
+    assert c.delete(f"{API_PREFIX}/captures/{made['capture']['id']}"
+                    ).status_code == 204
+    assert c.delete(f"{API_PREFIX}/shelves/{shelf_id}").status_code == 204
+
+
+def test_the_wishlist_is_absent_from_the_shelf_list_unless_asked_for():
+    c = TestClient(_app())
+    c.post(f"{API_PREFIX}/shelves", json={"label": "סלון"})
+    wish = c.post(f"{API_PREFIX}/shelves",
+                  json={"label": "משאלות", "virtual": True}).json()
+
+    assert wish["id"] not in [s["id"] for s in
+                             c.get(f"{API_PREFIX}/shelves").json()]
+    assert wish["id"] in [
+        s["id"] for s in
+        c.get(f"{API_PREFIX}/shelves", params={"include_virtual": True}).json()
+    ]
+    # And it never gains a row behind — it is not furniture.
+    assert c.post(f"{API_PREFIX}/shelves/{wish['id']}/depths"
+                  ).status_code == 409
+
+
+def test_a_shelf_in_another_library_is_404_not_403():
+    """§4.2: absent and forbidden are the same answer, so the API cannot leak
+    which shelf ids exist in someone else's library."""
+    shared = MemoryShelfStore()
+    mine = TestClient(_app(shelves=shared))
+    theirs = TestClient(_app(
+        StubPrincipal(LibraryRef("lib-other", "Other"), "p-other"),
+        shelves=shared,
+    ))
+    made = mine.post(f"{API_PREFIX}/captures", json={"image_id": "a"}).json()
+    shelf_id, cap_id = made["shelf"]["id"], made["capture"]["id"]
+
+    assert theirs.get(f"{API_PREFIX}/shelves/{shelf_id}").status_code == 404
+    assert theirs.get(f"{API_PREFIX}/captures/{cap_id}").status_code == 404
+    assert theirs.delete(f"{API_PREFIX}/shelves/{shelf_id}").status_code == 404
+    assert theirs.get(f"{API_PREFIX}/shelves").json() == []
+    # Filing a photo onto a foreign shelf is the same answer, not a 403.
+    assert theirs.post(f"{API_PREFIX}/captures",
+                       json={"shelf_id": shelf_id}).status_code == 404
+    assert mine.get(f"{API_PREFIX}/shelves/{shelf_id}").status_code == 200
 
 
 if __name__ == "__main__":

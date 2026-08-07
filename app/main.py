@@ -32,7 +32,7 @@ import os
 from pathlib import Path
 
 from app.adapters.dev_identity import DevPrincipal, SystemClock, UuidIdGen
-from app.adapters.sqlite_store import SqliteBookStore
+from app.adapters.sqlite_store import SqliteBookStore, SqliteShelfStore
 from app.api.app import create_app
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -53,9 +53,16 @@ def build() -> object:
     # request-independent). P4.1 replaces this with a per-request session read;
     # the signature does not change, which is the point of the stub.
     principal = DevPrincipal()
+    path = db_path()
     return create_app(
         principal_provider=lambda: principal,
-        book_store=SqliteBookStore(db_path()),
+        book_store=SqliteBookStore(path),
+        # The SAME file, two aggregates. Separate ports because their
+        # lifetimes are independent (a shelf exists before any book is on it),
+        # separate stores because a Postgres move should not have to port both
+        # at once — but one database, so a capture and the books it produces
+        # cannot end up in different places.
+        shelf_store=SqliteShelfStore(path),
         clock=SystemClock(),
         id_gen=UuidIdGen(),
         web_dist=WEB_DIST,

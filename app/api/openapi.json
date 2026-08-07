@@ -168,6 +168,172 @@
         "title": "BookSort",
         "type": "string"
       },
+      "CaptureBinding": {
+        "description": "What :meth:`create` produced — the photo AND the shelf it landed on.\n\nBoth, never just the capture: when the shelf was auto-created the client\nhas no other way to learn its id, and a second round trip to discover the\nthing you just implicitly made is the sort of gap that gets papered over\nwith a client-side guess. Same reasoning as the copy routes returning the\nwhole ``BookDTO``.",
+        "properties": {
+          "capture": {
+            "$ref": "#/components/schemas/CaptureDTO"
+          },
+          "shelf": {
+            "$ref": "#/components/schemas/ShelfDTO"
+          },
+          "shelf_created": {
+            "description": "True when no shelf_id was given and one was made.",
+            "title": "Shelf Created",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "capture",
+          "shelf",
+          "shelf_created"
+        ],
+        "title": "CaptureBinding",
+        "type": "object"
+      },
+      "CaptureCreate": {
+        "description": "File a photo.\n\n``shelf_id`` is optional and that is the point of P2.2: a photo that names\nno shelf gets a fresh unnamed one, because a capture with no shelf is a\nread with nothing to reconcile against (§5.6). *\"Unassigned\"* on screen\nmeans *not yet named*, never *not yet filed*.",
+        "properties": {
+          "depth": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Depth",
+            "type": "integer"
+          },
+          "image_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Id"
+          },
+          "order": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Omit to append after the last photo at this shelf+depth.",
+            "title": "Order"
+          },
+          "shelf_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shelf Id"
+          }
+        },
+        "title": "CaptureCreate",
+        "type": "object"
+      },
+      "CaptureDTO": {
+        "description": "One photo of part of a shelf, keyed by ``(shelf, depth, order)``.",
+        "properties": {
+          "captured_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Captured At"
+          },
+          "depth": {
+            "description": "Which row front-to-back. 1-based.",
+            "title": "Depth",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "image_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Reference, never bytes — blobs live behind BlobStore (P3.5). Also what identifies an unnamed shelf on screen.",
+            "title": "Image Id"
+          },
+          "order": {
+            "description": "Position among this shelf+depth's photos, left-to-right or right-to-left per the shelf's reading direction.",
+            "title": "Order",
+            "type": "integer"
+          },
+          "shelf_id": {
+            "title": "Shelf Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "shelf_id",
+          "depth",
+          "order"
+        ],
+        "title": "CaptureDTO",
+        "type": "object"
+      },
+      "CapturePatch": {
+        "description": "Re-bind a photo: move it to another shelf, another row, or another\nposition. This is the inline assignment the intake UI performs.",
+        "properties": {
+          "depth": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Depth"
+          },
+          "order": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order"
+          },
+          "shelf_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shelf Id"
+          }
+        },
+        "title": "CapturePatch",
+        "type": "object"
+      },
       "CopyCreate": {
         "description": "*\"I have another copy\"* (§5.1) — the only path that creates a second\nphysical object. No ``shelf_id`` here: shelves don't exist until P2.1, so\nevery copy today is unlocated regardless of how it was created.",
         "properties": {
@@ -210,6 +376,18 @@
             "default": "",
             "title": "Condition",
             "type": "string"
+          },
+          "depth": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Row front-to-back. A located copy always has one; an unlocated copy has neither shelf nor depth (§5.7).",
+            "title": "Depth"
           },
           "id": {
             "title": "Id",
@@ -459,6 +637,90 @@
         "title": "MetaResponse",
         "type": "object"
       },
+      "ShelfCreate": {
+        "description": "Declare a shelf. Every field optional — see :class:`ShelfDTO.label`.",
+        "properties": {
+          "label": {
+            "default": "",
+            "title": "Label",
+            "type": "string"
+          },
+          "virtual": {
+            "default": false,
+            "title": "Virtual",
+            "type": "boolean"
+          }
+        },
+        "title": "ShelfCreate",
+        "type": "object"
+      },
+      "ShelfDTO": {
+        "description": "A shelf's identity. No address — that is pillar 6 (plan §1.1).",
+        "properties": {
+          "capture_count": {
+            "description": "Photos filed against this shelf, across every depth.",
+            "title": "Capture Count",
+            "type": "integer"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "depth_count": {
+            "description": "Rows front-to-back, declared by the owner — never detected (§5.7). 1 unless a row behind was added.",
+            "title": "Depth Count",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "default": "",
+            "description": "Optional. Empty is normal: identity is free, so a shelf is never required to be named. An unnamed one is shown by the image it came from.",
+            "title": "Label",
+            "type": "string"
+          },
+          "virtual": {
+            "description": "The wishlist. Excluded from shelf listings by default.",
+            "title": "Virtual",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "depth_count",
+          "virtual",
+          "capture_count"
+        ],
+        "title": "ShelfDTO",
+        "type": "object"
+      },
+      "ShelfPatch": {
+        "description": "Name a shelf, or clear the name. ``depth_count`` is deliberately NOT\nhere: adding a row behind is its own endpoint, because §5.7 makes it an\nexplicit declaration rather than a number to nudge.",
+        "properties": {
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          }
+        },
+        "title": "ShelfPatch",
+        "type": "object"
+      },
       "SightingDTO": {
         "description": "One entry of a copy's append-only provenance (§5.2).",
         "properties": {
@@ -473,6 +735,18 @@
             ],
             "title": "Captured At"
           },
+          "depth": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Which row front-to-back (§5.7). Travels WITH shelf_id — both null or both set.",
+            "title": "Depth"
+          },
           "run_id": {
             "title": "Run Id",
             "type": "string"
@@ -486,7 +760,7 @@
                 "type": "null"
               }
             ],
-            "description": "Null until the map exists (§1.1) — the UI hides it.",
+            "description": "Where this sighting happened. Null for the 251 imported books, whose recorded evidence is only run+spine.",
             "title": "Shelf Id"
           },
           "spine_id": {
@@ -1180,6 +1454,174 @@
         ]
       }
     },
+    "/api/v1/captures": {
+      "post": {
+        "description": "File a photo — with a shelf if one is named, on a fresh one if not.\n\nReturns BOTH the capture and its shelf: when the shelf was auto-created the\nclient has no other way to learn its id, and a second round trip to\ndiscover the thing you just implicitly made is what gets papered over with\na client-side guess.",
+        "operationId": "create_capture_api_v1_captures_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CaptureCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaptureBinding"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Capture",
+        "tags": [
+          "captures"
+        ]
+      }
+    },
+    "/api/v1/captures/{capture_id}": {
+      "delete": {
+        "operationId": "delete_capture_api_v1_captures__capture_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "capture_id",
+            "required": true,
+            "schema": {
+              "title": "Capture Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Capture",
+        "tags": [
+          "captures"
+        ]
+      },
+      "get": {
+        "operationId": "get_capture_api_v1_captures__capture_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "capture_id",
+            "required": true,
+            "schema": {
+              "title": "Capture Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaptureDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Capture",
+        "tags": [
+          "captures"
+        ]
+      },
+      "patch": {
+        "description": "Move a photo to another shelf, another row, or another position.\n\nThis is the inline assignment the intake UI performs. Moving to a shelf\nthat is not one row deeper than the caller thinks is a **409** naming the\ndeclared depth, not a silent clamp: filing a photo at a row that does not\nexist would give reconciliation a location with no counterpart in the room.",
+        "operationId": "bind_capture_api_v1_captures__capture_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "capture_id",
+            "required": true,
+            "schema": {
+              "title": "Capture Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CapturePatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaptureBinding"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Bind Capture",
+        "tags": [
+          "captures"
+        ]
+      }
+    },
     "/api/v1/meta": {
       "get": {
         "operationId": "get_meta_api_v1_meta_get",
@@ -1198,6 +1640,331 @@
         "summary": "Service and library identity",
         "tags": [
           "meta"
+        ]
+      }
+    },
+    "/api/v1/shelves": {
+      "get": {
+        "description": "Every shelf, named ones first and alphabetically, then unnamed ones\noldest-first. Not paged — a personal library has tens of shelves.",
+        "operationId": "list_shelves_api_v1_shelves_get",
+        "parameters": [
+          {
+            "description": "Include the wishlist. Excluded by default: it holds books the owner does not own, so counting it inflates both the shelf list and the apparent size of the library.",
+            "in": "query",
+            "name": "include_virtual",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Include the wishlist. Excluded by default: it holds books the owner does not own, so counting it inflates both the shelf list and the apparent size of the library.",
+              "title": "Include Virtual",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ShelfDTO"
+                  },
+                  "title": "Response List Shelves Api V1 Shelves Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Shelves",
+        "tags": [
+          "shelves"
+        ]
+      },
+      "post": {
+        "description": "Declare a shelf up front. Every field is optional (identity is free).\n\nDepth is not settable here on purpose — a shelf starts one row deep and\ngains rows through :func:`add_a_row_behind`, because §5.7 makes the second\nrow a declaration rather than a number to guess at during creation.",
+        "operationId": "create_shelf_api_v1_shelves_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShelfCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShelfDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Shelf",
+        "tags": [
+          "shelves"
+        ]
+      }
+    },
+    "/api/v1/shelves/{shelf_id}": {
+      "delete": {
+        "description": "Remove a shelf that holds no photos. **409** if it does.\n\nNot a cascade: its captures are the record a re-read diffs against (§5.6).\nThis is for the shelf created by mistake, not for clearing one out.",
+        "operationId": "delete_shelf_api_v1_shelves__shelf_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "shelf_id",
+            "required": true,
+            "schema": {
+              "title": "Shelf Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Shelf",
+        "tags": [
+          "shelves"
+        ]
+      },
+      "get": {
+        "operationId": "get_shelf_api_v1_shelves__shelf_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "shelf_id",
+            "required": true,
+            "schema": {
+              "title": "Shelf Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShelfDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Shelf",
+        "tags": [
+          "shelves"
+        ]
+      },
+      "patch": {
+        "description": "Name a shelf, or clear the name — ``\"\"`` is a legal value, not a\nmissing one, because a label the owner no longer wants should not be kept\njust to avoid an empty string.",
+        "operationId": "patch_shelf_api_v1_shelves__shelf_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "shelf_id",
+            "required": true,
+            "schema": {
+              "title": "Shelf Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShelfPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShelfDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Shelf",
+        "tags": [
+          "shelves"
+        ]
+      }
+    },
+    "/api/v1/shelves/{shelf_id}/captures": {
+      "get": {
+        "operationId": "list_shelf_captures_api_v1_shelves__shelf_id__captures_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "shelf_id",
+            "required": true,
+            "schema": {
+              "title": "Shelf Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Narrow to one row front-to-back. §5.6's not-seen rule and the diff view are per depth, and §5.7 #2 forbids merging overlaps across depths.",
+            "in": "query",
+            "name": "depth",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Narrow to one row front-to-back. §5.6's not-seen rule and the diff view are per depth, and §5.7 #2 forbids merging overlaps across depths.",
+              "title": "Depth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CaptureDTO"
+                  },
+                  "title": "Response List Shelf Captures Api V1 Shelves  Shelf Id  Captures Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Shelf Captures",
+        "tags": [
+          "shelves"
+        ]
+      }
+    },
+    "/api/v1/shelves/{shelf_id}/depths": {
+      "post": {
+        "description": "*\"Add a row behind this one\"* (§5.7) — the declaration that cannot be\ndetected, because nothing in a photo says \"this is the row behind\"; the\nfront books are simply absent.\n\nIts own endpoint rather than a ``depth_count`` field so the client cannot\nset it to 5 in one step and leave three rows nobody photographed. Refused\non the wishlist, which has no behind.",
+        "operationId": "add_a_row_behind_api_v1_shelves__shelf_id__depths_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "shelf_id",
+            "required": true,
+            "schema": {
+              "title": "Shelf Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShelfDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add A Row Behind",
+        "tags": [
+          "shelves"
         ]
       }
     }

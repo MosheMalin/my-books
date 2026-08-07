@@ -73,6 +73,7 @@ app/
   api/          FastAPI routers under /api/v1 + DTOs. THIN — no rules
     routers/meta.py   service + library identity
     routers/books.py  list / get / patch / delete / manual add / export
+    routers/shelves.py  shelves + captures; the capture→shelf binding (P2.2)
   api/openapi.json          committed contract, regenerated, never hand-edited
   main.py       the composition root — the ONE file allowed to cross layers
   web/          React + Vite + TS client; talks only to /api/v1
@@ -493,15 +494,16 @@ names to run a subset (`python tests/run_all.py test_api`).
 |---|---|---|
 | `test_core.py` | 52 | matcher / normalize / evidence gates |
 | `test_integrations.py` | 24 | catalog + fallback adapters, fully mocked/offline |
-| `test_domain.py` | 45 | the VISION rules that can be silently reversed |
+| `test_domain.py` | 46 | the VISION rules that can be silently reversed |
 | `test_store_contract.py` | 109 | one store spec × every implementation + isolation |
 | `test_legacy_import.py` | 21 | `work/*.json` → entities, against a committed fixture |
 | `test_search.py` | 15 | Hebrew search, against 24 real queries on the real 251 books |
 | `test_layering.py` | 9 | the one-way import rules (plan H1) |
-| `test_api.py` | 38 | `/api/v1` shapes + the versioning/tenancy meta-tests |
+| `test_api.py` | 46 | `/api/v1` shapes + the versioning/tenancy meta-tests |
 
-313 python tests as of P2.1 (the +40 since P1.7 are shelf identity and depth:
-12 domain rules, and the shelf-store spec run against both implementations).
+322 python tests as of P2.2's API half (+49 since P1.7: shelf identity and
+depth, the shelf-store spec against both implementations, and the shelves /
+captures routes).
 No pytest dependency, deliberately — the repo has never had one and the
 accuracy gate runs on bare python. Counts grow with each run's fixes; the
 commit log is the history (`SESSION_NOTES.md` was a one-time handoff and is
@@ -803,6 +805,45 @@ because `Shelf.__post_init__` rejects the same state, and the sqlite shelf
 *other* line of each pair IS caught. Worth knowing before reading a survivor
 as a missing test — the question to ask is "what else enforces this?", and
 only if nothing does is it a gap.
+
+## Capture → shelf binding (P2.2, API half)
+
+`/api/v1/shelves` (list/create/get/patch/delete, `POST .../depths`,
+`GET .../captures`) and `/api/v1/captures` (create/get/patch/delete). The
+client half — the intake UI that assigns shelf and depth inline — is still to
+come.
+
+**The binding is that `POST /captures` may omit `shelf_id`, and then a fresh
+unnamed shelf is created for the photo.** That is not a convenience: a capture
+with no shelf is a read with nothing to reconcile against (§5.6), so *"assign
+it later"* is deliberately not a state the model offers, and *Unassigned* on
+screen means *not yet named*. The rule lives in
+`app/domain/shelf.py:capture_onto_a_new_shelf`, not in the router, so it is
+testable in the domain ring and mutation-checked.
+
+- **the response returns the capture AND its shelf** (`CaptureBinding`). When
+  the shelf was auto-created the client has no other way to learn its id, and
+  a second round trip to discover the thing you just implicitly made is the
+  kind of gap that gets papered over with a client-side guess. Same reasoning
+  as the copy routes returning the whole `BookDTO`;
+- **`captures` has its own root, not `/shelves/{id}/captures/{id}`.** Binding
+  MOVES a capture between shelves, and nesting would make "change the shelf" a
+  change of the resource's own address;
+- **`order` is computed, not supplied** — intake is "photograph it left to
+  right", so a caller with its own opinion is two clients waiting to disagree.
+  A capture moved to another shelf or row is appended there rather than
+  inheriting a position that would collide;
+- **"add a row behind" is its own endpoint**, not a settable `depth_count`, so
+  a client cannot jump to 5 and leave three rows nobody photographed;
+- an undeclared depth is **409 naming the declared depth**, never a silent
+  clamp to 1: filing a photo at a row that does not exist would hand
+  reconciliation a location with no counterpart in the room.
+
+⚠ Uploads and runs still live in the **tuning** server through pillars 1–2
+(H1/D2), so the product has no image bytes yet — `Capture.image_id` is a
+reference and P3.5's `BlobStore` is what will resolve it. The binding is built
+first because it is what §5.6 needs, and it can be exercised without an upload
+path.
 
 ## Author sort, and why it needed a schema version
 
