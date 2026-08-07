@@ -17,6 +17,7 @@ from fastapi import Depends
 
 from app.domain import LibraryRef
 from app.ports import Clock, IdGen, Principal
+from app.ports.blobs import BlobStore
 from app.ports.store import BookStore, ShelfStore
 
 
@@ -47,6 +48,10 @@ def get_book_store() -> BookStore:
 
 def get_shelf_store() -> ShelfStore:
     raise RuntimeError("no ShelfStore bound; build the app via create_app")
+
+
+def get_blob_store() -> BlobStore:
+    raise RuntimeError("no BlobStore bound; build the app via create_app")
 
 
 def get_clock() -> Clock:

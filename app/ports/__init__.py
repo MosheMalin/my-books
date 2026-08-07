@@ -5,14 +5,28 @@ May import ``app.domain``. May NOT import adapters, the api layer, a web
 framework or a driver — that is what keeps the datastore/queue/storage
 decisions swappable (IMPLEMENTATION_PLAN D1, H4 ring 2).
 
-P1.0 defines only the three that the scaffolding actually uses. BookStore,
-ShelfStore, BlobStore and JobQueue arrive with the items that need them.
+Defined here: the three request-scoped ports. ``BookStore``/``ShelfStore`` live
+in ``app.ports.store`` and ``BlobStore`` in ``app.ports.blobs``, each with
+enough of its own vocabulary (sorts, pages, blobs) to be worth a file. JobQueue
+arrives with P2.4.
 """
 from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
 from app.domain import LibraryRef
+from app.ports.blobs import Blob, BlobError, BlobStore, ImageTooLarge, UnsupportedImage
+
+__all__ = [
+    "Blob",
+    "BlobError",
+    "BlobStore",
+    "Clock",
+    "IdGen",
+    "ImageTooLarge",
+    "Principal",
+    "UnsupportedImage",
+]
 
 
 @runtime_checkable

@@ -65,8 +65,10 @@ app/
     text.py       book_key() over booksnap.catalog.normalize — NOT a copy
     search.py     Hebrew search SEMANTICS: parse + rank, pure and portable
   ports/        Protocols: Principal, Clock, IdGen, BookStore, ShelfStore
+    blobs.py      BlobStore — image bytes, keys in rows (D1)
   adapters/     implementations behind the ports
     sqlite_store.py  the real one (D1); connection per operation, WAL
+    disk_blobs.py    uploaded photos; content-addressed, EXIF-normalised
     memory_store.py  the API ring's store, and the contract's 2nd implementation
     migrations.py    versioned schema via PRAGMA user_version (H6)
     legacy_import.py work/*.json -> entities; I/O and PURE mapping split
@@ -499,11 +501,11 @@ names to run a subset (`python tests/run_all.py test_api`).
 | `test_legacy_import.py` | 21 | `work/*.json` → entities, against a committed fixture |
 | `test_search.py` | 15 | Hebrew search, against 24 real queries on the real 251 books |
 | `test_layering.py` | 9 | the one-way import rules (plan H1) |
-| `test_api.py` | 46 | `/api/v1` shapes + the versioning/tenancy meta-tests |
+| `test_api.py` | 55 | `/api/v1` shapes + the versioning/tenancy meta-tests |
 
-322 python tests as of P2.2's API half (+49 since P1.7: shelf identity and
-depth, the shelf-store spec against both implementations, and the shelves /
-captures routes).
+331 python tests as of P2.3 (+58 since P1.7: shelf identity and depth, the
+shelf-store spec against both implementations, the shelves/captures routes,
+and image upload/serving).
 No pytest dependency, deliberately — the repo has never had one and the
 accuracy gate runs on bare python. Counts grow with each run's fixes; the
 commit log is the history (`SESSION_NOTES.md` was a one-time handoff and is
@@ -839,11 +841,60 @@ testable in the domain ring and mutation-checked.
   clamp to 1: filing a photo at a row that does not exist would hand
   reconciliation a location with no counterpart in the room.
 
-⚠ Uploads and runs still live in the **tuning** server through pillars 1–2
-(H1/D2), so the product has no image bytes yet — `Capture.image_id` is a
-reference and P3.5's `BlobStore` is what will resolve it. The binding is built
-first because it is what §5.6 needs, and it can be exercised without an upload
-path.
+## Images are real (P2.3)
+
+`BlobStore` port (`app/ports/blobs.py`) + `DiskBlobStore`, and
+`/api/v1/images` — upload, metadata, `/full`, `/thumb`, delete.
+`Capture.image_id` now holds a real key. Bytes live on disk with the key in a
+row (D1); the product **never** reads the tuning server's `work/runs/`, and its
+photos go under `work/product_blobs` (`BOOKSNAP_BLOBS`).
+
+The layout is **already P3.5's**: `libraries/<library_id>/blobs/<ab>/<sha>.<ext>`.
+Pillar 3 inherits retention, purge and orphan collection rather than a path
+migration.
+
+- **content-addressed.** The key IS the SHA-256 of the stored bytes, so
+  re-uploading a photo after a browser refresh writes nothing and returns the
+  same key (§12.3 #13) — the normal case with a camera roll, not an edge one.
+  It also means a URL built from a key can be cached forever, since different
+  bytes can never reuse one;
+- **upload and binding are two calls.** `POST /images` then `POST /captures`.
+  One multipart call that did both reads tidier and is worse in the flow that
+  happens: twelve photos dropped at once, shelf and depth decided while looking
+  at the thumbnails;
+- **validation is decoding.** The filename and the declared content type are
+  both the client's own claim; a store that believes them serves whatever was
+  really uploaded back under an image content type;
+- **variants are a cache, owned by the adapter.** `read(variant="thumb")`
+  re-derives a missing rendition rather than reporting it absent — on screen
+  "no thumbnail yet" and "this photo is gone" look identical and only one is a
+  real problem. Rendering sits behind the port because `app/api/*` may not
+  import `app/adapters/*`, and a first draft of the route did exactly that.
+
+⚠ **EXIF orientation is applied at STORE time, not at display time.** Phone
+photos carry a rotation flag; `cv2.imread` honours it, PIL does not unless
+asked, and browsers honour it inconsistently. Left alone, the engine reads an
+upright shelf while the review grid shows it on its side — and the person
+reviewing reasonably concludes the reader is broken. Normalising once, up
+front, is what makes the pixels the engine sees and the pixels on screen the
+same. It also makes the hash agree: the same photo uploaded upright and
+rotated is one key, not two. Bytes that need no correction are stored
+**untouched** — a JPEG round-tripped through PIL loses quality for nothing, and
+accuracy is measured on the pixels the engine is given.
+
+⚠ **A variant carries its own extension, not the original's.** Every rendition
+is a JPEG, so deriving the variant path from the key's extension writes JPEG
+bytes into a `~thumb.png`, which is then served as `image/png` and renders as a
+broken image. Found by a test, not by review.
+
+⚠ **A blob key arrives in a URL, so it is validated, never joined.** `<64 hex>.<ext>`
+or nothing — `../` in a path segment is how a store that just concatenates ends
+up serving a private key file.
+
+⚠ Deleting an image does **not** check whether a capture still points at it —
+the stores cannot see each other's aggregates, and reference counting is
+P3.5's. A capture whose image was deleted shows a missing picture rather than
+disappearing. Recorded, not accidental.
 
 ## Author sort, and why it needed a schema version
 

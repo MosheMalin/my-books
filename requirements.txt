@@ -1,4 +1,9 @@
 opencv-python-headless>=4.8
+# Product uploads (app/adapters/disk_blobs.py): decode-to-validate, EXIF
+# normalisation and thumbnails. Already present transitively via scikit-image,
+# declared because relying on somebody else's transitive dep is how an install
+# breaks on the machine that matters.
+pillow>=10.0
 # stdlib urllib is used for NLI HTTP; no extra dep needed there.
 pytesseract>=0.3.10
 rapidfuzz>=3.0

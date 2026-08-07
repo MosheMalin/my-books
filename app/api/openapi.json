@@ -1,6 +1,27 @@
 {
   "components": {
     "schemas": {
+      "Body_upload_image_api_v1_images_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "description": "The photo. Decoded to validate it.",
+            "title": "File",
+            "type": "string"
+          },
+          "filename": {
+            "default": "",
+            "description": "Original name, for the review screen. Falls back to the upload's own name; never used to decide the format.",
+            "title": "Filename",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_image_api_v1_images_post",
+        "type": "object"
+      },
       "BookCreate": {
         "description": "Add a book the reader never found. Lands as ``manual`` with one copy.",
         "properties": {
@@ -509,6 +530,54 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "ImageDTO": {
+        "description": "A stored photo. Bytes are served from ``/images/{key}/full|thumb``.",
+        "properties": {
+          "content_type": {
+            "title": "Content Type",
+            "type": "string"
+          },
+          "filename": {
+            "default": "",
+            "description": "Original name, for the review screen only.",
+            "title": "Filename",
+            "type": "string"
+          },
+          "height": {
+            "default": 0,
+            "description": "Dimensions of the stored, upright image — so the grid can reserve the right aspect ratio before the bytes arrive.",
+            "title": "Height",
+            "type": "integer"
+          },
+          "key": {
+            "description": "Storage key AND content hash. Re-uploading the same photo returns this same key, so a URL built from it can be cached forever — different bytes can never reuse it.",
+            "title": "Key",
+            "type": "string"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "size": {
+            "description": "Bytes as STORED, after EXIF normalisation.",
+            "title": "Size",
+            "type": "integer"
+          },
+          "width": {
+            "default": 0,
+            "title": "Width",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "key",
+          "sha256",
+          "size",
+          "content_type"
+        ],
+        "title": "ImageDTO",
         "type": "object"
       },
       "LendRequest": {
@@ -1619,6 +1688,207 @@
         "summary": "Bind Capture",
         "tags": [
           "captures"
+        ]
+      }
+    },
+    "/api/v1/images": {
+      "post": {
+        "description": "Store a photo. **Idempotent by content** — the same bytes return the\nsame key and write nothing the second time, so a re-upload after a browser\nrefresh costs a hash rather than a duplicate (§12.3 #13).\n\n``201`` either way. A conditional ``200``-if-present would leak whether\nsomebody has already uploaded this exact photo, and the client has nothing\nto do differently.",
+        "operationId": "upload_image_api_v1_images_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_image_api_v1_images_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upload Image",
+        "tags": [
+          "images"
+        ]
+      }
+    },
+    "/api/v1/images/{key}": {
+      "delete": {
+        "description": "Remove a photo and its renditions.\n\n⚠ Does NOT check whether a capture still points at it — the stores cannot\nsee each other's aggregates, and reference counting is P3.5's. Until then\nthis is for a photo uploaded by mistake, and a capture whose image was\ndeleted shows a missing picture rather than disappearing.",
+        "operationId": "delete_image_api_v1_images__key__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "title": "Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Image",
+        "tags": [
+          "images"
+        ]
+      },
+      "get": {
+        "description": "Metadata without the bytes — size, dimensions, original filename.",
+        "operationId": "get_image_api_v1_images__key__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "title": "Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Image",
+        "tags": [
+          "images"
+        ]
+      }
+    },
+    "/api/v1/images/{key}/full": {
+      "get": {
+        "description": "The stored photo, EXIF already applied — the same pixels the engine\nreads, which is what makes a review screen trustworthy.",
+        "operationId": "get_full_api_v1_images__key__full_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "title": "Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Full",
+        "tags": [
+          "images"
+        ]
+      }
+    },
+    "/api/v1/images/{key}/thumb": {
+      "get": {
+        "description": "A JPEG thumbnail for the review grid.\n\nWhether it was cached at upload or derived just now is the adapter's\nbusiness — this route asks for a variant and gets bytes. Keeping the\nrendering behind the port is also what keeps the API layer out of the\nimage-processing business, which the layering test forbids outright.",
+        "operationId": "get_thumb_api_v1_images__key__thumb_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "title": "Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Thumb",
+        "tags": [
+          "images"
         ]
       }
     },

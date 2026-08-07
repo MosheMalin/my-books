@@ -19,6 +19,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from app.domain import Book, Capture, Copy, Lending, Provenance, Shelf
+from app.ports.blobs import Blob
 
 
 class LibraryRefDTO(BaseModel):
@@ -327,6 +328,34 @@ class CapturePatch(BaseModel):
     shelf_id: str | None = None
     depth: int | None = Field(default=None, ge=1)
     order: int | None = Field(default=None, ge=0)
+
+
+class ImageDTO(BaseModel):
+    """A stored photo. Bytes are served from ``/images/{key}/full|thumb``."""
+
+    key: str = Field(
+        description="Storage key AND content hash. Re-uploading the same photo "
+                    "returns this same key, so a URL built from it can be "
+                    "cached forever — different bytes can never reuse it.",
+    )
+    sha256: str
+    size: int = Field(description="Bytes as STORED, after EXIF normalisation.")
+    content_type: str
+    filename: str = Field(
+        default="", description="Original name, for the review screen only.",
+    )
+    width: int = 0
+    height: int = Field(
+        default=0,
+        description="Dimensions of the stored, upright image — so the grid can "
+                    "reserve the right aspect ratio before the bytes arrive.",
+    )
+
+    @classmethod
+    def of(cls, blob: Blob) -> "ImageDTO":
+        return cls(key=blob.key, sha256=blob.sha256, size=blob.size,
+                   content_type=blob.content_type, filename=blob.filename,
+                   width=blob.width, height=blob.height)
 
 
 class CaptureBinding(BaseModel):

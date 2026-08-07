@@ -18,14 +18,16 @@ from fastapi.staticfiles import StaticFiles
 
 from app import API_PREFIX, __version__
 from app.api.deps import (
+    get_blob_store,
     get_book_store,
     get_clock,
     get_id_gen,
     get_principal,
     get_shelf_store,
 )
-from app.api.routers import books, meta, shelves
+from app.api.routers import books, images, meta, shelves
 from app.ports import Clock, IdGen, Principal
+from app.ports.blobs import BlobStore
 from app.ports.store import BookStore, ShelfStore
 
 API_TITLE = "booksnap product API"
@@ -54,6 +56,7 @@ def create_app(
     clock: Clock | None = None,
     id_gen: IdGen | None = None,
     shelf_store: ShelfStore | None = None,
+    blob_store: BlobStore | None = None,
     web_dist: Path | None = None,
 ) -> FastAPI:
     """Build the product API.
@@ -83,10 +86,12 @@ def create_app(
     app.include_router(books.router, prefix=API_PREFIX)
     app.include_router(shelves.router, prefix=API_PREFIX)
     app.include_router(shelves.captures, prefix=API_PREFIX)
+    app.include_router(images.router, prefix=API_PREFIX)
 
     app.dependency_overrides[get_principal] = principal_provider
     for dep, impl in ((get_book_store, book_store), (get_clock, clock),
-                      (get_id_gen, id_gen), (get_shelf_store, shelf_store)):
+                      (get_id_gen, id_gen), (get_shelf_store, shelf_store),
+                      (get_blob_store, blob_store)):
         if impl is not None:
             app.dependency_overrides[dep] = _always(impl)
 

@@ -223,6 +223,107 @@ export interface paths {
         patch: operations["bind_capture_api_v1_captures__capture_id__patch"];
         trace?: never;
     };
+    "/api/v1/images": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload Image
+         * @description Store a photo. **Idempotent by content** — the same bytes return the
+         *     same key and write nothing the second time, so a re-upload after a browser
+         *     refresh costs a hash rather than a duplicate (§12.3 #13).
+         *
+         *     ``201`` either way. A conditional ``200``-if-present would leak whether
+         *     somebody has already uploaded this exact photo, and the client has nothing
+         *     to do differently.
+         */
+        post: operations["upload_image_api_v1_images_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/images/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Image
+         * @description Metadata without the bytes — size, dimensions, original filename.
+         */
+        get: operations["get_image_api_v1_images__key__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete Image
+         * @description Remove a photo and its renditions.
+         *
+         *     ⚠ Does NOT check whether a capture still points at it — the stores cannot
+         *     see each other's aggregates, and reference counting is P3.5's. Until then
+         *     this is for a photo uploaded by mistake, and a capture whose image was
+         *     deleted shows a missing picture rather than disappearing.
+         */
+        delete: operations["delete_image_api_v1_images__key__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/images/{key}/full": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Full
+         * @description The stored photo, EXIF already applied — the same pixels the engine
+         *     reads, which is what makes a review screen trustworthy.
+         */
+        get: operations["get_full_api_v1_images__key__full_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/images/{key}/thumb": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Thumb
+         * @description A JPEG thumbnail for the review grid.
+         *
+         *     Whether it was cached at upload or derived just now is the adapter's
+         *     business — this route asks for a variant and gets bytes. Keeping the
+         *     rendering behind the port is also what keeps the API layer out of the
+         *     image-processing business, which the layering test forbids outright.
+         */
+        get: operations["get_thumb_api_v1_images__key__thumb_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/meta": {
         parameters: {
             query?: never;
@@ -346,6 +447,20 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** Body_upload_image_api_v1_images_post */
+        Body_upload_image_api_v1_images_post: {
+            /**
+             * File
+             * @description The photo. Decoded to validate it.
+             */
+            file: string;
+            /**
+             * Filename
+             * @description Original name, for the review screen. Falls back to the upload's own name; never used to decide the format.
+             * @default
+             */
+            filename: string;
+        };
         /**
          * BookCreate
          * @description Add a book the reader never found. Lands as ``manual`` with one copy.
@@ -601,6 +716,43 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /**
+         * ImageDTO
+         * @description A stored photo. Bytes are served from ``/images/{key}/full|thumb``.
+         */
+        ImageDTO: {
+            /** Content Type */
+            content_type: string;
+            /**
+             * Filename
+             * @description Original name, for the review screen only.
+             * @default
+             */
+            filename: string;
+            /**
+             * Height
+             * @description Dimensions of the stored, upright image — so the grid can reserve the right aspect ratio before the bytes arrive.
+             * @default 0
+             */
+            height: number;
+            /**
+             * Key
+             * @description Storage key AND content hash. Re-uploading the same photo returns this same key, so a URL built from it can be cached forever — different bytes can never reuse it.
+             */
+            key: string;
+            /** Sha256 */
+            sha256: string;
+            /**
+             * Size
+             * @description Bytes as STORED, after EXIF normalisation.
+             */
+            size: number;
+            /**
+             * Width
+             * @default 0
+             */
+            width: number;
         };
         /**
          * LendRequest
@@ -1261,6 +1413,161 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaptureBinding"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_image_api_v1_images_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_image_api_v1_images_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImageDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_image_api_v1_images__key__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImageDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_image_api_v1_images__key__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_full_api_v1_images__key__full_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_thumb_api_v1_images__key__thumb_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
