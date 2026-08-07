@@ -63,6 +63,7 @@ app/
   domain/       entities + rules. pure Python, no I/O, no framework
     book.py       Book/Copy/Status/Provenance + the rules (VISION §5.1-5.6)
     text.py       book_key() over booksnap.catalog.normalize — NOT a copy
+    search.py     Hebrew search SEMANTICS: parse + rank, pure and portable
   ports/        Protocols: Principal, Clock, IdGen, BookStore
   adapters/     implementations behind the ports
     sqlite_store.py  the real one (D1); connection per operation, WAL
@@ -489,12 +490,13 @@ names to run a subset (`python tests/run_all.py test_api`).
 | `test_core.py` | 52 | matcher / normalize / evidence gates |
 | `test_integrations.py` | 24 | catalog + fallback adapters, fully mocked/offline |
 | `test_domain.py` | 22 | the VISION rules that can be silently reversed |
-| `test_store_contract.py` | 52 | one store spec × every implementation + isolation |
+| `test_store_contract.py` | 75 | one store spec × every implementation + isolation |
 | `test_legacy_import.py` | 21 | `work/*.json` → entities, against a committed fixture |
+| `test_search.py` | 15 | Hebrew search, against 24 real queries on the real 251 books |
 | `test_layering.py` | 9 | the one-way import rules (plan H1) |
-| `test_api.py` | 26 | `/api/v1` shapes + the versioning/tenancy meta-tests |
+| `test_api.py` | 28 | `/api/v1` shapes + the versioning/tenancy meta-tests |
 
-206 total as of P1.4. No pytest dependency, deliberately — the repo has never
+246 total as of P1.5. No pytest dependency, deliberately — the repo has never
 had one and the accuracy gate runs on bare python. Counts grow with each run's
 fixes; SESSION_NOTES.md tracks the history.
 
@@ -523,6 +525,56 @@ cases, and each only in the adapter that was broken.
 NO tiebreaker at all — Python's sort is stable and dicts keep insertion order.
 The committed test inserts in DESCENDING id order for exactly that reason.
 Found by mutation testing, not by review.
+
+## Hebrew search (P1.5)
+
+**The semantics are in `app/domain/search.py`; adapters own only retrieval.**
+That split is what makes a Postgres adapter cheap: `parse()` says what a query
+means and `score()` says what comes first, both pure and shared, so an adapter
+chooses only how it NARROWS — SQLite `LIKE` over a stored `search_text`
+column, Postgres could use `pg_trgm` or a tsvector — and then ranks with the
+same function. **Ranking is never done in SQL**: doing it there means writing
+it twice in two dialects and finding the drift in a user report. The store
+contract runs the same search cases against every implementation, so a clever
+retrieval strategy that changes the ANSWERS gets caught.
+
+Measured on `fixtures/search/` (24 real queries × the real 251 books,
+`python tools/search_eval.py --compare`):
+
+| mechanism | P@1 | recall | results/query |
+|---|---|---|---|
+| **and + particles + rank** (shipped) | **1.00** | **1.00** | **2.8** |
+| alphabetical instead of ranked | 0.88 | 1.00 | 2.8 |
+| no particle variants | 0.94 | 0.97 | 2.7 |
+| OR terms | 1.00 | 1.00 | 6.8 |
+| word-start matching only | 0.81 | 0.89 | 2.5 |
+
+P@1 is the metric that matters — the failure mode on a personal library is
+never "nothing found", it is the right book at rank 9 behind its series
+siblings. AND does *not* beat OR on P@1; its case is the 2.4× smaller result
+set.
+
+Things worth knowing:
+
+- **leading ה/ו/ב/ל/מ/ש/כ are tolerated in the QUERY only.** Note the
+  asymmetry with the matcher, where the same transform measured *harmful*
+  (precision 0.62 → 0.50): a matcher compares two machine strings, search
+  compares a human's typing to a catalogue. The stored key is never stripped;
+  only one leading letter is removed, and only if ≥2 chars remain;
+- substring matching covers the other direction free — a query for `נבונים`
+  finds the stored `הנבונים` with no variant at all;
+- terms shorter than 3 chars match only at a word start. 1–2 letters appear
+  inside almost every Hebrew word, so infix matching on them returns the
+  library;
+- **the title-length bonus applies only when the query touched the TITLE.** On
+  a pure author search every hit scores identically, so a length bonus becomes
+  the sole tiebreak and orders an author's shelf by title length. Without it
+  the tie falls through to alphabetical, which is what browsing wants. Found
+  by reading real output, not by the fixture;
+- search cost is a linear scan and that is deliberate: no index helps
+  `LIKE '%x%'`. Measured 4ms at 251 books, 9ms at 2k, 53ms at 10k. The target
+  is a few thousand; when it stops being enough the fix is a better narrowing
+  clause (FTS5, trigram) in the adapter, not a different ranking.
 
 ## Legacy import (`work/` → the product store)
 

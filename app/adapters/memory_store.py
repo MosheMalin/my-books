@@ -13,6 +13,8 @@ frozen, so there is nothing to defensively copy.
 from __future__ import annotations
 
 from app.domain import Book, LibraryRef, Status
+from app.domain.search import parse
+from app.domain.search import search as domain_search
 from app.ports.store import (
     BookPage,
     BookSort,
@@ -86,6 +88,21 @@ class MemoryBookStore:
             offset=offset,
             limit=limit,
         )
+
+    def search(
+        self,
+        library: LibraryRef,
+        query: str,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> BookPage:
+        """Straight to the reference implementation — no retrieval trick to
+        get wrong. This is the answer the sqlite adapter has to reproduce."""
+        parsed = parse(query)
+        hits = domain_search(parsed, list(self._shelf(library).values()))
+        return BookPage(items=tuple(hits[offset: offset + limit]),
+                        total=len(hits), offset=offset, limit=limit)
 
     def count(self, library: LibraryRef) -> int:
         return len(self._shelf(library))

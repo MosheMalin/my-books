@@ -114,5 +114,32 @@ class BookStore(Protocol):
         grouping over normalized strings, not an entity (§5.1).
         """
 
+    def search(
+        self,
+        library: LibraryRef,
+        query: str,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> BookPage:
+        """Hebrew search over title + author, ranked by relevance (P1.5).
+
+        A separate method from :meth:`list` because the result ORDER is the
+        answer here — relevance, not an axis the caller picks. Passing a
+        ``sort`` alongside a query would be a lie.
+
+        **What an implementation may and may not choose.** The semantics are
+        fixed by ``app.domain.search``: :func:`~app.domain.search.parse` says
+        what a query means and :func:`~app.domain.search.score` says what comes
+        first, and both are pure. An adapter chooses only how it NARROWS —
+        SQLite uses ``LIKE`` over a stored haystack column, Postgres could use
+        ``pg_trgm`` or a tsvector — and then ranks with the shared function.
+        The contract suite runs the same cases against every implementation,
+        so a clever retrieval strategy that changes the answers gets caught.
+
+        An empty or whitespace-only query returns an EMPTY page, never the
+        whole library: an empty search box is the caller's business.
+        """
+
     def count(self, library: LibraryRef) -> int:
         """Books in this library. Cheap enough to call on every page."""

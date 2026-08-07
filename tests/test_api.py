@@ -195,6 +195,30 @@ def test_list_filters_by_author_key():
     assert page["total"] == 2
 
 
+def test_search_ranks_by_relevance_and_ignores_the_sort_control():
+    """Relevance IS the order when searching, so a `sort` arriving alongside
+    `q` is ignored rather than rejected — a UI that keeps a sort control on
+    screen while the user types must not start returning 400s mid-keystroke."""
+    store = MemoryBookStore()
+    _seed(store, TEST_LIBRARY, "מהעיר הדוממת", "עיר", "עיר הזמן")
+    with TestClient(_app(store=store)) as client:
+        body = client.get(f"{API_PREFIX}/books",
+                          params={"q": "עיר", "sort": "title"}).json()
+    assert body["items"][0]["title"] == "עיר", [b["title"] for b in body["items"]]
+    assert body["total"] == 3
+
+
+def test_an_empty_q_falls_back_to_listing_rather_than_returning_nothing():
+    """A cleared search box shows the library again; it does not show zero
+    books because `q=` was still on the URL."""
+    store = MemoryBookStore()
+    _seed(store, TEST_LIBRARY, "אבן", "בית")
+    with TestClient(_app(store=store)) as client:
+        assert client.get(f"{API_PREFIX}/books", params={"q": ""}).json()["total"] == 2
+        assert client.get(f"{API_PREFIX}/books", params={"q": "  "}).json()["total"] == 2
+        assert client.get(f"{API_PREFIX}/books", params={"q": "זזז"}).json()["total"] == 0
+
+
 def test_get_returns_the_book_with_its_copies():
     store = MemoryBookStore()
     _seed(store, TEST_LIBRARY, "אבן")

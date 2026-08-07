@@ -11,7 +11,15 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List books */
+        /**
+         * List or search books
+         * @description One endpoint, two modes.
+         *
+         *     Searching is not a filter on top of a sort — relevance IS the order, so a
+         *     `sort` passed alongside `q` would be a promise the server cannot keep.
+         *     It is ignored rather than rejected: a UI that keeps a sort control on
+         *     screen while the user types should not start returning 400s mid-keystroke.
+         */
         get: operations["list_books_api_v1_books_get"];
         put?: never;
         /**
@@ -358,6 +366,8 @@ export interface operations {
     list_books_api_v1_books_get: {
         parameters: {
             query?: {
+                /** @description Hebrew search over title and author. When present the results are ordered by RELEVANCE and `sort`/`ascending` are ignored — the order is the answer. */
+                q?: string | null;
                 /** @description title / author sort on the NORMALIZED forms, so Hebrew orders sensibly. */
                 sort?: components["schemas"]["BookSort"];
                 ascending?: boolean;

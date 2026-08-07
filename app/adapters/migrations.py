@@ -87,8 +87,28 @@ CREATE TABLE provenance (
 CREATE UNIQUE INDEX provenance_sighting ON provenance (copy_id, run_id, spine_id);
 """
 
+# --- v2: the search haystack (P1.5) --------------------------------------
+#
+# A stored column rather than `norm_title || ' | ' || norm_author` computed in
+# the query, for two reasons: the concatenation format then lives in exactly
+# one place (`app.domain.search.haystack`, written at insert time, so Python
+# and SQL cannot disagree), and a Postgres adapter can put a GIN trigram index
+# on a real column.
+#
+# NO index here on purpose. The predicate is `LIKE '%term%'`, and a leading
+# wildcard cannot use a B-tree — an index would cost write time and buy
+# nothing. Measured: a full scan of the owner's 251 books is well under a
+# millisecond (see tools/search_eval.py --bench). The engine-specific answer
+# (trigram/GIN on PG, FTS5 on SQLite) belongs in the adapter that needs it,
+# not in the shared schema.
+_V2 = """
+ALTER TABLE books ADD COLUMN search_text TEXT NOT NULL DEFAULT '';
+UPDATE books SET search_text = norm_title || ' | ' || norm_author;
+"""
+
 MIGRATIONS: tuple[tuple[int, str], ...] = (
     (1, _V1),
+    (2, _V2),
 )
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]

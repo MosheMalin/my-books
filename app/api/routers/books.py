@@ -54,10 +54,15 @@ def _save(store: BookStore, library: LibraryRef, book: Book) -> Book:
     return book
 
 
-@router.get("", response_model=BookPageDTO, summary="List books")
+@router.get("", response_model=BookPageDTO, summary="List or search books")
 def list_books(
     library: LibraryRef = Depends(current_library),
     store: BookStore = Depends(get_book_store),
+    q: str | None = Query(None,
+                          description="Hebrew search over title and author. "
+                                      "When present the results are ordered by "
+                                      "RELEVANCE and `sort`/`ascending` are "
+                                      "ignored — the order is the answer."),
     sort: BookSort = Query(BookSort.TITLE,
                            description="title / author sort on the NORMALIZED "
                                        "forms, so Hebrew orders sensibly."),
@@ -69,9 +74,19 @@ def list_books(
     limit: int = Query(50, ge=1, le=MAX_LIMIT),
     offset: int = Query(0, ge=0),
 ) -> BookPageDTO:
-    page = store.list(library, sort=sort, ascending=ascending,
-                      status=book_status, author_key=author_key,
-                      limit=limit, offset=offset)
+    """One endpoint, two modes.
+
+    Searching is not a filter on top of a sort — relevance IS the order, so a
+    `sort` passed alongside `q` would be a promise the server cannot keep.
+    It is ignored rather than rejected: a UI that keeps a sort control on
+    screen while the user types should not start returning 400s mid-keystroke.
+    """
+    if q is not None and q.strip():
+        page = store.search(library, q, limit=limit, offset=offset)
+    else:
+        page = store.list(library, sort=sort, ascending=ascending,
+                          status=book_status, author_key=author_key,
+                          limit=limit, offset=offset)
     return BookPageDTO(
         items=[BookDTO.of(b) for b in page.items],
         total=page.total, offset=page.offset, limit=page.limit,

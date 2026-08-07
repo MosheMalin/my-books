@@ -502,8 +502,27 @@
   "paths": {
     "/api/v1/books": {
       "get": {
+        "description": "One endpoint, two modes.\n\nSearching is not a filter on top of a sort — relevance IS the order, so a\n`sort` passed alongside `q` would be a promise the server cannot keep.\nIt is ignored rather than rejected: a UI that keeps a sort control on\nscreen while the user types should not start returning 400s mid-keystroke.",
         "operationId": "list_books_api_v1_books_get",
         "parameters": [
+          {
+            "description": "Hebrew search over title and author. When present the results are ordered by RELEVANCE and `sort`/`ascending` are ignored — the order is the answer.",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Hebrew search over title and author. When present the results are ordered by RELEVANCE and `sort`/`ascending` are ignored — the order is the answer.",
+              "title": "Q"
+            }
+          },
           {
             "description": "title / author sort on the NORMALIZED forms, so Hebrew orders sensibly.",
             "in": "query",
@@ -605,7 +624,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "List books",
+        "summary": "List or search books",
         "tags": [
           "books"
         ]

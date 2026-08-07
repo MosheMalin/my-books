@@ -38,6 +38,8 @@ from app.domain import (
     Status,
     WorkFields,
 )
+from app.domain.search import compile_sql_like, haystack, parse
+from app.domain.search import search as domain_search
 from app.ports.store import (
     BookPage,
     BookSort,
@@ -181,6 +183,44 @@ class SqliteBookStore:
             items = tuple(_load_book(conn, r) for r in rows)
         return BookPage(items=items, total=total, offset=offset, limit=limit)
 
+    def search(
+        self,
+        library: LibraryRef,
+        query: str,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> BookPage:
+        """SQL narrows, Python ranks.
+
+        The split is the whole reason a Postgres adapter is cheap later:
+        ordering by relevance in SQL means writing the ranking twice, in two
+        dialects, and finding the drift in a user report. Here the WHERE
+        clause is engine-specific (and portable ANSI ``LIKE`` at that) while
+        ``domain_search`` orders the survivors — the same function the memory
+        store uses, so the two cannot disagree.
+
+        Loading all matches before paging is deliberate and bounded: on the
+        real 251 books a query matches ~3, and the fixture's worst case is 12.
+        If a library ever makes that expensive, the fix is a better narrowing
+        clause (trigram, FTS5), not a different ranking.
+        """
+        parsed = parse(query)
+        if not parsed:
+            return BookPage(items=(), total=0, offset=offset, limit=limit)
+
+        where, params = compile_sql_like(parsed, "search_text")
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM books WHERE library_id = ? AND ({where})",
+                (library.id, *params),
+            ).fetchall()
+            books = [_load_book(conn, r) for r in rows]
+
+        hits = domain_search(parsed, books)
+        return BookPage(items=tuple(hits[offset: offset + limit]),
+                        total=len(hits), offset=offset, limit=limit)
+
     def count(self, library: LibraryRef) -> int:
         with self._connect() as conn:
             return int(conn.execute(
@@ -200,11 +240,14 @@ def _insert_book(conn: sqlite3.Connection, library: LibraryRef, book: Book) -> N
     conn.execute(
         "INSERT INTO books (id, library_id, title, author, norm_title,"
         " norm_author, book_key, shared_book_id, rating, notes, read_status,"
-        " added_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        " added_at, search_text) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (book.id, library.id, book.title, book.author, book.normalized_title,
          book.normalized_author, book.key, book.shared_book_id,
          book.work.rating, book.work.notes, book.work.read_status,
-         book.added_at),
+         book.added_at,
+         # Written by the SAME function the matcher uses at query time, so the
+         # stored haystack and the in-memory one cannot drift apart.
+         haystack(book)),
     )
     for position, copy in enumerate(book.copies):
         conn.execute(

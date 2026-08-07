@@ -327,6 +327,105 @@ def filters_by_normalized_author(store):
     assert got == ["b1", "b2"], got
 
 
+# --- search (P1.5) --------------------------------------------------------
+#
+# The semantics live in app.domain.search and are tested exhaustively against
+# the real 251 books in tests/test_search.py. What these cases pin is that
+# EVERY implementation reproduces them — SQLite narrows with LIKE over a
+# stored haystack column, a Postgres adapter might use pg_trgm, and this is
+# where a clever retrieval strategy that changes the ANSWERS gets caught.
+
+@contract
+def search_finds_a_book_by_a_word_from_its_title(store):
+    store.save(LIB, _book(1, title="מלכי הכופרים"))
+    store.save(LIB, _book(2, title="ספינות מן המערב"))
+    page = store.search(LIB, "כופרים")
+    assert [b.id for b in page.items] == ["b1"] and page.total == 1
+
+
+@contract
+def search_tolerates_a_definite_article_the_catalogue_lacks(store):
+    """The user types "the neutron star"; the catalogue says "neutron star"."""
+    store.save(LIB, _book(1, title="כוכב ניוטרון"))
+    assert [b.id for b in store.search(LIB, "הכוכב ניוטרון").items] == ["b1"]
+
+
+def _search_titles(store, q):
+    return [b.title for b in store.search(LIB, q).items]
+
+
+@contract
+def search_ranks_the_exact_title_first(store):
+    """Not just filtering: three books match and alphabetical order gets it
+    wrong. Every implementation must agree on the ORDER, not only the set."""
+    store.save(LIB, _book(1, title="מהעיר הדוממת"))
+    store.save(LIB, _book(2, title="עיר"))
+    store.save(LIB, _book(3, title="עיר הזמן"))
+    assert _search_titles(store, "עיר")[0] == "עיר"
+
+
+@contract
+def search_prefers_a_title_hit_over_an_author_hit(store):
+    store.save(LIB, _book(1, title="ארץ לא נודעת", author="שלום ירושלים"))
+    store.save(LIB, _book(2, title="מלך ירושלים", author="פול קארני"))
+    assert _search_titles(store, "ירושלים")[0] == "מלך ירושלים"
+
+
+@contract
+def search_requires_every_term(store):
+    store.save(LIB, _book(1, title="עולם טבעת"))
+    store.save(LIB, _book(2, title="מהנדסי הטבעת"))
+    assert [b.id for b in store.search(LIB, "עולם טבעת").items] == ["b1"]
+
+
+@contract
+def search_ignores_geresh_and_nikud_on_both_sides(store):
+    store.save(LIB, _book(1, title="הצ'ופצ'יק", author="מאיר שלו"))
+    for typed in ("הצ'ופצ'יק", "הצופציק", "צ'ופצ'יק"):
+        assert [b.id for b in store.search(LIB, typed).items] == ["b1"], typed
+
+
+@contract
+def search_folds_final_letters(store):
+    store.save(LIB, _book(1, title="גנב הקוונטום"))
+    assert [b.id for b in store.search(LIB, "קוונטומ").items] == ["b1"]
+
+
+@contract
+def search_pages_and_reports_the_total(store):
+    for i in range(1, 6):
+        store.save(LIB, _book(i, title=f"הצי האבוד {i}"))
+    page = store.search(LIB, "הצי האבוד", limit=2, offset=2)
+    assert page.total == 5 and len(page.items) == 2 and page.offset == 2
+
+
+@contract
+def an_empty_search_returns_nothing_not_the_library(store):
+    """An empty search box must not page the whole collection back."""
+    store.save(LIB, _book(1))
+    for blank in ("", "   ", "!!"):
+        page = store.search(LIB, blank)
+        assert page.items == () and page.total == 0, blank
+
+
+@contract
+def search_never_crosses_libraries(store):
+    store.save(LIB, _book(1, title="מלכי הכופרים"))
+    store.save(OTHER, _book(2, library=OTHER, title="מלכי הכופרים"))
+    assert [b.id for b in store.search(LIB, "כופרים").items] == ["b1"]
+    assert [b.id for b in store.search(OTHER, "כופרים").items] == ["b2"]
+
+
+@contract
+def search_cannot_be_turned_into_a_wildcard(store):
+    """``%`` is a LIKE wildcard. normalize() drops it, and compile_sql_like
+    escapes it anyway — a query of "%" must find nothing, not everything."""
+    store.save(LIB, _book(1))
+    store.save(LIB, _book(2))
+    for evil in ("%", "%%", "_", "%_%"):
+        assert store.search(LIB, evil).total == 0, evil
+
+
 @contract
 def an_empty_library_lists_cleanly(store):
     page = store.list(LIB)
@@ -452,6 +551,50 @@ def test_migrating_an_already_current_database_is_a_no_op():
             conn.close()
         reopened = SqliteBookStore(store.path)
         assert reopened.count(LIB) == 1, "re-opening lost data"
+
+
+def test_a_v1_database_upgrades_to_v2_and_backfills_the_search_column():
+    """H6, the case that actually matters: an EXISTING database with data in
+    it, not a fresh one. The owner's work/product.db was written at v1 with
+    251 books; if the v2 backfill were wrong, search would silently return
+    nothing for every book that predates the upgrade.
+    """
+    import sqlite3
+
+    from app.adapters.migrations import MIGRATIONS, current_version, migrate
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "v1.db"
+        conn = sqlite3.connect(str(path))
+        try:
+            # Stop at v1, exactly as a database written before P1.5 would be.
+            conn.executescript(MIGRATIONS[0][1])
+            conn.execute("PRAGMA user_version = 1")
+            conn.execute(
+                "INSERT INTO books (id, library_id, title, author, norm_title,"
+                " norm_author, book_key, notes) VALUES"
+                " ('b1', ?, 'מלכי הכופרים', 'פול קארני', 'מלכי הכופרימ',"
+                " 'פול קארני', 'מלכי הכופרימ|פול קארני', '')",
+                (LIB.id,),
+            )
+            conn.execute(
+                "INSERT INTO copies (id, book_id, library_id, position, status)"
+                " VALUES ('c1', 'b1', ?, 0, 'auto')", (LIB.id,))
+            conn.commit()
+            assert current_version(conn) == 1
+        finally:
+            conn.close()
+
+        store = SqliteBookStore(path)          # migrates on construction
+        conn = sqlite3.connect(str(path))
+        try:
+            assert current_version(conn) == 2
+        finally:
+            conn.close()
+
+        # The pre-existing row is searchable, which is the whole point.
+        assert [b.id for b in store.search(LIB, "כופרים").items] == ["b1"]
+        assert store.get(LIB, "b1").title == "מלכי הכופרים"
 
 
 def test_deleting_a_book_leaves_no_orphan_rows():

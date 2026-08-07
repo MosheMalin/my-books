@@ -1,0 +1,138 @@
+[
+ {
+  "q": "עולם טבעת",
+  "why": "exact title — the baseline. If this is not rank 1, nothing else matters.",
+  "expect_top": "עולם טבעת"
+ },
+ {
+  "q": "מהנדסי הטבעת",
+  "why": "exact title of a SIBLING by the same author; must not lose to 'עולם טבעת'.",
+  "expect_top": "מהנדסי הטבעת"
+ },
+ {
+  "q": "הצי האבוד תעוזה",
+  "why": "series disambiguation, the hardest ranking case: five titles share 'הצי האבוד' and only the last word separates them.",
+  "expect_top": "הצי האבוד: תעוזה"
+ },
+ {
+  "q": "הצי האבוד",
+  "why": "the series prefix alone — all five volumes, none missing.",
+  "expect_contains": [
+   "הצי האבוד :אומץ",
+   "הצי האבוד :גבורה",
+   "הצי האבוד :נחישות",
+   "הצי האבוד :ניצחון",
+   "הצי האבוד: תעוזה"
+  ]
+ },
+ {
+  "q": "נופלים",
+  "why": "stored title carries the definite article ('הנופלים'), the user does not. Handled by substring, no variant needed.",
+  "expect_top": "הנופלים"
+ },
+ {
+  "q": "הכוכב ניוטרון",
+  "why": "the OTHER direction: the user adds a definite article the catalogue does not have ('כוכב ניוטרון'). This is the case particle-stripping exists for.",
+  "expect_top": "כוכב ניוטרון"
+ },
+ {
+  "q": "צעקה אדומה",
+  "why": "both words carry a particle in the stored title ('הצעקה האדומה'); substring covers both.",
+  "expect_top": "הצעקה האדומה"
+ },
+ {
+  "q": "גנב הקוונטום",
+  "why": "final letter ם, folded by normalize() so it is the same token as a medial מ.",
+  "expect_top": "גנב הקוונטום"
+ },
+ {
+  "q": "קוונטום",
+  "why": "one distinctive word out of the middle of a title.",
+  "expect_top": "גנב הקוונטום"
+ },
+ {
+  "q": "באלדאצי",
+  "why": "author typed WITHOUT the geresh; stored as באלדאצ'י. normalize() deletes it in-word on both sides.",
+  "expect_contains": ["המהמר", "הנופלים", "צל כבד"]
+ },
+ {
+  "q": "גונתן סטריינג",
+  "why": "the same work is stored three times with three punctuation styles — geresh, backtick, and an ampersand. All three must come back from one query.",
+  "expect_contains": [
+   "ג'ונתן סטריינג' & מר נורל",
+   "ג`ונתן סטריינג` ומר נורל I",
+   "ג`ונתן סטריינג` ומר נורל II"
+  ]
+ },
+ {
+  "q": "עיר",
+  "why": "RANKING, not filtering: three books match ('מהעיר הדוממת', 'עיר', 'עיר הזמן') and the exact title must win. Alphabetical order puts 'מהעיר הדוממת' first, so this query fails without a relevance score.",
+  "expect_top": "עיר"
+ },
+ {
+  "q": "ירושלים",
+  "why": "RANKING, title over author: one book has it in the TITLE ('מלך ירושלים'), another has it in the AUTHOR's name. Alphabetical order puts the author match first.",
+  "expect_top": "מלך ירושלים"
+ },
+ {
+  "q": "מבוא לפילוסופיה",
+  "why": "an exact title that is also a prefix of a longer one ('...מודרנית'); the shorter, exact answer wins.",
+  "expect_top": "מבוא לפילוסופיה"
+ },
+ {
+  "q": "סודות החרב",
+  "why": "mixed script — the stored title ends in a Latin numeral 'III'.",
+  "expect_top": "סודות החרב III"
+ },
+ {
+  "q": "לארי ניבן",
+  "why": "author search: every book by them, and nothing else.",
+  "expect_contains": [
+   "עולם טבעת",
+   "מהנדסי הטבעת",
+   "פטיש השטן",
+   "כוכב ניוטרון",
+   "מגונן"
+  ]
+ },
+ {
+  "q": "ניבן טבעת",
+  "why": "author plus a title word — the query shape a person actually types when they half-remember a book.",
+  "expect_contains": ["עולם טבעת", "מהנדסי הטבעת"]
+ },
+ {
+  "q": "באלדאצ",
+  "why": "truncated word: search is substring, so a partial name still finds its books.",
+  "expect_contains": ["המהמר", "צל כבד"]
+ },
+ {
+  "q": "אור יום",
+  "why": "two very common words as a whole title — the exact title must beat every book that merely contains one of them.",
+  "expect_top": "אור יום"
+ },
+ {
+  "q": "פטיש השטן",
+  "why": "plain two-word title, no particles, no tricks. The control case.",
+  "expect_top": "פטיש השטן"
+ },
+ {
+  "q": "14",
+  "why": "a numeric title. Short, and would be noise as an infix — must still resolve.",
+  "expect_top": "14"
+ },
+ {
+  "q": "בבל-17",
+  "why": "punctuation inside the title; normalize() drops the hyphen on both sides.",
+  "expect_top": "בבל-17"
+ },
+ {
+  "q": "זזזזזזז",
+  "why": "no such book. Must return nothing rather than a best guess.",
+  "expect_contains": []
+ },
+ {
+  "q": "   ",
+  "why": "empty search box. Must return nothing, NOT the whole library.",
+  "expect_contains": []
+ }
+]
