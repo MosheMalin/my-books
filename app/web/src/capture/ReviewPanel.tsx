@@ -5,13 +5,15 @@
  * The copy under the header says plainly that confirming here is a
  * shortcut and the shelf is the durable home (UI_PLAN §4's hybrid
  * contract). UI_PLAN also asks for a *"פתחו את המדף →"* chip beside it —
- * left OUT here: it links to `#/map/<shelfId>`, and neither the map tab nor
- * a shelf-detail route exists yet (pillar 6 / P2.8). A chip to nowhere is
- * worse than no chip (absent, not disabled); the sentence alone still
- * carries the point.
+ * P2.7 left it out because neither the map tab nor a shelf-detail route
+ * existed yet; P2.8 built the route (`#/map/<shelfId>`, `shelf/ShelfPage`),
+ * so the chip lands here now. Setting `location.hash` directly (rather than
+ * threading `useRoute`'s `navigate` down through `CaptureTab`) is the same
+ * mechanism `useRoute` itself uses — a hash write IS the navigation.
  */
 import type { Shelf } from '../api/client'
 import { useI18n } from '../lib/i18n'
+import { shelfHash } from '../lib/route'
 import { ClaimRow } from './ClaimRow'
 import type { RunState } from './useCapture'
 
@@ -33,11 +35,22 @@ export function ReviewPanel({ run, shelves, onStop, onAnswer }: ReviewPanelProps
     <div className="panel reviewpanel">
       <h3>
         <span className="rtl-safe">{target}</span>
-        {run.status === 'running' && (
-          <button type="button" className="btn sm danger" onClick={onStop}>
-            {t.stop_run}
+        <span className="chiprow">
+          <button
+            type="button"
+            className="linkish"
+            onClick={() => {
+              globalThis.location.hash = shelfHash(run.shelfId)
+            }}
+          >
+            {t.open_shelf}
           </button>
-        )}
+          {run.status === 'running' && (
+            <button type="button" className="btn sm danger" onClick={onStop}>
+              {t.stop_run}
+            </button>
+          )}
+        </span>
       </h3>
       <div className="body">
         {run.status === 'running' && (

@@ -1,0 +1,117 @@
+/* booksnap — shelf-detail screen (P2.8, UI_PLAN §3 level 3).
+   No mock reference: `planning/mockup/` never built a shelf-detail view
+   (the mock is Books/Map/Capture tabs, and Map never got past the sketch —
+   UI_PLAN §3). Built fresh, in the same idiom as capture.css/books.css:
+   `.panel`/`.body`/`.chiprow`/`.badge`/`.brow` are reused as-is; only what's
+   genuinely new to this screen (the photo, the depth bar, the staleness
+   note, the history rows) gets its own rules here. */
+
+.shelfpage {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ================= header: photo, last-read, staleness, depth bar ======= */
+.shelfheroTop {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+.shelfphoto {
+  width: 120px;
+  height: 90px;
+  object-fit: cover;
+  border-radius: 8px;
+  background: var(--none-bg);
+  flex: none;
+}
+.shelfphoto-empty {
+  border: 1.5px dashed var(--line);
+}
+.shelfheroMeta {
+  flex: 1;
+  min-width: 0;
+}
+.shelfheroMeta h2 {
+  margin: 0 0 3px;
+  font-size: var(--fs-xl);
+  line-height: 1.25;
+}
+.shelfheroMeta p {
+  margin: 2px 0;
+}
+/* A soft nudge, not an error — the review token (amber), same "needs a
+   look, nothing is wrong" register `.b-lent` already uses for a loan. */
+.stalenote {
+  color: var(--review);
+}
+
+.depthbar {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.depthbtn {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 13px;
+  background: var(--panel);
+}
+.depthbtn:hover {
+  border-color: var(--accent);
+}
+.depthbtn.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+/* A small stale marker on the button itself, so the signal is visible even
+   before reading the staleness sentence above. */
+.depthbtn .dot {
+  position: absolute;
+  top: -3px;
+  inset-inline-end: -3px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--review);
+  border: 1.5px solid var(--panel);
+}
+
+/* ================= books at the selected depth =========================== */
+.shelfbooks .booklist {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ================= read history ============================================ */
+.historylist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.historyrow {
+  padding: 9px 4px;
+  border-bottom: 1px solid var(--line);
+}
+.historyrow:last-child {
+  border-bottom: none;
+}
+.historyrow .top {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+.historyrow .date {
+  font-weight: 550;
+  font-size: 13px;
+}

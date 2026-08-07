@@ -10,6 +10,7 @@ import { BookDrawer } from './book/BookDrawer'
 import { BookPage } from './book/BookPage'
 import { BooksTab } from './books/BooksTab'
 import { CaptureTab } from './capture/CaptureTab'
+import { ShelfPage } from './shelf/ShelfPage'
 import { getMeta, type Meta } from './api/client'
 import { useBooks } from './lib/books'
 import { useI18n } from './lib/i18n'
@@ -100,6 +101,8 @@ export function App() {
           <BookPage bookId={route.id} onBack={back} onAuthor={filterByAuthor} />
         ) : route.name === 'capture' ? (
           <CaptureTab />
+        ) : route.name === 'shelf' ? (
+          <ShelfPage shelfId={route.id} onBack={back} onOpen={setDrawerId} />
         ) : (
           <BooksTab onOpen={setDrawerId} />
         )}

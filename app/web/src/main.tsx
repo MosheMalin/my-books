@@ -7,6 +7,7 @@ import './styles/tokens.css'
 import './styles/base.css'
 import './styles/books.css'
 import './styles/capture.css'
+import './styles/shelf.css'
 
 const root = document.getElementById('root')
 if (!root) throw new Error('#root missing from index.html')

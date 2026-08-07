@@ -18,6 +18,8 @@ never be silently reversed (plan H5):
   - a shelf's list is reconciled, never replaced ....... §5.6  reconcile.reconcile
   - a rejected/wrong-book claim is never re-added ...... §5.6  reconcile.reconcile
   - "not seen" never auto-removes a book ............... §5.6  reconcile._not_seen_here
+  - the not-seen streak is a badge, never a removal .... §5.6  history.not_seen_streak
+  - a diff summary is a snapshot, never recomputed ..... §5.5  read.DiffSummary
 """
 from __future__ import annotations
 
@@ -59,6 +61,7 @@ from app.domain.copy_resolution import (
     open_or_refresh,
     pick_default_copy,
 )
+from app.domain.history import DepthStatus, depth_staleness, not_seen_streak
 from app.domain.library import LibraryRef
 from app.domain.reconcile import (
     ClaimOutcome,
@@ -68,11 +71,13 @@ from app.domain.reconcile import (
     NotSeenEntry,
     OutcomeKind,
     reconcile,
+    summarize,
 )
 from app.domain.read import (
     Alternative,
     Claim,
     ClaimTier,
+    DiffSummary,
     Read,
     ReadAlreadyFinished,
     ReadStatus,
@@ -81,6 +86,7 @@ from app.domain.read import (
     finish_read,
     new_read,
     stop_read,
+    with_diff_summary,
 )
 from app.domain.shelf import (
     Capture,
@@ -112,7 +118,9 @@ __all__ = [
     "DEFAULT_RESOLUTION",
     "Decision",
     "DecisionKind",
+    "DepthStatus",
     "Diff",
+    "DiffSummary",
     "DomainError",
     "DuplicateQuestion",
     "FIRE_TABLE",
@@ -142,6 +150,7 @@ __all__ = [
     "build_prompt",
     "capture_onto_a_new_shelf",
     "counts_toward_library",
+    "depth_staleness",
     "edit",
     "edit_copy",
     "fail_read",
@@ -153,6 +162,7 @@ __all__ = [
     "new_read",
     "new_shelf",
     "normalize",
+    "not_seen_streak",
     "observe",
     "open_or_refresh",
     "pick_default_copy",
@@ -163,4 +173,6 @@ __all__ = [
     "return_copy",
     "set_work_fields",
     "stop_read",
+    "summarize",
+    "with_diff_summary",
 ]

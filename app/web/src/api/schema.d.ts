@@ -475,6 +475,32 @@ export interface paths {
         patch: operations["patch_shelf_api_v1_shelves__shelf_id__patch"];
         trace?: never;
     };
+    "/api/v1/shelves/{shelf_id}/books": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Shelf Books
+         * @description The books standing at ONE (shelf, depth), in physical order (best
+         *     effort — see :func:`_physical_order_key`), each copy annotated with its
+         *     own soft *"not seen in the last N reads"* streak (§5.6 option 2, scoped
+         *     to this depth per §5.7 #1 — `app.domain.history.not_seen_streak`).
+         *
+         *     This is the durable list of §5.6: a book stays here until a human removes
+         *     it (``remove_from_shelf``), never because a read failed to reconfirm it.
+         */
+        get: operations["shelf_books_api_v1_shelves__shelf_id__books_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/shelves/{shelf_id}/captures": {
         parameters: {
             query?: never;
@@ -512,6 +538,29 @@ export interface paths {
          *     on the wishlist, which has no behind.
          */
         post: operations["add_a_row_behind_api_v1_shelves__shelf_id__depths_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/shelves/{shelf_id}/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Shelf Overview
+         * @description Declared depth, plus the soft staleness line (UI_PLAN §3: *"rows 2, 3
+         *     not read since 11.3.2026"*) — every declared row, whether or not it was
+         *     ever read, so the depth bar can show ALL of them (§5.7: always visible,
+         *     even at ``depth_count`` 1).
+         */
+        get: operations["shelf_overview_api_v1_shelves__shelf_id__overview_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1023,6 +1072,11 @@ export interface components {
             /** @description Most recent provenance entry, if any. */
             last_seen?: components["schemas"]["SightingDTO"] | null;
             lending?: components["schemas"]["LendingDTO"] | null;
+            /**
+             * Not Seen Streak
+             * @description Consecutive most-recent reads of this copy's OWN (shelf, depth) that did not reconfirm it (§5.6's soft badge, never a removal — app.domain.history.not_seen_streak). Populated only by GET /shelves/{id}/books, which has that shelf's read archive in hand; null everywhere else, including an unlocated copy.
+             */
+            not_seen_streak?: number | null;
             /** Shelf Id */
             shelf_id?: string | null;
             /**
@@ -1049,6 +1103,26 @@ export interface components {
             label?: string | null;
             /** Tags */
             tags?: string[] | null;
+        };
+        /**
+         * DepthStatusDTO
+         * @description One row's last-read date, for the shelf-detail screen's soft
+         *     staleness line (UI_PLAN §3: *"rows 2, 3 not read since 11.3.2026"*) —
+         *     see ``app.domain.history.depth_staleness``.
+         */
+        DepthStatusDTO: {
+            /** Depth */
+            depth: number;
+            /**
+             * Is Stale
+             * @description Read less recently than this SHELF's own freshest row — never against a clock, and never automatic beyond this soft line (§5.7's own closing note).
+             */
+            is_stale: boolean;
+            /**
+             * Last Read At
+             * @description Null if this row has never been read.
+             */
+            last_read_at?: string | null;
         };
         /**
          * DiffDTO
@@ -1085,6 +1159,50 @@ export interface components {
             shelf_id: string;
             /** Unchanged */
             unchanged: components["schemas"]["ClaimOutcomeDTO"][];
+        };
+        /**
+         * DiffSummaryDTO
+         * @description Headline diff counts, captured once when a read settles — see
+         *     ``app.domain.read.DiffSummary`` for why this is a SNAPSHOT and must never
+         *     be recomputed to "freshen" it. This is the plan's own example rendered
+         *     literally: ``+3 added · 1 corrected · 12 unchanged · 1 not seen``.
+         */
+        DiffSummaryDTO: {
+            /**
+             * Added
+             * @default 0
+             */
+            added: number;
+            /**
+             * Corrected
+             * @default 0
+             */
+            corrected: number;
+            /**
+             * Ignored
+             * @default 0
+             */
+            ignored: number;
+            /**
+             * Needs Decision
+             * @default 0
+             */
+            needs_decision: number;
+            /**
+             * Not Seen
+             * @default 0
+             */
+            not_seen: number;
+            /**
+             * Rejected
+             * @default 0
+             */
+            rejected: number;
+            /**
+             * Unchanged
+             * @default 0
+             */
+            unchanged: number;
         };
         /**
          * DuplicateAnswerIn
@@ -1315,6 +1433,8 @@ export interface components {
             } | null;
             /** Depth */
             depth: number;
+            /** @description Same snapshot as ReadSummaryDTO's — see there. Carried here too so a single read fetched on its own (e.g. from a history row) does not need a second call. */
+            diff_summary?: components["schemas"]["DiffSummaryDTO"] | null;
             /** Error */
             error?: string | null;
             /** Finished At */
@@ -1340,15 +1460,16 @@ export interface components {
         /**
          * ReadSummaryDTO
          * @description One row of a shelf's read history — no claims, no config. Listing a
-         *     shelf's reads is a history view (§5.6's "history as diffs" surface, once
-         *     P2.8 builds it); it does not need every claim of every past read to
-         *     render a row.
+         *     shelf's reads is a history view (§5.6's "history as diffs" surface,
+         *     P2.8); it does not need every claim of every past read to render a row.
          */
         ReadSummaryDTO: {
             /** Claim Count */
             claim_count: number;
             /** Depth */
             depth: number;
+            /** @description Null while running, for a failed read, or for a read that finished before this column existed (v10 and earlier) — the history row shows it without one rather than inventing a number nobody measured. */
+            diff_summary?: components["schemas"]["DiffSummaryDTO"] | null;
             /** Error */
             error?: string | null;
             /** Finished At */
@@ -1410,6 +1531,24 @@ export interface components {
              * @description The wishlist. Excluded from shelf listings by default.
              */
             virtual: boolean;
+        };
+        /**
+         * ShelfOverviewDTO
+         * @description The shelf-detail screen's header data (UI_PLAN §3, level 3): declared
+         *     depth, per-row last-read dates and the staleness line they imply. Books
+         *     themselves are a separate call (``GET /shelves/{id}/books``) — this is
+         *     the shelf's own state, not its contents, the same split ``BookDetail``
+         *     keeps from the list.
+         */
+        ShelfOverviewDTO: {
+            /** Depths */
+            depths: components["schemas"]["DepthStatusDTO"][];
+            /**
+             * Last Read At
+             * @description The freshest read across EVERY depth, or null if this shelf has never been read at all.
+             */
+            last_read_at?: string | null;
+            shelf: components["schemas"]["ShelfDTO"];
         };
         /**
          * ShelfPatch
@@ -2384,6 +2523,40 @@ export interface operations {
             };
         };
     };
+    shelf_books_api_v1_shelves__shelf_id__books_get: {
+        parameters: {
+            query?: {
+                /** @description Which row front-to-back (§5.7 #1 — there is no 'every depth' view of a shelf's books; a mixed list would conflate two different physical locations). */
+                depth?: number;
+            };
+            header?: never;
+            path: {
+                shelf_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookDTO"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_shelf_captures_api_v1_shelves__shelf_id__captures_get: {
         parameters: {
             query?: {
@@ -2436,6 +2609,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ShelfDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    shelf_overview_api_v1_shelves__shelf_id__overview_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shelf_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShelfOverviewDTO"];
                 };
             };
             /** @description Validation Error */

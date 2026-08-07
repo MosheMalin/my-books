@@ -38,6 +38,7 @@ from app.domain import (
     CopyFields,
     Decision,
     DecisionKind,
+    DiffSummary,
     DuplicateQuestion,
     Lending,
     LibraryRef,
@@ -827,13 +828,15 @@ def _load_copy(conn: sqlite3.Connection, row: sqlite3.Row) -> Copy:
 def _insert_read(conn: sqlite3.Connection, library: LibraryRef, read: Read) -> None:
     conn.execute(
         "INSERT INTO reads (id, library_id, shelf_id, depth, capture_ids,"
-        " mode, status, code_version, config, started_at, finished_at, error)"
-        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        " mode, status, code_version, config, started_at, finished_at, error,"
+        " diff_summary) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (read.id, library.id, read.shelf_id, read.depth,
          json.dumps(list(read.capture_ids)), read.mode, read.status.value,
          json.dumps(read.code_version) if read.code_version is not None else None,
          json.dumps(read.config) if read.config is not None else None,
-         read.started_at, read.finished_at, read.error),
+         read.started_at, read.finished_at, read.error,
+         json.dumps(asdict(read.diff_summary))
+         if read.diff_summary is not None else None),
     )
     for position, claim in enumerate(read.claims):
         conn.execute(
@@ -883,4 +886,6 @@ def _load_read(conn: sqlite3.Connection, row: sqlite3.Row) -> Read:
         started_at=row["started_at"],
         finished_at=row["finished_at"],
         error=row["error"],
+        diff_summary=DiffSummary(**json.loads(row["diff_summary"]))
+        if row["diff_summary"] else None,
     )

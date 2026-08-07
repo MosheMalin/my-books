@@ -665,6 +665,18 @@
               }
             ]
           },
+          "not_seen_streak": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Consecutive most-recent reads of this copy's OWN (shelf, depth) that did not reconfirm it (§5.6's soft badge, never a removal — app.domain.history.not_seen_streak). Populated only by GET /shelves/{id}/books, which has that shelf's read archive in hand; null everywhere else, including an unlocated copy.",
+            "title": "Not Seen Streak"
+          },
           "shelf_id": {
             "anyOf": [
               {
@@ -742,6 +754,38 @@
           }
         },
         "title": "CopyPatch",
+        "type": "object"
+      },
+      "DepthStatusDTO": {
+        "description": "One row's last-read date, for the shelf-detail screen's soft\nstaleness line (UI_PLAN §3: *\"rows 2, 3 not read since 11.3.2026\"*) —\nsee ``app.domain.history.depth_staleness``.",
+        "properties": {
+          "depth": {
+            "title": "Depth",
+            "type": "integer"
+          },
+          "is_stale": {
+            "description": "Read less recently than this SHELF's own freshest row — never against a clock, and never automatic beyond this soft line (§5.7's own closing note).",
+            "title": "Is Stale",
+            "type": "boolean"
+          },
+          "last_read_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Null if this row has never been read.",
+            "title": "Last Read At"
+          }
+        },
+        "required": [
+          "depth",
+          "is_stale"
+        ],
+        "title": "DepthStatusDTO",
         "type": "object"
       },
       "DiffDTO": {
@@ -825,6 +869,48 @@
           "ignored"
         ],
         "title": "DiffDTO",
+        "type": "object"
+      },
+      "DiffSummaryDTO": {
+        "description": "Headline diff counts, captured once when a read settles — see\n``app.domain.read.DiffSummary`` for why this is a SNAPSHOT and must never\nbe recomputed to \"freshen\" it. This is the plan's own example rendered\nliterally: ``+3 added · 1 corrected · 12 unchanged · 1 not seen``.",
+        "properties": {
+          "added": {
+            "default": 0,
+            "title": "Added",
+            "type": "integer"
+          },
+          "corrected": {
+            "default": 0,
+            "title": "Corrected",
+            "type": "integer"
+          },
+          "ignored": {
+            "default": 0,
+            "title": "Ignored",
+            "type": "integer"
+          },
+          "needs_decision": {
+            "default": 0,
+            "title": "Needs Decision",
+            "type": "integer"
+          },
+          "not_seen": {
+            "default": 0,
+            "title": "Not Seen",
+            "type": "integer"
+          },
+          "rejected": {
+            "default": 0,
+            "title": "Rejected",
+            "type": "integer"
+          },
+          "unchanged": {
+            "default": 0,
+            "title": "Unchanged",
+            "type": "integer"
+          }
+        },
+        "title": "DiffSummaryDTO",
         "type": "object"
       },
       "DuplicateAnswerIn": {
@@ -1201,6 +1287,17 @@
             "title": "Depth",
             "type": "integer"
           },
+          "diff_summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DiffSummaryDTO"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Same snapshot as ReadSummaryDTO's — see there. Carried here too so a single read fetched on its own (e.g. from a history row) does not need a second call."
+          },
           "error": {
             "anyOf": [
               {
@@ -1276,7 +1373,7 @@
         "type": "object"
       },
       "ReadSummaryDTO": {
-        "description": "One row of a shelf's read history — no claims, no config. Listing a\nshelf's reads is a history view (§5.6's \"history as diffs\" surface, once\nP2.8 builds it); it does not need every claim of every past read to\nrender a row.",
+        "description": "One row of a shelf's read history — no claims, no config. Listing a\nshelf's reads is a history view (§5.6's \"history as diffs\" surface,\nP2.8); it does not need every claim of every past read to render a row.",
         "properties": {
           "claim_count": {
             "title": "Claim Count",
@@ -1285,6 +1382,17 @@
           "depth": {
             "title": "Depth",
             "type": "integer"
+          },
+          "diff_summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DiffSummaryDTO"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Null while running, for a failed read, or for a read that finished before this column existed (v10 and earlier) — the history row shows it without one rather than inventing a number nobody measured."
           },
           "error": {
             "anyOf": [
@@ -1411,6 +1519,39 @@
           "capture_count"
         ],
         "title": "ShelfDTO",
+        "type": "object"
+      },
+      "ShelfOverviewDTO": {
+        "description": "The shelf-detail screen's header data (UI_PLAN §3, level 3): declared\ndepth, per-row last-read dates and the staleness line they imply. Books\nthemselves are a separate call (``GET /shelves/{id}/books``) — this is\nthe shelf's own state, not its contents, the same split ``BookDetail``\nkeeps from the list.",
+        "properties": {
+          "depths": {
+            "items": {
+              "$ref": "#/components/schemas/DepthStatusDTO"
+            },
+            "title": "Depths",
+            "type": "array"
+          },
+          "last_read_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The freshest read across EVERY depth, or null if this shelf has never been read at all.",
+            "title": "Last Read At"
+          },
+          "shelf": {
+            "$ref": "#/components/schemas/ShelfDTO"
+          }
+        },
+        "required": [
+          "shelf",
+          "depths"
+        ],
+        "title": "ShelfOverviewDTO",
         "type": "object"
       },
       "ShelfPatch": {
@@ -2905,6 +3046,66 @@
         ]
       }
     },
+    "/api/v1/shelves/{shelf_id}/books": {
+      "get": {
+        "description": "The books standing at ONE (shelf, depth), in physical order (best\neffort — see :func:`_physical_order_key`), each copy annotated with its\nown soft *\"not seen in the last N reads\"* streak (§5.6 option 2, scoped\nto this depth per §5.7 #1 — `app.domain.history.not_seen_streak`).\n\nThis is the durable list of §5.6: a book stays here until a human removes\nit (``remove_from_shelf``), never because a read failed to reconfirm it.",
+        "operationId": "shelf_books_api_v1_shelves__shelf_id__books_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "shelf_id",
+            "required": true,
+            "schema": {
+              "title": "Shelf Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Which row front-to-back (§5.7 #1 — there is no 'every depth' view of a shelf's books; a mixed list would conflate two different physical locations).",
+            "in": "query",
+            "name": "depth",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "description": "Which row front-to-back (§5.7 #1 — there is no 'every depth' view of a shelf's books; a mixed list would conflate two different physical locations).",
+              "minimum": 1,
+              "title": "Depth",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/BookDTO"
+                  },
+                  "title": "Response Shelf Books Api V1 Shelves  Shelf Id  Books Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Shelf Books",
+        "tags": [
+          "shelves"
+        ]
+      }
+    },
     "/api/v1/shelves/{shelf_id}/captures": {
       "get": {
         "operationId": "list_shelf_captures_api_v1_shelves__shelf_id__captures_get",
@@ -3008,6 +3209,49 @@
           }
         },
         "summary": "Add A Row Behind",
+        "tags": [
+          "shelves"
+        ]
+      }
+    },
+    "/api/v1/shelves/{shelf_id}/overview": {
+      "get": {
+        "description": "Declared depth, plus the soft staleness line (UI_PLAN §3: *\"rows 2, 3\nnot read since 11.3.2026\"*) — every declared row, whether or not it was\never read, so the depth bar can show ALL of them (§5.7: always visible,\neven at ``depth_count`` 1).",
+        "operationId": "shelf_overview_api_v1_shelves__shelf_id__overview_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "shelf_id",
+            "required": true,
+            "schema": {
+              "title": "Shelf Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShelfOverviewDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Shelf Overview",
         "tags": [
           "shelves"
         ]

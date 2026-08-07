@@ -26,19 +26,9 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Book, Copy } from '../api/client'
 import { isConflict, useBooks } from '../lib/books'
+import { formatDate } from '../lib/format'
 import { useI18n } from '../lib/i18n'
 import { CopyBadges, StatusBadge } from '../books/Feed'
-
-function formatDate(iso: string | null | undefined, lang: string): string {
-  if (!iso) return ''
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return iso
-  return d.toLocaleDateString(lang === 'he' ? 'he-IL' : 'en-GB', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-  })
-}
 
 export interface BookSurfaceProps {
   book: Book

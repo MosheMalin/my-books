@@ -141,6 +141,42 @@ class Claim:
 
 
 @dataclass(frozen=True)
+class DiffSummary:
+    """Headline diff counts (§5.6: *"+3 added · 1 corrected · 12 unchanged ·
+    1 not seen"*), captured ONCE when a read settles into ``done`` or
+    ``stopped`` — a snapshot, never recomputed (P2.8).
+
+    Why a snapshot and not a live recomputation, unlike every other diff view
+    in this codebase: ``app.reconcile_apply``'s ``diff_for`` deliberately
+    recomputes ``reconcile()`` fresh against CURRENT library state on every
+    call, and says so in its own docstring — right for the ONE active,
+    not-yet-applied read that every review screen shows, because "would this
+    claim resolve differently now" is exactly the live question that screen
+    answers. A read's place in HISTORY is a different question. Recompute an
+    ALREADY-APPLIED read's diff today and every one of its ``added`` claims
+    now shows as ``unchanged`` — the book it added is, by definition,
+    already standing at that (shelf, depth) the moment you ask again — which
+    would silently rewrite "this read added 3 books" into "this read changed
+    nothing", forever, the instant the read was reviewed. So the four
+    headline counts (plus the three transparency buckets) are captured once
+    and archived, the same shape as a run's own config snapshot
+    (CLAUDE.md, "Run history": *"THIS IS THE EXPERIMENT VARIABLE"*).
+
+    Deliberately plain ints, not the ``ClaimOutcome`` list `Diff` carries —
+    the archived record a history view needs is "how many", not a second
+    copy of every claim already sitting in ``Read.claims``.
+    """
+
+    added: int = 0
+    corrected: int = 0
+    unchanged: int = 0
+    needs_decision: int = 0
+    not_seen: int = 0
+    rejected: int = 0
+    ignored: int = 0
+
+
+@dataclass(frozen=True)
 class Read:
     """One engine pass over one (shelf, depth) — the audit trail P2.5's
     reconciliation and P2.6's copy resolution both read from.
@@ -154,6 +190,11 @@ class Read:
     only interpretable next to the code and config that produced it, same
     reasoning, same shape, second copy on purpose (H1 — this module must not
     import the tuning server to share the logic).
+
+    ``diff_summary`` is ``None`` until the read settles (P2.8) — see
+    :class:`DiffSummary`. Still ``None`` forever for a ``failed`` read: there
+    is no reliable diff to summarise over claims that may have stopped mid
+    spine because setup itself blew up.
     """
 
     id: str
@@ -169,6 +210,7 @@ class Read:
     started_at: str | None = None
     finished_at: str | None = None
     error: str | None = None
+    diff_summary: DiffSummary | None = None
 
     def __post_init__(self) -> None:
         if not self.library_id:
@@ -276,3 +318,18 @@ def fail_read(read: Read, *, error: str, finished_at: str) -> Read:
     "partial result over none" reasoning as :func:`stop_read` — but ``error``
     records that this ending was not requested."""
     return _end(read, status=ReadStatus.FAILED, finished_at=finished_at, error=error)
+
+
+def with_diff_summary(read: Read, summary: DiffSummary) -> Read:
+    """Attach the diff snapshot (P2.8) the moment the read settles.
+
+    Not guarded by ``is_terminal`` the way :func:`append_claim` is: a
+    summary is metadata ABOUT a finished read, computed and set by the same
+    caller that just finished it (``app/api/routers/reads.py``'s job), never
+    something a later, independent write races against. What must never
+    happen — recomputing this later against a changed library and
+    overwriting the archived snapshot — is a caller discipline (only the job
+    that just finished the read calls this), not a fact this function alone
+    can enforce from a `Read`'s own state.
+    """
+    return replace(read, diff_summary=summary)

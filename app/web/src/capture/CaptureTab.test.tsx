@@ -216,6 +216,19 @@ describe('Capture tab — review', () => {
     expect(within(altRow).queryByRole('button')).not.toBeInTheDocument()
   })
 
+  it('the "open the shelf" chip navigates to the shelf-detail route (P2.8)', async () => {
+    const server = fakeCaptureServer()
+    server.diffFor = (readId) => emptyDiff('sh1', 1, readId)
+    globalThis.location.hash = ''
+    await startRun()
+
+    const shelfId = server.shelves[0]!.id
+    await userEvent.click(screen.getByRole('button', { name: 'פתחו את המדף →' }))
+
+    expect(globalThis.location.hash).toBe(`#/map/${shelfId}`)
+    globalThis.location.hash = ''
+  })
+
   it('a running read offers Stop, and Stop calls the stop endpoint', async () => {
     const server = fakeCaptureServer()
     server.nextReadStatus = 'running'
