@@ -35,7 +35,12 @@ from fastapi.testclient import TestClient
 from app import API_PREFIX, __version__
 from app.adapters.disk_blobs import DiskBlobStore
 from app.adapters.inprocess_jobs import InProcessJobRunner
-from app.adapters.memory_store import MemoryBookStore, MemoryReadStore, MemoryShelfStore
+from app.adapters.memory_store import (
+    MemoryBookStore,
+    MemoryDecisionStore,
+    MemoryReadStore,
+    MemoryShelfStore,
+)
 from app.api import deps
 from app.api.app import create_app
 from app.domain import LibraryRef, Status, new_book
@@ -77,7 +82,7 @@ class StubPrincipal:
 
 
 def _app(principal: StubPrincipal | None = None, store=None, shelves=None,
-         blobs=None, reads=None, reader=None, jobs=None):
+         blobs=None, reads=None, reader=None, jobs=None, decisions=None):
     p = principal or StubPrincipal()
     return create_app(
         principal_provider=lambda: p,
@@ -85,6 +90,7 @@ def _app(principal: StubPrincipal | None = None, store=None, shelves=None,
         shelf_store=shelves if shelves is not None else MemoryShelfStore(),
         blob_store=blobs,
         read_store=reads if reads is not None else MemoryReadStore(),
+        decision_store=decisions if decisions is not None else MemoryDecisionStore(),
         reader=reader,
         job_runner=jobs if jobs is not None else InProcessJobRunner(),
         clock=StubClock(),
@@ -1264,6 +1270,236 @@ def test_a_capture_can_carry_the_key_of_an_uploaded_photo():
         # And the bytes are reachable from what the capture carries.
         assert c.get(f"{API_PREFIX}/images/{made['capture']['image_id']}/thumb"
                      ).status_code == 200
+
+
+# --- reconciliation (P2.5) --------------------------------------------------
+
+def _read_shelf_and_capture(c, *, image_key: str | None = None):
+    """Common setup: a shelf, one uploaded photo, one capture at depth 1."""
+    key = image_key or c.post(
+        f"{API_PREFIX}/images",
+        files={"file": ("a.png", _png(), "image/png")},
+    ).json()["key"]
+    made = c.post(f"{API_PREFIX}/captures", json={"image_id": key}).json()
+    return made["shelf"]["id"], made["capture"]["id"]
+
+
+def test_diff_reports_added_unchanged_and_not_seen():
+    with _blobs() as blobs:
+        store = MemoryBookStore()
+        shelves = MemoryShelfStore()
+        reads_store = MemoryReadStore()
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_store,
+                            blobs=blobs, reader=StubReader()))
+        shelf_id, cap_id = _read_shelf_and_capture(c)
+
+        # A book already on this shelf, unclaimed by this read -> not_seen.
+        store.save(TEST_LIBRARY, new_book(
+            id="b-missing", library_id=TEST_LIBRARY.id, title="לא נקרא",
+            author="", copy_id="c-missing", shelf_id=shelf_id, depth=1,
+        ))
+        # A book already here that this read DOES claim -> unchanged.
+        store.save(TEST_LIBRARY, new_book(
+            id="b-here", library_id=TEST_LIBRARY.id, title="כבר כאן",
+            author="מחבר", copy_id="c-here", shelf_id=shelf_id, depth=1,
+        ))
+
+        reader = StubReader([
+            ReadClaim(spine_id="sp1", capture_id=cap_id, title="כבר כאן",
+                     author="מחבר", tier="auto", score=91.0),
+            ReadClaim(spine_id="sp2", capture_id=cap_id, title="ספר חדש",
+                     author="סופר", tier="auto", score=88.0),
+        ])
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_store,
+                            blobs=blobs, reader=reader))
+        read_id = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
+                         json={"depth": 1}).json()["id"]
+        _wait_until_settled(c, shelf_id, read_id)
+
+        diff = c.get(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/diff").json()
+        assert len(diff["added"]) == 1
+        assert diff["added"][0]["claim"]["title"] == "ספר חדש"
+        assert len(diff["unchanged"]) == 1
+        assert diff["unchanged"][0]["existing_book"]["id"] == "b-here"
+        assert len(diff["not_seen"]) == 1
+        assert diff["not_seen"][0]["book"]["id"] == "b-missing"
+        # Read-only: nothing was written by GET.
+        assert store.count(TEST_LIBRARY) == 2
+
+
+def test_diff_asks_for_a_book_claimed_on_another_shelf():
+    with _blobs() as blobs:
+        store = MemoryBookStore()
+        shelves = MemoryShelfStore()
+        reads_store = MemoryReadStore()
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_store,
+                            blobs=blobs, reader=StubReader()))
+        shelf_id, cap_id = _read_shelf_and_capture(c)
+
+        store.save(TEST_LIBRARY, new_book(
+            id="b-elsewhere", library_id=TEST_LIBRARY.id, title="ספר אחר",
+            author="מחבר", copy_id="c-elsewhere", shelf_id="some-other-shelf",
+            depth=1,
+        ))
+        reader = StubReader([ReadClaim(spine_id="sp1", capture_id=cap_id,
+                                       title="ספר אחר", author="מחבר",
+                                       tier="auto", score=90.0)])
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_store,
+                            blobs=blobs, reader=reader))
+        read_id = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
+                         json={"depth": 1}).json()["id"]
+        _wait_until_settled(c, shelf_id, read_id)
+
+        diff = c.get(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/diff").json()
+        assert not diff["added"] and not diff["unchanged"]
+        assert len(diff["needs_decision"]) == 1
+        assert diff["needs_decision"][0]["reason"] == "ambiguous_location"
+        assert diff["needs_decision"][0]["existing_book"]["id"] == "b-elsewhere"
+
+
+def test_apply_persists_added_and_unchanged_without_any_answers():
+    with _blobs() as blobs:
+        store = MemoryBookStore()
+        shelves = MemoryShelfStore()
+        reads_store = MemoryReadStore()
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_store,
+                            blobs=blobs, reader=StubReader()))
+        shelf_id, cap_id = _read_shelf_and_capture(c)
+
+        reader = StubReader([ReadClaim(spine_id="sp1", capture_id=cap_id,
+                                       title="ספר חדש", author="סופר",
+                                       tier="auto", score=90.0)])
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_store,
+                            blobs=blobs, reader=reader))
+        read_id = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
+                         json={"depth": 1}).json()["id"]
+        _wait_until_settled(c, shelf_id, read_id)
+
+        applied = c.post(
+            f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/apply",
+            json={"answers": []},
+        )
+        assert applied.status_code == 200, applied.text
+        assert store.count(TEST_LIBRARY) == 1
+        assert not applied.json()["added"], (
+            "the returned diff is the POST-apply state; a persisted book is "
+            "no longer 'added' against the library that now holds it"
+        )
+        assert store.list(TEST_LIBRARY).items[0].title == "ספר חדש"
+
+
+def test_apply_with_an_already_listed_answer_relinks_the_copy():
+    with _blobs() as blobs:
+        store = MemoryBookStore()
+        shelves = MemoryShelfStore()
+        reads_store = MemoryReadStore()
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_store,
+                            blobs=blobs, reader=StubReader()))
+        shelf_id, cap_id = _read_shelf_and_capture(c)
+
+        store.save(TEST_LIBRARY, new_book(
+            id="b1", library_id=TEST_LIBRARY.id, title="ספר נודד",
+            author="מחבר", copy_id="c1", shelf_id="old-shelf", depth=1,
+        ))
+        reader = StubReader([ReadClaim(spine_id="sp1", capture_id=cap_id,
+                                       title="ספר נודד", author="מחבר",
+                                       tier="auto", score=90.0)])
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_store,
+                            blobs=blobs, reader=reader))
+        read_id = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
+                         json={"depth": 1}).json()["id"]
+        _wait_until_settled(c, shelf_id, read_id)
+
+        claim_id = c.get(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/diff"
+                         ).json()["needs_decision"][0]["claim"]["id"]
+        applied = c.post(
+            f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/apply",
+            json={"answers": [{"claim_id": claim_id, "kind": "already_listed"}]},
+        )
+        assert applied.status_code == 200, applied.text
+        assert not applied.json()["needs_decision"], "the answered claim is still open"
+        assert store.get(TEST_LIBRARY, "b1").copies[0].shelf_id == shelf_id
+        assert store.count(TEST_LIBRARY) == 1, "already-listed must not duplicate the book"
+
+
+def test_apply_rejects_an_unknown_answer_kind():
+    with _blobs() as blobs:
+        c = TestClient(_app(blobs=blobs, reader=StubReader()))
+        shelf_id, cap_id = _read_shelf_and_capture(c)
+        read_id = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
+                         json={"depth": 1}).json()["id"]
+        _wait_until_settled(c, shelf_id, read_id)
+
+        r = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/apply",
+                  json={"answers": [{"claim_id": "nope", "kind": "maybe"}]})
+        assert r.status_code == 400, r.text
+
+
+def test_apply_rejects_an_answer_for_a_claim_that_is_not_open():
+    with _blobs() as blobs:
+        shelves = MemoryShelfStore()
+        reads_store = MemoryReadStore()
+        c = TestClient(_app(blobs=blobs, shelves=shelves, reads=reads_store,
+                            reader=StubReader()))
+        shelf_id, cap_id = _read_shelf_and_capture(c)
+        reader = StubReader([ReadClaim(spine_id="sp1", capture_id=cap_id,
+                                       title="ספר", author="", tier="auto",
+                                       score=90.0)])
+        c = TestClient(_app(blobs=blobs, shelves=shelves, reads=reads_store,
+                            reader=reader))
+        read_id = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
+                         json={"depth": 1}).json()["id"]
+        _wait_until_settled(c, shelf_id, read_id)
+
+        r = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/apply",
+                  json={"answers": [{"claim_id": "not-a-real-claim-id",
+                                    "kind": "confirm"}]})
+        assert r.status_code == 400, r.text
+
+
+def test_diff_and_apply_refuse_a_still_running_read():
+    with _blobs() as blobs:
+        shelves = MemoryShelfStore()
+        reads_store = MemoryReadStore()
+        setup = TestClient(_app(blobs=blobs, shelves=shelves, reads=reads_store))
+        shelf_id, cap_id = _read_shelf_and_capture(setup)
+
+        reader = SlowStubReader(capture_id=cap_id, steps=200, step_s=0.01)
+        c = TestClient(_app(blobs=blobs, shelves=shelves, reads=reads_store,
+                            reader=reader))
+        read_id = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
+                         json={"depth": 1}).json()["id"]
+
+        assert c.get(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/diff"
+                     ).status_code == 409
+        assert c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/apply",
+                      json={"answers": []}).status_code == 409
+        c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/stop")
+        _wait_until_settled(c, shelf_id, read_id, timeout=3.0)
+
+
+def test_diff_for_a_read_in_another_library_is_404_not_403():
+    with _blobs() as blobs:
+        shelves = MemoryShelfStore()
+        reads_store = MemoryReadStore()
+        mine = TestClient(_app(blobs=blobs, shelves=shelves, reads=reads_store,
+                               reader=StubReader()))
+        shelf_id, cap_id = _read_shelf_and_capture(mine)
+        read_id = mine.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
+                            json={"depth": 1}).json()["id"]
+        _wait_until_settled(mine, shelf_id, read_id)
+
+        theirs = TestClient(_app(
+            StubPrincipal(LibraryRef("lib-other", "Other"), "p-other"),
+            blobs=blobs, shelves=shelves, reads=reads_store, reader=StubReader(),
+        ))
+        assert theirs.get(
+            f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/diff"
+        ).status_code == 404
+        assert theirs.post(
+            f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/apply",
+            json={"answers": []},
+        ).status_code == 404
 
 
 if __name__ == "__main__":

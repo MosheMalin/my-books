@@ -36,7 +36,12 @@ from app.adapters.booksnap_reader import BooksnapReader
 from app.adapters.dev_identity import DevPrincipal, SystemClock, UuidIdGen
 from app.adapters.disk_blobs import DiskBlobStore
 from app.adapters.inprocess_jobs import InProcessJobRunner
-from app.adapters.sqlite_store import SqliteBookStore, SqliteReadStore, SqliteShelfStore
+from app.adapters.sqlite_store import (
+    SqliteBookStore,
+    SqliteDecisionStore,
+    SqliteReadStore,
+    SqliteShelfStore,
+)
 from app.api.app import create_app
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -84,6 +89,10 @@ def build() -> object:
         # cannot end up in different places.
         shelf_store=SqliteShelfStore(path),
         read_store=SqliteReadStore(path),
+        # P2.5: a fourth aggregate, same file, same reasoning — a decision
+        # made about a claim from a specific read must live next to that
+        # read, not in a database a Postgres move could split off alone.
+        decision_store=SqliteDecisionStore(path),
         # Bytes on disk, keys in rows (D1). The layout is already P3.5's, so
         # pillar 3 inherits retention and orphan work, not a path migration.
         blob_store=blobs,

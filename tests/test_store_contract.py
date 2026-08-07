@@ -31,13 +31,25 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from app.adapters.memory_store import MemoryBookStore, MemoryReadStore, MemoryShelfStore
+from app.adapters.memory_store import (
+    MemoryBookStore,
+    MemoryDecisionStore,
+    MemoryReadStore,
+    MemoryShelfStore,
+)
 from app.adapters.migrations import SCHEMA_VERSION, current_version, migrate
-from app.adapters.sqlite_store import SqliteBookStore, SqliteReadStore, SqliteShelfStore
+from app.adapters.sqlite_store import (
+    SqliteBookStore,
+    SqliteDecisionStore,
+    SqliteReadStore,
+    SqliteShelfStore,
+)
 from app.domain import (
     Capture,
     Claim,
     ClaimTier,
+    Decision,
+    DecisionKind,
     LibraryRef,
     Provenance,
     Status,
@@ -73,6 +85,7 @@ OTHER = LibraryRef("lib-b", "Library B")
 CONTRACT: list = []
 SHELF_CONTRACT: list = []
 READ_CONTRACT: list = []
+DECISION_CONTRACT: list = []
 
 
 def contract(fn):
@@ -96,6 +109,13 @@ def read_contract(fn):
     """Mark a function as part of the ReadStore spec (P2.4). A third list,
     same reasoning as `shelf_contract`."""
     READ_CONTRACT.append(fn)
+    return fn
+
+
+def decision_contract(fn):
+    """Mark a function as part of the DecisionStore spec (P2.5). A fourth
+    list, same reasoning as `shelf_contract`/`read_contract`."""
+    DECISION_CONTRACT.append(fn)
     return fn
 
 
@@ -899,6 +919,113 @@ def every_read_store_method_takes_a_library(store):
         assert hasattr(store, name), f"{type(store).__name__} lacks {name}()"
 
 
+# --- the decision spec (P2.5) ----------------------------------------------
+#
+# A fourth contract list: decisions run against the DecisionStore
+# implementations, not the book/shelf/read ones. Same discipline as the other
+# three — one spec, every implementation, so P2.5's standing answers are as
+# portable as everything before them.
+
+def _decision(*, shelf_id: str = "sh1", depth: int = 1, book_key: str = "k|a",
+             kind: DecisionKind = DecisionKind.ALREADY_LISTED,
+             library: LibraryRef = LIB, **kw) -> Decision:
+    args = dict(library_id=library.id, shelf_id=shelf_id, depth=depth,
+                book_key=book_key, kind=kind)
+    args.update(kw)
+    return Decision(**args)
+
+
+@decision_contract
+def saves_and_reads_back_a_decision(store):
+    d = _decision(kind=DecisionKind.ALREADY_LISTED, copy_id="c1",
+                 decided_at="2026-08-07T12:00:00+00:00")
+    store.save_decision(LIB, d)
+    got = store.get_decision(LIB, "sh1", 1, "k|a")
+    assert got == d
+
+
+@decision_contract
+def missing_decision_reads_as_none(store):
+    assert store.get_decision(LIB, "sh1", 1, "nope|nope") is None
+
+
+@decision_contract
+def a_changed_mind_replaces_the_decision_not_accumulates(store):
+    """§5.4's queue makes a second answer to the same question possible —
+    this asserts it OVERWRITES, so `reconcile()` never has to pick among a
+    history of contradictory decisions for one (shelf, depth, book_key)."""
+    store.save_decision(LIB, _decision(kind=DecisionKind.WRONG_BOOK))
+    store.save_decision(LIB, _decision(kind=DecisionKind.ANOTHER_COPY))
+    got = store.get_decision(LIB, "sh1", 1, "k|a")
+    assert got.kind is DecisionKind.ANOTHER_COPY
+    assert len(store.list_decisions(LIB, "sh1", 1)) == 1
+
+
+@decision_contract
+def lists_every_decision_at_one_shelf_and_depth(store):
+    """The exact shape `reconcile()`'s caller needs: every decision for ONE
+    (shelf, depth), not the whole library's — §5.6's "previously rejected
+    HERE" is scoped that tightly on purpose."""
+    store.save_decision(LIB, _decision(book_key="a|a", depth=1))
+    store.save_decision(LIB, _decision(book_key="b|b", depth=1))
+    store.save_decision(LIB, _decision(book_key="c|c", depth=2))
+    store.save_decision(LIB, _decision(book_key="d|d", shelf_id="sh2", depth=1))
+
+    got = {d.book_key for d in store.list_decisions(LIB, "sh1", 1)}
+    assert got == {"a|a", "b|b"}
+    assert store.list_decisions(LIB, "sh1", 2) == (
+        _decision(book_key="c|c", depth=2),
+    )
+    assert store.list_decisions(LIB, "sh2", 1) == (
+        _decision(book_key="d|d", shelf_id="sh2", depth=1),
+    )
+
+
+@decision_contract
+def deleting_a_decision_is_the_undo_of_a_mis_click(store):
+    """Mirrors ``booksnap.library.clear_decision``: removing the answer does
+    not touch any book — it only means the next read asks again."""
+    store.save_decision(LIB, _decision())
+    assert store.delete_decision(LIB, "sh1", 1, "k|a") is True
+    assert store.get_decision(LIB, "sh1", 1, "k|a") is None
+    assert store.delete_decision(LIB, "sh1", 1, "k|a") is False
+
+
+@decision_contract
+def a_foreign_decision_reads_as_absent(store):
+    """§4.2, same as every other aggregate: absent and forbidden are the
+    same answer, checked here so the route above it can honour it."""
+    store.save_decision(OTHER, _decision(library=OTHER))
+    assert store.get_decision(LIB, "sh1", 1, "k|a") is None
+    assert store.list_decisions(LIB, "sh1", 1) == ()
+    assert store.delete_decision(LIB, "sh1", 1, "k|a") is False
+    assert store.get_decision(OTHER, "sh1", 1, "k|a") is not None, \
+        "a foreign call reached in"
+
+
+@decision_contract
+def saving_a_decision_into_the_wrong_library_is_refused_loudly(store):
+    _raises(WrongLibrary, store.save_decision, OTHER, _decision(library=LIB))
+    assert store.get_decision(OTHER, "sh1", 1, "k|a") is None
+    assert store.get_decision(LIB, "sh1", 1, "k|a") is None, \
+        "the refused write leaked"
+
+
+@decision_contract
+def every_decision_store_method_takes_a_library(store):
+    """H2 by signature, same as the other three stores'."""
+    import inspect
+
+    from app.ports.decisions import DecisionStore
+
+    for name, member in vars(DecisionStore).items():
+        if name.startswith("_") or not callable(member):
+            continue
+        params = list(inspect.signature(member).parameters)
+        assert params[:2] == ["self", "library"], (name, params)
+        assert hasattr(store, name), f"{type(store).__name__} lacks {name}()"
+
+
 # --- registration ---------------------------------------------------------
 
 @contextmanager
@@ -943,11 +1070,27 @@ def _sqlite_read_store():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+@contextmanager
+def _memory_decision_store():
+    yield MemoryDecisionStore()
+
+
+@contextmanager
+def _sqlite_decision_store():
+    tmp = tempfile.mkdtemp(prefix="booksnap-decision-")
+    try:
+        yield SqliteDecisionStore(Path(tmp) / "books.db")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 IMPLEMENTATIONS = (("memory", _memory_store), ("sqlite", _sqlite_store))
 SHELF_IMPLEMENTATIONS = (("memory", _memory_shelf_store),
                          ("sqlite", _sqlite_shelf_store))
 READ_IMPLEMENTATIONS = (("memory", _memory_read_store),
                         ("sqlite", _sqlite_read_store))
+DECISION_IMPLEMENTATIONS = (("memory", _memory_decision_store),
+                            ("sqlite", _sqlite_decision_store))
 
 
 def _bind(fn, factory, name):
@@ -974,6 +1117,11 @@ for _label, _factory in SHELF_IMPLEMENTATIONS:
 
 for _label, _factory in READ_IMPLEMENTATIONS:
     for _fn in READ_CONTRACT:
+        _name = f"test_{_fn.__name__}__{_label}"
+        globals()[_name] = _bind(_fn, _factory, _name)
+
+for _label, _factory in DECISION_IMPLEMENTATIONS:
+    for _fn in DECISION_CONTRACT:
         _name = f"test_{_fn.__name__}__{_label}"
         globals()[_name] = _bind(_fn, _factory, _name)
 

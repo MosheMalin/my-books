@@ -18,11 +18,14 @@ Two rules shape every signature here:
     one, and §5.1 says there is exactly one (for a Copy) and P2.4 makes the
     same call for a Claim.
 
-Deliberately NOT here: reconciliation (P2.5 — a pure function over a shelf's
-state and a read's claims, so it belongs in the domain and needs no port) and
-blob storage (P2.3's ``BlobStore``, in its own file — a capture's ``image_id``
-is a reference, and multi-MB JPEGs are exactly what D1 keeps out of the
-database file).
+Deliberately NOT here: reconciliation itself (P2.5 — a pure function over a
+shelf's state and a read's claims, so it belongs in the domain and needs no
+port) and blob storage (P2.3's ``BlobStore``, in its own file — a capture's
+``image_id`` is a reference, and multi-MB JPEGs are exactly what D1 keeps out
+of the database file). What DOES need a port is making one of P2.5's
+decisions survive past the read that produced it — see
+``app.ports.decisions.DecisionStore``, a fourth, independent aggregate for the
+same reasons as the three below.
 """
 from __future__ import annotations
 
@@ -202,7 +205,7 @@ class ShelfStore(Protocol):
     Captures live here rather than in a store of their own because a capture
     is meaningless without its shelf — its identity IS ``(shelf, depth, order)``
     (§5.3) — and because "the captures of this shelf at this depth" is the
-    query P2.3's reconciliation runs.
+    query P2.5's reconciliation runs.
     """
 
     # --- shelves ---------------------------------------------------------

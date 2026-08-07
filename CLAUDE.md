@@ -496,17 +496,19 @@ names to run a subset (`python tests/run_all.py test_api`).
 |---|---|---|
 | `test_core.py` | 52 | matcher / normalize / evidence gates |
 | `test_integrations.py` | 24 | catalog + fallback adapters, fully mocked/offline |
-| `test_domain.py` | 54 | the VISION rules that can be silently reversed |
-| `test_store_contract.py` | 130 | one store spec × every implementation + isolation |
+| `test_domain.py` | 75 | the VISION rules that can be silently reversed |
+| `test_store_contract.py` | 146 | one store spec × every implementation + isolation |
+| `test_reconcile_apply.py` | 14 | `app.reconcile_apply` writing a `Diff` through real stores |
 | `test_legacy_import.py` | 21 | `work/*.json` → entities, against a committed fixture |
 | `test_search.py` | 15 | Hebrew search, against 24 real queries on the real 251 books |
 | `test_layering.py` | 9 | the one-way import rules (plan H1) |
-| `test_api.py` | 64 | `/api/v1` shapes + the versioning/tenancy meta-tests |
+| `test_api.py` | 72 | `/api/v1` shapes + the versioning/tenancy meta-tests |
 
-369 python tests as of P2.4 (+38 since P2.3: the Read/Claim rules — scoped to
-one shelf+depth, a stop is not a failure, claims are append-only — the
-read-store spec against both implementations, and the reads API driven by a
-stub engine).
+428 python tests as of P2.5 (+59 since P2.4: 21 new cases in `test_domain.py`
+— 18 named rule tests for `reconcile()` plus three for the new `relink_copy`
+domain operation — the `DecisionStore` contract (8 cases × 2 implementations),
+the whole new `test_reconcile_apply.py` module, and the diff/apply API
+surface).
 No pytest dependency, deliberately — the repo has never had one and the
 accuracy gate runs on bare python. Counts grow with each run's fixes; the
 commit log is the history (`SESSION_NOTES.md` was a one-time handoff and is
@@ -516,15 +518,16 @@ gone — session scratch belongs in `notes/`, which is gitignored).
 that someone could plausibly "fix" later, and every one was verified to FAIL
 when its rule is reversed (mutation-checked, not assumed). Two of them are
 structural rather than behavioural, which is the more valuable kind here:
-`Copy()` may be constructed only in `new_book`/`add_copy` (an AST walk, so it
-also constrains the reconciliation code that P2.3 will add to the same
-package), and `normalize()` may not be re-implemented in `app/domain`. Add
-rules there, not assertions about dataclass plumbing.
+`Copy()` may be constructed only in `new_book`/`add_copy` (an AST walk — P2.5's
+`relink_copy` does not construct one, so it needed no exemption), and
+`normalize()` may not be re-implemented in `app/domain`. Add rules there, not
+assertions about dataclass plumbing.
 
 **`test_store_contract.py` is ONE spec run against EVERY implementation** —
-24 cases × (`MemoryBookStore`, `SqliteBookStore`) + 4 sqlite-specific. Adding
-an adapter (Postgres) means adding one line to `IMPLEMENTATIONS`; that is what
-makes D1's datastore choice a swap rather than a leap. It carries the
+now four aggregates (`BookStore`, `ShelfStore`, `ReadStore`, `DecisionStore` as
+of P2.5) × (`Memory*`, `Sqlite*`). Adding an adapter (Postgres) means adding
+one line per aggregate's `IMPLEMENTATIONS` tuple; that is what makes D1's
+datastore choice a swap rather than a leap. It carries the
 **tenant-isolation** suite too, already running against two library refs even
 though the app resolves one until pillar 3 — §4.2's "a foreign record reads as
 ABSENT" is a store property, and no route can answer 404-not-403 unless it
@@ -997,6 +1000,139 @@ are built only from captures that have an `image_id`; the router refuses to
 even submit a job if that list would be empty, because a read that silently
 produces zero claims looks like the engine failed, not like nothing was ever
 uploaded.
+
+## Reconciliation (P2.5)
+
+The item VISION §5.6 calls "the single biggest change from how the system
+behaves today": a shelf's book list is durable state, and a read is an event
+that *updates* it, never replaces it. `app/domain/reconcile.py`'s `reconcile`
+is the pure function — `(shelf, depth, claims, library_books, decisions) ->
+Diff` — and it is the highest-risk logic in the product for exactly the
+reason the plan names: it is the one place a silently-reversed rule deletes
+someone's books. It is comfortable to call an item rather than a project only
+because it is fully offline-testable — no store, no clock, no ids, milliseconds
+per case.
+
+**Signature note — why `library_books` is the WHOLE library, not just this
+location.** The plan's one-line summary undersells the inputs: §5.4's ask
+fires when a claimed book is already confirmed *somewhere else* in the
+library, so the pure function needs every book, keyed by `book_key`, not only
+this shelf's occupants. The caller (`app/api/routers/reads.py:_diff_for`)
+pays an honest O(library) `BookStore.list` scan per diff — the same trade
+`books.py`'s CSV export already makes with `EXPORT_MAX`, and the same one
+`app.domain.search` documents for its `LIKE` scan. Revisit if it is ever
+measured to cost something; guessing at a narrower query now would be
+premature.
+
+**The five buckets, and what `corrected` actually means.** VISION's table
+only literally distinguishes four outcomes (already-here / elsewhere-ask /
+not-in-library / previously-rejected) plus the not-seen rule; `corrected` is
+named in the plan (`+3 added · 1 corrected · 12 unchanged · 1 not seen`) but
+never defined. The call made here, and the one thing in this item VISION
+genuinely left open: **`corrected` is a REPLAYED §5.4 decision** — a claim
+whose (shelf, depth, book_key) was already answered by a human on an earlier
+read (`ALREADY_LISTED` or `ANOTHER_COPY`), applied automatically this time
+with no second prompt. It is a real, distinct thing from `unchanged` (the
+copy's location is actively being corrected/created, not merely reconfirmed)
+and from `needs_decision` (the question already has a standing answer). Once
+applied, the copy really does stand at this location, so the NEXT read of the
+same spot resolves as ordinary `unchanged` — `corrected` only fires once per
+decision, which is what makes the shelf-history line
+(`app/reconcile_apply.py`'s test suite proves this end to end) an honest count
+rather than one that grows forever.
+
+**`relink_copy` — a new domain operation, not a reuse of `observe`.**
+`observe()` deliberately never moves an already-located copy, even with an
+explicit `copy_id` (its own docstring: "adopting an unshelved copy is the
+only relink a read may perform") — a bare read's claim must never relocate a
+copy on its own say-so, because the claim alone might simply be wrong.
+§5.4's "already listed copy" answer is different: a HUMAN decision, stronger
+evidence, and it explicitly means *move it*. `app/domain/book.py:relink_copy`
+is that second, narrower door — same append-only/idempotent/never-demote
+shape as `observe`, but it WILL change `shelf_id`/`depth` on a copy that
+already has one. It does not construct a `Copy`, so it needed no exemption
+from `test_only_two_functions_in_the_domain_may_construct_a_copy`'s AST walk.
+Found by writing the first end-to-end apply test and watching a relink
+silently no-op — see "what a green domain ring can't catch" below.
+
+**`add_copy` gained an optional `provenance` param.** §5.4's "another copy"
+answer creates a copy that a read genuinely just observed (unlike P1.7's "I
+have another copy" button, which has no read behind it and still defaults to
+none). Threaded through, default `()`, so every existing call site is
+unaffected — `test_domain.py`'s AST walk still names `add_copy` as one of the
+two functions allowed to construct a `Copy`, unchanged.
+
+**Decisions are two different vocabularies, and `AnswerKind` keeps them
+separate on purpose.** `DecisionKind` (persisted) has four values —
+`REJECTED`, `WRONG_BOOK`, `ALREADY_LISTED`, `ANOTHER_COPY` — deliberately with
+**no `CONFIRMED`**: confirming a REVIEW-tier claim for a brand-new book
+*creates the Book*, and that Book's existence is already the durable record —
+a later read of the same spot resolves as `unchanged` without ever consulting
+a stored decision again. Only the SUPPRESSING answers need to persist,
+because nothing else remembers "no" on their behalf. `AnswerKind`
+(`app/reconcile_apply.py`, the API-facing vocabulary) has five —
+`CONFIRM`/`REJECT` for a `review_tier_new_book` claim,
+`ALREADY_LISTED`/`ANOTHER_COPY`/`WRONG_BOOK` for an `ambiguous_location`
+one — and `apply_diff` refuses a mismatched pairing (`CONFIRM` on an
+ambiguous claim, say) as a 400 rather than silently doing nothing or, worse,
+doing the wrong thing.
+
+**Where the rules live vs. where they execute.** `reconcile()` classifies —
+it decides the bucket and, for a replayed decision, which domain operation
+that implies — but it never mints an id, reads a clock, or calls
+`new_book`/`observe`/`add_copy`/`relink_copy` itself; doing so would need an
+`IdGen` and make it impure. `app/reconcile_apply.py` (a new top-level module,
+sibling to `domain`/`ports`/`adapters`/`api` — it needs BOTH `app.domain` and
+`app.ports`, and the plan says explicitly not `app/api`) is the thin layer
+that turns a classified `ClaimOutcome` into an actual write. "Keep the rules
+in the pure function; that part only persists" is the plan's own phrasing for
+the split, and it is why every rule test above lives in `test_domain.py`
+against `reconcile()` alone, with zero store involved.
+
+**`DecisionStore`** (`app/ports/decisions.py` + `MemoryDecisionStore` +
+`SqliteDecisionStore`, schema **v8**) is a fourth, independent port — same
+reasoning as every other split in `app.ports.store`: a decision can outlive
+the read that produced it and exist before the book it concerns is ever
+created (a `REJECTED` decision for a claim that never became a `Book`).
+Identity is `(library, shelf, depth, book_key)`, a composite PRIMARY KEY, so
+`save_decision` is a plain upsert — a human who changes their mind (rare, but
+possible once P2.6's queue exists) overwrites rather than accumulating a
+history nobody reads. `list_decisions(library, shelf_id, depth)` returns
+exactly the shape `reconcile()`'s caller needs, one call per read.
+
+**API**: `GET /shelves/{id}/reads/{read_id}/diff` (read-only, recomputed
+fresh every call — never cached, so "would this resolve differently now" is
+always a real, current answer) and `POST .../apply` (writes everything
+`reconcile()` already decided unconditionally, plus whatever `answers` the
+body supplies for still-open `needs_decision` claims; returns the diff
+RECOMPUTED after writing, so a resolved claim visibly leaves
+`needs_decision` in the same response that resolved it). Both 409 on a
+`RUNNING` read — applying against claims a background job could still be
+appending to would be writing provenance for a read the store might overwrite
+out from under it (H2/§1.3's concurrency concern, one layer up from the job
+runner itself).
+
+**Deliberately deferred, and named so they are not mistaken for gaps:**
+  - **not-seen streak counting.** `Diff.not_seen` reports THIS read's facts
+    only; persisting a count across several reads and surfacing "not seen in
+    the last 3 reads" softly is P2.8's, which has the read archive to count
+    from. `apply_diff` writes nothing for a `not_seen` entry — asserted
+    directly (`test_not_seen_entries_are_never_written_anywhere`), not just
+    assumed from the absence of a call site;
+  - **the "duplicates to resolve" queue.** `needs_decision` is a snapshot of
+    ONE read's open asks; an entry with no matching `Answer` simply stays
+    open and reappears next time the diff is asked for. Making it durable and
+    filterable on the Books tab, independent of any one read, is P2.6's item.
+
+**What a green domain ring can't catch, again.** The first version of
+`app.reconcile_apply`'s "already listed" path called `observe()` (matching
+`unchanged`'s path) instead of the new `relink_copy()`. Every `reconcile()`
+test still passed — the pure function only classifies, it never checked
+whether an outcome, once EXECUTED, actually changed anything — and the bug
+only surfaced when an end-to-end apply test asserted the copy's `shelf_id`
+after the write. Recorded because it is the same shape of lesson
+P1.6/P1.7 already logged twice: a ring that cannot see the full round trip
+is not proof the round trip works.
 
 ## Author sort, and why it needed a schema version
 

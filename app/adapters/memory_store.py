@@ -12,7 +12,7 @@ frozen, so there is nothing to defensively copy.
 """
 from __future__ import annotations
 
-from app.domain import Book, Capture, LibraryRef, Read, Shelf, Status
+from app.domain import Book, Capture, Decision, LibraryRef, Read, Shelf, Status
 from app.domain.search import parse
 from app.domain.search import search as domain_search
 from app.ports.store import (
@@ -253,6 +253,48 @@ class MemoryReadStore:
         # the SQL adapter's ORDER BY exactly, so the two cannot disagree.
         rows.sort(key=lambda r: (r.started_at or "", r.id), reverse=True)
         return tuple(rows)
+
+
+class MemoryDecisionStore:
+    """Implements ``app.ports.decisions.DecisionStore`` (P2.5).
+
+    Same role as the other memory stores: the API ring's store, and the
+    second implementation that turns the decision contract into a spec.
+    """
+
+    def __init__(self) -> None:
+        self._by_library: dict[str, dict[tuple[str, int, str], Decision]] = {}
+
+    def _d(self, library: LibraryRef) -> dict[tuple[str, int, str], Decision]:
+        return self._by_library.setdefault(library.id, {})
+
+    def save_decision(self, library: LibraryRef, decision: Decision) -> None:
+        if decision.library_id != library.id:
+            raise WrongLibrary(
+                f"decision for {decision.book_key!r} belongs to "
+                f"{decision.library_id!r}, not {library.id!r}"
+            )
+        key = (decision.shelf_id, decision.depth, decision.book_key)
+        self._d(library)[key] = decision
+
+    def get_decision(
+        self, library: LibraryRef, shelf_id: str, depth: int, book_key: str,
+    ) -> Decision | None:
+        return self._d(library).get((shelf_id, depth, book_key))
+
+    def list_decisions(
+        self, library: LibraryRef, shelf_id: str, depth: int,
+    ) -> tuple[Decision, ...]:
+        rows = [d for d in self._d(library).values()
+                if d.shelf_id == shelf_id and d.depth == depth]
+        rows.sort(key=lambda d: d.book_key)
+        return tuple(rows)
+
+    def delete_decision(
+        self, library: LibraryRef, shelf_id: str, depth: int, book_key: str,
+    ) -> bool:
+        key = (shelf_id, depth, book_key)
+        return self._d(library).pop(key, None) is not None
 
 
 def _any_copy_out(book: Book) -> bool:

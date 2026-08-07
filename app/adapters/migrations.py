@@ -295,6 +295,41 @@ CREATE TABLE claims (
 CREATE INDEX claims_of_read ON claims (read_id, position);
 """
 
+# --- v8: reconciliation decisions (P2.5, §5.4/§5.6) -----------------------
+#
+# One human answer, keyed by exactly where it was asked: (library, shelf,
+# depth, book_key) IS the identity — not a surrogate id, because that quadruple
+# is also every lookup this table ever serves (`reconcile()` asks "what was
+# decided HERE", never "what was decision #N"). The composite PRIMARY KEY
+# is what makes `save_decision` a plain upsert (INSERT ... ON CONFLICT) rather
+# than a select-then-branch: a human changing their mind overwrites the row
+# instead of accumulating a history nobody reads.
+#
+# Pure SQL, no backfill: this is a brand-new feature (P2.5), so no row
+# anywhere predates it — same shape as v4's `lent_out` and v7's reads/claims.
+#
+# `book_key`, not a book id: §5.6's "previously rejected HERE" must survive
+# a claim that never became a `Book` at all (the whole point of REJECTED), and
+# `Book.key` is exactly the identity `reconcile()` already computes per claim
+# — reusing it means this table needs no join back to `books` to be useful.
+_V8 = """
+CREATE TABLE decisions (
+    library_id  TEXT NOT NULL,
+    shelf_id    TEXT NOT NULL,
+    depth       INTEGER NOT NULL,
+    book_key    TEXT NOT NULL,
+    kind        TEXT NOT NULL,        -- rejected | wrong_book | already_listed | another_copy
+    copy_id     TEXT,
+    decided_at  TEXT,
+    PRIMARY KEY (library_id, shelf_id, depth, book_key)
+);
+
+-- Leads with library_id like every other table (H2); shelf_id and depth
+-- follow because "every decision at this (shelf, depth)" is the only query
+-- `reconcile()`'s caller ever runs against this table.
+CREATE INDEX decisions_by_shelf ON decisions (library_id, shelf_id, depth);
+"""
+
 # A step is either SQL to execute or a callable to run — both inside the same
 # once-only transaction. Callables exist because a derived column whose rule
 # lives in the domain must be backfilled BY that rule, not by a re-statement
@@ -307,6 +342,7 @@ MIGRATIONS: tuple[tuple[int, str | Step], ...] = (
     (5, _V5),
     (6, _V6),
     (7, _V7),
+    (8, _V8),
 )
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]

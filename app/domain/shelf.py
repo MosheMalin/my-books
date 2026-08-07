@@ -48,7 +48,8 @@ class UnknownDepth(DomainError):
 
     §5.7: depth is declared, never detected. Accepting a capture at depth 3 of
     a shelf the owner said is one row deep would invent a location that has no
-    counterpart in the room — and P2.3 would then reconcile against it.
+    counterpart in the room — and P2.5's reconciliation would then compare
+    against it.
     """
 
 

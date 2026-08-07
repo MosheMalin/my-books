@@ -18,6 +18,7 @@ from fastapi import Depends
 from app.domain import LibraryRef
 from app.ports import Clock, IdGen, Principal
 from app.ports.blobs import BlobStore
+from app.ports.decisions import DecisionStore
 from app.ports.jobs import JobRunner
 from app.ports.reader import Reader
 from app.ports.store import BookStore, ReadStore, ShelfStore
@@ -58,6 +59,10 @@ def get_blob_store() -> BlobStore:
 
 def get_read_store() -> ReadStore:
     raise RuntimeError("no ReadStore bound; build the app via create_app")
+
+
+def get_decision_store() -> DecisionStore:
+    raise RuntimeError("no DecisionStore bound; build the app via create_app")
 
 
 def get_reader() -> Reader:
