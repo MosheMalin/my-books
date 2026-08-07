@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { App } from './App'
+import { App, type Overview } from './App'
 import type { Meta } from './api/client'
 
 /**
@@ -18,12 +18,18 @@ const meta: Meta = {
   api_version: 'v1',
   library: { id: 'lib-test', label: 'ספרייה לבדיקה' },
 }
+const overview: Overview = { meta, bookCount: 251 }
 
 describe('App', () => {
   it('renders the library resolved by the server', async () => {
-    render(<App load={async () => meta} />)
+    render(<App load={async () => overview} />)
     expect(await screen.findByText('ספרייה לבדיקה')).toBeInTheDocument()
     expect(screen.getByText(/booksnap 0\.1\.0 · API v1/)).toBeInTheDocument()
+  })
+
+  it('shows the book count the API reported, not a hardcoded one', async () => {
+    render(<App load={async () => overview} />)
+    expect(await screen.findByText('251 ספרים')).toBeInTheDocument()
   })
 
   it('shows an error instead of a blank page when the API is down', async () => {

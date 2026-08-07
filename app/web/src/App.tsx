@@ -1,15 +1,30 @@
 import { useEffect, useState } from 'react'
-import { getMeta, type Meta } from './api/client'
+import { getMeta, listBooks, type Meta } from './api/client'
 import './App.css'
+
+/** What the placeholder page needs: who we are, and how many books exist. */
+export interface Overview {
+  meta: Meta
+  bookCount: number
+}
+
+const loadOverview = async (): Promise<Overview> => {
+  const [meta, page] = await Promise.all([
+    getMeta(),
+    // limit=1: the count comes from `total`, so the page itself is waste.
+    listBooks({ query: { limit: 1 } }),
+  ])
+  return { meta, bookCount: page.total }
+}
 
 type State =
   | { status: 'loading' }
-  | { status: 'ready'; meta: Meta }
+  | { status: 'ready'; overview: Overview }
   | { status: 'error'; message: string }
 
 export interface AppProps {
   /** Injected in tests. Production uses the real typed client. */
-  load?: () => Promise<Meta>
+  load?: () => Promise<Overview>
 }
 
 /**
@@ -22,13 +37,13 @@ export interface AppProps {
  * every screen from here on talks to a real API and "it showed nothing" is
  * the failure mode a mock-backed UI never teaches you to handle.
  */
-export function App({ load = getMeta }: AppProps) {
+export function App({ load = loadOverview }: AppProps) {
   const [state, setState] = useState<State>({ status: 'loading' })
 
   useEffect(() => {
     let live = true
     load()
-      .then((meta) => live && setState({ status: 'ready', meta }))
+      .then((overview) => live && setState({ status: 'ready', overview }))
       .catch((err: unknown) =>
         live &&
         setState({
@@ -52,9 +67,14 @@ export function App({ load = getMeta }: AppProps) {
       )}
       {state.status === 'ready' && (
         <section aria-label="library">
-          <p className="library">{state.meta.library.label}</p>
+          <p className="library">{state.overview.meta.library.label}</p>
+          {/* Placeholder, replaced wholesale by the Books tab in P1.6
+              (UI_PLAN §2). It is here so P1.4's endpoint is verifiable in a
+              browser and not only under TestClient. */}
+          <p className="count">{state.overview.bookCount} ספרים</p>
           <p className="build">
-            {state.meta.app} {state.meta.version} · API {state.meta.api_version}
+            {state.overview.meta.app} {state.overview.meta.version} · API{' '}
+            {state.overview.meta.api_version}
           </p>
         </section>
       )}

@@ -17,21 +17,49 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from app import API_PREFIX, __version__
-from app.api.deps import get_principal
-from app.api.routers import meta
-from app.ports import Principal
+from app.api.deps import get_book_store, get_clock, get_id_gen, get_principal
+from app.api.routers import books, meta
+from app.ports import Clock, IdGen, Principal
+from app.ports.store import BookStore
 
 API_TITLE = "booksnap product API"
 
 
+def _always(value):
+    """A zero-argument provider returning ``value``.
+
+    Must take NO parameters. The obvious ``lambda v=value: v`` is a trap:
+    FastAPI analyses a dependency's signature and treats a defaulted parameter
+    as a field to resolve, which runs the default through pydantic — and
+    pydantic DEEP-COPIES mutable defaults. The endpoint then receives a *copy*
+    of the store, so every write lands in a throwaway object, every read looks
+    right, and nothing ever persists. Reads pass, writes silently vanish.
+    """
+
+    def provide():
+        return value
+
+    return provide
+
+
 def create_app(
     principal_provider: Callable[[], Principal],
+    book_store: BookStore | None = None,
+    clock: Clock | None = None,
+    id_gen: IdGen | None = None,
     web_dist: Path | None = None,
 ) -> FastAPI:
     """Build the product API.
 
+    Takes PORTS, never adapters (H1) — ``app/main.py`` decides which
+    implementation satisfies each, and the layering test enforces that this
+    module never imports one.
+
     :param principal_provider: request-scoped identity; FastAPI may inject
         request state into it, so it follows the normal dependency rules.
+    :param book_store: persistence. Optional only so a caller that just wants
+        the OpenAPI document doesn't have to build one; a route that needs it
+        without it bound fails loudly rather than serving nothing.
     :param web_dist: built client assets to serve in production. ``None`` in
         dev, where Vite serves the client and proxies ``/api`` here.
     """
@@ -45,7 +73,13 @@ def create_app(
         redoc_url=None,
     )
     app.include_router(meta.router, prefix=API_PREFIX)
+    app.include_router(books.router, prefix=API_PREFIX)
+
     app.dependency_overrides[get_principal] = principal_provider
+    for dep, impl in ((get_book_store, book_store), (get_clock, clock),
+                      (get_id_gen, id_gen)):
+        if impl is not None:
+            app.dependency_overrides[dep] = _always(impl)
 
     # Static client last: mounting at "/" first would shadow the API routes.
     # Same ordering hazard as booksnap/server.py:1018.

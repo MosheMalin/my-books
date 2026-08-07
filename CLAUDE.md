@@ -70,6 +70,8 @@ app/
     migrations.py    versioned schema via PRAGMA user_version (H6)
     legacy_import.py work/*.json -> entities; I/O and PURE mapping split
   api/          FastAPI routers under /api/v1 + DTOs. THIN — no rules
+    routers/meta.py   service + library identity
+    routers/books.py  list / get / patch / delete / manual add / export
   api/openapi.json          committed contract, regenerated, never hand-edited
   main.py       the composition root — the ONE file allowed to cross layers
   web/          React + Vite + TS client; talks only to /api/v1
@@ -80,6 +82,21 @@ Two applications coexist through pillars 1–2, by design (plan H1/D2,
 on `:8757` `/api/v1/*`. Run the product with
 `uvicorn app.main:app --port 8757`; in dev, `npm --prefix app/web run dev`
 serves the client on `:5173` and proxies `/api` to it.
+
+The product database is `work/product.db` (override with `BOOKSNAP_DB`;
+defaults under `BOOKSNAP_WORK`). It is a **different file from the tuning
+server's `store.json`** — the product never writes into the run archive, and
+the run archive is not the product's source of truth. Populate it with
+`python tools/import_legacy.py --db work/product.db`.
+
+⚠ **Bind a port with a zero-argument closure, never `lambda v=value: v`.**
+FastAPI analyses a dependency's signature and treats a defaulted parameter as
+a field to resolve, which runs the default through pydantic — and pydantic
+DEEP-COPIES mutable defaults. Every endpoint then gets a *copy* of the store:
+reads look perfect, writes silently vanish. `app/api/app.py:_always` is the
+correct form, and `test_a_write_through_the_api_reaches_the_real_store` is the
+only test that catches it (every other assertion reads back through the same
+request-scoped copy and passes).
 
 Rules that are enforced mechanically, not by intention
 (`tests/test_layering.py`, `tests/test_api.py`):
@@ -475,9 +492,9 @@ names to run a subset (`python tests/run_all.py test_api`).
 | `test_store_contract.py` | 52 | one store spec × every implementation + isolation |
 | `test_legacy_import.py` | 21 | `work/*.json` → entities, against a committed fixture |
 | `test_layering.py` | 9 | the one-way import rules (plan H1) |
-| `test_api.py` | 9 | `/api/v1` shapes + the versioning/tenancy meta-tests |
+| `test_api.py` | 26 | `/api/v1` shapes + the versioning/tenancy meta-tests |
 
-189 total as of P1.3. No pytest dependency, deliberately — the repo has never
+206 total as of P1.4. No pytest dependency, deliberately — the repo has never
 had one and the accuracy gate runs on bare python. Counts grow with each run's
 fixes; SESSION_NOTES.md tracks the history.
 

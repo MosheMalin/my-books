@@ -1,6 +1,318 @@
 {
   "components": {
     "schemas": {
+      "BookCreate": {
+        "description": "Add a book the reader never found. Lands as ``manual`` with one copy.",
+        "properties": {
+          "author": {
+            "default": "",
+            "title": "Author",
+            "type": "string"
+          },
+          "title": {
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "title": "BookCreate",
+        "type": "object"
+      },
+      "BookDTO": {
+        "description": "A book and its copies.\n\nCopies are embedded in the LIST response, not fetched per row. With one\ncopy per book on the real data that is roughly a 2x payload, and the\nalternative — the book surface firing a request per card (UI_PLAN §5) —\nis far worse. Revisit if a library ever has many multi-copy books.",
+        "properties": {
+          "added_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Added At"
+          },
+          "author": {
+            "default": "",
+            "title": "Author",
+            "type": "string"
+          },
+          "author_key": {
+            "description": "Normalized author, the key the author chip groups on (§5.1 — authors are strings, not entities).",
+            "title": "Author Key",
+            "type": "string"
+          },
+          "copies": {
+            "items": {
+              "$ref": "#/components/schemas/CopyDTO"
+            },
+            "title": "Copies",
+            "type": "array"
+          },
+          "copy_count": {
+            "title": "Copy Count",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "shared_book_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shared Book Id"
+          },
+          "status": {
+            "description": "auto | approved | manual — the strongest claim among this book's copies.",
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "work": {
+            "$ref": "#/components/schemas/WorkFieldsDTO"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "author_key",
+          "status",
+          "copy_count",
+          "work",
+          "copies"
+        ],
+        "title": "BookDTO",
+        "type": "object"
+      },
+      "BookPageDTO": {
+        "description": "One page plus the total, so the client can render \"1-20 of 251\"\nwithout a second round trip.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/BookDTO"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "offset",
+          "limit"
+        ],
+        "title": "BookPageDTO",
+        "type": "object"
+      },
+      "BookPatch": {
+        "description": "Fix a title or an author by hand. Either field, or both.\n\nSaving marks the book ``manual`` — a human decision outranking an auto one\n(UI_PLAN §5). That is applied by the domain, not here.",
+        "properties": {
+          "author": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "BookPatch",
+        "type": "object"
+      },
+      "BookSort": {
+        "description": "Sort orders §6 lists as \"Must\". ``TITLE``/``AUTHOR`` sort by the\nNORMALIZED forms, so Hebrew orders sensibly regardless of nikud, geresh or\na leading particle in the stored string.",
+        "enum": [
+          "title",
+          "author",
+          "recently_added"
+        ],
+        "title": "BookSort",
+        "type": "string"
+      },
+      "CopyDTO": {
+        "description": "One physical object. Created only by a human action (§5.1).",
+        "properties": {
+          "acquired_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acquired At"
+          },
+          "condition": {
+            "default": "",
+            "title": "Condition",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "default": "",
+            "title": "Label",
+            "type": "string"
+          },
+          "last_seen": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SightingDTO"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Most recent provenance entry, if any."
+          },
+          "lending": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LendingDTO"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "shelf_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shelf Id"
+          },
+          "sighting_count": {
+            "description": "Length of the provenance list; the list itself is on the book detail, not in every row.",
+            "title": "Sighting Count",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "sighting_count"
+        ],
+        "title": "CopyDTO",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "LendingDTO": {
+        "description": "Per copy, never per book — you lend an object, not a work.",
+        "properties": {
+          "due_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At"
+          },
+          "is_out": {
+            "description": "Derived: no returned_at yet.",
+            "title": "Is Out",
+            "type": "boolean"
+          },
+          "lent_at": {
+            "title": "Lent At",
+            "type": "string"
+          },
+          "lent_to": {
+            "title": "Lent To",
+            "type": "string"
+          },
+          "returned_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Returned At"
+          }
+        },
+        "required": [
+          "lent_to",
+          "lent_at",
+          "is_out"
+        ],
+        "title": "LendingDTO",
+        "type": "object"
+      },
       "LibraryRefDTO": {
         "description": "The tenant reference the client echoes back on every request.\n\nPresent from the very first endpoint on purpose: the client is\ntenant-aware from P1.0 (§1.3), even though there is exactly one library\nuntil pillar 3.",
         "properties": {
@@ -23,7 +335,7 @@
         "type": "object"
       },
       "MetaResponse": {
-        "description": "Service identity + the caller's resolved library.\n\nThe one endpoint P1.0 ships. It carries no domain data — its job is to\nprove the whole path end to end: principal -> library -> DTO -> OpenAPI\nschema -> generated TS type -> typed fetch in a React component.",
+        "description": "Service identity + the caller's resolved library.",
         "properties": {
           "api_version": {
             "description": "API major version, e.g. 'v1'.",
@@ -53,6 +365,132 @@
         ],
         "title": "MetaResponse",
         "type": "object"
+      },
+      "SightingDTO": {
+        "description": "One entry of a copy's append-only provenance (§5.2).",
+        "properties": {
+          "captured_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Captured At"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "shelf_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Null until the map exists (§1.1) — the UI hides it.",
+            "title": "Shelf Id"
+          },
+          "spine_id": {
+            "title": "Spine Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "spine_id"
+        ],
+        "title": "SightingDTO",
+        "type": "object"
+      },
+      "Status": {
+        "description": "auto < approved < manual.\n\n``auto``      the pipeline claimed it at AUTO tier and nobody has looked;\n``approved``  a human confirmed the claim;\n``manual``    a human typed or corrected it.\n\nOrdering matters because it is the whole content of \"a human decision\noutranks an auto one\" (`booksnap/library.py::add_book`, VISION §5.6).",
+        "enum": [
+          "auto",
+          "approved",
+          "manual"
+        ],
+        "title": "Status",
+        "type": "string"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "WorkFieldsDTO": {
+        "description": "Book-level user fields. You don't rate your second copy differently.",
+        "properties": {
+          "notes": {
+            "default": "",
+            "title": "Notes",
+            "type": "string"
+          },
+          "rating": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rating"
+          },
+          "read_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Read Status"
+          }
+        },
+        "title": "WorkFieldsDTO",
+        "type": "object"
       }
     }
   },
@@ -62,6 +500,327 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/books": {
+      "get": {
+        "operationId": "list_books_api_v1_books_get",
+        "parameters": [
+          {
+            "description": "title / author sort on the NORMALIZED forms, so Hebrew orders sensibly.",
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/BookSort",
+              "default": "title",
+              "description": "title / author sort on the NORMALIZED forms, so Hebrew orders sensibly."
+            }
+          },
+          {
+            "in": "query",
+            "name": "ascending",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Ascending",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/Status"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "description": "Normalized author, from a book's author_key.",
+            "in": "query",
+            "name": "author_key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Normalized author, from a book's author_key.",
+              "title": "Author Key"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookPageDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List books",
+        "tags": [
+          "books"
+        ]
+      },
+      "post": {
+        "description": "A book the reader never found. Lands as ``manual`` — a person typed it,\nwhich is the strongest evidence the system gets.",
+        "operationId": "create_book_api_v1_books_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BookCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add a book by hand",
+        "tags": [
+          "books"
+        ]
+      }
+    },
+    "/api/v1/books/export": {
+      "get": {
+        "description": "The honest answer to lock-in (§6): everything, in one file, always.\n\nCSV is written with a UTF-8 BOM. Without it Excel opens a Hebrew CSV as\nmojibake, and \"my export is broken\" is indistinguishable from \"your data\nis broken\".",
+        "operationId": "export_books_api_v1_books_export_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "format",
+            "required": false,
+            "schema": {
+              "default": "csv",
+              "pattern": "^(csv|json)$",
+              "title": "Format",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Export the whole library (CSV or JSON)",
+        "tags": [
+          "books"
+        ]
+      }
+    },
+    "/api/v1/books/{book_id}": {
+      "delete": {
+        "description": "*Delete from the library* — the destructive one of UI_PLAN §5's two\nactions. *Remove from shelf* is a different thing entirely and does not\nlive here; it changes a copy, it does not remove a record.",
+        "operationId": "delete_book_api_v1_books__book_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "book_id",
+            "required": true,
+            "schema": {
+              "title": "Book Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete from the library (every copy)",
+        "tags": [
+          "books"
+        ]
+      },
+      "get": {
+        "operationId": "get_book_api_v1_books__book_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "book_id",
+            "required": true,
+            "schema": {
+              "title": "Book Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "One book",
+        "tags": [
+          "books"
+        ]
+      },
+      "patch": {
+        "description": "Editing marks the book ``manual`` (UI_PLAN §5). The domain applies\nthat; this route only decides what an unresolvable rename returns.",
+        "operationId": "patch_book_api_v1_books__book_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "book_id",
+            "required": true,
+            "schema": {
+              "title": "Book Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BookPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Fix the title or author",
+        "tags": [
+          "books"
+        ]
+      }
+    },
     "/api/v1/meta": {
       "get": {
         "operationId": "get_meta_api_v1_meta_get",

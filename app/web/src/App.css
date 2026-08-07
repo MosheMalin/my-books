@@ -27,6 +27,12 @@ body {
   margin: 0.5rem 0 0;
 }
 
+.count {
+  font-size: 1rem;
+  opacity: 0.75;
+  margin: 0.25rem 0 1rem;
+}
+
 .build {
   /* Latin text inside an RTL document: pin its direction so the version
      string doesn't get reordered (UI_PLAN §7.2 mixed-script alignment). */

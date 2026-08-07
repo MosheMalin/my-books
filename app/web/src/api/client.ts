@@ -34,6 +34,8 @@ export type GetResponse<P extends ApiPath> = paths[P] extends {
   : never
 
 export type Meta = GetResponse<'/api/v1/meta'>
+export type BookPage = GetResponse<'/api/v1/books'>
+export type Book = BookPage['items'][number]
 
 /**
  * A library reference travels with every request (§1.3), even though there is
@@ -45,6 +47,19 @@ export interface ApiOptions {
   libraryId?: string | undefined
   fetchImpl?: typeof fetch | undefined
   signal?: AbortSignal | undefined
+  /** Query parameters. Kept separate from the path so the path stays a
+   *  literal the generated types can key on. */
+  query?: Record<string, string | number | boolean | undefined> | undefined
+}
+
+function withQuery(path: string, query: ApiOptions['query']): string {
+  if (!query) return path
+  const params = new URLSearchParams()
+  for (const [k, v] of Object.entries(query)) {
+    if (v !== undefined) params.set(k, String(v))
+  }
+  const qs = params.toString()
+  return qs ? `${path}?${qs}` : path
 }
 
 export async function apiGet<P extends ApiPath>(
@@ -55,7 +70,8 @@ export async function apiGet<P extends ApiPath>(
   const headers: Record<string, string> = { Accept: 'application/json' }
   if (opts.libraryId) headers['X-Booksnap-Library'] = opts.libraryId
 
-  const res = await doFetch(path, {
+  const url = withQuery(path, opts.query)
+  const res = await doFetch(url, {
     headers,
     ...(opts.signal ? { signal: opts.signal } : {}),
   })
@@ -67,3 +83,6 @@ export async function apiGet<P extends ApiPath>(
 
 export const getMeta = (opts?: ApiOptions): Promise<Meta> =>
   apiGet('/api/v1/meta', opts)
+
+export const listBooks = (opts?: ApiOptions): Promise<BookPage> =>
+  apiGet('/api/v1/books', opts)

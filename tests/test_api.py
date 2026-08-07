@@ -27,11 +27,28 @@ from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from app import API_PREFIX, __version__
+from app.adapters.memory_store import MemoryBookStore
 from app.api import deps
 from app.api.app import create_app
-from app.domain import LibraryRef
+from app.domain import LibraryRef, Status, new_book
 
 TEST_LIBRARY = LibraryRef(id="lib-test", label="Test library")
+
+
+class StubClock:
+    def now_iso(self) -> str:
+        return "2026-08-07T12:00:00+00:00"
+
+
+class SeqIdGen:
+    """Deterministic ids, so a test can name what it just created."""
+
+    def __init__(self) -> None:
+        self._n = 0
+
+    def new_id(self) -> str:
+        self._n += 1
+        return f"id-{self._n}"
 
 
 class StubPrincipal:
@@ -50,9 +67,27 @@ class StubPrincipal:
         return self._library
 
 
-def _app(principal: StubPrincipal | None = None):
+def _app(principal: StubPrincipal | None = None, store=None):
     p = principal or StubPrincipal()
-    return create_app(principal_provider=lambda: p)
+    return create_app(
+        principal_provider=lambda: p,
+        book_store=store if store is not None else MemoryBookStore(),
+        clock=StubClock(),
+        id_gen=SeqIdGen(),
+    )
+
+
+def _seed(store, library: LibraryRef, *titles: str, status=Status.AUTO,
+          author: str = "פול קארני"):
+    """Ids continue from what is already there, so two _seed calls in one test
+    don't overwrite each other — the first book is always b1."""
+    base = store.count(library)
+    for i, title in enumerate(titles, start=base + 1):
+        store.save(library, new_book(
+            id=f"b{i}", library_id=library.id, title=title,
+            author=author, copy_id=f"c{i}", status=status,
+            added_at="2026-01-01T00:00:00+00:00",
+        ))
 
 
 def _api_routes(app) -> list[tuple[str, APIRoute]]:
@@ -97,6 +132,193 @@ def test_meta_follows_the_principal_not_a_global():
         b = c2.get(f"{API_PREFIX}/meta").json()
     assert a["library"]["id"] == "lib-test"
     assert b["library"]["id"] == "lib-other"
+
+
+# --- books: the P1.4 surface ---------------------------------------------
+
+def test_a_write_through_the_api_reaches_the_real_store():
+    """The bug this exists for: binding a port with ``lambda v=value: v`` gives
+    the provider a defaulted PARAMETER, FastAPI treats it as a field to
+    resolve, and pydantic DEEP-COPIES mutable defaults. Every endpoint then
+    gets a copy of the store — reads look perfect and writes vanish. Nothing
+    else in this file catches it, because every other assertion reads back
+    through the same request-scoped copy.
+    """
+    store = MemoryBookStore()
+    with TestClient(_app(store=store)) as client:
+        created = client.post(f"{API_PREFIX}/books",
+                              json={"title": "ספר", "author": "מחבר"}).json()
+    assert store.get(TEST_LIBRARY, created["id"]) is not None, \
+        "the API served a copy of the store; the write was discarded"
+
+
+def test_lists_books_with_paging_and_a_total():
+    store = MemoryBookStore()
+    _seed(store, TEST_LIBRARY, "גדר", "אבן", "בית")
+    with TestClient(_app(store=store)) as client:
+        body = client.get(f"{API_PREFIX}/books?limit=2").json()
+    assert [b["title"] for b in body["items"]] == ["אבן", "בית"]
+    assert body["total"] == 3 and body["limit"] == 2 and body["offset"] == 0
+
+
+def test_list_rejects_an_unbounded_limit():
+    """A client asking for everything must not be able to page the server out
+    of memory by accident."""
+    with TestClient(_app()) as client:
+        assert client.get(f"{API_PREFIX}/books?limit=100000").status_code == 422
+
+
+def test_list_filters_by_status():
+    store = MemoryBookStore()
+    _seed(store, TEST_LIBRARY, "אבן")
+    _seed(store, TEST_LIBRARY, "בית", status=Status.MANUAL)
+    with TestClient(_app(store=store)) as client:
+        assert [b["title"] for b in
+                client.get(f"{API_PREFIX}/books?status=auto").json()["items"]] \
+            == ["אבן"]
+        assert [b["title"] for b in
+                client.get(f"{API_PREFIX}/books?status=manual").json()["items"]] \
+            == ["בית"]
+
+
+def test_list_filters_by_author_key():
+    """The author chip is a grouping over NORMALIZED strings (§5.1), so the
+    key round-trips: a book's ``author_key`` is what you filter with, and a
+    differently-spelled-but-equal name comes back with it."""
+    store = MemoryBookStore()
+    _seed(store, TEST_LIBRARY, "אבן", "בית", author="ג'ראלד דארל")
+    _seed(store, TEST_LIBRARY, "גדר", author="אסימוב")
+    with TestClient(_app(store=store)) as client:
+        key = client.get(f"{API_PREFIX}/books/b1").json()["author_key"]
+        page = client.get(f"{API_PREFIX}/books", params={"author_key": key}).json()
+    assert [b["title"] for b in page["items"]] == ["אבן", "בית"]
+    assert page["total"] == 2
+
+
+def test_get_returns_the_book_with_its_copies():
+    store = MemoryBookStore()
+    _seed(store, TEST_LIBRARY, "אבן")
+    with TestClient(_app(store=store)) as client:
+        body = client.get(f"{API_PREFIX}/books/b1").json()
+    assert body["copy_count"] == 1 and len(body["copies"]) == 1
+    assert body["copies"][0]["shelf_id"] is None  # §1.1, until the map
+
+
+def test_patch_marks_the_book_manual_and_persists():
+    store = MemoryBookStore()
+    _seed(store, TEST_LIBRARY, "אבן")
+    with TestClient(_app(store=store)) as client:
+        body = client.patch(f"{API_PREFIX}/books/b1",
+                            json={"title": "אבן מתוקנת"}).json()
+    assert body["title"] == "אבן מתוקנת"
+    assert body["status"] == "manual", "an edit did not outrank the auto claim"
+    assert store.get(TEST_LIBRARY, "b1").title == "אבן מתוקנת"
+
+
+def test_patch_with_no_fields_is_a_400_not_a_silent_no_op():
+    store = MemoryBookStore()
+    _seed(store, TEST_LIBRARY, "אבן")
+    with TestClient(_app(store=store)) as client:
+        assert client.patch(f"{API_PREFIX}/books/b1", json={}).status_code == 400
+
+
+def test_renaming_onto_a_book_you_already_own_is_a_409():
+    """A real case — fixing a misread title to one you own. Resolving it is a
+    decision (merge? keep both?), so the API refuses rather than defaulting."""
+    store = MemoryBookStore()
+    _seed(store, TEST_LIBRARY, "אבן", "בית")
+    with TestClient(_app(store=store)) as client:
+        r = client.patch(f"{API_PREFIX}/books/b2", json={"title": "אבן"})
+    assert r.status_code == 409
+    assert store.get(TEST_LIBRARY, "b2").title == "בית", "the refused edit stuck"
+
+
+def test_manual_add_lands_as_manual_with_one_copy():
+    with TestClient(_app()) as client:
+        r = client.post(f"{API_PREFIX}/books",
+                        json={"title": "  ספר ידני  ", "author": " מחבר "})
+    assert r.status_code == 201
+    body = r.json()
+    assert body["title"] == "ספר ידני", "whitespace was not trimmed"
+    assert body["status"] == "manual" and body["copy_count"] == 1
+    assert body["added_at"] == "2026-08-07T12:00:00+00:00"
+
+
+def test_manual_add_of_a_book_you_own_is_a_409():
+    store = MemoryBookStore()
+    _seed(store, TEST_LIBRARY, "אבן")
+    with TestClient(_app(store=store)) as client:
+        r = client.post(f"{API_PREFIX}/books",
+                        json={"title": "אבן", "author": "פול קארני"})
+    assert r.status_code == 409
+
+
+def test_delete_removes_from_the_library_and_is_not_idempotent_about_it():
+    store = MemoryBookStore()
+    _seed(store, TEST_LIBRARY, "אבן")
+    with TestClient(_app(store=store)) as client:
+        assert client.delete(f"{API_PREFIX}/books/b1").status_code == 204
+        assert client.delete(f"{API_PREFIX}/books/b1").status_code == 404
+    assert store.count(TEST_LIBRARY) == 0
+
+
+def test_export_is_reachable_and_not_swallowed_by_the_id_route():
+    """/books/export is declared BEFORE /books/{book_id}. Registered the other
+    way round, "export" arrives as a book id and 404s — invisible until
+    someone clicks Export."""
+    store = MemoryBookStore()
+    _seed(store, TEST_LIBRARY, "אבן")
+    with TestClient(_app(store=store)) as client:
+        assert client.get(f"{API_PREFIX}/books/export").status_code == 200
+
+
+def test_csv_export_carries_a_bom_so_excel_reads_hebrew():
+    """Without it Excel shows mojibake, and "my export is broken" becomes
+    indistinguishable from "your data is broken"."""
+    store = MemoryBookStore()
+    _seed(store, TEST_LIBRARY, "אבן", "בית")
+    with TestClient(_app(store=store)) as client:
+        r = client.get(f"{API_PREFIX}/books/export?format=csv")
+    assert r.status_code == 200
+    assert r.content.startswith(b"\xef\xbb\xbf")
+    assert "attachment" in r.headers["content-disposition"]
+    text = r.content.decode("utf-8-sig")
+    assert text.splitlines()[0].startswith("title,author,status")
+    assert "אבן" in text and "בית" in text
+
+
+def test_export_is_the_whole_library_not_a_page():
+    """An export that stops at page 1 is worse than no export — it looks
+    complete."""
+    store = MemoryBookStore()
+    _seed(store, TEST_LIBRARY, *[f"ספר {i:03d}" for i in range(1, 121)])
+    with TestClient(_app(store=store)) as client:
+        rows = client.get(f"{API_PREFIX}/books/export?format=csv") \
+            .content.decode("utf-8-sig").strip().splitlines()
+        data = client.get(f"{API_PREFIX}/books/export?format=json").json()
+    assert len(rows) == 121, "header + 120 books"
+    assert len(data["books"]) == 120
+
+
+def test_export_rejects_an_unknown_format():
+    with TestClient(_app()) as client:
+        assert client.get(
+            f"{API_PREFIX}/books/export?format=pdf").status_code == 422
+
+
+def test_a_book_in_another_library_is_404_not_403():
+    """§4.2 / P3.3: don't leak existence. The store already answers 'absent',
+    so the route cannot leak it even by accident."""
+    store = MemoryBookStore()
+    other = LibraryRef("lib-other", "Other")
+    store.save(other, new_book(id="b9", library_id=other.id, title="סוד",
+                               copy_id="c9"))
+    with TestClient(_app(store=store)) as client:
+        assert client.get(f"{API_PREFIX}/books/b9").status_code == 404
+        assert client.patch(f"{API_PREFIX}/books/b9",
+                            json={"title": "x"}).status_code == 404
+        assert client.delete(f"{API_PREFIX}/books/b9").status_code == 404
+    assert store.get(other, "b9") is not None, "a foreign book was modified"
 
 
 def test_unbound_principal_fails_loudly():

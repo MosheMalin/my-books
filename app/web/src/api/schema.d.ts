@@ -4,6 +4,80 @@
  */
 
 export interface paths {
+    "/api/v1/books": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List books */
+        get: operations["list_books_api_v1_books_get"];
+        put?: never;
+        /**
+         * Add a book by hand
+         * @description A book the reader never found. Lands as ``manual`` — a person typed it,
+         *     which is the strongest evidence the system gets.
+         */
+        post: operations["create_book_api_v1_books_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/books/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export the whole library (CSV or JSON)
+         * @description The honest answer to lock-in (§6): everything, in one file, always.
+         *
+         *     CSV is written with a UTF-8 BOM. Without it Excel opens a Hebrew CSV as
+         *     mojibake, and "my export is broken" is indistinguishable from "your data
+         *     is broken".
+         */
+        get: operations["export_books_api_v1_books_export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/books/{book_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One book */
+        get: operations["get_book_api_v1_books__book_id__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete from the library (every copy)
+         * @description *Delete from the library* — the destructive one of UI_PLAN §5's two
+         *     actions. *Remove from shelf* is a different thing entirely and does not
+         *     live here; it changes a copy, it does not remove a record.
+         */
+        delete: operations["delete_book_api_v1_books__book_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Fix the title or author
+         * @description Editing marks the book ``manual`` (UI_PLAN §5). The domain applies
+         *     that; this route only decides what an unresolvable rename returns.
+         */
+        patch: operations["patch_book_api_v1_books__book_id__patch"];
+        trace?: never;
+    };
     "/api/v1/meta": {
         parameters: {
             query?: never;
@@ -25,6 +99,152 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * BookCreate
+         * @description Add a book the reader never found. Lands as ``manual`` with one copy.
+         */
+        BookCreate: {
+            /**
+             * Author
+             * @default
+             */
+            author: string;
+            /** Title */
+            title: string;
+        };
+        /**
+         * BookDTO
+         * @description A book and its copies.
+         *
+         *     Copies are embedded in the LIST response, not fetched per row. With one
+         *     copy per book on the real data that is roughly a 2x payload, and the
+         *     alternative — the book surface firing a request per card (UI_PLAN §5) —
+         *     is far worse. Revisit if a library ever has many multi-copy books.
+         */
+        BookDTO: {
+            /** Added At */
+            added_at?: string | null;
+            /**
+             * Author
+             * @default
+             */
+            author: string;
+            /**
+             * Author Key
+             * @description Normalized author, the key the author chip groups on (§5.1 — authors are strings, not entities).
+             */
+            author_key: string;
+            /** Copies */
+            copies: components["schemas"]["CopyDTO"][];
+            /** Copy Count */
+            copy_count: number;
+            /** Id */
+            id: string;
+            /** Shared Book Id */
+            shared_book_id?: string | null;
+            /**
+             * Status
+             * @description auto | approved | manual — the strongest claim among this book's copies.
+             */
+            status: string;
+            /** Title */
+            title: string;
+            work: components["schemas"]["WorkFieldsDTO"];
+        };
+        /**
+         * BookPageDTO
+         * @description One page plus the total, so the client can render "1-20 of 251"
+         *     without a second round trip.
+         */
+        BookPageDTO: {
+            /** Items */
+            items: components["schemas"]["BookDTO"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
+        };
+        /**
+         * BookPatch
+         * @description Fix a title or an author by hand. Either field, or both.
+         *
+         *     Saving marks the book ``manual`` — a human decision outranking an auto one
+         *     (UI_PLAN §5). That is applied by the domain, not here.
+         */
+        BookPatch: {
+            /** Author */
+            author?: string | null;
+            /** Title */
+            title?: string | null;
+        };
+        /**
+         * BookSort
+         * @description Sort orders §6 lists as "Must". ``TITLE``/``AUTHOR`` sort by the
+         *     NORMALIZED forms, so Hebrew orders sensibly regardless of nikud, geresh or
+         *     a leading particle in the stored string.
+         * @enum {string}
+         */
+        BookSort: "title" | "author" | "recently_added";
+        /**
+         * CopyDTO
+         * @description One physical object. Created only by a human action (§5.1).
+         */
+        CopyDTO: {
+            /** Acquired At */
+            acquired_at?: string | null;
+            /**
+             * Condition
+             * @default
+             */
+            condition: string;
+            /** Id */
+            id: string;
+            /**
+             * Label
+             * @default
+             */
+            label: string;
+            /** @description Most recent provenance entry, if any. */
+            last_seen?: components["schemas"]["SightingDTO"] | null;
+            lending?: components["schemas"]["LendingDTO"] | null;
+            /** Shelf Id */
+            shelf_id?: string | null;
+            /**
+             * Sighting Count
+             * @description Length of the provenance list; the list itself is on the book detail, not in every row.
+             */
+            sighting_count: number;
+            /** Status */
+            status: string;
+            /** Tags */
+            tags?: string[];
+        };
+        /** HTTPValidationError */
+        HTTPValidationError: {
+            /** Detail */
+            detail?: components["schemas"]["ValidationError"][];
+        };
+        /**
+         * LendingDTO
+         * @description Per copy, never per book — you lend an object, not a work.
+         */
+        LendingDTO: {
+            /** Due At */
+            due_at?: string | null;
+            /**
+             * Is Out
+             * @description Derived: no returned_at yet.
+             */
+            is_out: boolean;
+            /** Lent At */
+            lent_at: string;
+            /** Lent To */
+            lent_to: string;
+            /** Returned At */
+            returned_at?: string | null;
+        };
         /**
          * LibraryRefDTO
          * @description The tenant reference the client echoes back on every request.
@@ -48,10 +268,6 @@ export interface components {
         /**
          * MetaResponse
          * @description Service identity + the caller's resolved library.
-         *
-         *     The one endpoint P1.0 ships. It carries no domain data — its job is to
-         *     prove the whole path end to end: principal -> library -> DTO -> OpenAPI
-         *     schema -> generated TS type -> typed fetch in a React component.
          */
         MetaResponse: {
             /**
@@ -72,6 +288,64 @@ export interface components {
              */
             version: string;
         };
+        /**
+         * SightingDTO
+         * @description One entry of a copy's append-only provenance (§5.2).
+         */
+        SightingDTO: {
+            /** Captured At */
+            captured_at?: string | null;
+            /** Run Id */
+            run_id: string;
+            /**
+             * Shelf Id
+             * @description Null until the map exists (§1.1) — the UI hides it.
+             */
+            shelf_id?: string | null;
+            /** Spine Id */
+            spine_id: string;
+        };
+        /**
+         * Status
+         * @description auto < approved < manual.
+         *
+         *     ``auto``      the pipeline claimed it at AUTO tier and nobody has looked;
+         *     ``approved``  a human confirmed the claim;
+         *     ``manual``    a human typed or corrected it.
+         *
+         *     Ordering matters because it is the whole content of "a human decision
+         *     outranks an auto one" (`booksnap/library.py::add_book`, VISION §5.6).
+         * @enum {string}
+         */
+        Status: "auto" | "approved" | "manual";
+        /** ValidationError */
+        ValidationError: {
+            /** Context */
+            ctx?: Record<string, never>;
+            /** Input */
+            input?: unknown;
+            /** Location */
+            loc: (string | number)[];
+            /** Message */
+            msg: string;
+            /** Error Type */
+            type: string;
+        };
+        /**
+         * WorkFieldsDTO
+         * @description Book-level user fields. You don't rate your second copy differently.
+         */
+        WorkFieldsDTO: {
+            /**
+             * Notes
+             * @default
+             */
+            notes: string;
+            /** Rating */
+            rating?: number | null;
+            /** Read Status */
+            read_status?: string | null;
+        };
     };
     responses: never;
     parameters: never;
@@ -81,6 +355,203 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_books_api_v1_books_get: {
+        parameters: {
+            query?: {
+                /** @description title / author sort on the NORMALIZED forms, so Hebrew orders sensibly. */
+                sort?: components["schemas"]["BookSort"];
+                ascending?: boolean;
+                status?: components["schemas"]["Status"] | null;
+                /** @description Normalized author, from a book's author_key. */
+                author_key?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookPageDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_book_api_v1_books_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BookCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_books_api_v1_books_export_get: {
+        parameters: {
+            query?: {
+                format?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_book_api_v1_books__book_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                book_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_book_api_v1_books__book_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                book_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_book_api_v1_books__book_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                book_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BookPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_meta_api_v1_meta_get: {
         parameters: {
             query?: never;
