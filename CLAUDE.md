@@ -632,6 +632,20 @@ before P1.5 answered `?q=…` with the whole 251-book library and a 200. The
 client looked broken; the server was stale. **Restart the API server after any
 route change** — there is no `--reload` in `.claude/launch.json`.
 
+⚠ **Port 8757 serves a BUILD, and the build is gitignored — so it goes stale
+silently.** `app/main.py` mounts `app/web/dist/` at `/`, and nothing rebuilds
+it. After P2.7 shipped the Capture tab, `:8757` still served a bundle from
+before the tab existed: the nav had one button, and `grep capture_tab
+dist/assets/*.js` returned nothing. The reason it is worse than the stale-server
+trap above is that **the API was completely current** — all 28 routes present —
+so the UI looked like the bug. Diagnose it by grepping the built bundle for a
+string only the new code has, not by reading the source.
+
+  - dev loop: `npm --prefix app/web run dev` (`:5173`, serves from source and
+    proxies `/api` to `:8757`). This is the one to use while building;
+  - `:8757` directly: `npm --prefix app/web run build` after every client
+    change, or you are looking at history.
+
 ⚠ **CSS transitions freeze at t=0 when the Browser pane is not displayed.**
 No frames composited means no animation progress, so `getComputedStyle`
 returns the transition's START value and the element looks mis-positioned.
