@@ -19,6 +19,7 @@ a resource's own identity.
 """
 from __future__ import annotations
 
+import logging
 from typing import Sequence
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -65,6 +66,8 @@ from app.ports.jobs import JobHandle, JobRunner
 from app.ports.reader import Reader, ReadRequest
 from app.ports.store import BookStore, ReadStore, ShelfStore
 from app.reconcile_apply import Answer, AnswerKind, UnresolvedAnswer, apply_diff
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/shelves/{shelf_id}/reads", tags=["reads"])
 
@@ -122,6 +125,7 @@ def start_read(
     blobs: BlobStore = Depends(get_blob_store),
     books: BookStore = Depends(get_book_store),
     decisions: DecisionStore = Depends(get_decision_store),
+    duplicates: DuplicateQueue = Depends(get_duplicate_queue),
     clock: Clock = Depends(get_clock),
     ids: IdGen = Depends(get_id_gen),
 ) -> ReadDTO:
@@ -163,8 +167,9 @@ def start_read(
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     reads.save_read(library, read)
 
-    jobs.submit(read.id, _job(read, shelf, library, captures, reads, reader,
-                              blobs, books, decisions, ids, clock))
+    jobs.submit(read.id, _job(read, shelf, library, captures, reads, shelves,
+                              reader, blobs, books, decisions, duplicates,
+                              ids, clock))
     return ReadDTO.of(read)
 
 
@@ -346,10 +351,12 @@ def _job(
     library: LibraryRef,
     captures: Sequence[Capture],
     reads: ReadStore,
+    shelves: ShelfStore,
     reader: Reader,
     blobs: BlobStore,
     books: BookStore,
     decisions: DecisionStore,
+    duplicates: DuplicateQueue,
     ids: IdGen,
     clock: Clock,
 ):
@@ -407,6 +414,76 @@ def _job(
                 diff = reconcile(shelf, read.depth, current.claims,
                                  library_books, decision_rows, read_id=current.id)
                 current = with_diff_summary(current, summarize(diff))
+
+                # Apply SERVER-SIDE, right here where the read settles (fixing
+                # the bug this exists for: completing a catalogue update used
+                # to depend on the owner's browser staying open long enough to
+                # notice the read finished and POST .../apply itself — a
+                # mobile tab backgrounded mid-read, or refreshed, meant claims
+                # sat stored forever with no book ever added, which
+                # contradicts §5.6's own inversion: "a read is an event that
+                # UPDATES the list", not an event that waits to be told to).
+                #
+                # Reuses the SAME `diff` object `with_diff_summary` above just
+                # summarised — never recomputes one. `diff` is already a
+                # frozen snapshot of `reconcile()` against the library as it
+                # stood the moment `library_books` was read, a few lines up,
+                # BEFORE any write below — so the archived summary is safe
+                # regardless of textual order down here. What would corrupt
+                # it is refetching `books.list(...)` and calling `reconcile()`
+                # a second time AFTER `apply_diff` for "fresher" data: that
+                # second diff would see the book this very apply just added
+                # and call it `unchanged`, silently rewriting "this read
+                # added 3 books" into "this read changed nothing" the moment
+                # it settles. Don't.
+                #
+                # `answers=()` is not a placeholder for future wiring, it is
+                # the whole point: only the buckets `reconcile()` already
+                # settled with no human input (added/unchanged/corrected) are
+                # written. A `needs_decision` claim is NEVER auto-resolved
+                # here (§5.4) — an `ambiguous_location` one is opened in the
+                # duplicates queue exactly as it would be if a human had
+                # loaded the review screen and closed it without answering,
+                # and a `review_tier_new_book` one simply stays open. This is
+                # the identical operation the client's own `commitDiff`
+                # performs (`app/web/src/capture/useCapture.ts`) — calling it
+                # from both places is intentional and safe, not a race:
+                # `observe()`'s `Provenance.sighting` idempotency
+                # (`app/domain/book.py`) means a claim already applied here
+                # reconciles as `unchanged` the second time, so the client's
+                # later call (it still makes one) writes nothing new.
+                try:
+                    apply_diff(
+                        diff, library=library, books=books, shelves=shelves,
+                        decisions=decisions, duplicates=duplicates, clock=clock,
+                        ids=ids, captured_at=current.finished_at, answers=(),
+                    )
+                except Exception:
+                    # A read is a real record of an attempt even when the
+                    # automatic follow-up fails (the shelf was deleted mid-
+                    # read; a store hiccup) — `current` (claims + summary) is
+                    # kept exactly as computed above and still gets saved
+                    # below. Logged, not re-raised — and this local catch is
+                    # not merely tidy, it is LOAD-BEARING: `current.status` is
+                    # already terminal by this point (`finish_read`/`stop_read`
+                    # ran above, before this whole block), so letting the
+                    # exception reach the `except Exception as exc:` below
+                    # would call `fail_read` on an ALREADY-terminal read,
+                    # which raises `ReadAlreadyFinished` right back out —
+                    # uncaught, killing the job thread before it ever reaches
+                    # `reads.save_read` at the bottom, leaving the read stuck
+                    # showing `running` forever. That is a WORSE bug than the
+                    # one this file exists to fix (verified: temporarily
+                    # removing this try/except reproduces exactly that hang).
+                    # The client's own `commitDiff` (still called on every
+                    # settle) is the retry path for the failed apply itself.
+                    logger.exception(
+                        "read %s settled as %s but its diff failed to apply "
+                        "automatically; the read and its claims are saved "
+                        "regardless — the client's own apply-on-settle is "
+                        "the fallback",
+                        current.id, current.status.value,
+                    )
         except Exception as exc:
             # A read is a real record of an attempt even when the attempt
             # failed (a bad catalog, no engine credentials, ...) — see

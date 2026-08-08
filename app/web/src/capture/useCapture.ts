@@ -6,16 +6,28 @@
  * screen's state, not a cache several screens share, so a query library would
  * be pure API surface here too.
  *
- * **The intake queue is SESSION state, not a server resource.** Each dropped
- * photo becomes a REAL `Image` + `Capture` on the server the moment it
- * uploads — P2.2/P2.3 already made that durable — but there is no "list
- * photos waiting to be read" endpoint (P2.1-P2.6 never built one; a shelf's
- * captures are only listable BY shelf, `GET /shelves/{id}/captures`, and
- * nothing indexes "every capture with no read yet" across the library). So
- * a page refresh loses this queue's ordering/selection, though nothing it
- * already uploaded is lost — the shelf and its captures are still there,
- * just not re-listed here. Building that index is a P2.8/shelf-view concern
- * (browsing a shelf's own capture history), not this tab's.
+ * **The intake queue is REBUILT from the server on mount** (P2.9 — fixing the
+ * "background the tab / refresh mid-read and everything vanishes" bug: the
+ * photos and the read were always durable server-side, P2.2/P2.3/P2.4 already
+ * made sure of that; only this tab's OWN state forgot them). There is still
+ * no dedicated "list photos waiting to be read" endpoint — a personal
+ * library has tens of shelves (`ShelfStore.list_shelves`'s own docstring), so
+ * `hydrate()` below just calls the existing per-shelf endpoints
+ * (`GET /shelves`, then `GET /shelves/{id}/captures` and
+ * `GET /shelves/{id}/reads` per shelf, concurrently) rather than adding a new
+ * aggregate index for a call count that is a few dozen requests, once, on
+ * mount or on returning to the tab — not the N+1-on-every-render shape that
+ * would justify one. If the shelf count ever stops being "tens" this is the
+ * place to add a purpose-built endpoint.
+ *
+ * Deliberately NOT rebuilt: the review panel of an already-SETTLED read. A
+ * running read is re-attached (below) because there is real work to resume
+ * watching; a finished one already did everything it was going to do — the
+ * books it changed are in the library (server-side apply, P2.9's other half —
+ * see `app/api/routers/reads.py`), and re-opening its diff on every tab visit
+ * forever would be clutter, not state recovery. Its outcome is visible on the
+ * photo itself via `readStage: 'done'`, and the shelf's own history
+ * (P2.8, `GET /shelves/{id}/overview`) is where a past read is reviewed.
  *
  * **A read is scoped to exactly one (shelf, depth)** (`app.domain.read.new_read`).
  * Selecting photos here is a per-PHOTO convenience for the human, but
@@ -32,12 +44,16 @@ import {
   applyDiff,
   createCapture,
   getRead,
+  listShelfCaptures,
   listShelves,
+  listReadHistory,
   patchCapture,
   startRead,
   stopRead,
   uploadImage,
+  type CaptureDTO,
   type DiffDTO,
+  type ReadSummaryDTO,
   type Shelf,
 } from '../api/client'
 
@@ -46,7 +62,11 @@ export type ReadStage = 'unread' | 'queued' | 'done'
 
 export interface IntakeItem {
   localId: string
-  file: File
+  /** `null` for an item rebuilt from the server on hydrate (see the module
+   *  docstring) — its bytes already left this browser, possibly days ago, so
+   *  there is nothing to re-POST. Only ever read by `retryItem`, and a
+   *  hydrated item is never in `status: 'error'`, so that path never runs. */
+  file: File | null
   previewUrl: string
   filename: string
   status: 'uploading' | 'ready' | 'error'
@@ -97,6 +117,12 @@ export function useCapture() {
   const [mode, setMode] = useState<Mode>('llmpage')
   const [runs, setRuns] = useState<RunState[]>([])
 
+  // Guards `hydrate()` against React 18 StrictMode's dev-only double-invoke
+  // of mount effects (setup → cleanup → setup, same component instance) —
+  // without it, two concurrent hydrations can each miss the other's
+  // in-flight `setItems` and double up every rebuilt row.
+  const hydratedRef = useRef(false)
+
   const itemsRef = useRef(items)
   useEffect(() => {
     itemsRef.current = items
@@ -113,21 +139,124 @@ export function useCapture() {
     [],
   )
 
-  const refreshShelves = useCallback(async () => {
+  const refreshShelves = useCallback(async (): Promise<Shelf[]> => {
     setShelvesLoading(true)
     try {
-      setShelves(await listShelves())
+      const fresh = await listShelves()
+      setShelves(fresh)
+      return fresh
     } catch {
       // The select just offers fewer options; a capture's own auto-created
       // shelf still works even if the list failed to load.
+      return []
     } finally {
       setShelvesLoading(false)
     }
   }, [])
 
-  useEffect(() => {
-    void refreshShelves()
+  /**
+   * Rebuild the intake list and re-attach any in-flight read (P2.9, Fix B —
+   * see the module docstring). Runs once on mount and again whenever the tab
+   * becomes visible (the `visibilitychange` effect below) — the exact moment
+   * a backgrounded phone browser comes back and needs to catch up on a read
+   * it slept through.
+   *
+   * `known` guards against clobbering an upload the user is mid-way through
+   * RIGHT NOW: a capture already present locally (by id) is left alone rather
+   * than replaced by the server's copy of itself.
+   */
+  const hydrate = useCallback(async () => {
+    const allShelves = await refreshShelves()
+    if (allShelves.length === 0) return
+
+    const perShelf = await Promise.all(allShelves.map(async (shelf) => {
+      const [captures, reads] = await Promise.all([
+        listShelfCaptures(shelf.id).catch(() => [] as CaptureDTO[]),
+        listReadHistory(shelf.id).catch(() => [] as ReadSummaryDTO[]),
+      ])
+      return { shelf, captures, reads }
+    }))
+
+    // `list_reads` is already most-recent-first (`ReadStore.list_reads`'s
+    // own contract), so the first one seen per (shelf, depth) is the latest.
+    const latestByDepth = new Map<string, ReadSummaryDTO>()
+    for (const { shelf, reads } of perShelf) {
+      for (const r of reads) {
+        const key = `${shelf.id}:${r.depth}`
+        if (!latestByDepth.has(key)) latestByDepth.set(key, r)
+      }
+    }
+
+    const known = new Set(
+      itemsRef.current.map((it) => it.captureId).filter((id): id is string => !!id),
+    )
+    const rebuilt: { item: IntakeItem; capturedAt: string }[] = []
+    for (const { shelf, captures } of perShelf) {
+      for (const cap of captures) {
+        // No `image_id` yet (P2.2's recorded gap) or already tracked locally
+        // (an upload this session already produced this exact capture) —
+        // either way, nothing to add.
+        if (!cap.image_id || known.has(cap.id)) continue
+        const latest = latestByDepth.get(`${shelf.id}:${cap.depth}`)
+        const readStage: ReadStage =
+          latest?.status === 'running' ? 'queued' : latest ? 'done' : 'unread'
+        rebuilt.push({
+          capturedAt: cap.captured_at ?? '',
+          item: {
+            localId: cap.id,
+            file: null,
+            previewUrl: `/api/v1/images/${encodeURIComponent(cap.image_id)}/thumb`,
+            // The server has no original filename to give back (`CaptureDTO`
+            // never stored one) — showing the real storage key beats
+            // inventing a friendlier-looking name that isn't true.
+            filename: cap.image_id,
+            status: 'ready',
+            imageKey: cap.image_id,
+            captureId: cap.id,
+            shelfId: cap.shelf_id,
+            depth: cap.depth,
+            readStage,
+          },
+        })
+      }
+    }
+    // Oldest first, so a hydrated queue reads top-to-bottom the same way it
+    // would have if the browser had never lost it.
+    rebuilt.sort((a, b) => a.capturedAt.localeCompare(b.capturedAt))
+    if (rebuilt.length > 0) {
+      setItems((s) => [...s, ...rebuilt.map((r) => r.item)])
+    }
+
+    // In-flight reads are RE-ATTACHED, never restarted (P2.9's explicit
+    // requirement) — the job is already running server-side; this only
+    // resumes watching it, the same `RunState` `start()` itself would create.
+    const running = [...latestByDepth.values()].filter((r) => r.status === 'running')
+    if (running.length > 0) {
+      setRuns((rs) => {
+        const existingKeys = new Set(rs.map((r) => r.key))
+        const additions = running
+          .map((r) => ({ key: `${r.shelf_id}:${r.depth}`, r }))
+          .filter(({ key }) => !existingKeys.has(key))
+          .map(({ key, r }): RunState => ({
+            key, shelfId: r.shelf_id, depth: r.depth, readId: r.id,
+            status: 'running', progress: null, error: r.error ?? null,
+            diff: null, diffLoading: false, diffError: null,
+            answeringClaimIds: new Set(), answerError: null,
+          }))
+        return additions.length > 0 ? [...rs, ...additions] : rs
+      })
+    }
   }, [refreshShelves])
+
+  useEffect(() => {
+    if (hydratedRef.current) return
+    hydratedRef.current = true
+    void hydrate()
+    // Mount only — `hydrate` itself is stable (its one dependency,
+    // `refreshShelves`, has an empty dependency array), and re-running it on
+    // every `items`/`runs` change would fight the very state it just set.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const uploadOne = useCallback((id: string, file: File) => {
     void (async () => {
@@ -170,7 +299,10 @@ export function useCapture() {
 
   const retryItem = useCallback((id: string) => {
     const item = itemsRef.current.find((it) => it.localId === id)
-    if (!item) return
+    // A hydrated item (`file: null`) is never `'error'` — nothing server-side
+    // ever reaches this tab's intake list without an `image_id` already
+    // saved — so this guard is defence in depth, not a real path.
+    if (!item?.file) return
     setItems((s) => s.map((it) => (it.localId === id
       ? { ...it, status: 'uploading' as const, error: undefined } : it)))
     uploadOne(id, item.file)
@@ -330,33 +462,54 @@ export function useCapture() {
     }
   }, [])
 
-  // Poll every running read until it settles, then load its diff. Re-arms
-  // whenever `runs` changes — cheap at this scale (a handful of reads, not a
-  // list) and keeps the closure's view of `runs` current without a second
-  // ref-vs-state reconciliation.
+  /**
+   * Poll every running read once, then load its diff once it settles. Reads
+   * `runsRef` rather than closing over `runs` — that is what makes it safe to
+   * call from BOTH the interval below AND the `visibilitychange` handler
+   * without either one working from a stale list.
+   */
+  const pollRunning = useCallback(() => {
+    const running = runsRef.current.filter((r) => r.status === 'running')
+    running.forEach((r) => {
+      void getRead(r.shelfId, r.readId).then((read) => {
+        setRuns((rs) => rs.map((x) => (x.key === r.key
+          ? {
+              ...x, status: read.status as RunState['status'],
+              progress: (read.progress ?? null) as Record<string, unknown> | null,
+              error: read.error ?? null,
+            }
+          : x)))
+        if (read.status !== 'running') {
+          setItems((s) => s.map((it) => (it.shelfId === r.shelfId && it.depth === r.depth
+            ? { ...it, readStage: 'done' as const } : it)))
+          void commitDiff(r.key, r.shelfId, r.readId)
+        }
+      }).catch(() => undefined)
+    })
+  }, [commitDiff])
+
+  // Re-arms whenever `runs` changes — cheap at this scale (a handful of
+  // reads, not a list).
   useEffect(() => {
-    const running = runs.filter((r) => r.status === 'running')
-    if (running.length === 0) return
-    const timer = setInterval(() => {
-      running.forEach((r) => {
-        void getRead(r.shelfId, r.readId).then((read) => {
-          setRuns((rs) => rs.map((x) => (x.key === r.key
-            ? {
-                ...x, status: read.status as RunState['status'],
-                progress: (read.progress ?? null) as Record<string, unknown> | null,
-                error: read.error ?? null,
-              }
-            : x)))
-          if (read.status !== 'running') {
-            setItems((s) => s.map((it) => (it.shelfId === r.shelfId && it.depth === r.depth
-              ? { ...it, readStage: 'done' as const } : it)))
-            void commitDiff(r.key, r.shelfId, r.readId)
-          }
-        }).catch(() => undefined)
-      })
-    }, 1000)
+    if (!runs.some((r) => r.status === 'running')) return
+    const timer = setInterval(pollRunning, 1000)
     return () => clearInterval(timer)
-  }, [runs, commitDiff])
+  }, [runs, pollRunning])
+
+  // Mobile browsers throttle or fully suspend a background tab's timers
+  // (CLAUDE.md's own diagnosis of the bug this file exists to fix) — the
+  // `setInterval` above may not have ticked in minutes by the time the owner
+  // switches back. Polling immediately on `visibilitychange` is what makes
+  // "switch app, come back" feel instant rather than "wait up to a second
+  // for the next tick", which was never really the bug but is worth not
+  // reintroducing either.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') pollRunning()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [pollRunning])
 
   /**
    * One human answer to one still-open claim — confirm/reject a REVIEW-tier

@@ -519,14 +519,14 @@ names to run a subset (`python tests/run_all.py test_api`).
 | `test_legacy_import.py` | 21 | `work/*.json` → entities, against a committed fixture |
 | `test_search.py` | 15 | Hebrew search, against 24 real queries on the real 251 books |
 | `test_layering.py` | 9 | the one-way import rules (plan H1) |
-| `test_api.py` | 95 | `/api/v1` shapes + the versioning/tenancy meta-tests |
+| `test_api.py` | 101 | `/api/v1` shapes + the versioning/tenancy meta-tests |
 
-512 python tests as of P2.8 (+32 since P2.7: the diff-summary snapshot and
-the not-seen-streak/staleness rules — `app.domain.history` (new module),
-`DiffSummary`/`summarize`/`with_diff_summary` in `read.py`/`reconcile.py`,
-schema **v11** — and the two new endpoints, `GET /shelves/{id}/overview` and
-`GET /shelves/{id}/books`, in `test_domain.py`/`test_store_contract.py`/
-`test_api.py`; see "Shelf view + read history (P2.8)"). No pytest
+518 python tests as of P2.9 (+6 since P2.8, all in `test_api.py`: a settled
+read applying itself with zero client involvement, a `needs_decision` claim
+never auto-resolving, the diff-summary snapshot surviving the automatic
+apply, a failed read applying nothing, the automatic apply being idempotent
+against a later client apply, and a failed automatic apply NOT failing the
+read — see "Reads apply themselves now (P2.9)"). No pytest
 dependency, deliberately — the repo has never had one and the accuracy gate
 runs on bare python. Counts grow with each run's fixes; the commit log is
 the history (`SESSION_NOTES.md` was a one-time handoff and is gone —
@@ -1638,6 +1638,120 @@ other screen already proves work in both themes, but that is inference from
 the token system, not a rendered screenshot. Re-verify visually the next
 time the pane composites.
 
+## Reads apply themselves now (P2.9) — client-driven apply was a real bug
+
+Live phone use found the bug this item fixes: upload a photo (worked) → press
+Run (started) → switch to another app → come back — Run was idle again and
+**no books had appeared**. Refresh the tab → **the photo was gone too**. Two
+separate causes, both in `useCapture.ts`, both structural:
+
+**Bug A — applying a settled read was CLIENT-DRIVEN**, contradicting §5.6's
+own inversion ("a read is an event that UPDATES the list", not one that waits
+to be told to). `reads.py`'s job already reconciled at settle to capture
+P2.8's `diff_summary`, but nothing ever *applied* that diff — the only thing
+that ever called `POST .../apply` was the browser's own poll loop noticing
+`status !== 'running'`. Mobile browsers throttle or fully suspend a
+backgrounded tab's timers, and a refresh drops the loop's state entirely, so
+a read could complete, its claims and summary land in `work/product.db`, and
+the library still never change.
+
+**Fix**: `_job`'s `run()` in `app/api/routers/reads.py` now calls
+`app.reconcile_apply.apply_diff` itself, right after computing the P2.8
+snapshot, reusing the SAME `diff` object `summarize()` just consumed — never
+a second `reconcile()` call, which is what would let a book this very apply
+just added reclassify as `unchanged` in the summary meant to record it as
+`added`. `answers=()`: only the buckets `reconcile()` already settled with no
+human input (added/unchanged/corrected) are written; a `needs_decision`
+claim is NEVER auto-resolved — an `ambiguous_location` one opens in the
+duplicates queue exactly as an unanswered `POST .../apply` would leave it,
+and a `review_tier_new_book` one just stays open. `start_read` now resolves
+a `DuplicateQueue` (`get_duplicate_queue`) and threads it into `_job` for
+exactly this. The client's `commitDiff` still calls `POST .../apply` on
+every settle (kept, not removed — see "Idempotency" below for why that is
+safe rather than a duplicate-write risk); the two together are the reason
+`_job` also gained a `ShelfStore` parameter, since `apply_diff` needs one to
+re-verify the shelf still exists.
+
+⚠ **The local `try/except` around `apply_diff` is not tidy, it is
+LOAD-BEARING — proved by temporarily deleting it.** By the point `apply_diff`
+runs, `current.status` is already terminal (`finish_read`/`stop_read` ran
+earlier in the same function). Removing the `try/except` and letting a
+failure reach the outer `except Exception as exc: current = fail_read(...)`
+does not produce a `failed` read — `fail_read` itself raises
+`ReadAlreadyFinished` when called on an already-terminal `Read`
+(`app/domain/read.py`'s own `_end`), and THAT exception is uncaught, killing
+the job thread before it reaches `reads.save_read` at the bottom. The read is
+left showing `running` forever — worse than the bug this item fixes. Confirmed
+live in `test_a_failed_automatic_apply_does_not_fail_the_read`: without the
+local catch, the test times out waiting for the read to settle at all.
+
+**Idempotency is not assumed, it is the reason both call sites are safe
+together.** `Provenance.sighting = (run_id, spine_id)` (`app/domain/book.py`)
+makes `observe()` idempotent, and `reconcile()`'s own `_copy_at` check means
+a claim already applied here resolves as `unchanged` — same location,
+same copy — the next time anything reconciles it, including the client's own
+follow-up `commitDiff` call. `test_the_automatic_apply_is_idempotent_
+against_a_later_client_apply_call` calls `POST .../apply` twice AFTER the
+automatic apply already ran and asserts one book, one copy, one sighting.
+
+**Bug B — the intake queue and any run state were session-only React state**,
+with no hydration on mount, even though the shelves/captures/reads it
+displays are all durable server-side already (P2.2-P2.4). Fixed in
+`useCapture.ts`'s new `hydrate()`: `GET /shelves`, then per shelf (concurrently)
+`GET .../captures` and `GET .../reads` — no new endpoint, because
+`ShelfStore.list_shelves`'s own docstring says a personal library has *tens*
+of shelves, and a few dozen requests once on mount is not the N+1-per-render
+shape that would justify inventing an aggregate index. **In-flight reads are
+RE-ATTACHED, never restarted**: a `running` read found in the per-shelf
+history becomes a `RunState` exactly like `start()`'s own, and the existing
+poll effect picks it up from there — confirmed live (see below), where a
+read still `running` at reload showed *"קורא…"* again immediately after the
+photo list reappeared, with only ONE `POST .../reads` ever hitting the
+server log for that read.
+
+`visibilitychange` now also triggers an immediate poll of every running read
+(`pollRunning`, extracted from the interval body so both share it) — a
+backgrounded tab's timer may not have ticked in minutes by the time the owner
+switches back, and waiting for the NEXT tick was never really the bug but is
+worth not reintroducing.
+
+⚠ **React 18 StrictMode double-invokes a mount effect in dev** (setup →
+cleanup → setup, same instance) — `hydrate()` would otherwise run twice
+concurrently, and since its `known`-capture dedup set is only computed once,
+after all its `await`s, two overlapping calls can each miss the other's
+in-flight `setItems` and double every rebuilt row. Guarded with a plain
+`useRef` flag (`hydratedRef`) that survives the double-invoke because the
+component instance itself is never actually unmounted.
+
+⚠ **`CaptureDTO` has no filename to give back.** A hydrated row's `filename`
+falls back to the image's own storage key (`image_id`) — honest, if less
+friendly than the original upload name, which the server never stored.
+`file` on `IntakeItem` is now `File | null`: `null` for anything hydrated,
+since its bytes already left the browser and there is nothing to re-POST if
+`retryItem` were ever reached (it never legitimately is — a hydrated item is
+always `'ready'`, not `'error'`).
+
+Verified live against the real `work/product.db` (snapshotted before,
+restored after — see "Copies & lending" for why this is now routine).
+⚠ **`preview_start` REUSED an already-running `product-api` process** left
+over from before this fix — exactly the "no `--reload`" trap this file
+already warns about, caught before it cost anything only because it is
+already a known trap: stopped and restarted explicitly before any live
+check, since a reused process would have silently verified the OLD,
+client-driven-apply code and called it fixed. A real
+photo through the real `llmpage` engine was run, the page was hard-reloaded
+mid-read via `location.reload()`, and after it came back: the photo was
+still listed with a `readStage` badge, the review panel re-appeared reading
+"קורא…" without a second read being started, and it settled into the
+correct `diff_summary` moments later with no manual apply click anywhere in
+the session. A second, throwaway low-resolution test photo produced zero
+identifiable claims (a real, honest outcome — not this fix's concern; OCR
+accuracy on a resized synthetic crop is not what P2.9 changes), which is
+also why the "`added` > 0 visible in the Books tab" half of this fix rests on
+the Python ring's `test_a_settled_read_applies_its_diff_with_no_client_call_
+at_all` (a `StubReader` claim that resolves to a real match) rather than on
+a screenshot.
+
 ## Author sort, and why it needed a schema version
 
 "Sort by author" means the SHELF order — by surname. Sorting the stored string
@@ -1769,8 +1883,8 @@ arrive in P2.1. The importer reports them loudly rather than dropping them —
 until P2.3 lands, a re-read could re-add those books.
 
 Client ring (needs `npm install --prefix app/web` once):
-`npm --prefix app/web run test` (vitest + React Testing Library, **57 tests**
-as of P2.8) and `npm --prefix app/web run typecheck`. Test what encodes a
+`npm --prefix app/web run test` (vitest + React Testing Library, **60 tests**
+as of P2.9) and `npm --prefix app/web run typecheck`. Test what encodes a
 *decision*, not layout and not DTO plumbing — same standard as the Python
 rings. The suite mocks `fetch`, never `useBooks`/`useCapture`/`useShelfDetail`:
 the store, the request-id race guard and the paging arithmetic are exactly
@@ -1788,8 +1902,10 @@ until a shelf is already stacked, ✓/✕ shown for every `needs_decision` reaso
 instead of only `review_tier_new_book`, an alternative given a one-click
 accept button, a freshly-uploaded photo not auto-selected — P2.7; the depth
 bar hidden at `depth_count` 1, a book title rendered without `.rtl-safe`,
-the *"open the shelf →"* chip dropped from the review panel header — P2.8)
-each fail a named test.
+the *"open the shelf →"* chip dropped from the review panel header — P2.8;
+the intake list never rebuilt from the server, an in-flight read not
+re-attached on mount, `visibilitychange` not wired to an immediate poll —
+P2.9) each fail a named test.
 
 ⚠ **This ring cannot see CSS.** jsdom computes no cascade, so every finding
 in the "traps" list above was invisible here and had to be caught in a real
