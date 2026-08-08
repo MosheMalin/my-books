@@ -33,6 +33,17 @@ this same function or the queue's own "use the default" action), the
 matching row is deleted. ``duplicates=None`` skips this bookkeeping entirely
 — every REAL call site (the API layer) always provides one; tests that only
 care about the write itself, not the queue, may omit it.
+
+**Retracting a finding (P2.10, §12.2 #10).** :func:`retract_finding` is the
+second entry point here, and it is deliberately NOT an extra
+:class:`AnswerKind` on :func:`apply_diff`: an answer RESOLVES a question that
+is still open, while a retraction RETRACTS something already settled and
+written — often days later, from the image workspace, long after the read
+auto-applied. Routing it through ``answers`` would also mean the unconditional
+``unchanged`` loop above re-``observe()``-ing the very claim being retracted in
+the same call, which reads as a bug however it is ordered. Same split as the
+rest of this module: `app.domain.retract.plan_retraction` decides, this
+persists.
 """
 from __future__ import annotations
 
@@ -42,18 +53,22 @@ from enum import Enum
 from app.domain import (
     Book,
     Decision,
+    Read,
     DecisionKind,
     Diff,
     FireDecision,
     LibraryRef,
     Provenance,
+    RetractAction,
     Status,
     add_copy,
     fires,
     new_book,
     observe,
     open_or_refresh,
+    plan_retraction,
     relink_copy,
+    remove_from_shelf,
 )
 from app.domain.book import DomainError
 from app.ports import Clock, IdGen
@@ -65,11 +80,14 @@ from app.ports.store import BookStore, ShelfStore
 class AnswerKind(str, Enum):
     """A human's response to one still-open (``needs_decision``) claim.
 
-    ``CONFIRM`` only fits a claim reasoned ``review_tier_new_book`` (no prior
-    record anywhere in the library, read at REVIEW confidence): a human
-    looking at it and saying "yes, real book" is itself an approval —
-    stronger evidence than a read alone ever produces — so the book is
-    created at :attr:`Status.APPROVED`, not ``AUTO``.
+    ``CONFIRM`` only fits a claim reasoned ``new_book_unconfirmed`` (no prior
+    record anywhere in the library): a human looking at it and saying "yes,
+    real book" is itself an approval — stronger evidence than a read alone
+    ever produces — so the book is created at :attr:`Status.APPROVED`, not
+    ``AUTO``. Since 2026-08-09 that covers AUTO-tier claims too, not only
+    REVIEW ones: nothing enters the library unapproved (see
+    `app.domain.reconcile`'s own note on the reversal), which makes this the
+    ONLY door a machine-read book ever comes through.
 
     ``REJECT`` fits either origin and means the same thing operationally:
     suppress this claim, here, forever, until the decision is cleared (§5.6).
@@ -96,11 +114,21 @@ class Answer:
     and only REQUIRED when the book has more than one copy not already
     standing somewhere else it disambiguates on its own (§5.4: "if the
     library already holds several copies, the user picks which one").
+
+    ``title``/``author`` are only meaningful with :attr:`AnswerKind.CONFIRM`
+    and mean *"yes — as corrected"*: the reader got the book right enough to
+    recognise but spelled it wrong, and approving it as-read only to
+    immediately edit the record would be two writes and two audit entries for
+    one human act. The CLAIM is left exactly as the engine produced it (it is
+    evidence, and `Claim` is frozen for that reason) — the correction lands on
+    the `Book`, which is the thing being asserted about.
     """
 
     claim_id: str
     kind: AnswerKind
     copy_id: str | None = None
+    title: str | None = None
+    author: str | None = None
 
 
 class UnresolvedAnswer(DomainError):
@@ -159,10 +187,15 @@ def apply_diff(
     # --- what `reconcile()` already decided, with no human input needed ---
 
     for outcome in diff.added:
+        # Since 2026-08-09 `reconcile()` puts exactly one thing here: a book
+        # the OWNER typed onto a photo (`manual_add`). A machine-read book is
+        # never `added` unconditionally any more — it waits for a CONFIRM
+        # answer below. Hence MANUAL, not AUTO: the only evidence this record
+        # has is a person, and §5.1's ladder says that outranks every read.
         book = new_book(
             id=ids.new_id(), library_id=library.id, title=outcome.claim.title,
             author=outcome.claim.author, copy_id=ids.new_id(),
-            status=Status.AUTO, shelf_id=diff.shelf_id, depth=diff.depth,
+            status=Status.MANUAL, shelf_id=diff.shelf_id, depth=diff.depth,
             provenance=(_prov(outcome.claim),), added_at=when,
         )
         books.save(library, book)
@@ -209,6 +242,86 @@ def apply_diff(
                          decisions_saved=tuple(saved_decisions))
 
 
+# --- retracting a settled finding (P2.10) ------------------------------------
+
+@dataclass(frozen=True)
+class RetractedResult:
+    """What a retraction actually did — the API turns this into its response,
+    and the tests assert on it rather than re-reading the store."""
+
+    action: RetractAction
+    decision: Decision
+    book: Book | None = None
+    """The saved book when it survived (``REMOVE_FROM_SHELF``); ``None`` when
+    it was deleted or there was never one."""
+    deleted_book_id: str | None = None
+
+
+def retract_finding(
+    outcome,
+    *,
+    library: LibraryRef,
+    shelf_id: str,
+    depth: int,
+    read: Read,
+    books: BookStore,
+    decisions: DecisionStore,
+    clock: Clock,
+    duplicates: DuplicateQueue | None = None,
+    when: str | None = None,
+) -> RetractedResult:
+    """*"No — this finding is wrong"*, on a claim that has already been
+    applied (P2.10's ✕; see the module docstring for why it is not an
+    :class:`Answer`).
+
+    Two writes, and the ORDER of importance is the opposite of the obvious
+    one: the :class:`Decision` is the part that must always happen (§5.6 — a
+    rejected book must not be re-added by a later run, and the very next read
+    of this row would otherwise put it straight back), while what happens to
+    the library record depends on
+    :func:`app.domain.retract.plan_retraction`'s rule — a record this very
+    read created is deleted, anything with a life of its own is merely taken
+    off this shelf.
+
+    ``outcome`` is a live :class:`~app.domain.reconcile.ClaimOutcome` from a
+    freshly recomputed diff, never a stored snapshot, for the same reason
+    P2.6's queue stores a pointer: the book may have been edited, gained a
+    copy, or moved since the read.
+    """
+    stamp = when or clock.now_iso()
+    plan = plan_retraction(
+        outcome.existing_book, shelf_id, depth, read=read,
+        # §5.4's ambiguous case is the one where the key names a book the
+        # library already holds SOMEWHERE ELSE — the same question the
+        # three-way prompt's "wrong book" answers, so it records the same
+        # decision kind. Everything else is a plain "not a real book here".
+        claimed_elsewhere=outcome.reason == "ambiguous_location",
+    )
+    decision = Decision(library_id=library.id, shelf_id=shelf_id, depth=depth,
+                        book_key=outcome.book_key, kind=plan.decision_kind,
+                        decided_at=stamp)
+    decisions.save_decision(library, decision)
+
+    saved: Book | None = None
+    deleted_id: str | None = None
+    if plan.action is RetractAction.DELETE_BOOK:
+        books.delete(library, outcome.existing_book.id)
+        deleted_id = outcome.existing_book.id
+    elif plan.action is RetractAction.REMOVE_FROM_SHELF:
+        saved = remove_from_shelf(outcome.existing_book, plan.copy_id)
+        books.save(library, saved)
+
+    if duplicates is not None:
+        # A retraction ANSWERS §5.4's question if one was open at this key —
+        # the same "an answer and its queue row are two states of one fact"
+        # bookkeeping `_sync_duplicate_queue` does, here for the one act that
+        # does not go through `apply_diff`.
+        duplicates.delete_question(library, shelf_id, depth, outcome.book_key)
+
+    return RetractedResult(action=plan.action, decision=decision, book=saved,
+                           deleted_book_id=deleted_id)
+
+
 # --- the P2.6 queue ----------------------------------------------------------
 
 def _sync_duplicate_queue(
@@ -240,7 +353,7 @@ def _sync_duplicate_queue(
 
     for outcome in diff.needs_decision:
         if outcome.reason != "ambiguous_location":
-            continue  # review_tier_new_book -- a different question (§5.4
+            continue  # new_book_unconfirmed -- a different question (§5.4
                       # never applies), never a candidate for this queue.
         assert fires(outcome.reason) is FireDecision.ASK, (
             "FIRE_TABLE and reconcile()'s own classification have drifted "
@@ -296,11 +409,19 @@ def _apply_corrected(outcome, *, when: str, prov: Provenance, ids: IdGen,
 def _apply_answer(outcome, answer: Answer, *, library: LibraryRef,
                   shelf_id: str, depth: int, when: str, prov: Provenance,
                   ids: IdGen) -> tuple[Book | None, Decision | None]:
-    if outcome.reason == "review_tier_new_book":
+    if outcome.reason == "new_book_unconfirmed":
         if answer.kind is AnswerKind.CONFIRM:
+            title = (answer.title or outcome.claim.title).strip()
+            if not title:
+                raise UnresolvedAnswer(
+                    f"claim {outcome.claim.id!r} has no title to confirm; "
+                    "send one with the answer"
+                )
             book = new_book(
-                id=ids.new_id(), library_id=library.id, title=outcome.claim.title,
-                author=outcome.claim.author, copy_id=ids.new_id(),
+                id=ids.new_id(), library_id=library.id, title=title,
+                author=(answer.author if answer.author is not None
+                        else outcome.claim.author),
+                copy_id=ids.new_id(),
                 # A human confirming a REVIEW-tier claim IS an approval — it
                 # would be dishonest to file it at the same rung a read alone
                 # produces (Status.AUTO).
@@ -314,8 +435,8 @@ def _apply_answer(outcome, answer: Answer, *, library: LibraryRef,
                                 kind=DecisionKind.REJECTED, decided_at=when)
             return None, decision
         raise UnresolvedAnswer(
-            f"{answer.kind.value!r} does not answer a new-book review claim "
-            f"(claim {outcome.claim.id!r}) — expected confirm or reject"
+            f"{answer.kind.value!r} does not answer an unconfirmed new-book "
+            f"claim (claim {outcome.claim.id!r}) — expected confirm or reject"
         )
 
     if outcome.reason == "ambiguous_location":

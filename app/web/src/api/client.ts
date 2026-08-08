@@ -356,6 +356,49 @@ export const listReadHistory = (
     opts,
   )
 
+// --- the image workspace (P2.10, §12.2 #10) ---------------------------------
+//
+// An image is the durable object; its runs hang off it, and a finding stays
+// actionable long after its read settled. None of these re-reads a photo.
+
+export const listCaptureReads = (
+  captureId: string, opts: ApiOptions = {},
+): Promise<ReadSummaryDTO[]> =>
+  getJson(`/api/v1/captures/${encodeURIComponent(captureId)}/reads`, opts)
+
+export type ManualFindingIn = components['schemas']['ManualFindingIn']
+
+/** *"The engine missed this book"* — file one onto this photo by hand. It
+ *  needs no approval (typing the title IS the approval), so this returns the
+ *  diff with the book already in it. */
+export const addFindingByHand = (
+  shelfId: string, readId: string, payload: ManualFindingIn, opts?: ApiOptions,
+) => send('POST', readsPath(shelfId, `/${encodeURIComponent(readId)}/findings`),
+         payload, opts) as Promise<DiffDTO>
+
+export const approveBook = (bookId: string, opts?: ApiOptions) =>
+  send('POST', `/api/v1/books/${encodeURIComponent(bookId)}/approve`,
+       undefined, opts) as Promise<Book>
+
+const findingPath = (shelfId: string, readId: string, claimId: string,
+                     action: 'retract' | 'restore') =>
+  readsPath(shelfId, `/${encodeURIComponent(readId)}/findings`
+                   + `/${encodeURIComponent(claimId)}/${action}`)
+
+/** ✕ — this finding is wrong. Returns the diff recomputed after the write,
+ *  same contract as `applyDiff`, so one response repaints every badge. */
+export const retractFinding = (
+  shelfId: string, readId: string, claimId: string, opts?: ApiOptions,
+) => send('POST', findingPath(shelfId, readId, claimId, 'retract'), undefined,
+         opts) as Promise<DiffDTO>
+
+/** ↩ — undo that. Clears the standing rejection and lets the read apply
+ *  itself again; never re-reads the photo. */
+export const restoreFinding = (
+  shelfId: string, readId: string, claimId: string, opts?: ApiOptions,
+) => send('POST', findingPath(shelfId, readId, claimId, 'restore'), undefined,
+         opts) as Promise<DiffDTO>
+
 // --- the shelf-detail screen (P2.8) -----------------------------------------
 
 export const getShelf = (shelfId: string, opts: ApiOptions = {}): Promise<Shelf> =>

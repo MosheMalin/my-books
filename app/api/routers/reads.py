@@ -37,7 +37,14 @@ from app.api.deps import (
     get_reader,
     get_shelf_store,
 )
-from app.api.dto import ApplyDiffRequest, DiffDTO, ReadCreate, ReadDTO, ReadSummaryDTO
+from app.api.dto import (
+    ApplyDiffRequest,
+    DiffDTO,
+    ManualFindingIn,
+    ReadCreate,
+    ReadDTO,
+    ReadSummaryDTO,
+)
 from app.domain import (
     Alternative,
     Capture,
@@ -45,8 +52,10 @@ from app.domain import (
     ClaimTier,
     LibraryRef,
     Read,
+    ReadAlreadyFinished,
     ReadStatus,
     Shelf,
+    add_manual_claim,
     append_claim,
     fail_read,
     finish_read,
@@ -65,7 +74,13 @@ from app.ports.duplicates import DuplicateQueue
 from app.ports.jobs import JobHandle, JobRunner
 from app.ports.reader import Reader, ReadRequest
 from app.ports.store import BookStore, ReadStore, ShelfStore
-from app.reconcile_apply import Answer, AnswerKind, UnresolvedAnswer, apply_diff
+from app.reconcile_apply import (
+    Answer,
+    AnswerKind,
+    UnresolvedAnswer,
+    apply_diff,
+    retract_finding,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -329,7 +344,8 @@ def apply_read_diff(
                 f"{sorted(_ANSWER_KINDS)}",
             )
         answers.append(Answer(claim_id=a.claim_id, kind=kind,
-                              copy_id=a.copy_id))
+                              copy_id=a.copy_id, title=a.title,
+                              author=a.author))
     try:
         apply_diff(diff, library=library, books=books, shelves=shelves,
                   decisions=decisions, duplicates=duplicates, clock=clock,
@@ -337,6 +353,183 @@ def apply_read_diff(
                   answers=tuple(answers))
     except UnresolvedAnswer as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+    _, fresh = diff_for(shelf_id, read_id, library, shelves, reads, books,
+                         decisions)
+    return DiffDTO.of(fresh)
+
+
+# --- the image workspace: acting on a settled finding (P2.10) ---------------
+#
+# §12.2 #10: the Capture tab is a WORKSPACE, not a pipeline — a finding stays
+# actionable after its read settled, so a processed photo never has to be
+# re-read just to see (or fix) what it found. *Approve* and *edit* are
+# ordinary book routes (`POST /books/{id}/approve`, `PATCH /books/{id}`); the
+# two below are the ones that need the READ's context, because a retraction is
+# scoped to the (shelf, depth) the claim was read at (§5.6/§5.7 #1), not to
+# the book.
+#
+# Both return the diff RECOMPUTED after writing — the same contract as
+# `POST .../apply`, so the client replaces one object and every badge on the
+# screen follows.
+
+@router.post("/{read_id}/findings", response_model=DiffDTO,
+             status_code=status.HTTP_201_CREATED)
+def add_a_finding_by_hand(
+    shelf_id: str,
+    read_id: str,
+    body: ManualFindingIn,
+    library: LibraryRef = Depends(current_library),
+    shelves: ShelfStore = Depends(get_shelf_store),
+    reads: ReadStore = Depends(get_read_store),
+    books: BookStore = Depends(get_book_store),
+    decisions: DecisionStore = Depends(get_decision_store),
+    duplicates: DuplicateQueue = Depends(get_duplicate_queue),
+    clock: Clock = Depends(get_clock),
+    ids: IdGen = Depends(get_id_gen),
+) -> DiffDTO:
+    """*"The engine missed this book"* — add one to this photo by hand.
+
+    Files a MANUAL-tier :class:`~app.domain.read.Claim` on the read (see
+    ``app.domain.read.add_manual_claim`` for why a settled read accepts this
+    one kind of late claim and nothing else), then applies, so the book lands
+    at its (shelf, depth) immediately: unlike a machine claim it needs no
+    approval, because typing the title IS the approval.
+
+    The ``spine_id`` is minted ``manual-<id>`` rather than left blank —
+    `Provenance.sighting` is ``(run_id, spine_id)``, so a blank one would make
+    every hand-added book on a single read look like the same sighting, and
+    `observe()`'s idempotency would silently swallow the second.
+    """
+    read = _load_read(reads, library, shelf_id, read_id)
+    try:
+        claim = Claim(id=ids.new_id(), spine_id=f"manual-{ids.new_id()}",
+                      # A hand-added book belongs to the photo the owner is
+                      # looking at; a read of one (shelf, depth) may cover
+                      # several, and the first is the only honest default the
+                      # server can pick without being told which.
+                      capture_id=read.capture_ids[0], title=body.title.strip(),
+                      author=body.author.strip(), tier=ClaimTier.MANUAL)
+        read = add_manual_claim(read, claim)
+    except ReadAlreadyFinished as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    except DomainError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    reads.save_read(library, read)
+
+    _, diff = diff_for(shelf_id, read_id, library, shelves, reads, books,
+                        decisions)
+    apply_diff(diff, library=library, books=books, shelves=shelves,
+              decisions=decisions, duplicates=duplicates, clock=clock, ids=ids,
+              captured_at=read.finished_at, answers=())
+    _, fresh = diff_for(shelf_id, read_id, library, shelves, reads, books,
+                         decisions)
+    return DiffDTO.of(fresh)
+
+
+def _outcome_for(diff, claim_id: str):
+    """The claim's CURRENT classification, from a freshly recomputed diff.
+
+    Searches every bucket, including ``rejected`` (that is where a retracted
+    finding lands, and it is what ``restore`` acts on) and ``ignored``.
+    """
+    for group in (diff.added, diff.corrected, diff.unchanged,
+                  diff.needs_decision, diff.rejected, diff.ignored):
+        for outcome in group:
+            if outcome.claim.id == claim_id:
+                return outcome
+    raise HTTPException(status.HTTP_404_NOT_FOUND,
+                        f"read has no finding {claim_id!r}")
+
+
+@router.post("/{read_id}/findings/{claim_id}/retract", response_model=DiffDTO)
+def retract_a_finding(
+    shelf_id: str,
+    read_id: str,
+    claim_id: str,
+    library: LibraryRef = Depends(current_library),
+    shelves: ShelfStore = Depends(get_shelf_store),
+    reads: ReadStore = Depends(get_read_store),
+    books: BookStore = Depends(get_book_store),
+    decisions: DecisionStore = Depends(get_decision_store),
+    duplicates: DuplicateQueue = Depends(get_duplicate_queue),
+    clock: Clock = Depends(get_clock),
+) -> DiffDTO:
+    """*"✕ — this finding is wrong"*, on a claim already applied.
+
+    Always records the standing decision (§5.6: a rejected book must not be
+    re-added by a later run — without it the next read of this row puts it
+    straight back). What happens to the library RECORD is
+    `app.domain.retract.plan_retraction`'s rule: a book only a read ever
+    claimed, standing only here, is deleted; anything a human approved,
+    edited, or holds a second copy of is merely taken off this shelf
+    (UI_PLAN §5's two-destructive-actions separation).
+    """
+    read, diff = diff_for(shelf_id, read_id, library, shelves, reads, books,
+                           decisions)
+    outcome = _outcome_for(diff, claim_id)
+    if not outcome.book_key:
+        # A claim with no title has no identity to record a decision AT
+        # (`reconcile()`'s `no_identity`) — there is nothing to suppress and
+        # nothing that could ever be re-added.
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"finding {claim_id!r} resolved to no book at all; there is "
+            "nothing to retract",
+        )
+    retract_finding(outcome, library=library, shelf_id=shelf_id,
+                    depth=diff.depth, read=read, books=books,
+                    decisions=decisions, clock=clock, duplicates=duplicates)
+
+    _, fresh = diff_for(shelf_id, read_id, library, shelves, reads, books,
+                         decisions)
+    return DiffDTO.of(fresh)
+
+
+@router.post("/{read_id}/findings/{claim_id}/restore", response_model=DiffDTO)
+def restore_a_finding(
+    shelf_id: str,
+    read_id: str,
+    claim_id: str,
+    library: LibraryRef = Depends(current_library),
+    shelves: ShelfStore = Depends(get_shelf_store),
+    reads: ReadStore = Depends(get_read_store),
+    books: BookStore = Depends(get_book_store),
+    decisions: DecisionStore = Depends(get_decision_store),
+    duplicates: DuplicateQueue = Depends(get_duplicate_queue),
+    clock: Clock = Depends(get_clock),
+    ids: IdGen = Depends(get_id_gen),
+) -> DiffDTO:
+    """*"↩ — undo that"*: clear the standing decision suppressing this
+    finding here, then let the read apply itself again.
+
+    Composed from two things that already exist rather than a third write
+    path: ``DecisionStore.delete_decision`` (its own docstring calls this
+    "the undo of a mis-click", and is explicit that clearing an answer never
+    itself adds anything back) followed by the ordinary
+    ``apply_diff(answers=())`` — so an AUTO claim returns as the book it was,
+    and a REVIEW-tier one returns to the open question it was, decided by the
+    same `reconcile()` rules as any other apply. Nothing here re-reads the
+    photo or invents a book.
+
+    **409** when the finding is not actually suppressed: there is no decision
+    to undo, and silently doing nothing would look identical to success.
+    """
+    read, diff = diff_for(shelf_id, read_id, library, shelves, reads, books,
+                           decisions)
+    outcome = _outcome_for(diff, claim_id)
+    if not decisions.delete_decision(library, shelf_id, diff.depth,
+                                     outcome.book_key):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"finding {claim_id!r} is not suppressed at this shelf and row; "
+            "there is nothing to undo",
+        )
+    _, reopened = diff_for(shelf_id, read_id, library, shelves, reads, books,
+                            decisions)
+    apply_diff(reopened, library=library, books=books, shelves=shelves,
+              decisions=decisions, duplicates=duplicates, clock=clock, ids=ids,
+              captured_at=read.finished_at, answers=())
 
     _, fresh = diff_for(shelf_id, read_id, library, shelves, reads, books,
                          decisions)
@@ -444,7 +637,7 @@ def _job(
                 # here (§5.4) — an `ambiguous_location` one is opened in the
                 # duplicates queue exactly as it would be if a human had
                 # loaded the review screen and closed it without answering,
-                # and a `review_tier_new_book` one simply stays open. This is
+                # and a `new_book_unconfirmed` one simply stays open. This is
                 # the identical operation the client's own `commitDiff`
                 # performs (`app/web/src/capture/useCapture.ts`) — calling it
                 # from both places is intentional and safe, not a race:

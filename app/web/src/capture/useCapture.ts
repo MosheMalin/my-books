@@ -24,10 +24,14 @@
  * running read is re-attached (below) because there is real work to resume
  * watching; a finished one already did everything it was going to do — the
  * books it changed are in the library (server-side apply, P2.9's other half —
- * see `app/api/routers/reads.py`), and re-opening its diff on every tab visit
- * forever would be clutter, not state recovery. Its outcome is visible on the
- * photo itself via `readStage: 'done'`, and the shelf's own history
- * (P2.8, `GET /shelves/{id}/overview`) is where a past read is reviewed.
+ * see `app/api/routers/reads.py`), and re-opening every past read's diff on
+ * every tab visit forever would be clutter, not state recovery.
+ *
+ * That is NOT the same as having no route back to it — which is exactly the
+ * bug §12.2 #10 named. A settled read is reached ON PURPOSE, by opening the
+ * photo: `openImage` below, `useImageWorkspace` for the state, and
+ * `ImageWorkspace` for the screen (P2.10). The photo is the durable object;
+ * this hook only owns the queue and the reads it STARTS.
  *
  * **A read is scoped to exactly one (shelf, depth)** (`app.domain.read.new_read`).
  * Selecting photos here is a per-PHOTO convenience for the human, but
@@ -40,7 +44,6 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  addShelfDepth,
   applyDiff,
   createCapture,
   getRead,
@@ -56,6 +59,7 @@ import {
   type ReadSummaryDTO,
   type Shelf,
 } from '../api/client'
+import { approveAllPending, performFindingOp, type FindingOp } from './findingOps'
 
 export type Mode = 'spines' | 'fullpage' | 'llmpage'
 export type ReadStage = 'unread' | 'queued' | 'done'
@@ -116,6 +120,9 @@ export function useCapture() {
   // reader as the one everybody meets first. Cost is stated on the control.
   const [mode, setMode] = useState<Mode>('llmpage')
   const [runs, setRuns] = useState<RunState[]>([])
+  // Which photo's workspace is open (P2.10). Local id, not capture id — the
+  // intake row is what was clicked, and it may still be uploading.
+  const [openImageId, setOpenImageId] = useState<string | null>(null)
 
   // Guards `hydrate()` against React 18 StrictMode's dev-only double-invoke
   // of mount effects (setup → cleanup → setup, same component instance) —
@@ -339,15 +346,6 @@ export function useCapture() {
     }
   }, [])
 
-  /** *"Add a row behind this one"* (§5.7) — surfaced from the intake row even
-   *  at `depth_count` 1, because most owners never learn depth exists unless
-   *  it is offered before they need it. */
-  const addRowBehind = useCallback(async (shelfId: string) => {
-    const grown = await addShelfDepth(shelfId)
-    setShelves((s) => s.map((sh) => (sh.id === shelfId ? grown : sh)))
-    return grown
-  }, [])
-
   const toggleSelect = useCallback((id: string) => {
     setSelected((s) => {
       const next = new Set(s)
@@ -413,6 +411,9 @@ export function useCapture() {
   }, [items, selected])
 
   const start = useCallback(async () => {
+    // Starting a read is the one moment the LIVE panels matter more than any
+    // photo's history, so an open workspace steps aside for them.
+    setOpenImageId(null)
     const groups = pendingGroups()
     for (const [key, g] of groups) {
       try {
@@ -553,10 +554,82 @@ export function useCapture() {
     [],
   )
 
+  /**
+   * P2.10's loop on a LIVE run's findings — approve / fix details / remove /
+   * undo, on the rows the read just produced. The identical four ops the
+   * image workspace offers days later, through the identical
+   * `performFindingOp`: "right after the read" and "a week later" are the
+   * same act, which is the whole of §12.2 #10.
+   */
+  const findingOnRun = useCallback(
+    async (key: string, claimId: string, op: FindingOp) => {
+      const run = runsRef.current.find((r) => r.key === key)
+      if (!run) return
+      setRuns((rs) => rs.map((r) => (r.key === key
+        ? {
+            ...r, answerError: null,
+            answeringClaimIds: new Set(r.answeringClaimIds).add(claimId),
+          }
+        : r)))
+      try {
+        const diff = await performFindingOp(op, run.shelfId, run.readId, claimId)
+        setRuns((rs) => rs.map((r) => {
+          if (r.key !== key) return r
+          const answeringClaimIds = new Set(r.answeringClaimIds)
+          answeringClaimIds.delete(claimId)
+          return { ...r, diff, answeringClaimIds }
+        }))
+      } catch (err) {
+        setRuns((rs) => rs.map((r) => {
+          if (r.key !== key) return r
+          const answeringClaimIds = new Set(r.answeringClaimIds)
+          answeringClaimIds.delete(claimId)
+          return { ...r, answeringClaimIds, answerError: String(err) }
+        }))
+      }
+    },
+    [],
+  )
+
+  /** "Approve all" on a LIVE run — the same bulk act the workspace offers,
+   *  through the same `approveAllPending`. */
+  const approveAllOnRun = useCallback(
+    async (key: string, claimIds: readonly string[]) => {
+      const run = runsRef.current.find((r) => r.key === key)
+      if (!run || claimIds.length === 0) return
+      setRuns((rs) => rs.map((r) => (r.key === key
+        ? {
+            ...r, answerError: null,
+            answeringClaimIds: new Set(r.answeringClaimIds).add('_all'),
+          }
+        : r)))
+      try {
+        const diff = await approveAllPending(run.shelfId, run.readId, claimIds)
+        setRuns((rs) => rs.map((r) => {
+          if (r.key !== key) return r
+          const answeringClaimIds = new Set(r.answeringClaimIds)
+          answeringClaimIds.delete('_all')
+          return { ...r, diff, answeringClaimIds }
+        }))
+      } catch (err) {
+        setRuns((rs) => rs.map((r) => {
+          if (r.key !== key) return r
+          const answeringClaimIds = new Set(r.answeringClaimIds)
+          answeringClaimIds.delete('_all')
+          return { ...r, answeringClaimIds, answerError: String(err) }
+        }))
+      }
+    },
+    [],
+  )
+
+  const openImage = useCallback((id: string | null) => setOpenImageId(id), [])
+
   return {
-    items, selected, shelves, shelvesLoading, mode, runs,
-    setMode, addFiles, retryItem, assignShelf, assignDepth, addRowBehind,
-    toggleSelect, selectAll, selectNone, selectUnread,
+    items, selected, shelves, shelvesLoading, mode, runs, openImageId,
+    setMode, addFiles, retryItem, assignShelf, assignDepth,
+    toggleSelect, selectAll, selectNone, selectUnread, openImage, findingOnRun,
+    approveAllOnRun,
     pendingGroupCount: pendingGroups().length,
     selectedReadyCount: items.filter(
       (it) => selected.has(it.localId) && it.status === 'ready',

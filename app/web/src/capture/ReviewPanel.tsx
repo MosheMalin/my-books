@@ -13,8 +13,8 @@
  */
 import type { Shelf } from '../api/client'
 import { useI18n } from '../lib/i18n'
-import { shelfHash } from '../lib/route'
-import { ClaimRow } from './ClaimRow'
+import { FindingList } from './FindingList'
+import type { FindingOp } from './findingOps'
 import type { RunState } from './useCapture'
 
 export interface ReviewPanelProps {
@@ -22,9 +22,15 @@ export interface ReviewPanelProps {
   shelves: Shelf[]
   onStop: () => void
   onAnswer: (claimId: string, kind: string, copyId?: string | null) => void
+  /** P2.10 — approve / fix / remove, on the same rows, right after the read.
+   *  The workspace offers the identical loop days later. */
+  onFinding: (claimId: string, op: FindingOp) => void
+  onApproveAll: (claimIds: string[]) => void
 }
 
-export function ReviewPanel({ run, shelves, onStop, onAnswer }: ReviewPanelProps) {
+export function ReviewPanel({
+  run, shelves, onStop, onAnswer, onFinding, onApproveAll,
+}: ReviewPanelProps) {
   const { t } = useI18n()
   const shelf = shelves.find((s) => s.id === run.shelfId)
   const shelfLabel = shelf?.label || t.unassigned
@@ -35,16 +41,10 @@ export function ReviewPanel({ run, shelves, onStop, onAnswer }: ReviewPanelProps
     <div className="panel reviewpanel">
       <h3>
         <span className="rtl-safe">{target}</span>
+        {/* The *"open the shelf"* chip P2.8 put here is gone (owner,
+            2026-08-09): this tab is about the image, and the shelf binding
+            belongs to the Map tab. */}
         <span className="chiprow">
-          <button
-            type="button"
-            className="linkish"
-            onClick={() => {
-              globalThis.location.hash = shelfHash(run.shelfId)
-            }}
-          >
-            {t.open_shelf}
-          </button>
           {run.status === 'running' && (
             <button type="button" className="btn sm danger" onClick={onStop}>
               {t.stop_run}
@@ -72,34 +72,18 @@ export function ReviewPanel({ run, shelves, onStop, onAnswer }: ReviewPanelProps
 
             {run.diff && (
               <>
-                <div className="chiprow diffbits">
-                  <span className="g">+{run.diff.added.length} {t.read_added}</span>
-                  {run.diff.corrected.length > 0 && (
-                    <span className="m">{run.diff.corrected.length} {t.read_corrected}</span>
-                  )}
-                  <span className="m">{run.diff.unchanged.length} {t.read_unchanged}</span>
-                  {run.diff.not_seen.length > 0 && (
-                    <span className="r">{t.read_unseen(run.diff.not_seen.length)}</span>
-                  )}
-                </div>
-
                 {run.answerError && (
                   <p className="errorbox" role="alert">{run.answerError}</p>
                 )}
 
-                {[
-                  ...run.diff.added,
-                  ...run.diff.corrected,
-                  ...run.diff.needs_decision,
-                  ...run.diff.unchanged,
-                ].map((outcome) => (
-                  <ClaimRow
-                    key={outcome.claim.id}
-                    outcome={outcome}
-                    answering={run.answeringClaimIds.has(outcome.claim.id)}
-                    onAnswer={(kind, copyId) => onAnswer(outcome.claim.id, kind, copyId)}
-                  />
-                ))}
+                <FindingList
+                  diff={run.diff}
+                  busy={run.answeringClaimIds}
+                  onAnswer={onAnswer}
+                  onFinding={onFinding}
+                  onApproveAll={onApproveAll}
+                  emptyText={t.workspace_no_findings}
+                />
               </>
             )}
           </>

@@ -263,7 +263,7 @@ def reconcile(
     decisions_by_key = {d.book_key: d for d in decisions}
 
     outcomes = _classify_all(claims, shelf.id, depth, library_books,
-                             decisions_by_key)
+                             decisions_by_key, read_id)
 
     added = tuple(o for o in outcomes if o.kind is OutcomeKind.ADDED)
     corrected = tuple(o for o in outcomes if o.kind is OutcomeKind.CORRECTED)
@@ -288,12 +288,36 @@ def reconcile(
 
 # --- classification ---------------------------------------------------------
 
+def _sightings_here(
+    library_books: Mapping[str, Book], shelf_id: str, depth: int, read_id: str,
+) -> dict[str, tuple[Book, str]]:
+    """``spine_id -> (book, copy_id)`` for every copy standing at this
+    (shelf, depth) that THIS read has already been recorded as sighting.
+
+    The index behind :func:`_resolved_by_its_own_sighting` — built once per
+    reconcile() call rather than scanned per claim. One pass over the library's
+    copies and their provenance; the caller already pays O(library) to build
+    ``library_books`` at all, so this changes the order of nothing.
+    """
+    here = (shelf_id, depth)
+    out: dict[str, tuple[Book, str]] = {}
+    for book in library_books.values():
+        for copy in book.copies:
+            if copy.location != here:
+                continue
+            for prov in copy.provenance:
+                if prov.run_id == read_id:
+                    out[prov.spine_id] = (book, copy.id)
+    return out
+
+
 def _classify_all(
     claims: Sequence[Claim],
     shelf_id: str,
     depth: int,
     library_books: Mapping[str, Book],
     decisions_by_key: Mapping[str, Decision],
+    read_id: str,
 ) -> list[ClaimOutcome]:
     identified: list[tuple[str, Claim]] = []
     out: list[ClaimOutcome] = []
@@ -316,6 +340,8 @@ def _classify_all(
     for key, claim in identified:
         by_key.setdefault(key, []).append(claim)
 
+    sighted = _sightings_here(library_books, shelf_id, depth, read_id)
+
     for key, group in by_key.items():
         primary = _pick_primary(group)
         for claim in group:
@@ -325,7 +351,7 @@ def _classify_all(
                     reason="duplicate_within_depth", superseded_by=primary.id,
                 ))
         out.append(_classify_one(primary, key, shelf_id, depth, library_books,
-                                 decisions_by_key))
+                                 decisions_by_key, sighted))
     return out
 
 
@@ -334,7 +360,12 @@ def _pick_primary(group: Sequence[Claim]) -> Claim:
     depth: AUTO over REVIEW (real matcher confidence over a guess), then the
     higher score, then the lower spine_id so two ties still pick the same
     claim on every run rather than depending on dict/set ordering."""
-    rank = {ClaimTier.AUTO: 2, ClaimTier.REVIEW: 1, ClaimTier.UNMATCHED: 0}
+    # MANUAL outranks every machine tier — if the owner typed a book onto this
+    # photo and the reader also found it, the human's text is the one to keep
+    # (§5.1's ladder). `rank.get` rather than `rank[...]` would hide a future
+    # tier from this ordering, so every value is listed on purpose.
+    rank = {ClaimTier.MANUAL: 3, ClaimTier.AUTO: 2, ClaimTier.REVIEW: 1,
+            ClaimTier.UNMATCHED: 0}
     return min(group, key=lambda c: (-rank[c.tier], -c.score, c.spine_id))
 
 
@@ -351,7 +382,31 @@ def _classify_one(
     depth: int,
     library_books: Mapping[str, Book],
     decisions_by_key: Mapping[str, Decision],
+    sighted: Mapping[str, tuple[Book, str]],
 ) -> ClaimOutcome:
+    # ⚠ FIRST, before anything keyed on the claim's own text: has THIS claim
+    # already produced a book standing here?
+    #
+    # A claim's identity is `book_key(claim.title, claim.author)` — the text
+    # the ENGINE read, frozen forever because it is evidence. But a human may
+    # have answered the claim with DIFFERENT text: approving it as corrected,
+    # picking one of `explain()`'s runners-up, or editing the book's title
+    # afterwards. The book that answered then lives under a different key, and
+    # keying alone would report the claim as still unanswered — leaving the
+    # finding pending forever and creating a SECOND book on the next click.
+    # Found live, by correcting a title and watching the row stay pending.
+    #
+    # `Provenance.sighting` is `(run_id, spine_id)`, so "which book did this
+    # spine produce" is a fact the data already carries. The location check is
+    # part of the rule, not an optimisation: a copy that has since MOVED is
+    # genuinely not here any more, and §5.7 #1 says so.
+    recorded = sighted.get(claim.spine_id)
+    if recorded is not None:
+        book, copy_id = recorded
+        return ClaimOutcome(claim=claim, kind=OutcomeKind.UNCHANGED,
+                            book_key=book.key, existing_book=book,
+                            existing_copy_id=copy_id, reason="same_location")
+
     existing = library_books.get(key)
     here = _copy_at(existing, shelf_id, depth) if existing is not None else None
     if here is not None:
@@ -371,15 +426,30 @@ def _classify_one(
                             reason=decision.kind.value)
 
     if existing is None:
-        # Not in the library at all. AUTO is real matcher confidence and
-        # auto-enters (same rule `booksnap/library.py::absorb_auto_claims`
-        # already applies); anything weaker waits for a human — `Status` has
-        # no "pending" rung, so there is nothing honest to create yet.
-        if claim.tier is ClaimTier.AUTO:
+        # Not in the library at all.
+        #
+        # ⚠ REVERSED 2026-08-09 (owner). This branch used to auto-enter an
+        # AUTO-tier claim, mirroring `booksnap/library.py::absorb_auto_claims`.
+        # The owner watched a real photo put fourteen books into the library
+        # without ever being asked and called it wrong: **nothing enters the
+        # library until a human approves it.** UI_PLAN §6 already lists
+        # "auto-approve AUTO" as a Settings toggle; until that setting exists,
+        # its value is OFF, and this is where that lives.
+        #
+        # So tier no longer decides ENTRY, only how the finding is presented:
+        # both AUTO and REVIEW land in the same pending bucket, which is also
+        # what lets the review UI give them the same controls (owner's item 7
+        # in the same round of feedback). The claim is not lost by waiting —
+        # it is on the read forever, and the read is reachable from its photo
+        # (P2.10's workspace).
+        if claim.tier is ClaimTier.MANUAL:
+            # ...except a book the owner typed in themselves. There is no one
+            # left to ask (§5.1: a person's word is the strongest evidence the
+            # system ever gets), so it enters at once, at MANUAL.
             return ClaimOutcome(claim=claim, kind=OutcomeKind.ADDED,
-                                book_key=key, reason="new_book_auto")
+                                book_key=key, reason="manual_add")
         return ClaimOutcome(claim=claim, kind=OutcomeKind.NEEDS_DECISION,
-                            book_key=key, reason="review_tier_new_book")
+                            book_key=key, reason="new_book_unconfirmed")
 
     # The book is real and confirmed, but not standing HERE (§5.4's actual
     # ambiguous case: another shelf, or another row of this one, per §5.7 #3).

@@ -15,29 +15,31 @@ import type { IntakeItem } from './useCapture'
 export interface CaptureRowProps {
   item: IntakeItem
   selected: boolean
+  open: boolean
   shelves: Shelf[]
   onToggle: () => void
+  onOpen: () => void
   onShelf: (shelfId: string) => void
   onDepth: (depth: number) => void
-  onAddRowBehind: () => void
   onRetry: () => void
 }
 
 export function CaptureRow({
   item,
   selected,
+  open,
   shelves,
   onToggle,
+  onOpen,
   onShelf,
   onDepth,
-  onAddRowBehind,
   onRetry,
 }: CaptureRowProps) {
   const { t } = useI18n()
   const shelf = shelves.find((s) => s.id === item.shelfId)
 
   return (
-    <div className={`caprow${selected ? ' sel' : ''}`}>
+    <div className={`caprow${selected ? ' sel' : ''}${open ? ' open' : ''}`}>
       <input
         type="checkbox"
         checked={selected}
@@ -45,7 +47,18 @@ export function CaptureRow({
         onChange={onToggle}
         aria-label={item.filename}
       />
-      <img src={item.previewUrl} alt="" />
+      {/* The photo IS the way into its own history (P2.10, §12.2 #10) — the
+          thumbnail is the button, which is why the row's picture is not a
+          bare <img>. Only once it exists server-side: an upload still in
+          flight has no runs to show. */}
+      {item.status === 'ready' ? (
+        <button type="button" className="thumbbtn" onClick={onOpen}
+                aria-label={t.open_image}>
+          <img src={item.previewUrl} alt="" />
+        </button>
+      ) : (
+        <img src={item.previewUrl} alt="" />
+      )}
       <div className="m">
         <div className="fn rtl-safe">{item.filename}</div>
 
@@ -87,13 +100,20 @@ export function CaptureRow({
                 ))}
               </select>
             )}
-            {/* Surfaced even at depth_count 1 — §5.7 is explicit that most
-                owners never discover the feature unless it is offered before
-                they need it. */}
-            <button type="button" className="linkish" onClick={onAddRowBehind}>
-              {t.add_row_behind}
-            </button>
+            {/* No "add a row behind" (owner, 2026-08-09). P2.7 surfaced it
+                here on §5.7's reasoning that nobody discovers depth unless it
+                is offered early — but the owner's call is that this tab is
+                about IMAGES, and declaring the shape of a piece of furniture
+                belongs to the Map tab with the rest of the shelf model. The
+                depth PICKER above stays: a shelf that is already stacked still
+                has to say which row a photo shows. */}
           </div>
+        )}
+
+        {item.status === 'ready' && item.readStage !== 'unread' && (
+          <button type="button" className="linkish" onClick={onOpen}>
+            {t.open_image}
+          </button>
         )}
       </div>
 

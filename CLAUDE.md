@@ -68,6 +68,9 @@ app/
                   rules derived from a copy's provenance + a shelf's reads (P2.8)
     copy_resolution.py  the §5.4 fire table, the queue entity, the two cheap
                   wins (P2.6)
+    retract.py    plan_retraction(): what removing a finding costs the
+                  library — delete the phantom, keep what a human vouched
+                  for (P2.10)
     text.py       book_key() over booksnap.catalog.normalize — NOT a copy
     search.py     Hebrew search SEMANTICS: parse + rank, pure and portable
   ports/        Protocols: Principal, Clock, IdGen, BookStore, ShelfStore
@@ -81,12 +84,14 @@ app/
     migrations.py    versioned schema via PRAGMA user_version (H6)
     legacy_import.py work/*.json -> entities; I/O and PURE mapping split
   reconcile_apply.py  turns a classified Diff into writes (P2.5); also the
-                  P2.6 queue's open/close bookkeeping
+                  P2.6 queue's open/close bookkeeping and P2.10's
+                  retract_finding()
   api/          FastAPI routers under /api/v1 + DTOs. THIN — no rules
     routers/meta.py   service + library identity
     routers/books.py  list / get / patch / delete / manual add / export
     routers/shelves.py  shelves + captures; the capture→shelf binding (P2.2)
-    routers/reads.py  start/poll/stop a read; diff/apply (P2.4/P2.5)
+    routers/reads.py  start/poll/stop a read; diff/apply (P2.4/P2.5);
+                      retract/restore one finding (P2.10)
     routers/duplicates.py  the durable queue: list/answer/skip (P2.6)
   api/openapi.json          committed contract, regenerated, never hand-edited
   main.py       the composition root — the ONE file allowed to cross layers
@@ -95,7 +100,9 @@ app/
     src/books/      Tab 1: Toolbar, FilterBar, Feed, AddBookModal
     src/book/       the book surface: ONE renderer, drawer + page mounts
     src/capture/    Tab 3: useCapture.ts, intake rows, review panel + claim
-                    row/why?/§5.4 prompt (P2.7)
+                    row/why?/§5.4 prompt (P2.7); the image workspace —
+                    useImageWorkspace.ts, ImageWorkspace.tsx, and the
+                    FindingList/findingOps both surfaces share (P2.10)
     src/shelf/      the shelf-detail screen: useShelfDetail.ts, ShelfPage.tsx,
                     ReadHistory.tsx — mounted at #/map/<shelfId> (P2.8)
     src/styles/     tokens / base / books / capture / shelf — palette ported
@@ -513,18 +520,22 @@ names to run a subset (`python tests/run_all.py test_api`).
 |---|---|---|
 | `test_core.py` | 52 | matcher / normalize / evidence gates |
 | `test_integrations.py` | 24 | catalog + fallback adapters, fully mocked/offline |
-| `test_domain.py` | 105 | the VISION rules that can be silently reversed |
-| `test_store_contract.py` | 171 | one store spec × every implementation + isolation |
-| `test_reconcile_apply.py` | 20 | `app.reconcile_apply` writing a `Diff` through real stores |
+| `test_domain.py` | 119 | the VISION rules that can be silently reversed |
+| `test_store_contract.py` | 179 | one store spec × every implementation + isolation |
+| `test_reconcile_apply.py` | 27 | `app.reconcile_apply` writing a `Diff` through real stores |
 | `test_legacy_import.py` | 21 | `work/*.json` → entities, against a committed fixture |
 | `test_search.py` | 15 | Hebrew search, against 24 real queries on the real 251 books |
 | `test_layering.py` | 9 | the one-way import rules (plan H1) |
-| `test_api.py` | 101 | `/api/v1` shapes + the versioning/tenancy meta-tests |
+| `test_api.py` | 117 | `/api/v1` shapes + the versioning/tenancy meta-tests |
 | `test_reader_wiring.py` | 8 | WHICH catalog the product hands the engine |
 
-526 python tests as of the catalog-wiring fix (+8: `test_reader_wiring.py`,
-which exists because the product silently handed the engine a 57-entry
-stand-in catalog and a real shelf matched nothing).
+571 python tests as of P2.10 and the owner's feedback rounds (+45: the
+retraction rule, a photo's runs across both store implementations,
+`retract_finding`'s writes, the workspace routes, the approval reversal —
+which also REPLACED the test that asserted an AUTO claim auto-enters — and
+the sighting-resolution rule found live). The jump before that was the catalog-wiring fix's
+`test_reader_wiring.py`, which exists because the product silently handed the
+engine a 57-entry stand-in catalog and a real shelf matched nothing.
 
 **Test the real input, not a fixture you invented.** Added after uploads
 shipped broken with a green suite (see the MPO warning under "Images are
@@ -1471,16 +1482,22 @@ live catalog round trip every time a human clicks *why?*, which is exactly
 the cost the "deterministic first" philosophy asks this codebase to avoid
 paying twice.
 
-**"Alternatives" is READ-ONLY, not "one-click acceptable" (UI_PLAN §4's own
-phrase) — a deliberate, reported scope cut.** The domain has no operation to
-re-point an already-classified claim at a different catalog candidate;
-building one (a new `reconcile()` outcome, a new `AnswerKind`, a write path)
-is a real domain addition, not a UI tweak, and out of this item's size. The
-ranked list still renders inside *why?* for transparency (title, author,
-score, and the gate `explain()` refused it on, verbatim — those reason
-strings are ENGLISH always, hardcoded in `booksnap/match.py`, and are shown
-as-is rather than mistranslated by guessing at their meaning). No accept
-button is drawn next to a candidate — absent, not a button that does nothing.
+**"Alternatives" was READ-ONLY, and stopped being so on 2026-08-09.** P2.7
+cut UI_PLAN §4's "one-click acceptable" for a good reason — the domain had no
+operation to re-point an already-classified claim, and inventing one (a new
+outcome, a new `AnswerKind`, a write path) was a real domain addition. The
+operation then arrived from somewhere else entirely: *"nothing enters the
+library unapproved"* made every machine finding a pending question, and
+`AnswerKind.CONFIRM` carries an optional title/author so a human can approve
+one AS CORRECTED. Accepting a runner-up is exactly that with the candidate's
+text; a settled finding takes the other existing door, `PATCH /books/{id}`.
+So there is STILL no "override this claim's match" op and there needs to be
+none — the claim keeps the engine's reading (evidence), the book gets the
+human's answer. The panel is now labelled *"try a better match?"* and each
+candidate carries a **use this**; the rejection reasons stay, because "why
+not this one" is what makes a ranked list judgeable — and they are ENGLISH
+always, hardcoded in `booksnap/match.py`, shown verbatim rather than
+mistranslated by guessing.
 
 **The *"פתחו את המדף →"* chip (UI_PLAN §4) is also left out**, for the same
 "absent, not disabled" reason: it links to `#/map/<shelfId>`, and neither a
@@ -1791,6 +1808,253 @@ the Python ring's `test_a_settled_read_applies_its_diff_with_no_client_call_
 at_all` (a `StubReader` claim that resolves to a real match) rather than on
 a screenshot.
 
+## The image workspace (P2.10) — the tab is a workspace, not a pipeline
+
+§12.2 #10, settled by the owner 2026-08-09: the first build of the Capture
+tab read "capture" as **drop → run → review-now**, so a settled read had no
+route back and the only visible action on a processed photo was *re-run on
+selected* — which costs money, costs time, and invites re-deciding questions
+already answered. The shape that replaces it:
+
+> **the image is the durable object; runs hang off the image; findings hang
+> off the run** — and each finding can be approved / edited / removed, the
+> loop the engine POC already had.
+
+This is a split by SURFACE, not a reversal of §5.5 ("a run is not a
+user-facing concept"). Books and the shelf view stay run-free; there is still
+no global list of runs. `GET /captures/{id}/reads` is the one run-shaped
+question the product answers, and it answers it where the unit of work really
+is the photograph.
+
+**`ReadStore.list_reads_for_capture` is a store method, not a filter over
+`list_reads(shelf_id)`, and that is the whole reason it exists.** A capture
+can be RE-BOUND to another shelf or row after it was read (P2.2's intake
+correction), and its earlier reads stay filed — correctly — under the shelf as
+it was then. Deriving a photo's runs from its CURRENT shelf loses exactly the
+history a workspace is for, and loses it only for the photos someone had to
+correct. Same reason `useImageWorkspace` addresses every write to
+`run.shelf_id`, never to the photo's current shelf.
+
+⚠ The SQLite side narrows with `LIKE '%"<capture_id>"%'` over the v7
+`capture_ids` JSON column (json1 is not guaranteed present) and then confirms
+membership in Python. The confirmation **survives mutation testing** — the
+quoted needle is already exact — and it stays anyway, recorded in the contract
+test rather than left looking like a gap: it keeps the SQL a pure *narrowing*
+clause, so an index- or FTS-shaped rewrite can be judged on speed alone.
+
+**The three actions, and where each rule lives:**
+
+- **approve** — `POST /books/{id}/approve` over the existing domain
+  `approve()`, which had no route until now. Idempotent and never a demotion
+  (`Status.merge`), so the button simply disappears once the book is
+  `approved`;
+- **edit** — the ordinary `PATCH /books/{id}`. H3: the workspace does not need
+  a third way to write a title;
+- **remove** — `POST .../reads/{rid}/findings/{cid}/retract`, and the only one
+  with a rule worth arguing about. It sits between two rules of this codebase
+  that point in opposite directions: *precision is the expensive metric — a
+  phantom rots silently* says delete it, and UI_PLAN §5's *remove-from-shelf
+  is not delete-from-library* says do not. `app/domain/retract.py:plan_retraction`
+  is where they meet:
+
+  > the library record is deleted only when **this read created it** — one
+  > copy, standing here, every sighting on it from this read, and the record
+  > itself no older than the read. Anything with a life of its own is merely
+  > taken off this shelf.
+
+  (That is the SECOND version of the rule; the first asked "has a human
+  vouched for this?" and stopped meaning anything the same day — see
+  "Nothing enters the library unapproved" below.)
+
+  ALWAYS, in every branch, a standing `Decision` is recorded at
+  (shelf, depth, book_key) — §5.6, or the very next read puts the phantom
+  straight back. That is why `plan_retraction` returns a decision kind even in
+  the `NOTHING` case (nothing left here to remove, and the answer still has to
+  survive). `ambiguous_location` records `WRONG_BOOK` rather than `REJECTED`:
+  the same suppression, but the audit trail says which question was answered.
+- **undo** — `.../restore` is composed from two things that already existed
+  rather than a third write path: `DecisionStore.delete_decision` (its own
+  docstring calls it "the undo of a mis-click") then the ordinary
+  `apply_diff(answers=())`. So an AUTO claim returns as the book it was and a
+  REVIEW-tier one returns to the open question it was, decided by the same
+  `reconcile()` rules as any other apply — nothing re-reads the photo or
+  invents a book. **409 when the finding is not actually suppressed**; silently
+  doing nothing would look identical to success.
+
+⚠ **`retract_finding` is deliberately NOT another `AnswerKind` on
+`apply_diff`.** An `Answer` RESOLVES a question that is still open; a
+retraction retracts something already settled and written, often days later.
+Routing it through `answers` would also have the unconditional `unchanged`
+loop re-`observe()`-ing the very claim being retracted in the same call, which
+reads as a bug however it is ordered.
+
+**A retracted finding stays on screen, greyed and struck through, with its
+reason and its undo.** `DiffDTO.rejected`'s own contract already said why
+("so a suppressed book has a visible reason"); before P2.10 the client simply
+never rendered that bucket, which meant *"why isn't my book showing up"* had
+no answer and the undo had nowhere to live. `ignored` is still not rendered —
+a within-read duplicate or a titleless spine is noise, not a decision anybody
+made.
+
+**Two more actions the owner asked for the same day** (2026-08-09), both
+sharing the machinery above rather than adding doors:
+
+- **approve all** — one `POST .../apply` with a `confirm` per pending finding.
+  `pendingApprovals()` computes both the button's COUNT and its ACTION, so
+  they cannot disagree, and it filters to `new_book_unconfirmed` only: §5.4's
+  duplicate question is a DIFFERENT question and must never ride along. That
+  was the POC's own hard-won rule and it is mutation-checked here;
+- **add a book by hand** — `POST .../reads/{id}/findings` files a MANUAL claim
+  on the read (`add_manual_claim`, the one late-claim exception, guarded to
+  MANUAL tier and to a settled read) and applies it. The spine id is minted
+  `manual-<id>` rather than left blank: `Provenance.sighting` is
+  `(run_id, spine_id)`, so a shared blank would make every hand-added book on
+  one read the same sighting and `observe()` would swallow all but the first.
+
+**One renderer, two mounts** (the same rule the book surface follows):
+`FindingList` + `ClaimRow` are shared by the LIVE review panel and the
+workspace, and `findingOps.ts` holds the four ops both call. "Right after the
+read" and "a week later" are the same act — that IS §12.2 #10 — so two copies
+of "what does ✕ do" would be two chances for one of them to be wrong. The
+workspace passes a `captureId` and the live panel does not: a read covers
+every capture at its (shelf, depth) (§5.7 #1 forbids a partial read of a row),
+but the workspace was opened from ONE image.
+
+⚠ **The run row and the findings under it deliberately disagree, and that is
+P2.8's distinction made visible.** Verified live: the run reads
+*"+2 added · 0 unchanged"* while its findings read *"+0 added · 2 unchanged"*.
+The first is `Read.diff_summary`, the archived snapshot of what that read DID;
+the second is `GET .../diff`, recomputed live against the library as it stands
+now — which is what the ✓/✎/✕ act on. Anyone "fixing" the inconsistency by
+sourcing both from one place will silently repaint every past read as having
+changed nothing (the exact failure `DiffSummary`'s docstring argues at length).
+
+Verified live against the real `work/product.db` (snapshotted before, restored
+after): approve raised a book to `approved` and the button vanished; ✕ on an
+AUTO-only book deleted it from the library and left the row struck through
+with its reason; ↩ put it back on the same shelf; ✕ on an **approved** book
+left it in the library with `shelf_id: null` — UI_PLAN §5's separation, over
+real HTTP. Both languages mirror (`dir` rtl/ltr, strings translated).
+
+⚠ The Browser pane did not composite frames this session either (screenshot
+timed out, same as P2.8), so every check above is DOM structure and API state
+— real verification of wiring, NOT of paint. `capture.css`'s new rules use
+only existing custom properties, the same inference P2.8 recorded; re-verify
+visually the next time the pane composites.
+
+## ⚠⚠ Nothing enters the library unapproved (owner, 2026-08-09)
+
+`reconcile()` used to auto-enter an AUTO-tier claim for a book the library had
+never seen, mirroring `booksnap/library.py::absorb_auto_claims`. The owner
+watched one real photo file **fourteen books he was never asked about** and
+reversed it (VISION §12.2 #11). A read now produces **findings**; a finding
+becomes a `Book` only through an explicit ✓.
+
+This is a REVERSAL of a rule with a named test, so it is written down in three
+places on purpose: here, VISION §12.2 #11, and
+`test_nothing_a_machine_read_enters_the_library_unapproved`, which replaced
+the test that asserted the opposite.
+
+**What moved:**
+
+- `_classify_one`: an unknown book at AUTO **or** REVIEW → `NEEDS_DECISION`,
+  reason **`new_book_unconfirmed`** (was `new_book_auto` / `review_tier_new_book`).
+  Tier no longer decides ENTRY, only presentation — which is what lets both
+  tiers wear the same controls (the owner's item 7 in the same round);
+- `ClaimTier.MANUAL` is new, and is the ONE tier that enters at once, at
+  `Status.MANUAL`. `diff.added` now means exactly "a book the owner typed onto
+  a photo" and nothing else, which is why `apply_diff` creates it MANUAL rather
+  than AUTO;
+- `AnswerKind.CONFIRM` gained optional `title`/`author` — *approve as
+  corrected*, so ✎-then-✓ is one act and one write. The CLAIM keeps the
+  engine's text; it is evidence, and `Claim` is frozen for that reason.
+
+**Three consequences that look like bugs and are not:**
+
+1. **`Read.diff_summary` leads with `needs_decision`.** "+0 added" is what an
+   honest engine read produces now. The finding list under the run row still
+   shows what each finding IS today, so the two lines disagree — that is
+   P2.8's snapshot-vs-live distinction, argued at length in `DiffSummary`;
+2. **`POST /books/{id}/approve` is nearly unreachable.** A confirmed finding is
+   created APPROVED, so the only thing left for that route is raising a legacy
+   `auto` record (one of P1.3's 251) that a read has re-found. Its test says so;
+3. **the retraction rule had to be rewritten the same day.** v1 asked *"has a
+   human vouched for this book?"* and deleted only `AUTO` records. Once every
+   confirmed finding arrived APPROVED that branch became unreachable, so every
+   ✕ would have left an unshelved phantom. v2 asks **"did this read create the
+   record?"** — see below.
+
+⚠ **`plan_retraction` needs BOTH the read's id and its start time**, and the
+second one is the non-obvious half. A book that already existed and that this
+read merely RECONFIRMED gets its first-ever sighting from this read
+(`observe()` appends one), so provenance alone says the same thing about
+"created here" and "found here". `Book.added_at >= read.started_at` is the
+fact that actually separates them. A record with no `added_at` reads as OLDER,
+never newer — the safe direction is always to keep the book. All four clauses
+are mutation-checked.
+
+## The Capture tab carries no shelf plumbing (owner, 2026-08-09)
+
+*"Open the shelf →"* (P2.8) and *"add a row behind"* (P2.7) are both gone, and
+their mutation tests with them. §5.7's argument that nobody discovers depth
+unless it is offered early still stands — it just does not get answered on
+this tab. **The tab is about images**; binding a photo to a place in the house,
+including how deep the furniture is, is the Map tab's job (VISION §12.2 #12).
+The depth PICKER stays: an already-stacked shelf still has to say which row a
+photo shows.
+
+Deleting a test for a control that must not exist is the point — a lingering
+test is what stops the next person from finding the reason.
+
+## ⚠ A claim is settled by its own SIGHTING, not only by its title
+
+Found live on 2026-08-09, by picking a runner-up and watching the row stay
+*"awaiting approval"*. A claim's identity is `book_key(claim.title,
+claim.author)` — the text the ENGINE read, frozen forever because it is
+evidence. But a human can answer a claim with DIFFERENT text three ways now:
+approve-as-corrected, pick one of `explain()`'s runners-up, or edit the
+book's title afterwards. The book that answered then lives under a different
+key, so a keyed lookup alone reports the claim as still unanswered — the
+finding stays pending forever and **the next click creates a second book**.
+
+`reconcile._classify_one` therefore checks, FIRST: has this claim's own
+`(read_id, spine_id)` already produced a copy standing at this (shelf, depth)?
+`Provenance.sighting` is exactly that fact, so no new state was needed —
+`_sightings_here` indexes it once per call, over a library the caller already
+pays O(library) to load. Both scopes in that check are rules, not
+optimisations, and both are mutation-checked: another read's sighting must not
+settle this claim (that would skip §5.4), and a copy that has since MOVED is
+genuinely not here (§5.7 #1).
+
+The reason it shipped broken and green: the test asserted the corrected book
+had the right title and stopped there. **A test that writes and never reads
+back is testing the request, not the behaviour** — the same lesson P1.7's tag
+parsing already recorded, in a different costume.
+
+## The finding row reads like a book row
+
+Title, then author, using `books.css`'s own `.t`/`.a` classes — a finding IS a
+book claim, and reading one should not feel like reading a log line (owner,
+2026-08-09). Two consequences:
+
+- **the raw OCR text moved off the row** into *"try a better match?"*. It
+  explains a finding; it does not identify one;
+- **a settled row shows the BOOK's title/author, not the claim's.** The claim
+  keeps the engine's text forever, so a row sourced from it would still be
+  showing the typo minutes after someone fixed it. NOT for a `needs_decision`
+  row: there `existing_book` is a *different* book — the one already elsewhere
+  that §5.4 is asking about — and showing its title as this spine's would be a
+  lie. Mutation-checked in both directions.
+
+## The match score is out of 130, not 100
+
+`booksnap/match.py:330` computes `60·tcov_c + 25·tcov + 15·acov +
+0.30·title_sim`, so a flawless match scores **130**. The review UI used to
+render a bare `130` beside the tier, which reads as a broken percentage — the
+owner asked what it meant, which is the bug report. It now renders `130/130`
+with the formula in the tooltip. If the weights in `match.py` ever change,
+`MAX_SCORE` in `ClaimRow.tsx` is the one place that has to follow.
+
 ## Author sort, and why it needed a schema version
 
 "Sort by author" means the SHELF order — by surname. Sorting the stored string
@@ -1922,8 +2186,8 @@ arrive in P2.1. The importer reports them loudly rather than dropping them —
 until P2.3 lands, a re-read could re-add those books.
 
 Client ring (needs `npm install --prefix app/web` once):
-`npm --prefix app/web run test` (vitest + React Testing Library, **60 tests**
-as of P2.9) and `npm --prefix app/web run typecheck`. Test what encodes a
+`npm --prefix app/web run test` (vitest + React Testing Library, **73 tests**
+as of P2.10) and `npm --prefix app/web run typecheck`. Test what encodes a
 *decision*, not layout and not DTO plumbing — same standard as the Python
 rings. The suite mocks `fetch`, never `useBooks`/`useCapture`/`useShelfDetail`:
 the store, the request-id race guard and the paging arithmetic are exactly
@@ -1932,7 +2196,7 @@ what needs exercising, and the Capture/shelf fake servers
 `reconcile()`/`apply_diff`/`not_seen_streak`/`depth_staleness` either — each
 test hands back the exact overview/books/diff a call should answer with, the
 way the Python API ring injects a `StubReader`.
-Mutation-checked — sixteen reversed decisions (dropped race guard, missing
+Mutation-checked — twenty-nine reversed decisions (dropped race guard, missing
 `.rtl-safe`, edit not abandoned on book change, delete without confirmation,
 409 clearing the form, focus not restored, drawer left open on promote,
 sort direction surviving a key change, tags not trimmed/blanks-dropped, the
@@ -1944,7 +2208,21 @@ bar hidden at `depth_count` 1, a book title rendered without `.rtl-safe`,
 the *"open the shelf →"* chip dropped from the review panel header — P2.8;
 the intake list never rebuilt from the server, an in-flight read not
 re-attached on mount, `visibilitychange` not wired to an immediate poll —
-P2.9) each fail a named test.
+P2.9; the workspace showing the whole row's findings instead of this photo's,
+`rejected` findings dropped from the list, *approve* still offered on an
+already-approved book, the newest run not opened on arrival, the
+approve/fix/remove loop missing from the LIVE panel; approve-all sweeping up
+a §5.4 duplicate question, a pending finding drawn without its controls, the
+match score shown without its 130 denominator, and the ✎ form patching a book
+that does not exist yet instead of approving-as-corrected; a runner-up with
+no *use this*, picking one on a pending finding patching instead of
+confirming, a row sourced from the claim rather than the book it became, and
+the author line dropped — P2.10's feedback rounds) each fail a named test.
+
+Two P2.7/P2.8 tests were DELETED rather than fixed in that round (*"add a row
+behind"*, the *"open the shelf →"* chip): the owner removed both controls, and
+a test for a button that must not exist is what stops the next person from
+reading why it went.
 
 ⚠ **This ring cannot see CSS.** jsdom computes no cascade, so every finding
 in the "traps" list above was invisible here and had to be caught in a real

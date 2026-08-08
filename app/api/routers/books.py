@@ -50,6 +50,7 @@ from app.domain import (
     Status,
     UnknownCopy,
     add_copy,
+    approve,
     edit,
     edit_copy,
     lend,
@@ -285,6 +286,30 @@ def patch_book(
         author=payload.author.strip() if payload.author is not None else None,
     )
     return BookDTO.of(_save(store, library, updated))
+
+
+@router.post("/{book_id}/approve", response_model=BookDTO,
+             summary="Confirm the claim — auto becomes approved")
+def approve_book(
+    book_id: str,
+    library: LibraryRef = Depends(current_library),
+    store: BookStore = Depends(get_book_store),
+) -> BookDTO:
+    """*"✓ — yes, that is the book"* (P2.10, §12.2 #10).
+
+    The middle rung of §5.1's ladder, and the one the product had no route to
+    until the image workspace needed it: a book the engine claimed at AUTO
+    sits unexamined until a human looks at the photo and says so. Approving
+    is what makes the "a human decision outranks an auto one" rule mean
+    something on a per-book basis — and `Status.merge` is what makes this
+    safe to press twice, or on a book already edited by hand: it never lowers
+    a rung.
+
+    No copy_id parameter: approving is about the RECORD's identity (is this
+    the right book?), which is book-level, exactly like `patch_book`'s edit.
+    Per-copy metadata has its own route.
+    """
+    return BookDTO.of(_save(store, library, approve(_load(store, library, book_id))))
 
 
 @router.delete("/{book_id}", status_code=status.HTTP_204_NO_CONTENT,

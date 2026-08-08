@@ -44,7 +44,14 @@ from app.adapters.memory_store import (
 )
 from app.api import deps
 from app.api.app import create_app
-from app.domain import LibraryRef, Provenance, Status, new_book
+from app.domain import (
+    Decision,
+    DecisionKind,
+    LibraryRef,
+    Provenance,
+    Status,
+    new_book,
+)
 from app.ports.reader import ReadAlternative, ReadClaim
 
 TEST_LIBRARY = LibraryRef(id="lib-test", label="Test library")
@@ -1385,17 +1392,19 @@ def test_diff_reports_added_unchanged_and_not_seen():
         _wait_until_settled(c, shelf_id, read_id)
 
         diff = c.get(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/diff").json()
-        assert not diff["added"], "already applied automatically by the time GET ran"
-        unchanged_titles = {o["existing_book"]["title"] for o in diff["unchanged"]}
-        assert unchanged_titles == {"כבר כאן", "ספר חדש"}
+        assert not diff["added"], "nothing is added without an answer (2026-08-09)"
+        # A book already standing here: reconfirmed silently, no question.
+        assert {o["existing_book"]["title"] for o in diff["unchanged"]} == {"כבר כאן"}
+        # A book the library has never seen: a question, not an addition.
+        assert [o["claim"]["title"] for o in diff["needs_decision"]] == ["ספר חדש"]
         assert len(diff["not_seen"]) == 1
         assert diff["not_seen"][0]["book"]["id"] == "b-missing"
-        # b-missing + b-here + the automatically-applied "ספר חדש" — GET
-        # itself is still read-only; calling it twice must not change this.
-        assert store.count(TEST_LIBRARY) == 3
+        # b-missing + b-here only — GET is read-only, and the unapproved
+        # finding has created nothing. Calling it twice must not change this.
+        assert store.count(TEST_LIBRARY) == 2
         again = c.get(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/diff").json()
-        assert store.count(TEST_LIBRARY) == 3
-        assert {o["existing_book"]["title"] for o in again["unchanged"]} == unchanged_titles
+        assert store.count(TEST_LIBRARY) == 2
+        assert {o["existing_book"]["title"] for o in again["unchanged"]} == {"כבר כאן"}
 
 
 def test_diff_asks_for_a_book_claimed_on_another_shelf():
@@ -1457,10 +1466,55 @@ class RaisingBookStore:
 
 
 def test_a_settled_read_applies_its_diff_with_no_client_call_at_all():
-    """THE regression test for the bug: reproduces "no client ever calls
+    """THE regression test for P2.9's bug: reproduces "no client ever calls
     apply" by never calling it — not even the usual `POST .../apply` this
     file's other tests make out of habit. If this fails, the fix regressed
-    back to depending on a client that might not be there."""
+    back to depending on a client that might not be there.
+
+    ⚠ What the automatic apply WRITES changed on 2026-08-09: a book the
+    reader has never seen before is no longer created here (nothing enters
+    the library unapproved — see `app.domain.reconcile`). So this uses the
+    bucket that still writes unconditionally, `unchanged`: a book already
+    standing at this (shelf, depth) must have this read's sighting appended
+    with no client in the loop. The P2.9 guarantee is unchanged — the read
+    reconciles and persists itself — only the set of things it may persist
+    without asking is narrower."""
+    with _blobs() as blobs:
+        store = MemoryBookStore()
+        shelves = MemoryShelfStore()
+        reads_store = MemoryReadStore()
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_store,
+                            blobs=blobs, reader=StubReader()))
+        shelf_id, cap_id = _read_shelf_and_capture(c)
+        store.save(TEST_LIBRARY, new_book(
+            id="b-here", library_id=TEST_LIBRARY.id, title="ספר חדש",
+            author="סופר", copy_id="c-here", shelf_id=shelf_id, depth=1,
+        ))
+
+        reader = StubReader([ReadClaim(spine_id="sp1", capture_id=cap_id,
+                                       title="ספר חדש", author="סופר",
+                                       tier="auto", score=90.0)])
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_store,
+                            blobs=blobs, reader=reader))
+        read_id = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
+                         json={"depth": 1}).json()["id"]
+        _wait_until_settled(c, shelf_id, read_id)
+
+        # No GET .../diff, no POST .../apply — the read settling is the only
+        # thing that happened.
+        got = store.get(TEST_LIBRARY, "b-here")
+        sighting = got.copies[0].provenance[-1].sighting
+        assert sighting == (read_id, "sp1"), (
+            "the sighting must carry THIS read's own (run_id, spine_id), the "
+            "same provenance an explicit client apply would have written"
+        )
+
+
+def test_a_settled_read_adds_no_book_the_owner_has_not_approved():
+    """The other half of the same guarantee, and the owner's own bug report
+    (2026-08-09): a read that finds fourteen books it has never seen before
+    must put NONE of them in the library until a human says yes. Before this,
+    the automatic apply above created them all."""
     with _blobs() as blobs:
         store = MemoryBookStore()
         shelves = MemoryShelfStore()
@@ -1478,17 +1532,20 @@ def test_a_settled_read_applies_its_diff_with_no_client_call_at_all():
                          json={"depth": 1}).json()["id"]
         _wait_until_settled(c, shelf_id, read_id)
 
-        # No GET .../diff, no POST .../apply — the read settling is the only
-        # thing that happened. The book must already be in the library.
-        assert store.count(TEST_LIBRARY) == 1
-        got = store.list(TEST_LIBRARY).items[0]
-        assert got.title == "ספר חדש" and got.status is Status.AUTO
-        assert got.copies[0].shelf_id == shelf_id
-        sighting = got.copies[0].provenance[0].sighting
-        assert sighting == (read_id, "sp1"), (
-            "the sighting must carry THIS read's own (run_id, spine_id), the "
-            "same provenance an explicit client apply would have written"
+        assert store.count(TEST_LIBRARY) == 0, (
+            "an AUTO-tier claim entered the library without being approved"
         )
+        diff = c.get(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/diff").json()
+        pending = diff["needs_decision"]
+        assert [o["reason"] for o in pending] == ["new_book_unconfirmed"]
+
+        # ...and approving it is what creates it, at APPROVED — a human said
+        # yes, which outranks the AUTO rung a read alone produces.
+        c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/apply",
+               json={"answers": [{"claim_id": pending[0]["claim"]["id"],
+                                  "kind": "confirm"}]})
+        assert store.count(TEST_LIBRARY) == 1
+        assert store.list(TEST_LIBRARY).items[0].status is Status.APPROVED
 
 
 def test_the_automatic_apply_never_auto_resolves_a_needs_decision_claim():
@@ -1539,40 +1596,63 @@ def test_the_automatic_apply_never_auto_resolves_a_needs_decision_claim():
         # Both claims are still open on a live GET .../diff.
         diff = c.get(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/diff").json()
         reasons = {o["reason"] for o in diff["needs_decision"]}
-        assert reasons == {"ambiguous_location", "review_tier_new_book"}
+        assert reasons == {"ambiguous_location", "new_book_unconfirmed"}
 
 
 def test_the_diff_summary_snapshot_is_captured_before_the_automatic_apply_runs():
-    """P2.8's `diff_summary` must keep meaning "what this read changed" even
-    though the automatic apply (P2.9) now runs moments later in the SAME
-    call — reversing the order would let the book this apply just added
-    reconcile as `unchanged` in the very summary meant to record it as
-    `added`, silently rewriting the read's own history."""
+    """ORDERING, and the one bug a "freshen the summary" refactor would
+    introduce: `_job` summarises the diff it already has and must never
+    recompute one after applying. A second reconcile() would see the write
+    the apply just made and describe it as having changed nothing.
+
+    Uses a standing ALREADY_LISTED decision so the automatic apply has
+    something to write without a human in the loop (since 2026-08-09 a new
+    book does not qualify — it waits for approval). Before the apply the
+    claim is `corrected`; recompute after it and the same claim reads
+    `unchanged`, which is exactly the repaint this pins."""
     with _blobs() as blobs:
         store = MemoryBookStore()
         shelves = MemoryShelfStore()
         reads_store = MemoryReadStore()
+        decisions = MemoryDecisionStore()
         c = TestClient(_app(store=store, shelves=shelves, reads=reads_store,
-                            blobs=blobs, reader=StubReader()))
+                            blobs=blobs, decisions=decisions,
+                            reader=StubReader()))
         shelf_id, cap_id = _read_shelf_and_capture(c)
+        # The same book, standing on ANOTHER shelf, plus the human answer
+        # that says "it is the same copy, it moved here".
+        elsewhere = new_book(id="b-elsewhere", library_id=TEST_LIBRARY.id,
+                             title="ספר חדש", author="סופר", copy_id="c-1",
+                             shelf_id="other-shelf", depth=1)
+        store.save(TEST_LIBRARY, elsewhere)
+        decisions.save_decision(TEST_LIBRARY, Decision(
+            library_id=TEST_LIBRARY.id, shelf_id=shelf_id, depth=1,
+            book_key=elsewhere.key, kind=DecisionKind.ALREADY_LISTED,
+            copy_id="c-1",
+        ))
 
         reader = StubReader([ReadClaim(spine_id="sp1", capture_id=cap_id,
                                        title="ספר חדש", author="סופר",
                                        tier="auto", score=90.0)])
         c = TestClient(_app(store=store, shelves=shelves, reads=reads_store,
-                            blobs=blobs, reader=reader))
+                            blobs=blobs, decisions=decisions, reader=reader))
         read_id = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
                          json={"depth": 1}).json()["id"]
         body = _wait_until_settled(c, shelf_id, read_id)
 
-        # By now the book IS in the library (the automatic apply already
-        # ran) — but the archived snapshot must still say "added", the truth
-        # at the moment reconcile() looked, before that apply touched it.
-        assert store.count(TEST_LIBRARY) == 1
+        # By now the copy HAS been relinked (the automatic apply ran) — but
+        # the archived snapshot must still say "corrected", the truth at the
+        # moment reconcile() looked, before that apply touched anything.
+        assert store.get(TEST_LIBRARY, "b-elsewhere").copies[0].shelf_id == shelf_id
         assert body["diff_summary"] == {
-            "added": 1, "corrected": 0, "unchanged": 0, "needs_decision": 0,
+            "added": 0, "corrected": 1, "unchanged": 0, "needs_decision": 0,
             "not_seen": 0, "rejected": 0, "ignored": 0,
         }
+        live = c.get(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/diff").json()
+        assert not live["corrected"] and len(live["unchanged"]) == 1, (
+            "the LIVE diff is expected to have moved on — that is precisely "
+            "why the snapshot may not be recomputed from it"
+        )
 
 
 def test_a_failed_read_applies_nothing():
@@ -1635,14 +1715,26 @@ def test_the_automatic_apply_is_idempotent_against_a_later_client_apply_call():
         read_id = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
                          json={"depth": 1}).json()["id"]
         _wait_until_settled(c, shelf_id, read_id)
+
+        # Approve the finding once — since 2026-08-09 that is what creates
+        # the book, and it is also the write this test is about repeating.
+        pending = c.get(
+            f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/diff"
+        ).json()["needs_decision"][0]["claim"]["id"]
+        c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/apply",
+               json={"answers": [{"claim_id": pending, "kind": "confirm"}]})
         assert store.count(TEST_LIBRARY) == 1
 
         # The client's own apply, exactly as it fires today — twice, even,
-        # since a flaky connection can retry it.
+        # since a flaky connection can retry it. And once more WITH the same
+        # answer, the shape a double-clicked ✓ sends.
         for _ in range(2):
             r = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/apply",
                       json={"answers": []})
             assert r.status_code == 200, r.text
+        r = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/apply",
+                  json={"answers": [{"claim_id": pending, "kind": "confirm"}]})
+        assert r.status_code in (200, 400), r.text
 
         assert store.count(TEST_LIBRARY) == 1, "a repeat apply must not add a second book"
         got = store.list(TEST_LIBRARY).items[0]
@@ -1683,7 +1775,7 @@ def test_a_failed_automatic_apply_does_not_fail_the_read():
         )
         assert len(body["claims"]) == 1, "the claim the engine found is kept"
         assert body["diff_summary"] == {
-            "added": 1, "corrected": 0, "unchanged": 0, "needs_decision": 0,
+            "added": 0, "corrected": 0, "unchanged": 0, "needs_decision": 1,
             "not_seen": 0, "rejected": 0, "ignored": 0,
         }, "the summary, computed before the failed apply, must still be saved"
 
@@ -1711,12 +1803,10 @@ def test_apply_persists_added_and_unchanged_without_any_answers():
             json={"answers": []},
         )
         assert applied.status_code == 200, applied.text
-        assert store.count(TEST_LIBRARY) == 1
-        assert not applied.json()["added"], (
-            "the returned diff is the POST-apply state; a persisted book is "
-            "no longer 'added' against the library that now holds it"
-        )
-        assert store.list(TEST_LIBRARY).items[0].title == "ספר חדש"
+        # A machine claim for an unknown book writes NOTHING without an answer
+        # (2026-08-09) — it stays a question instead.
+        assert store.count(TEST_LIBRARY) == 0
+        assert [o["reason"] for o in applied.json()["needs_decision"]]             == ["new_book_unconfirmed"]
 
 
 def test_apply_with_an_already_listed_answer_relinks_the_copy():
@@ -2139,21 +2229,27 @@ def test_a_finished_read_carries_a_diff_summary_and_it_is_archived_not_repainted
         read_id = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
                          json={"depth": 1}).json()["id"]
         body = _wait_until_settled(c, shelf_id, read_id)
+        # A read of a book the library has never seen now settles as a
+        # QUESTION, not an addition (2026-08-09) — the snapshot records that
+        # honestly rather than claiming an addition that never happened.
         assert body["diff_summary"] == {
-            "added": 1, "corrected": 0, "unchanged": 0, "needs_decision": 0,
+            "added": 0, "corrected": 0, "unchanged": 0, "needs_decision": 1,
             "not_seen": 0, "rejected": 0, "ignored": 0,
         }
 
         listed = c.get(f"{API_PREFIX}/shelves/{shelf_id}/reads").json()
-        assert listed[0]["diff_summary"]["added"] == 1
+        assert listed[0]["diff_summary"]["needs_decision"] == 1
 
+        pending = c.get(
+            f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/diff"
+        ).json()["needs_decision"][0]["claim"]["id"]
         c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/apply",
-              json={"answers": []})
+              json={"answers": [{"claim_id": pending, "kind": "confirm"}]})
         after_apply = c.get(
             f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}").json()
-        assert after_apply["diff_summary"]["added"] == 1, (
-            "the archived snapshot must not repaint itself once the book it "
-            "added is, correctly, 'already here' on every later look"
+        assert after_apply["diff_summary"]["needs_decision"] == 1, (
+            "the archived snapshot must not repaint itself once the question "
+            "it asked has, correctly, been answered"
         )
 
 
@@ -2182,7 +2278,10 @@ def test_a_stopped_or_failed_read_summary_is_none_or_reflects_the_partial_claims
         body = _wait_until_settled(c, shelf_id, read_id, timeout=3.0)
         assert body["status"] == "stopped"
         assert body["diff_summary"] is not None
-        assert body["diff_summary"]["added"] == len(body["claims"])
+        # Every claim a stopped read did collect is real evidence and lands in
+        # the snapshot — as a pending question each, since 2026-08-09, rather
+        # than as an addition nobody approved.
+        assert body["diff_summary"]["needs_decision"] == len(body["claims"])
 
 
 if __name__ == "__main__":
@@ -2356,3 +2455,418 @@ def test_the_owners_real_photos_upload_if_they_are_on_this_machine():
             assert r.status_code == 201, f"{path.name}: {r.status_code} {r.text[:200]}"
             key = r.json()["key"]
             assert c.get(f"{API_PREFIX}/images/{key}/thumb").status_code == 200
+
+
+# --- the image workspace (P2.10, §12.2 #10) ---------------------------------
+#
+# "An image is a durable object: clicking it opens its runs, each run lists its
+# findings, and each finding can be approved / edited / removed." Everything
+# below is that loop over HTTP — and, just as important, the proof that
+# reaching a settled read's findings costs no second read.
+
+def _settled_read(c, *, claims, store=None, shelves=None, reads=None,
+                  blobs=None, approve_findings=True):
+    """A shelf, a photo, and one finished read of it — the state the
+    workspace opens onto."""
+    shelf_id, cap_id = _read_shelf_and_capture(c)
+    reader = StubReader([claim(cap_id) for claim in claims])
+    c2 = TestClient(_app(store=store, shelves=shelves, reads=reads,
+                         blobs=blobs, reader=reader))
+    read_id = c2.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
+                      json={"depth": 1}).json()["id"]
+    _wait_until_settled(c2, shelf_id, read_id)
+    if approve_findings:
+        # Since 2026-08-09 a machine claim is a QUESTION, not a book — the
+        # workspace's approve/fix/remove loop only has something to act on
+        # once a human has said yes, which is what these lines are.
+        diff = c2.get(
+            f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/diff").json()
+        answers = [{"claim_id": o["claim"]["id"], "kind": "confirm"}
+                   for o in diff["needs_decision"]
+                   if o["reason"] == "new_book_unconfirmed"]
+        if answers:
+            c2.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/apply",
+                    json={"answers": answers})
+    return c2, shelf_id, cap_id, read_id
+
+
+def _auto_claim(title="ספר חדש", spine="sp1"):
+    return lambda cap_id: ReadClaim(spine_id=spine, capture_id=cap_id,
+                                    title=title, author="סופר", tier="auto",
+                                    score=90.0)
+
+
+def test_a_photo_lists_the_runs_that_read_it():
+    """§12.2 #10's "clicking it opens that image's runs" — and the reason it
+    hangs off the capture: two reads of the same photo both list here."""
+    with _blobs() as blobs:
+        store, shelves, reads_ = MemoryBookStore(), MemoryShelfStore(), MemoryReadStore()
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_,
+                            blobs=blobs, reader=StubReader()))
+        c, shelf_id, cap_id, read_id = _settled_read(
+            c, claims=[_auto_claim()], store=store, shelves=shelves,
+            reads=reads_, blobs=blobs)
+        second = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
+                        json={"depth": 1}).json()["id"]
+        _wait_until_settled(c, shelf_id, second)
+
+        r = c.get(f"{API_PREFIX}/captures/{cap_id}/reads")
+        assert r.status_code == 200, r.text
+        ids = [row["id"] for row in r.json()]
+        assert set(ids) == {read_id, second}
+        assert all(row["diff_summary"] is not None for row in r.json()), (
+            "a history row with no counts cannot render §5.6's headline line"
+        )
+
+
+def test_a_photos_runs_are_404_for_a_capture_that_is_not_there():
+    with _blobs() as blobs:
+        c = TestClient(_app(blobs=blobs, reader=StubReader()))
+        assert c.get(f"{API_PREFIX}/captures/nope/reads").status_code == 404
+
+
+def test_opening_a_settled_reads_findings_starts_no_new_read():
+    """The behaviour §12.2 #10 is explicitly about: *"a processed photo is
+    never re-read just to see what it found"*. Reaching the findings is
+    reads-of-the-photo + the read's own diff, and neither may start a job."""
+    with _blobs() as blobs:
+        store, shelves, reads_ = MemoryBookStore(), MemoryShelfStore(), MemoryReadStore()
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_,
+                            blobs=blobs, reader=StubReader()))
+        c, shelf_id, cap_id, read_id = _settled_read(
+            c, claims=[_auto_claim()], store=store, shelves=shelves,
+            reads=reads_, blobs=blobs)
+
+        before = len(reads_.list_reads(TEST_LIBRARY, shelf_id))
+        c.get(f"{API_PREFIX}/captures/{cap_id}/reads")
+        findings = c.get(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/diff")
+        assert findings.status_code == 200, findings.text
+        assert len(reads_.list_reads(TEST_LIBRARY, shelf_id)) == before, (
+            "opening a photo's findings started another read"
+        )
+        # Every finding names the capture it came from, which is what lets the
+        # workspace show one photo's findings rather than the whole row's.
+        outcomes = findings.json()["unchanged"] + findings.json()["added"]
+        assert [o["claim"]["capture_id"] for o in outcomes] == [cap_id]
+
+
+def test_approving_a_finding_raises_the_book_from_auto_to_approved():
+    with _blobs() as blobs:
+        store, shelves, reads_ = MemoryBookStore(), MemoryShelfStore(), MemoryReadStore()
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_,
+                            blobs=blobs, reader=StubReader()))
+        # An AUTO-status book the read RE-FINDS rather than introduces: one
+        # of P1.3's 251 imports, say. Since 2026-08-09 a newly-approved
+        # finding is already `approved`, so this route's remaining job is
+        # exactly this case — raising a record that predates the approval
+        # rule and has never been looked at.
+        shelf_id, cap_id = _read_shelf_and_capture(c)
+        store.save(TEST_LIBRARY, new_book(
+            id="b-legacy", library_id=TEST_LIBRARY.id, title="ספר ישן",
+            author="סופר", copy_id="c-legacy", shelf_id=shelf_id, depth=1,
+        ))
+        reader = StubReader([ReadClaim(spine_id="sp1", capture_id=cap_id,
+                                       title="ספר ישן", author="סופר",
+                                       tier="auto", score=90.0)])
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_,
+                            blobs=blobs, reader=reader))
+        read_id = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
+                         json={"depth": 1}).json()["id"]
+        _wait_until_settled(c, shelf_id, read_id)
+        book = c.get(f"{API_PREFIX}/books").json()["items"][0]
+        assert book["status"] == "auto"
+
+        r = c.post(f"{API_PREFIX}/books/{book['id']}/approve")
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "approved"
+        # Idempotent, and never a demotion — `Status.merge`'s whole job.
+        again = c.post(f"{API_PREFIX}/books/{book['id']}/approve")
+        assert again.json()["status"] == "approved"
+
+
+def test_editing_a_finding_marks_the_book_manual_and_keeps_it_on_the_shelf():
+    """*Edit* is the ordinary book route (H3 — the workspace does not need a
+    third way to write a title), but the thing worth pinning is that fixing a
+    title from a photo does not unfile the book."""
+    with _blobs() as blobs:
+        store, shelves, reads_ = MemoryBookStore(), MemoryShelfStore(), MemoryReadStore()
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_,
+                            blobs=blobs, reader=StubReader()))
+        c, shelf_id, cap_id, read_id = _settled_read(
+            c, claims=[_auto_claim(title="ספר חדשש")], store=store,
+            shelves=shelves, reads=reads_, blobs=blobs)
+        book = c.get(f"{API_PREFIX}/books").json()["items"][0]
+
+        r = c.patch(f"{API_PREFIX}/books/{book['id']}", json={"title": "ספר חדש"})
+        assert r.status_code == 200, r.text
+        assert r.json()["title"] == "ספר חדש" and r.json()["status"] == "manual"
+        assert r.json()["copies"][0]["shelf_id"] == shelf_id
+
+
+def test_retracting_a_finding_removes_the_phantom_and_suppresses_it_here():
+    """The ✕, end to end: the auto-only book is gone from the library, the
+    finding now reads `rejected` in the diff, and a re-read does not bring it
+    back (§5.6)."""
+    with _blobs() as blobs:
+        store, shelves, reads_ = MemoryBookStore(), MemoryShelfStore(), MemoryReadStore()
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_,
+                            blobs=blobs, reader=StubReader()))
+        c, shelf_id, cap_id, read_id = _settled_read(
+            c, claims=[_auto_claim()], store=store, shelves=shelves,
+            reads=reads_, blobs=blobs)
+        diff = c.get(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/diff").json()
+        claim_id = (diff["unchanged"] + diff["added"])[0]["claim"]["id"]
+        assert store.count(TEST_LIBRARY) == 1
+
+        r = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}"
+                   f"/findings/{claim_id}/retract")
+        assert r.status_code == 200, r.text
+        assert store.count(TEST_LIBRARY) == 0
+        assert [o["claim"]["id"] for o in r.json()["rejected"]] == [claim_id], (
+            "the retracted finding must stay visible with a reason, not vanish"
+        )
+
+        # A second read of the same shelf must not re-add it.
+        again = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
+                       json={"depth": 1}).json()["id"]
+        _wait_until_settled(c, shelf_id, again)
+        assert store.count(TEST_LIBRARY) == 0, "the retracted book came back"
+
+
+def test_retracting_never_deletes_a_book_that_predates_this_read():
+    """UI_PLAN §5's separation over HTTP: a book an EARLIER read (or P1.3's
+    import) put in the library is taken off this shelf and the no is
+    recorded — the record itself survives.
+
+    Note what stopped protecting it on 2026-08-09: "a human approved it".
+    Every confirmed finding is APPROVED now, so the rule asks who CREATED the
+    record instead (`app.domain.retract`)."""
+    with _blobs() as blobs:
+        store, shelves, reads_ = MemoryBookStore(), MemoryShelfStore(), MemoryReadStore()
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_,
+                            blobs=blobs, reader=StubReader()))
+        shelf_id, cap_id = _read_shelf_and_capture(c)
+        store.save(TEST_LIBRARY, new_book(
+            id="b-older", library_id=TEST_LIBRARY.id, title="ספר חדש",
+            author="סופר", copy_id="c-older", shelf_id=shelf_id, depth=1,
+        ))
+        book_id = "b-older"
+        reader = StubReader([_auto_claim()(cap_id)])
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_,
+                            blobs=blobs, reader=reader))
+        read_id = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
+                         json={"depth": 1}).json()["id"]
+        _wait_until_settled(c, shelf_id, read_id)
+        diff = c.get(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/diff").json()
+        claim_id = (diff["unchanged"] + diff["added"])[0]["claim"]["id"]
+
+        c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}"
+               f"/findings/{claim_id}/retract")
+
+        still = c.get(f"{API_PREFIX}/books/{book_id}")
+        assert still.status_code == 200, "a book older than this read was deleted"
+        assert still.json()["copies"][0]["shelf_id"] is None
+
+
+def test_restoring_a_retracted_finding_puts_the_book_back():
+    """The ↩. It re-applies the read rather than re-reading the photo — the
+    library returns to exactly one book, not two."""
+    with _blobs() as blobs:
+        store, shelves, reads_ = MemoryBookStore(), MemoryShelfStore(), MemoryReadStore()
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_,
+                            blobs=blobs, reader=StubReader()))
+        c, shelf_id, cap_id, read_id = _settled_read(
+            c, claims=[_auto_claim()], store=store, shelves=shelves,
+            reads=reads_, blobs=blobs)
+        diff = c.get(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/diff").json()
+        claim_id = (diff["unchanged"] + diff["added"])[0]["claim"]["id"]
+        c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}"
+               f"/findings/{claim_id}/retract")
+        assert store.count(TEST_LIBRARY) == 0
+
+        r = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}"
+                   f"/findings/{claim_id}/restore")
+        assert r.status_code == 200, r.text
+        assert not r.json()["rejected"], "the suppression was not lifted"
+        # ↩ un-suppresses the FINDING; it does not re-approve on the owner's
+        # behalf (2026-08-09 — nothing enters the library unapproved, and an
+        # undo is not an approval). One more ✓ puts the book back.
+        assert store.count(TEST_LIBRARY) == 0
+        assert [o["reason"] for o in r.json()["needs_decision"]]             == ["new_book_unconfirmed"]
+        c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/apply",
+               json={"answers": [{"claim_id": claim_id, "kind": "confirm"}]})
+        assert store.count(TEST_LIBRARY) == 1
+
+
+def test_restoring_a_finding_that_was_never_retracted_is_a_409():
+    """Silently doing nothing would look identical to success."""
+    with _blobs() as blobs:
+        store, shelves, reads_ = MemoryBookStore(), MemoryShelfStore(), MemoryReadStore()
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_,
+                            blobs=blobs, reader=StubReader()))
+        c, shelf_id, cap_id, read_id = _settled_read(
+            c, claims=[_auto_claim()], store=store, shelves=shelves,
+            reads=reads_, blobs=blobs)
+        diff = c.get(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/diff").json()
+        claim_id = (diff["unchanged"] + diff["added"])[0]["claim"]["id"]
+
+        r = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}"
+                   f"/findings/{claim_id}/restore")
+        assert r.status_code == 409, r.text
+
+
+def test_adding_a_book_to_a_photo_by_hand_files_it_immediately_at_manual():
+    """*"The engine missed this book"* (owner 2026-08-09). It joins the
+    photo's findings AND the library in one call — no approval step, because
+    typing the title IS the approval (§5.1's ladder)."""
+    with _blobs() as blobs:
+        store, shelves, reads_ = MemoryBookStore(), MemoryShelfStore(), MemoryReadStore()
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_,
+                            blobs=blobs, reader=StubReader()))
+        c, shelf_id, cap_id, read_id = _settled_read(
+            c, claims=[_auto_claim()], store=store, shelves=shelves,
+            reads=reads_, blobs=blobs)
+        before = store.count(TEST_LIBRARY)
+
+        r = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/findings",
+                   json={"title": "ספר שהמנוע פספס", "author": "מחבר"})
+        assert r.status_code == 201, r.text
+        assert store.count(TEST_LIBRARY) == before + 1
+
+        added = [b for b in store.list(TEST_LIBRARY).items
+                 if b.title == "ספר שהמנוע פספס"][0]
+        assert added.status is Status.MANUAL
+        assert added.copies[0].shelf_id == shelf_id
+        # It is a FINDING of this photo, not a book filed off to the side —
+        # which is the whole reason it goes onto the read at all.
+        titles = [o["claim"]["title"] for o in r.json()["added"] + r.json()["unchanged"]]
+        assert "ספר שהמנוע פספס" in titles
+        read = c.get(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}").json()
+        assert [cl["tier"] for cl in read["claims"] if cl["title"] == "ספר שהמנוע פספס"] \
+            == ["manual"]
+
+
+def test_two_hand_added_books_are_two_findings_not_one():
+    """Each gets its own minted spine id. Sharing one would make
+    `Provenance.sighting` identical for both, and `observe()`'s idempotency
+    would swallow the second without a word."""
+    with _blobs() as blobs:
+        store, shelves, reads_ = MemoryBookStore(), MemoryShelfStore(), MemoryReadStore()
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_,
+                            blobs=blobs, reader=StubReader()))
+        c, shelf_id, cap_id, read_id = _settled_read(
+            c, claims=[_auto_claim()], store=store, shelves=shelves,
+            reads=reads_, blobs=blobs)
+
+        for title in ("ראשון", "שני"):
+            r = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/findings",
+                       json={"title": title})
+            assert r.status_code == 201, r.text
+
+        read = c.get(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}").json()
+        manual = [cl for cl in read["claims"] if cl["tier"] == "manual"]
+        assert len({cl["spine_id"] for cl in manual}) == 2
+        assert {b.title for b in store.list(TEST_LIBRARY).items} >= {"ראשון", "שני"}
+
+
+def test_a_book_cannot_be_added_by_hand_to_a_read_that_is_still_running():
+    """The one guard that keeps `add_manual_claim` a narrow exception rather
+    than a hole in "claims are never mutated after a read finishes"."""
+    with _blobs() as blobs:
+        store, shelves, reads_ = MemoryBookStore(), MemoryShelfStore(), MemoryReadStore()
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_,
+                            blobs=blobs, reader=StubReader()))
+        shelf_id, cap_id = _read_shelf_and_capture(c)
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_,
+                            blobs=blobs,
+                            reader=SlowStubReader(capture_id=cap_id, steps=200,
+                                                  step_s=0.01)))
+        read_id = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
+                         json={"depth": 1}).json()["id"]
+        try:
+            r = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/findings",
+                       json={"title": "מוקדם מדי"})
+            assert r.status_code == 409, r.text
+        finally:
+            c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/stop")
+            _wait_until_settled(c, shelf_id, read_id, timeout=3.0)
+
+
+def test_approving_every_pending_finding_in_one_call():
+    """"Approve all auto", the POC's own bulk action, restored — and it is
+    deliberately just N confirms through the ordinary apply route rather than
+    an endpoint of its own."""
+    with _blobs() as blobs:
+        store, shelves, reads_ = MemoryBookStore(), MemoryShelfStore(), MemoryReadStore()
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_,
+                            blobs=blobs, reader=StubReader()))
+        c, shelf_id, cap_id, read_id = _settled_read(
+            c, claims=[_auto_claim(title=f"ספר {n}", spine=f"sp{n}")
+                       for n in range(1, 4)],
+            store=store, shelves=shelves, reads=reads_, blobs=blobs,
+            approve_findings=False)
+        assert store.count(TEST_LIBRARY) == 0
+
+        diff = c.get(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/diff").json()
+        answers = [{"claim_id": o["claim"]["id"], "kind": "confirm"}
+                   for o in diff["needs_decision"]]
+        assert len(answers) == 3
+        r = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/apply",
+                   json={"answers": answers})
+
+        assert r.status_code == 200, r.text
+        assert store.count(TEST_LIBRARY) == 3
+        assert not r.json()["needs_decision"]
+
+
+def test_a_finding_can_be_approved_as_corrected_in_one_act():
+    """✎ then ✓ is one human decision, so it is one call and one write. The
+    CLAIM keeps the engine's own text — it is evidence of what was read."""
+    with _blobs() as blobs:
+        store, shelves, reads_ = MemoryBookStore(), MemoryShelfStore(), MemoryReadStore()
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_,
+                            blobs=blobs, reader=StubReader()))
+        c, shelf_id, cap_id, read_id = _settled_read(
+            c, claims=[_auto_claim(title="מלכי הכופריט")], store=store,
+            shelves=shelves, reads=reads_, blobs=blobs, approve_findings=False)
+        pending = c.get(
+            f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/diff"
+        ).json()["needs_decision"][0]["claim"]["id"]
+
+        c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/apply",
+               json={"answers": [{"claim_id": pending, "kind": "confirm",
+                                  "title": "מלכי הכופרים",
+                                  "author": "פול קארני"}]})
+
+        book = store.list(TEST_LIBRARY).items[0]
+        assert book.title == "מלכי הכופרים" and book.author == "פול קארני"
+        read = c.get(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}").json()
+        assert read["claims"][0]["title"] == "מלכי הכופריט", (
+            "the claim was rewritten; it records what the ENGINE read"
+        )
+
+        # ⚠ The half that was missing when this shipped, and the reason the
+        # bug survived a green suite: nobody read the diff BACK. The book now
+        # lives under a different key from the claim, so a keyed lookup alone
+        # leaves the finding pending forever — and a second click would make a
+        # second book.
+        after = c.get(
+            f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/diff").json()
+        assert not after["needs_decision"], "the corrected finding stayed open"
+        assert [o["existing_book"]["title"] for o in after["unchanged"]]             == ["מלכי הכופרים"]
+        c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/apply",
+               json={"answers": []})
+        assert store.count(TEST_LIBRARY) == 1, "re-applying made a second book"
+
+
+def test_acting_on_a_finding_that_is_not_in_this_read_is_a_404():
+    with _blobs() as blobs:
+        store, shelves, reads_ = MemoryBookStore(), MemoryShelfStore(), MemoryReadStore()
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_,
+                            blobs=blobs, reader=StubReader()))
+        c, shelf_id, cap_id, read_id = _settled_read(
+            c, claims=[_auto_claim()], store=store, shelves=shelves,
+            reads=reads_, blobs=blobs)
+        r = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}"
+                   f"/findings/nope/retract")
+        assert r.status_code == 404, r.text

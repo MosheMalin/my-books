@@ -271,6 +271,14 @@ class MemoryReadStore:
         rows.sort(key=lambda r: (r.started_at or "", r.id), reverse=True)
         return tuple(rows)
 
+    def list_reads_for_capture(
+        self, library: LibraryRef, capture_id: str,
+    ) -> tuple[Read, ...]:
+        rows = [r for r in self._r(library).values()
+                if capture_id in r.capture_ids]
+        rows.sort(key=lambda r: (r.started_at or "", r.id), reverse=True)
+        return tuple(rows)
+
 
 class MemoryDecisionStore:
     """Implements ``app.ports.decisions.DecisionStore`` (P2.5).

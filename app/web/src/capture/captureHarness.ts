@@ -33,6 +33,15 @@ export interface FakeCaptureServer {
    *  server-side state push here directly (`useCapture.test.tsx`'s
    *  hydration cases); ordinary run/review tests never touch it. */
   reads: ReadSummaryDTO[]
+  /** The runs `GET /captures/{id}/reads` answers with, per capture (P2.10).
+   *  Kept separate from `reads` above rather than derived from it: a
+   *  `ReadSummaryDTO` carries no capture list, and inventing one here would
+   *  make this fake disagree with the real contract. */
+  readsForCapture: Record<string, ReadSummaryDTO[]>
+  /** What a finding action answers with. `diffFor` covers apply/diff; this
+   *  covers retract/restore, whose whole point is that they return a
+   *  DIFFERENT diff from the one that was on screen. */
+  findingResult: (action: 'retract' | 'restore', claimId: string) => DiffDTO
   /** status the NEXT `POST .../reads` returns — most tests want 'done' so
    *  no fake-timer polling is needed to reach the review panel. */
   nextReadStatus: 'running' | 'done' | 'stopped' | 'failed'
@@ -66,6 +75,25 @@ export function claim(over: Partial<ClaimOutcomeDTO['claim']> & { id: string }):
   }
 }
 
+/** A minimal `BookDTO`, for a finding's `existing_book` (P2.10 — approve and
+ *  ✎ fix details both need one to act on) and for what the fake book routes
+ *  answer with. */
+export function fakeBook(
+  id: string, over: Partial<ClaimOutcomeDTO['existing_book'] & object> = {},
+): NonNullable<ClaimOutcomeDTO['existing_book']> {
+  return {
+    id, title: 'ספר', author: '', author_key: '', status: 'auto',
+    copy_count: 1, added_at: null, shared_book_id: null,
+    work: { rating: null, notes: '', read_status: null },
+    copies: [{
+      id: `c-${id}`, status: 'auto', label: '', shelf_id: 'sh1', depth: 1,
+      tags: [], condition: '', acquired_at: null, lending: null,
+      last_seen: null, sighting_count: 1, not_seen_streak: null,
+    }],
+    ...over,
+  }
+}
+
 export function readSummary(
   over: Partial<ReadSummaryDTO> & { id: string; shelf_id: string },
 ): ReadSummaryDTO {
@@ -85,8 +113,10 @@ export function fakeCaptureServer(
     shelves: [...initialShelves],
     captures: {},
     reads: [],
+    readsForCapture: {},
     nextReadStatus: 'done',
     diffFor: (readId, _answers) => emptyDiff('sh1', 1, readId),
+    findingResult: (_action, _claimId) => emptyDiff('sh1', 1, 'rd1'),
     uploadShouldFail: false,
   }
 
@@ -165,6 +195,34 @@ export function fakeCaptureServer(
 
     if (u.pathname === '/api/v1/shelves' && method === 'GET') {
       return respond(server.shelves)
+    }
+
+    // --- the image workspace (P2.10) ---
+    if (parts[2] === 'captures' && parts[3] && parts[4] === 'reads'
+        && method === 'GET') {
+      return respond(server.readsForCapture[parts[3]] ?? [])
+    }
+
+    if (parts[2] === 'shelves' && parts[4] === 'reads' && parts[6] === 'diff'
+        && method === 'GET') {
+      return respond(server.diffFor(parts[5]!, []))
+    }
+
+    if (parts[2] === 'shelves' && parts[4] === 'reads' && parts[6] === 'findings'
+        && parts[8] && method === 'POST') {
+      const action = parts[8] as 'retract' | 'restore'
+      return respond(server.findingResult(action, parts[7]!))
+    }
+
+    if (parts[2] === 'books' && parts[3] && parts[4] === 'approve'
+        && method === 'POST') {
+      return respond(fakeBook(parts[3], { status: 'approved' }))
+    }
+
+    if (parts[2] === 'books' && parts[3] && !parts[4] && method === 'PATCH') {
+      const body = JSON.parse(String(init?.body)) as
+        { title?: string; author?: string }
+      return respond(fakeBook(parts[3], { status: 'manual', ...body }))
     }
 
     if (parts[2] === 'shelves' && parts[3] && parts[4] === 'captures' && !parts[5]

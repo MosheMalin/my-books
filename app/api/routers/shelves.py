@@ -42,6 +42,7 @@ from app.api.dto import (
     CaptureDTO,
     CapturePatch,
     DepthStatusDTO,
+    ReadSummaryDTO,
     ShelfCreate,
     ShelfDTO,
     ShelfOverviewDTO,
@@ -401,6 +402,32 @@ def get_capture(
     store: ShelfStore = Depends(get_shelf_store),
 ) -> CaptureDTO:
     return CaptureDTO.of(_load_capture(store, library, capture_id))
+
+
+@captures.get("/{capture_id}/reads", response_model=list[ReadSummaryDTO])
+def list_capture_reads(
+    capture_id: str,
+    library: LibraryRef = Depends(current_library),
+    store: ShelfStore = Depends(get_shelf_store),
+    reads: ReadStore = Depends(get_read_store),
+) -> list[ReadSummaryDTO]:
+    """Every run that read this photo, most recent first — P2.10's *"clicking
+    an image opens its runs"* (§12.2 #10).
+
+    The one place the product answers a run-shaped question, and it is
+    deliberate rather than a reversal of §5.5 ("a run is not a user-facing
+    concept"): §12.2 #10 settles that the split is by SURFACE. Books and the
+    shelf view stay run-free; the Capture tab is where the owner is doing the
+    cataloguing and the unit of work IS the photograph, so its history hangs
+    off the image. There is still no global list of runs anywhere.
+
+    Reads are matched on the capture, not on its current shelf — see
+    ``ReadStore.list_reads_for_capture`` for why a re-bound photo must keep
+    the runs that already read it.
+    """
+    _load_capture(store, library, capture_id)   # 404 for a foreign or absent one
+    return [ReadSummaryDTO.of(r)
+            for r in reads.list_reads_for_capture(library, capture_id)]
 
 
 @captures.patch("/{capture_id}", response_model=CaptureBinding)

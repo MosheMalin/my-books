@@ -43,6 +43,7 @@ from app.domain import (
     Read,
     ReadAlreadyFinished,
     ReadStatus,
+    RetractAction,
     Shelf,
     Status,
     UnknownCopy,
@@ -71,6 +72,7 @@ from app.domain import (
     observe,
     open_or_refresh,
     pick_default_copy,
+    plan_retraction,
     reconcile,
     relink_copy,
     remove_from_shelf,
@@ -837,26 +839,91 @@ def test_another_depth_of_the_same_shelf_also_asks():
     assert diff.needs_decision[0].reason == "ambiguous_location"
 
 
-def test_a_book_not_in_the_library_is_added_at_auto_tier():
+def test_nothing_a_machine_read_enters_the_library_unapproved():
+    """⚠ REVERSED 2026-08-09 (owner), and this test with it. reconcile() used
+    to auto-enter an AUTO-tier claim, mirroring
+    `booksnap/library.py::absorb_auto_claims`; the owner watched one real
+    photo file fourteen books he was never asked about and called it wrong.
+    UI_PLAN §6 already plans "auto-approve AUTO" as a Settings toggle — until
+    it exists its value is OFF, and this is the test that keeps it off.
+
+    Both machine tiers land in the SAME bucket now: tier decides how a
+    finding is PRESENTED, never whether it enters."""
     shelf = _rshelf()
-    diff = reconcile(shelf, 1, [_rclaim()], {}, [], read_id="r1")
+    for tier, score in ((ClaimTier.AUTO, 91.0), (ClaimTier.REVIEW, 60.0)):
+        diff = reconcile(shelf, 1, [_rclaim(tier=tier, score=score)], {}, [],
+                         read_id="r1")
+        assert not diff.added, f"a {tier.value} claim entered without approval"
+        assert len(diff.needs_decision) == 1
+        assert diff.needs_decision[0].reason == "new_book_unconfirmed"
+
+
+def test_a_book_the_owner_typed_in_needs_no_approval():
+    """The one exception, and the reason it is not a hole: there is nobody
+    left to ask. §5.1's ladder puts a person's word above every machine tier,
+    so a hand-added finding enters at once — asking a human to approve what
+    they just typed is the kind of ceremony that trains people to click
+    through prompts."""
+    shelf = _rshelf()
+    diff = reconcile(shelf, 1, [_rclaim(tier=ClaimTier.MANUAL, score=0.0)],
+                     {}, [], read_id="r1")
     assert len(diff.added) == 1
-    assert not diff.unchanged and not diff.needs_decision
-    assert diff.added[0].reason == "new_book_auto"
+    assert not diff.needs_decision
+    assert diff.added[0].reason == "manual_add"
 
 
-def test_a_review_tier_new_book_waits_for_a_human_instead_of_auto_entering():
-    """The rule `booksnap/library.py::absorb_auto_claims` already applies
-    (REVIEW claims wait for an explicit decision), carried into reconcile():
-    unlike an AUTO claim, a REVIEW-tier claim for a book the library has
-    never heard of must not silently become `added` — `Status` has no
-    "pending" rung to create it at honestly."""
+def test_a_claim_answered_with_a_different_title_reads_as_settled():
+    """⚠ Found LIVE (2026-08-09), by picking one of explain()'s runners-up
+    and watching the row stay "awaiting approval".
+
+    A claim's identity is the text the ENGINE read, frozen forever because it
+    is evidence. A human answering it with different text — approve-as-
+    corrected, pick a runner-up, or edit the book afterwards — creates a book
+    under a DIFFERENT key. Keyed lookup alone then reports the claim as still
+    unanswered, so the finding never settles and the next click makes a
+    SECOND book. `Provenance.sighting` is what actually answers "which book
+    did this spine produce"."""
     shelf = _rshelf()
-    claim = _rclaim(tier=ClaimTier.REVIEW, score=60.0)
-    diff = reconcile(shelf, 1, [claim], {}, [], read_id="r1")
-    assert not diff.added, "a REVIEW-tier claim auto-entered the library"
+    corrected = new_book(id="b1", library_id=LIB, title="ספר אחר לגמרי",
+                         author="מישהו", copy_id="c1", shelf_id="sh1", depth=1,
+                         provenance=(Provenance(run_id="r1", spine_id="rsp1",
+                                                shelf_id="sh1", depth=1),))
+    diff = reconcile(shelf, 1, [_rclaim()], {corrected.key: corrected}, [],
+                     read_id="r1")
+
+    assert not diff.needs_decision, "the answered claim was asked about again"
+    assert len(diff.unchanged) == 1
+    assert diff.unchanged[0].existing_book.id == "b1"
+    assert diff.unchanged[0].book_key == corrected.key
+
+
+def test_a_sighting_from_another_read_does_not_settle_this_claim():
+    """The check is scoped to THIS read's own (run_id, spine_id) — a book
+    another read placed here is a different question, and answering it
+    silently would skip §5.4 entirely."""
+    shelf = _rshelf()
+    other = new_book(id="b1", library_id=LIB, title="ספר אחר לגמרי",
+                     author="מישהו", copy_id="c1", shelf_id="sh1", depth=1,
+                     provenance=(Provenance(run_id="an-older-read",
+                                            spine_id="rsp1", shelf_id="sh1",
+                                            depth=1),))
+    diff = reconcile(shelf, 1, [_rclaim()], {other.key: other}, [],
+                     read_id="r1")
     assert len(diff.needs_decision) == 1
-    assert diff.needs_decision[0].reason == "review_tier_new_book"
+
+
+def test_a_claims_book_that_has_since_moved_does_not_settle_it():
+    """§5.7 #1: the copy is not here any more, so this row's read has nothing
+    standing in it — the claim is open again, not silently satisfied by a
+    book on another shelf."""
+    shelf = _rshelf()
+    moved = new_book(id="b1", library_id=LIB, title="ספר אחר לגמרי",
+                     author="מישהו", copy_id="c1", shelf_id="sh9", depth=1,
+                     provenance=(Provenance(run_id="r1", spine_id="rsp1",
+                                            shelf_id="sh1", depth=1),))
+    diff = reconcile(shelf, 1, [_rclaim()], {moved.key: moved}, [],
+                     read_id="r1")
+    assert len(diff.needs_decision) == 1
 
 
 def test_a_previously_rejected_claim_is_never_re_added():
@@ -952,8 +1019,12 @@ def test_two_captures_of_one_depth_claiming_the_same_book_collapse_to_one():
     strong = _rclaim(2, capture_id="capB", score=91.0)
     diff = reconcile(shelf, 1, [weak, strong], {}, [], read_id="r1")
 
-    assert len(diff.added) == 1, "an overlap produced two records for one book"
-    assert diff.added[0].claim.id == "rcl2", "the higher-score claim should win"
+    # ONE surviving outcome, whichever bucket it lands in — the bucket moved
+    # on 2026-08-09 (a new book now waits for approval), the dedup rule this
+    # test is about did not.
+    survivors = [*diff.added, *diff.needs_decision, *diff.unchanged]
+    assert len(survivors) == 1, "an overlap produced two records for one book"
+    assert survivors[0].claim.id == "rcl2", "the higher-score claim should win"
     assert len(diff.ignored) == 1
     assert diff.ignored[0].reason == "duplicate_within_depth"
     assert diff.ignored[0].superseded_by == "rcl2"
@@ -1066,7 +1137,7 @@ def test_fire_row_two_spines_same_shelf_same_run_never_asks():
     strong = _rclaim(2, capture_id="capA", score=91.0)
     diff = reconcile(shelf, 1, [weak, strong], {}, [], read_id="r1")
 
-    assert len(diff.added) == 1, "the pair did not collapse to one outcome"
+    assert len([*diff.added, *diff.needs_decision]) == 1,         "the pair did not collapse to one outcome"
     ignored = [o for o in diff.ignored if o.reason == "duplicate_within_depth"]
     assert len(ignored) == 1
     assert fires(ignored[0].reason) is FireDecision.NEVER_ASK
@@ -1094,7 +1165,7 @@ def test_fire_row_overlapping_captures_at_one_depth_never_asks():
     diff = reconcile(shelf, 1, [from_capture_a, from_capture_b], {}, [],
                      read_id="r1")
 
-    assert len(diff.added) == 1
+    assert len([*diff.added, *diff.needs_decision]) == 1
     ignored = [o for o in diff.ignored if o.reason == "duplicate_within_depth"]
     assert len(ignored) == 1
     assert fires(ignored[0].reason) is FireDecision.NEVER_ASK
@@ -1281,21 +1352,29 @@ def test_duplicate_question_requires_a_shelf_and_a_positive_depth():
 
 def test_summarize_captures_the_headline_counts_from_a_real_diff():
     """The plan's own example, literally: reconcile() -> summarize() must
-    read as "+3 added · 1 corrected · 12 unchanged · 1 not seen" for a diff
+    read as "+N added · N corrected · N unchanged · N not seen" for a diff
     shaped that way. Built from a real `reconcile()` call, not a hand-typed
-    Diff, so this also exercises the wiring between the two functions."""
+    Diff, so this also exercises the wiring between the two functions.
+
+    Note the shape after the 2026-08-09 reversal: a book the reader found and
+    the library has never heard of counts as **needs_decision**, not `added`,
+    and `added` now means only "a human typed it in". A history row for an
+    engine read therefore leads with the pending count, which is the honest
+    account of what that read did — it found things and asked."""
     shelf = _rshelf(depth_count=2)
     here = new_book(id="b1", library_id=LIB, title="מלכי הכופרים",
                     author="פול קארני", copy_id="c1", shelf_id="sh1", depth=1)
     missing = new_book(id="b2", library_id=LIB, title="ספר שלא נקרא",
                        author="", copy_id="c2", shelf_id="sh1", depth=1)
     books = {here.key: here, missing.key: missing}
-    claims = [_rclaim(), _rclaim(2, title="ספר חדש", author="סופר")]
+    claims = [_rclaim(), _rclaim(2, title="ספר חדש", author="סופר"),
+              _rclaim(3, title="ספר שהוקלד ביד", author="", tier=ClaimTier.MANUAL)]
     diff = reconcile(shelf, 1, claims, books, [], read_id="r1")
 
     summary = summarize(diff)
-    assert summary == DiffSummary(added=1, unchanged=1, not_seen=1)
-    assert summary.corrected == 0 and summary.needs_decision == 0
+    assert summary == DiffSummary(added=1, unchanged=1, needs_decision=1,
+                                  not_seen=1)
+    assert summary.corrected == 0
 
 
 def test_with_diff_summary_attaches_it_to_the_read():
@@ -1483,6 +1562,147 @@ def test_depth_staleness_never_mentions_row_or_band_in_the_module():
             names.add(node.attr)
     for bad in ("row", "band"):
         assert bad not in names, f"{bad!r} used as an identifier in history.py"
+
+
+# --- P2.10: retracting a finding (§12.2 #10, UI_PLAN §5) -------------------
+#
+# The workspace's ✕. Every case below is the line between UI_PLAN §5's
+# "remove from shelf != delete from library" and CLAUDE.md's "a phantom rots
+# silently" — see `app/domain/retract.py`'s module docstring.
+
+READ_START = "2026-08-09T10:00:00+00:00"
+READ_END = "2026-08-09T10:02:00+00:00"
+
+
+def _read_for_retract() -> Read:
+    """The read a retraction is scoped to — id and start time, which are the
+    two facts `plan_retraction` needs to answer "did this read create the
+    record?"."""
+    return Read(id="r1", library_id=LIB, shelf_id="sh1", depth=1,
+                capture_ids=("cap1",), mode="llmpage", status=ReadStatus.DONE,
+                started_at=READ_START, finished_at=READ_END)
+
+
+def _located(**kw) -> Book:
+    """A book standing at (sh1, 1), sighted once by read ``r1`` and added to
+    the library while that read was running — the shape a confirmed finding
+    leaves behind."""
+    args = dict(id="b1", library_id=LIB, title="מלכי הכופרים",
+                author="פול קארני", copy_id="c1", shelf_id="sh1", depth=1,
+                added_at=READ_END,
+                provenance=(Provenance(run_id="r1", spine_id="sp1",
+                                       shelf_id="sh1", depth=1),))
+    args.update(kw)
+    return new_book(**args)
+
+
+def test_retracting_a_finding_this_read_created_deletes_the_record():
+    """✕ undoes exactly what the finding did: the book exists only because
+    this read found it and a human approved it, so nothing is left behind —
+    CLAUDE.md's "a phantom silently rots in the catalog" is the failure this
+    prevents."""
+    book = _located()
+    plan = plan_retraction(book, "sh1", 1, read=_read_for_retract())
+    assert plan.action is RetractAction.DELETE_BOOK
+    assert plan.copy_id == "c1"
+    assert plan.decision_kind is DecisionKind.REJECTED
+
+
+def test_retracting_never_deletes_a_book_that_predates_this_read():
+    """UI_PLAN §5's separation, at its sharpest: an imported book (P1.3) or
+    one an earlier read placed has a life of its own — a ✕ on one photo's
+    finding takes it off this shelf and must never destroy the record.
+
+    The rule asks WHO CREATED the record, not what status it wears: after
+    2026-08-09 every machine-read book is confirmed by a human and so arrives
+    APPROVED, which made the old status test unable to tell these apart."""
+    book = _located(provenance=(Provenance(run_id="an-older-read",
+                                           spine_id="sp9", shelf_id="sh1",
+                                           depth=1),))
+    plan = plan_retraction(book, "sh1", 1, read=_read_for_retract())
+    assert plan.action is RetractAction.REMOVE_FROM_SHELF
+    assert plan.copy_id == "c1"
+
+
+def test_retracting_never_deletes_a_book_this_read_merely_reconfirmed():
+    """The case provenance ALONE gets wrong, and the reason `added_at` is in
+    the rule: a book that already existed and that this read reconfirmed gets
+    its first-ever sighting from this very read (`observe()` appends one), so
+    its provenance looks identical to a record the read created. When it
+    joined the library is the fact that actually tells them apart."""
+    older = _located(added_at="2026-01-01T00:00:00+00:00")
+    plan = plan_retraction(older, "sh1", 1, read=_read_for_retract())
+    assert plan.action is RetractAction.REMOVE_FROM_SHELF
+
+
+def test_retracting_never_deletes_a_record_with_no_added_at():
+    """P1.3's import can leave one, and "unknown" must read as OLDER — the
+    safe direction is always to keep the book."""
+    unknown = _located(added_at=None)
+    plan = plan_retraction(unknown, "sh1", 1, read=_read_for_retract())
+    assert plan.action is RetractAction.REMOVE_FROM_SHELF
+
+
+def test_retracting_never_deletes_a_copy_declared_by_hand():
+    """A copy from *"I have another copy"* has no provenance at all — no read
+    ever created it. `all()` over an empty tuple is vacuously true, so
+    without the explicit emptiness check this is exactly the case that would
+    delete a record nobody read."""
+    book = _located(provenance=())
+    plan = plan_retraction(book, "sh1", 1, read=_read_for_retract())
+    assert plan.action is RetractAction.REMOVE_FROM_SHELF
+
+
+def test_retracting_never_deletes_a_book_that_has_a_second_copy():
+    """The other copy stands somewhere else (or nowhere) and has nothing to do
+    with this photo — deleting the book would take it with it."""
+    book = add_copy(_located(), copy_id="c2")
+    plan = plan_retraction(book, "sh1", 1, read=_read_for_retract())
+    assert plan.action is RetractAction.REMOVE_FROM_SHELF
+    assert plan.copy_id == "c1", "the copy standing HERE is the one retracted"
+
+
+def test_retracting_targets_the_copy_at_this_row_not_the_one_behind_it():
+    """§5.7 #1/#3: a retraction is scoped to the row photographed. Matching on
+    shelf alone would take the back row's copy off the shelf instead."""
+    book = add_copy(_located(), copy_id="c2", shelf_id="sh1", depth=2)
+    plan = plan_retraction(book, "sh1", 2, read=_read_for_retract())
+    assert plan.copy_id == "c2"
+
+
+def test_retracting_a_finding_that_never_became_a_book_still_records_the_no():
+    """§5.6: without the standing decision the very next read re-adds it. The
+    answer must survive even when there is no record to remove."""
+    plan = plan_retraction(None, "sh1", 1, read=_read_for_retract())
+    assert plan.action is RetractAction.NOTHING
+    assert plan.copy_id is None
+    assert plan.decision_kind is DecisionKind.REJECTED
+
+
+def test_retracting_a_book_that_no_longer_stands_here_removes_nothing():
+    """Its copy moved (or was already taken off) since the read — there is
+    nothing at this location to retract, and touching another location's copy
+    would be exactly the §5.7 #3 mistake."""
+    book = _located(shelf_id="sh9")
+    plan = plan_retraction(book, "sh1", 1, read=_read_for_retract())
+    assert plan.action is RetractAction.NOTHING
+    assert plan.copy_id is None
+
+
+def test_retracting_an_ambiguous_claim_records_wrong_book_not_rejected():
+    """The two suppress identically; which one is stored is the audit trail of
+    WHICH question was answered (`DecisionKind`'s own docstring)."""
+    book = _located()
+    plan = plan_retraction(book, "sh1", 1, read=_read_for_retract(), claimed_elsewhere=True)
+    assert plan.decision_kind is DecisionKind.WRONG_BOOK
+
+
+def test_a_retraction_never_mutates_the_book_it_is_about():
+    """Pure by rule — `app.reconcile_apply` executes, this only decides."""
+    book = _located()
+    before = book
+    plan_retraction(book, "sh1", 1, read=_read_for_retract())
+    assert book == before
 
 
 if __name__ == "__main__":

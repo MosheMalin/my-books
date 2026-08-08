@@ -223,8 +223,29 @@
   flex: 1;
   min-width: 0;
 }
+/* Title then author, the same two lines a book row shows — a finding IS a
+   book claim. `display: block` for the same reason books.css documents at
+   length: these are spans inside a flex child, and inline boxes neither
+   stack nor honour text-align, which silently turns §7.2's per-container
+   alignment off. */
+.rrow .t,
+.rrow .a {
+  display: block;
+}
 .rrow .t {
   font-weight: 600;
+}
+.rrow .a {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  margin-top: 2px;
+}
+.altbox .rawread {
+  margin-bottom: 7px;
+}
+.altbox td:last-child {
+  text-align: end;
+  white-space: nowrap;
 }
 .rrow .acts {
   display: flex;
@@ -252,6 +273,171 @@
 }
 .altbox tr:last-child td {
   border-bottom: none;
+}
+
+/* ================= the image workspace (P2.10) =================
+   No mock reference — §12.2 #10 was settled after the mock was written, and
+   the mock's Capture tab is the one-way pipeline this screen replaces. Built
+   only from existing custom properties, the same rule shelf.css follows. */
+.thumbbtn {
+  border: 1px solid transparent;
+  background: none;
+  padding: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  flex: none;
+  line-height: 0;
+}
+.thumbbtn:hover,
+.thumbbtn:focus-visible {
+  border-color: var(--accent);
+}
+.caprow.open {
+  border-color: var(--accent);
+}
+.wshead {
+  display: flex;
+  gap: 11px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.wshead img {
+  width: 96px;
+  height: 68px;
+  object-fit: cover;
+  border-radius: 8px;
+  flex: none;
+  background: var(--none-bg);
+}
+.wshead .m {
+  min-width: 0;
+}
+.wshead .fn {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.wssection {
+  margin: 16px 0 8px;
+  font-size: 12.5px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--muted);
+}
+.runlist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.runrow {
+  width: 100%;
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  flex-wrap: wrap;
+  text-align: start;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+.runrow:hover {
+  background: var(--bg);
+}
+.runrow.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.runrow .date {
+  font-weight: 600;
+}
+.runrow .diffbits {
+  margin: 0;
+  margin-inline-start: auto;
+}
+.findingacts {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 40%;
+}
+.findingbar {
+  margin-bottom: 10px;
+  align-items: center;
+}
+
+/* The three finding actions carry their meaning in colour — approve green,
+   fix blue, remove red (owner, 2026-08-09) — but as TINTS, not as filled
+   buttons: a row can show all three at once, and three saturated blocks
+   side by side shout at a screen whose actual content is a book title. So
+   the fill is the colour's own soft background token (the same pairs the
+   status badges use, already proven in both themes), the text is the colour
+   at full strength, and the border carries just enough of it to separate
+   them. `color-mix` against the panel keeps the border honest in dark mode
+   too, where the raw hue on a dark panel is far too loud. */
+.btn.act-approve,
+.btn.act-fix,
+.btn.act-remove {
+  border-width: 1px;
+  border-style: solid;
+}
+.btn.act-approve {
+  color: var(--auto);
+  background: var(--auto-bg);
+  border-color: color-mix(in srgb, var(--auto) 35%, var(--panel));
+}
+.btn.act-fix {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--panel));
+}
+.btn.act-remove {
+  color: var(--danger);
+  background: var(--danger-bg);
+  border-color: color-mix(in srgb, var(--danger) 30%, var(--panel));
+}
+.btn.act-approve:hover:not(:disabled),
+.btn.act-fix:hover:not(:disabled),
+.btn.act-remove:hover:not(:disabled) {
+  border-color: currentColor;
+}
+/* The pending count, in the same amber the REVIEW tier already uses — a
+   finding awaiting approval and a claim read at review confidence are the
+   same "a human still has to look" state. */
+.diffbits .p {
+  color: var(--review);
+}
+/* A retracted finding stays on screen with its reason (DiffDTO.rejected's own
+   contract) — greyed and struck through, the same treatment the tuning UI
+   settled on after the owner reported that a rejected row wearing a normal
+   badge still read as a confirmed book. */
+.rrow.retracted .spine {
+  filter: grayscale(1);
+  opacity: .55;
+}
+.rrow.retracted .t {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+.fixbox {
+  margin-top: 9px;
+  margin-inline-start: 45px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+.fixbox label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 140px;
 }
 
 /* review-tier badge — the mock's `.b-review`, ported here because Capture is

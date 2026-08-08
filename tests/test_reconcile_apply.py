@@ -12,6 +12,7 @@ this item out for.
 from __future__ import annotations
 
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -26,18 +27,27 @@ from app.adapters.memory_store import (
 from app.domain import (
     DEFAULT_RESOLUTION,
     Claim,
+    Provenance,
     ClaimTier,
     DecisionKind,
     LibraryRef,
+    RetractAction,
     Status,
     UnknownCopy,
+    approve,
     new_book,
     new_shelf,
     pick_default_copy,
     reconcile,
 )
 from app.domain.book import DomainError
-from app.reconcile_apply import Answer, AnswerKind, UnresolvedAnswer, apply_diff
+from app.reconcile_apply import (
+    Answer,
+    AnswerKind,
+    UnresolvedAnswer,
+    apply_diff,
+    retract_finding,
+)
 
 LIB = LibraryRef("lib-1", "Lib")
 WHEN = "2026-08-07T12:00:00+00:00"
@@ -65,6 +75,21 @@ def _raises(exc, fn, *a, **kw):
     raise AssertionError(f"expected {exc.__name__}, nothing raised")
 
 
+READ_START = "2026-08-07T11:00:00+00:00"
+
+
+def _read_for_retract():
+    """The read a retraction is scoped to. Its start time is what lets
+    `plan_retraction` tell a record this read created from one it merely
+    reconfirmed — see `app/domain/retract.py`."""
+    from app.domain import Read, ReadStatus
+
+    return Read(id="r1", library_id=LIB.id, shelf_id="sh1", depth=1,
+                capture_ids=("cap1",), mode="llmpage",
+                status=ReadStatus.DONE, started_at=READ_START,
+                finished_at=WHEN)
+
+
 def _rig(depth_count: int = 1):
     shelves = MemoryShelfStore()
     shelf = new_shelf(id="sh1", library_id=LIB.id, depth_count=depth_count)
@@ -80,18 +105,64 @@ def _claim(n: int = 1, **kw) -> Claim:
     return Claim(**args)
 
 
-def test_an_added_outcome_is_persisted_as_a_new_book():
+def test_a_hand_added_finding_is_persisted_at_manual_with_no_approval_step():
+    """The ONLY thing `added` still means after the 2026-08-09 reversal: a
+    book the owner typed onto a photo. It enters at MANUAL — a person's word,
+    not a read's — and it enters immediately, because asking someone to
+    approve what they just typed is the ceremony that teaches people to click
+    through prompts (§5.4's own warning, one screen over)."""
     shelf, shelves, books, decisions, clock, ids = _rig()
-    diff = reconcile(shelf, 1, [_claim()], {}, [], read_id="r1")
+    typed = _claim(tier=ClaimTier.MANUAL, score=0.0)
+    diff = reconcile(shelf, 1, [typed], {}, [], read_id="r1")
     result = apply_diff(diff, library=LIB, books=books, shelves=shelves,
                         decisions=decisions, clock=clock, ids=ids)
 
     assert len(result.books_saved) == 1
     saved = result.books_saved[0]
-    assert saved.title == "מלכי הכופרים" and saved.status is Status.AUTO
+    assert saved.title == "מלכי הכופרים" and saved.status is Status.MANUAL
     assert saved.copies[0].location == ("sh1", 1)
     assert saved.copies[0].provenance[0].sighting == ("r1", "sp1")
     assert books.count(LIB) == 1
+
+
+def test_a_machine_claim_writes_nothing_until_it_is_confirmed():
+    """The reversal itself, at the layer that actually writes: applying a
+    read whose claims are all unconfirmed must leave the library untouched.
+    Reversing this is what put fourteen unasked-for books in the owner's
+    library."""
+    shelf, shelves, books, decisions, clock, ids = _rig()
+    diff = reconcile(shelf, 1, [_claim()], {}, [], read_id="r1")
+    result = apply_diff(diff, library=LIB, books=books, shelves=shelves,
+                        decisions=decisions, clock=clock, ids=ids)
+
+    assert result.books_saved == () and books.count(LIB) == 0
+
+    confirmed = apply_diff(diff, library=LIB, books=books, shelves=shelves,
+                           decisions=decisions, clock=clock, ids=ids,
+                           answers=(Answer(claim_id="cl1",
+                                           kind=AnswerKind.CONFIRM),))
+    assert books.count(LIB) == 1
+    saved = confirmed.books_saved[0]
+    # A human said yes — APPROVED, never the AUTO rung a read alone produces.
+    assert saved.status is Status.APPROVED
+    assert saved.copies[0].provenance[0].sighting == ("r1", "sp1")
+
+
+def test_confirming_as_corrected_files_the_typed_title_not_the_read_one():
+    """One human act, one write: the reader recognised the book but spelled
+    it wrong, and approving-then-editing would be two records of one
+    decision. The CLAIM keeps the engine's text — it is evidence."""
+    shelf, shelves, books, decisions, clock, ids = _rig()
+    diff = reconcile(shelf, 1, [_claim(title="מלכי הכופריט")], {}, [],
+                     read_id="r1")
+    apply_diff(diff, library=LIB, books=books, shelves=shelves,
+               decisions=decisions, clock=clock, ids=ids,
+               answers=(Answer(claim_id="cl1", kind=AnswerKind.CONFIRM,
+                               title="מלכי הכופרים", author="פול קארני"),))
+
+    saved = books.list(LIB).items[0]
+    assert saved.title == "מלכי הכופרים" and saved.author == "פול קארני"
+    assert diff.needs_decision[0].claim.title == "מלכי הכופריט",         "the claim was rewritten; it is the engine's record, not the book's"
 
 
 def test_an_unchanged_outcome_still_appends_provenance():
@@ -233,7 +304,9 @@ def test_a_reject_answer_persists_a_decision_and_stops_the_re_add():
 
 def test_answering_a_claim_that_is_not_open_is_a_domain_error():
     shelf, shelves, books, decisions, clock, ids = _rig()
-    diff = reconcile(shelf, 1, [_claim()], {}, [], read_id="r1")  # this is `added`, not open
+    # A hand-typed claim is `added` — already settled, never a question.
+    diff = reconcile(shelf, 1, [_claim(tier=ClaimTier.MANUAL)], {}, [],
+                     read_id="r1")
     _raises(UnresolvedAnswer, apply_diff, diff, library=LIB, books=books,
            shelves=shelves, decisions=decisions, clock=clock, ids=ids,
            answers=(Answer(claim_id="cl1", kind=AnswerKind.CONFIRM),))
@@ -472,6 +545,145 @@ def test_duplicates_none_skips_the_queue_bookkeeping_entirely():
     apply_diff(diff, library=LIB, books=books, shelves=shelves,
               decisions=decisions, clock=clock, ids=ids)
     assert books.get(LIB, "b1").copy_count == 1
+
+
+# --- retracting a settled finding (P2.10, §12.2 #10) ------------------------
+
+def _applied(claim=None, *, depth_count: int = 1, existing=None):
+    """Run one claim all the way through apply, the way a settled read does
+    (P2.9's automatic apply), and hand back the rig plus the freshly
+    recomputed outcome the workspace's ✕ would act on."""
+    shelf, shelves, books, decisions, clock, ids = _rig(depth_count)
+    if existing is not None:
+        books.save(LIB, existing)
+    claim = claim or _claim()
+    library_books = {b.key: b for b in books.list(LIB, limit=100).items}
+    diff = reconcile(shelf, 1, [claim], library_books, [], read_id="r1")
+    # CONFIRM every still-open finding: since 2026-08-09 a machine claim
+    # writes nothing until a human approves it, and a retraction is only
+    # meaningful against a finding that actually landed.
+    apply_diff(diff, library=LIB, books=books, shelves=shelves,
+               decisions=decisions, clock=clock, ids=ids,
+               answers=tuple(Answer(claim_id=o.claim.id, kind=AnswerKind.CONFIRM)
+                             for o in diff.needs_decision
+                             if o.reason == "new_book_unconfirmed"))
+
+    fresh_books = {b.key: b for b in books.list(LIB, limit=100).items}
+    fresh = reconcile(shelf, 1, [claim], fresh_books,
+                      decisions.list_decisions(LIB, "sh1", 1), read_id="r1")
+    outcome = next(o for group in (fresh.unchanged, fresh.added, fresh.corrected,
+                                   fresh.needs_decision)
+                   for o in group)
+    return outcome, shelves, books, decisions, clock, ids
+
+
+def test_retracting_an_auto_finding_deletes_the_phantom_and_records_the_no():
+    """The workspace's ✕ on a book only a read ever claimed: gone from the
+    library, AND suppressed here — CLAUDE.md's phantom, and §5.6's "a
+    rejected book must not be re-added by a later run", in one act."""
+    outcome, shelves, books, decisions, clock, ids = _applied()
+    assert books.count(LIB) == 1
+
+    result = retract_finding(outcome, library=LIB, shelf_id="sh1", depth=1,
+                            read=_read_for_retract(), books=books, decisions=decisions, clock=clock)
+
+    assert result.action is RetractAction.DELETE_BOOK
+    assert books.count(LIB) == 0
+    stored = decisions.get_decision(LIB, "sh1", 1, outcome.book_key)
+    assert stored is not None and stored.kind is DecisionKind.REJECTED
+
+
+def test_a_retracted_finding_is_not_re_added_by_the_next_read():
+    """The whole point of writing the decision. Without it the identical
+    claim reconciles as `added` again and the phantom comes back."""
+    outcome, shelves, books, decisions, clock, ids = _applied()
+    retract_finding(outcome, library=LIB, shelf_id="sh1", depth=1,
+                    read=_read_for_retract(), books=books, decisions=decisions, clock=clock)
+
+    shelf = shelves.get_shelf(LIB, "sh1")
+    again = reconcile(shelf, 1, [_claim()], {},
+                      decisions.list_decisions(LIB, "sh1", 1), read_id="r2")
+    assert not again.added
+    assert [o.reason for o in again.rejected] == ["rejected"]
+    apply_diff(again, library=LIB, books=books, shelves=shelves,
+               decisions=decisions, clock=clock, ids=ids)
+    assert books.count(LIB) == 0, "the retracted book came back on a re-read"
+
+
+def test_retracting_keeps_a_book_that_existed_before_this_read():
+    """UI_PLAN §5's separation, at the layer that writes: *remove from shelf*
+    is not *delete from library*. A book an earlier read (or P1.3's import)
+    put in the library has a life of its own — one ✕ on one photo's finding
+    must take it off this shelf and no more."""
+    shelf, shelves, books, decisions, clock, ids = _rig()
+    older = new_book(id="b1", library_id=LIB.id, title="מלכי הכופרים",
+                     author="פול קארני", copy_id="c1", shelf_id="sh1", depth=1,
+                     provenance=(Provenance(run_id="an-older-read",
+                                            spine_id="sp9", shelf_id="sh1",
+                                            depth=1),))
+    books.save(LIB, older)
+    diff = reconcile(shelf, 1, [_claim()], {older.key: older}, [], read_id="r1")
+    outcome = diff.unchanged[0]
+
+    result = retract_finding(outcome, library=LIB, shelf_id="sh1", depth=1,
+                            read=_read_for_retract(), books=books, decisions=decisions,
+                            clock=clock)
+
+    assert result.action is RetractAction.REMOVE_FROM_SHELF
+    still_here = books.get(LIB, "b1")
+    assert still_here is not None, "a book older than this read was deleted"
+    assert still_here.copies[0].location is None
+    assert still_here.copies[0].provenance, "its history was destroyed too"
+
+
+def test_retracting_an_ambiguous_claim_records_wrong_book_and_closes_the_queue():
+    """§5.4's third answer, reached from the workspace instead of the prompt —
+    it must land on the same standing decision AND clear the durable question,
+    or the queue keeps asking something already answered."""
+    shelf, shelves, books, decisions, clock, ids = _rig()
+    duplicates = MemoryDuplicateQueue()
+    elsewhere = new_book(id="b1", library_id=LIB.id, title="מלכי הכופרים",
+                         author="פול קארני", copy_id="c1", shelf_id="sh9", depth=1)
+    books.save(LIB, elsewhere)
+    diff = reconcile(shelf, 1, [_claim()], {elsewhere.key: elsewhere}, [],
+                     read_id="r1")
+    apply_diff(diff, library=LIB, books=books, shelves=shelves,
+               decisions=decisions, duplicates=duplicates, clock=clock, ids=ids)
+    assert len(duplicates.list_open_questions(LIB)) == 1
+
+    outcome = diff.needs_decision[0]
+    result = retract_finding(outcome, library=LIB, shelf_id="sh1", depth=1,
+                            read=_read_for_retract(), books=books, decisions=decisions, clock=clock,
+                            duplicates=duplicates)
+
+    assert result.action is RetractAction.NOTHING, \
+        "the book stands on another shelf — this row has nothing to remove"
+    assert decisions.get_decision(LIB, "sh1", 1, outcome.book_key).kind \
+        is DecisionKind.WRONG_BOOK
+    assert duplicates.list_open_questions(LIB) == ()
+    assert books.get(LIB, "b1").copies[0].location == ("sh9", 1), \
+        "retracting here touched the copy standing somewhere else"
+
+
+def test_undoing_a_retraction_lets_the_same_claim_apply_again():
+    """The workspace's ↩ — clearing the standing decision (`DecisionStore`'s
+    own "undo of a mis-click") and re-applying is what puts the book back;
+    the API route composes exactly these two steps."""
+    outcome, shelves, books, decisions, clock, ids = _applied()
+    retract_finding(outcome, library=LIB, shelf_id="sh1", depth=1,
+                    read=_read_for_retract(), books=books, decisions=decisions, clock=clock)
+    assert books.count(LIB) == 0
+
+    assert decisions.delete_decision(LIB, "sh1", 1, outcome.book_key) is True
+    shelf = shelves.get_shelf(LIB, "sh1")
+    again = reconcile(shelf, 1, [_claim()], {}, [], read_id="r1")
+    # The claim is a question again — undoing a rejection restores the
+    # FINDING, not the book; approving it is still a human's act.
+    assert len(again.needs_decision) == 1
+    apply_diff(again, library=LIB, books=books, shelves=shelves,
+               decisions=decisions, clock=clock, ids=ids,
+               answers=(Answer(claim_id="cl1", kind=AnswerKind.CONFIRM),))
+    assert books.count(LIB) == 1
 
 
 if __name__ == "__main__":

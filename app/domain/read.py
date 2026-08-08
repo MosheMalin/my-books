@@ -52,16 +52,28 @@ class ReadAlreadyFinished(DomainError):
 class ClaimTier(str, Enum):
     """What one claim is worth, straight out of ``booksnap.types.Match.tier``
     — lower-cased to match this codebase's other status enums (``Status.AUTO``
-    is ``"auto"``, not ``"AUTO"``) — plus ``UNMATCHED`` for a spine the
-    matcher had nothing to say about. booksnap represents that as
-    ``match is None``; a :class:`Claim` always exists once a spine was read
-    (it is the record of the attempt), so it needs its own tier value rather
-    than a null one.
+    is ``"auto"``, not ``"AUTO"``) — plus two values the engine has no notion
+    of:
+
+    ``UNMATCHED`` — a spine the matcher had nothing to say about. booksnap
+    represents that as ``match is None``; a :class:`Claim` always exists once a
+    spine was read (it is the record of the attempt), so it needs its own tier
+    value rather than a null one.
+
+    ``MANUAL`` — a book the OWNER added to a photo by hand, because the engine
+    missed it (P2.10, owner 2026-08-09). It is a claim like any other — it is
+    an assertion about what is in this photograph — but its evidence is a
+    person, not a reader, which is why it is a tier and not a flag: everything
+    downstream already dispatches on tier, and a human's word outranks every
+    machine tier (§5.1's ladder). In particular it is the ONE tier that enters
+    the library without an approval step, because typing the title IS the
+    approval.
     """
 
     AUTO = "auto"
     REVIEW = "review"
     UNMATCHED = "unmatched"
+    MANUAL = "manual"
 
 
 @dataclass(frozen=True)
@@ -285,6 +297,43 @@ def append_claim(read: Read, claim: Claim) -> Read:
         raise ReadAlreadyFinished(
             f"read {read.id} is already {read.status.value}; claims are "
             "never appended after a read finishes"
+        )
+    return replace(read, claims=read.claims + (claim,))
+
+
+def add_manual_claim(read: Read, claim: Claim) -> Read:
+    """The owner's own finding about this photo — *"the engine missed this
+    book"* (P2.10, owner 2026-08-09).
+
+    The ONE way a claim may join a read after it has finished, and the
+    exception is deliberately narrow rather than a loosening of
+    :func:`append_claim`'s rule. That rule protects the ENGINE's record from a
+    slow last spine writing into a read the API has already reported as
+    finished — a race between two machine writers. This is not that: it is a
+    human, minutes or days later, adding what they can see in the photograph
+    and the reader could not. Refusing it would mean either losing the book or
+    inventing a second place for "books in this image", and the image is
+    exactly what this record is about.
+
+    Two guards keep the distinction real:
+
+      - the claim must be :attr:`ClaimTier.MANUAL` — the engine's own tiers
+        stay unreachable through this door, so nothing here can forge machine
+        evidence;
+      - the read must NOT be running. A settled read is the only one a human
+        has finished looking at, and it also restores the exact race guarantee
+        `append_claim` exists for.
+    """
+    if claim.tier is not ClaimTier.MANUAL:
+        raise DomainError(
+            "only a MANUAL-tier claim may be added to a read by hand; "
+            f"got {claim.tier.value!r} — engine evidence goes through "
+            "append_claim while the read is running"
+        )
+    if not read.status.is_terminal:
+        raise ReadAlreadyFinished(
+            f"read {read.id} is still running; wait for it to settle before "
+            "adding a book to this photo by hand"
         )
     return replace(read, claims=read.claims + (claim,))
 

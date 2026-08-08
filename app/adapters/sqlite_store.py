@@ -527,6 +527,36 @@ class SqliteReadStore(_SqliteStore):
             ).fetchall()
             return tuple(_load_read(conn, r) for r in rows)
 
+    def list_reads_for_capture(
+        self, library: LibraryRef, capture_id: str,
+    ) -> tuple[Read, ...]:
+        # `capture_ids` is a JSON array column (v7 — json1 is not guaranteed
+        # present, see the migration's own note), so SQL NARROWS and Python
+        # DECIDES: the LIKE clause finds rows whose JSON text contains the
+        # quoted id, and the membership check below confirms it against the
+        # parsed list. Same split `app.domain.search` documents for its own
+        # `LIKE` scan — a clever retrieval clause may never change the answer.
+        # The escape matters because an id is opaque: a `%` or `_` in one
+        # would otherwise widen the pattern rather than narrow it.
+        #
+        # The quoted needle is already exact, so the membership re-check below
+        # changes no result today and SURVIVES mutation testing — recorded in
+        # the contract test that covers this rather than left looking like a
+        # missing case. It stays because it is what keeps the SQL a pure
+        # NARROWING clause: an index- or FTS-shaped rewrite of this query can
+        # then be judged on speed alone, never on whether it moved an answer.
+        needle = ('%"' + capture_id.replace("\\", "\\\\")
+                  .replace("%", "\\%").replace("_", "\\_") + '"%')
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM reads WHERE library_id = ?"
+                " AND capture_ids LIKE ? ESCAPE '\\'"
+                " ORDER BY started_at DESC, id DESC",
+                (library.id, needle),
+            ).fetchall()
+            reads = (_load_read(conn, r) for r in rows)
+            return tuple(r for r in reads if capture_id in r.capture_ids)
+
 
 class SqliteDecisionStore(_SqliteStore):
     """Implements ``app.ports.decisions.DecisionStore`` (P2.5).

@@ -976,6 +976,64 @@ def listing_reads_never_crosses_shelves_or_libraries(store):
 
 
 @read_contract
+def lists_the_runs_that_touched_one_photo(store):
+    """P2.10's *"clicking a photo opens its runs"* (§12.2 #10). A read of a
+    whole row lists under every photo of that row — it really did read them
+    all (§5.7 #1) — and the newest-first order matches `list_reads`'."""
+    store.save_read(LIB, _read(1, capture_ids=("capA", "capB"),
+                               started_at="2026-08-01T00:00:00+00:00"))
+    store.save_read(LIB, _read(2, capture_ids=("capB",),
+                               started_at="2026-08-03T00:00:00+00:00"))
+    store.save_read(LIB, _read(3, capture_ids=("capC",),
+                               started_at="2026-08-02T00:00:00+00:00"))
+
+    assert [r.id for r in store.list_reads_for_capture(LIB, "capB")] == ["rd2", "rd1"]
+    assert [r.id for r in store.list_reads_for_capture(LIB, "capA")] == ["rd1"]
+    assert store.list_reads_for_capture(LIB, "capZ") == ()
+
+
+@read_contract
+def a_photos_runs_survive_it_being_re_bound_to_another_shelf(store):
+    """The reason this is a store method and not a filter over
+    `list_reads(shelf_id)`: intake re-binding a photo (P2.2) must not erase
+    the runs that already read it under the shelf it used to be on. Reversing
+    this loses history only for the photos someone had to correct — the ones
+    whose history is most worth having."""
+    store.save_read(LIB, _read(1, shelf_id="sh-old", capture_ids=("capA",)))
+    # the capture now lives on sh-new; its old read is still filed on sh-old
+    assert [r.id for r in store.list_reads_for_capture(LIB, "capA")] == ["rd1"]
+    assert store.list_reads(LIB, "sh-new") == ()
+
+
+@read_contract
+def a_photos_runs_never_cross_libraries(store):
+    """Two libraries can mint the same capture id — §4.2 again, at the one
+    method whose lookup key is not a shelf."""
+    store.save_read(LIB, _read(1, capture_ids=("capA",)))
+    store.save_read(OTHER, _read(2, library=OTHER, capture_ids=("capA",)))
+    assert [r.id for r in store.list_reads_for_capture(LIB, "capA")] == ["rd1"]
+    assert [r.id for r in store.list_reads_for_capture(OTHER, "capA")] == ["rd2"]
+
+
+@read_contract
+def a_photos_runs_match_the_whole_id_not_a_fragment_of_one(store):
+    """A prefix-shaped id must not match its own longer sibling.
+
+    This is the case a naive `LIKE '%' || id || '%'` over the JSON column
+    gets wrong. The shipped adapter quotes the needle (`%"cap1"%`), which is
+    already exact — so this test passes against it and would fail against the
+    naive version. Note what it does NOT prove: the Python membership
+    re-check after the query survives being deleted, because the quoted LIKE
+    alone is sufficient today. That re-check is there to keep the SQL a pure
+    NARROWING clause (`app.domain.search`'s own split), so a future index or
+    FTS-shaped rewrite of the query cannot change the answer.
+    """
+    store.save_read(LIB, _read(1, capture_ids=("cap10",)))
+    assert store.list_reads_for_capture(LIB, "cap1") == ()
+    assert [r.id for r in store.list_reads_for_capture(LIB, "cap10")] == ["rd1"]
+
+
+@read_contract
 def a_read_in_another_library_reads_as_absent(store):
     """§4.2 / P3.3: 404-not-403, same as every other aggregate — asserted
     here because the route above it can only honour it if this holds."""

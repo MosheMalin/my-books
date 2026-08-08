@@ -11,8 +11,10 @@
 import { useRef } from 'react'
 import { useI18n } from '../lib/i18n'
 import { CaptureRow } from './CaptureRow'
+import { ImageWorkspace } from './ImageWorkspace'
 import { ReviewPanel } from './ReviewPanel'
 import { useCapture, type Mode } from './useCapture'
+import { useImageWorkspace } from './useImageWorkspace'
 
 // Ordered best-first, which is also default-first: llmpage is what
 // `useCapture` selects, and a default sitting third down the list reads as an
@@ -30,6 +32,13 @@ export function CaptureTab() {
   const { t } = useI18n()
   const cap = useCapture()
   const fileInput = useRef<HTMLInputElement | null>(null)
+
+  // The photo whose workspace is open, and its state (P2.10). The hook is
+  // mounted unconditionally with a nullable capture id — mounting it only
+  // when a photo is open would remount it on every switch anyway, and a hook
+  // behind a condition is not a hook.
+  const openItem = cap.items.find((it) => it.localId === cap.openImageId)
+  const ws = useImageWorkspace(openItem?.captureId ?? null)
 
   const onFiles = (files: FileList | null) => {
     if (!files || files.length === 0) return
@@ -102,13 +111,14 @@ export function CaptureTab() {
                       key={it.localId}
                       item={it}
                       selected={cap.selected.has(it.localId)}
+                      open={cap.openImageId === it.localId}
                       shelves={cap.shelves}
                       onToggle={() => cap.toggleSelect(it.localId)}
+                      onOpen={() => cap.openImage(
+                        cap.openImageId === it.localId ? null : it.localId,
+                      )}
                       onShelf={(shelfId) => void cap.assignShelf(it.localId, shelfId)}
                       onDepth={(depth) => void cap.assignDepth(it.localId, depth)}
-                      onAddRowBehind={() => {
-                        if (it.shelfId) void cap.addRowBehind(it.shelfId)
-                      }}
                       onRetry={() => cap.retryItem(it.localId)}
                     />
                   ))}
@@ -151,8 +161,20 @@ export function CaptureTab() {
         </div>
       </div>
 
+      {/* The right column answers ONE question at a time: "what is happening
+          now" (live panels) or "what did this photo find" (the workspace).
+          Stacking both would put two answers to two different questions on
+          one screen, and the workspace is opened deliberately — starting a
+          read closes it (see `useCapture.start`). */}
       <div className="reviewcol">
-        {cap.runs.length === 0 ? (
+        {openItem ? (
+          <ImageWorkspace
+            item={openItem}
+            shelves={cap.shelves}
+            ws={ws}
+            onClose={() => cap.openImage(null)}
+          />
+        ) : cap.runs.length === 0 ? (
           <div className="empty">{t.review_now}</div>
         ) : (
           cap.runs.map((run) => (
@@ -163,6 +185,9 @@ export function CaptureTab() {
               onStop={() => void cap.stopRun(run.key)}
               onAnswer={(claimId, kind, copyId) =>
                 void cap.answerClaim(run.key, claimId, kind, copyId)}
+              onFinding={(claimId, op) =>
+                void cap.findingOnRun(run.key, claimId, op)}
+              onApproveAll={(claimIds) => void cap.approveAllOnRun(run.key, claimIds)}
             />
           ))
         )}

@@ -20,6 +20,7 @@ never be silently reversed (plan H5):
   - "not seen" never auto-removes a book ............... §5.6  reconcile._not_seen_here
   - the not-seen streak is a badge, never a removal .... §5.6  history.not_seen_streak
   - a diff summary is a snapshot, never recomputed ..... §5.5  read.DiffSummary
+  - a retracted finding never deletes a vouched-for book  UI §5 retract.plan_retraction
 """
 from __future__ import annotations
 
@@ -81,6 +82,7 @@ from app.domain.read import (
     Read,
     ReadAlreadyFinished,
     ReadStatus,
+    add_manual_claim,
     append_claim,
     fail_read,
     finish_read,
@@ -88,6 +90,7 @@ from app.domain.read import (
     stop_read,
     with_diff_summary,
 )
+from app.domain.retract import RetractAction, Retraction, plan_retraction
 from app.domain.shelf import (
     Capture,
     Shelf,
@@ -135,6 +138,8 @@ __all__ = [
     "Read",
     "ReadAlreadyFinished",
     "ReadStatus",
+    "RetractAction",
+    "Retraction",
     "Shelf",
     "Status",
     "UnknownCopy",
@@ -143,6 +148,7 @@ __all__ = [
     "WorkFields",
     "add_copy",
     "add_depth",
+    "add_manual_claim",
     "append_claim",
     "approve",
     "author_sort_key",
@@ -166,6 +172,7 @@ __all__ = [
     "observe",
     "open_or_refresh",
     "pick_default_copy",
+    "plan_retraction",
     "reconcile",
     "relink_copy",
     "remove_from_shelf",

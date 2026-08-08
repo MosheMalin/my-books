@@ -124,7 +124,7 @@ def fires(reason: str) -> FireDecision:
     """Should §5.4's prompt ask, for a `ClaimOutcome.reason` reconcile() gave?
 
     Scoped STRICTLY to the four situations in :data:`FIRE_TABLE` — a reason
-    outside them (``new_book_auto``, ``review_tier_new_book``, ``rejected``,
+    outside them (``new_book_unconfirmed``, ``manual_add``, ``rejected``,
     ``wrong_book``, ``no_identity``, ``relinked_by_decision``,
     ``new_copy_by_decision``, ...) answers a DIFFERENT question `reconcile()`
     handles on its own (is this a real book at all? has a human already

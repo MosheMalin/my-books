@@ -12,7 +12,14 @@ import { cleanup, render, screen, waitFor, within } from '@testing-library/react
 import userEvent from '@testing-library/user-event'
 import { I18nProvider } from '../lib/i18n'
 import { CaptureTab } from './CaptureTab'
-import { claim, emptyDiff, fakeCaptureServer, outcome, readSummary } from './captureHarness'
+import {
+  claim,
+  emptyDiff,
+  fakeBook,
+  fakeCaptureServer,
+  outcome,
+  readSummary,
+} from './captureHarness'
 
 afterEach(() => {
   cleanup()
@@ -58,23 +65,12 @@ describe('Capture tab — intake', () => {
     expect(await screen.findByText('מדף הסלון.jpg')).toHaveClass('rtl-safe')
   })
 
-  it('offers "add a row behind" even on a single-row shelf (§5.7)', async () => {
-    fakeCaptureServer()
-    const { container } = renderCapture()
-    await dropOnePhoto(container)
-    await screen.findByText('לא משויך')
-
-    // Depth_count is 1 here — the affordance must still be on screen, not
-    // gated behind the shelf already being stacked.
-    const addRow = screen.getByText('+ הוספת שורה מאחור')
-    expect(addRow).toBeInTheDocument()
-
-    await userEvent.click(addRow)
-    // Growing the shelf to 2 rows surfaces the depth picker the mock only
-    // shows once a shelf IS stacked.
-    await waitFor(() => expect(screen.getByText('שורה 1')).toBeInTheDocument())
-    expect(screen.getByText('שורה 2')).toBeInTheDocument()
-  })
+  // REMOVED 2026-08-09 (owner): "add a row behind" is gone from this tab.
+  // P2.7 surfaced it here on §5.7's argument that nobody discovers depth
+  // unless it is offered early; the owner's call is that Capture is about
+  // IMAGES and declaring the shape of a piece of furniture belongs to the Map
+  // tab. The test went with the control — a test for a button that must not
+  // exist is a test that stops the next person from reading the reason.
 
   it('enables Run only once a photo is both uploaded and selected', async () => {
     fakeCaptureServer()
@@ -127,29 +123,37 @@ describe('Capture tab — review', () => {
     expect(screen.queryByText('אותו עותק')).not.toBeInTheDocument()
   })
 
-  it('confirming a REVIEW-tier new-book claim clears it from needs_decision', async () => {
+  it('approving a pending finding is what puts it in the library', async () => {
+    // REVERSED 2026-08-09 (owner). This used to be a REVIEW-tier-only test,
+    // because an AUTO claim entered the library on its own. Both tiers wait
+    // for a human now, and both wear the same controls (the owner's item 7)
+    // — so this covers an AUTO claim, the case that used to skip the
+    // question entirely.
     const server = fakeCaptureServer()
-    const c1 = claim({ id: 'c1', title: 'ספר חדש', tier: 'review', score: 62 })
+    const c1 = claim({ id: 'c1', title: 'ספר חדש', tier: 'auto', score: 91 })
     let answered = false
     server.diffFor = (_readId, answers) => {
       if (answers.some((a) => a.claim_id === 'c1' && a.kind === 'confirm')) answered = true
       return answered
         ? { ...emptyDiff('sh1', 1, 'rd1'),
-            added: [outcome({ kind: 'added', reason: 'new_book_auto', claim: c1 })] }
+            unchanged: [outcome({
+              kind: 'unchanged', reason: 'same_location', claim: c1,
+              existing_book: fakeBook('bk1', { title: 'ספר חדש',
+                                               status: 'approved' }),
+            })] }
         : { ...emptyDiff('sh1', 1, 'rd1'),
             needs_decision: [outcome({
-              kind: 'needs_decision', reason: 'review_tier_new_book', claim: c1,
+              kind: 'needs_decision', reason: 'new_book_unconfirmed', claim: c1,
             })] }
     }
     await startRun()
     await screen.findByText('ספר חדש')
-    expect(screen.getByText('טעון אישור')).toBeInTheDocument()
+    expect(screen.getByText('ממתין לאישור')).toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole('button', { name: '✓' }))
+    await userEvent.click(screen.getByRole('button', { name: 'אישור הספר' }))
 
-    await waitFor(() => expect(screen.getByText('חדש')).toBeInTheDocument())
-    expect(screen.queryByText('טעון אישור')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '✓' })).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText('היה כאן')).toBeInTheDocument())
+    expect(screen.queryByText('ממתין לאישור')).not.toBeInTheDocument()
   })
 
   it('an ambiguous-location claim shows the §5.4 three-way prompt with its default stated on screen', async () => {
@@ -185,14 +189,16 @@ describe('Capture tab — review', () => {
     expect(screen.queryByRole('button', { name: '✓' })).not.toBeInTheDocument()
   })
 
-  it('why? reveals ranked alternatives with their rejection reason, and none are one-click acceptable', async () => {
+  it('"try a better match" reveals the ranked runners-up with their rejection reason', async () => {
     const server = fakeCaptureServer()
     const diff = {
       ...emptyDiff('sh1', 1, 'rd1'),
-      added: [outcome({
-        kind: 'added', reason: 'new_book_auto',
+      unchanged: [outcome({
+        kind: 'unchanged', reason: 'same_location', book_key: 'k1',
+        existing_book: fakeBook('bk1', { title: 'מלכי הכופרים' }),
         claim: claim({
           id: 'c1', title: 'מלכי הכופרים', tier: 'auto', score: 91,
+          text: 'מלכי הכופרים פול קארני',
           alternatives: [
             { title: 'ספינות מן המערב', author: 'פול קארני', score: 61.2, reason: '' },
             { title: 'הכופרים', author: '', score: 40,
@@ -205,28 +211,98 @@ describe('Capture tab — review', () => {
     await startRun()
     await screen.findByText('מלכי הכופרים')
 
-    await userEvent.click(screen.getByRole('button', { name: 'למה?' }))
+    await userEvent.click(screen.getByRole('button', { name: 'התאמה אחרת?' }))
 
     expect(await screen.findByText('ספינות מן המערב')).toBeInTheDocument()
     expect(screen.getByText('title similarity 40 < 47')).toBeInTheDocument()
-    // "alternatives" is display-only (UI_PLAN's "one-click acceptable" was
-    // deliberately left out — no domain op exists to re-point a claim at a
-    // different candidate) — so a runner-up's own row carries no button.
-    const altRow = screen.getByText('ספינות מן המערב').closest('tr')!
-    expect(within(altRow).queryByRole('button')).not.toBeInTheDocument()
+    // The raw read lives HERE, not on the row: it explains the finding, it
+    // does not identify it (owner, 2026-08-09).
+    expect(screen.getByText(/מלכי הכופרים פול קארני/)).toBeInTheDocument()
   })
 
-  it('the "open the shelf" chip navigates to the shelf-detail route (P2.8)', async () => {
+  it('picking a runner-up re-titles the book behind a settled finding', async () => {
+    // REVERSED 2026-08-09 (owner). P2.7 deliberately shipped this list
+    // read-only because no domain op could re-point a claim; the operation
+    // arrived from the approval reversal (confirm-as-corrected / patch), so
+    // UI_PLAN §4's "one-click acceptable" is finally honest.
     const server = fakeCaptureServer()
-    server.diffFor = (readId) => emptyDiff('sh1', 1, readId)
-    globalThis.location.hash = ''
+    server.diffFor = () => ({
+      ...emptyDiff('sh1', 1, 'rd1'),
+      unchanged: [outcome({
+        kind: 'unchanged', reason: 'same_location', book_key: 'k1',
+        existing_book: fakeBook('bk1', { title: 'מלכי הכופריט' }),
+        claim: claim({
+          id: 'c1', title: 'מלכי הכופריט', tier: 'auto', score: 91,
+          alternatives: [{ title: 'מלכי הכופרים', author: 'פול קארני',
+                           score: 88, reason: '' }],
+        }),
+      })],
+    })
+    await startRun()
+    await userEvent.click(screen.getByRole('button', { name: 'התאמה אחרת?' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'בחירה' }))
+
+    await waitFor(() => {
+      const patch = server.bodies.find((b) => 'title' in (b ?? {}))
+      expect(patch?.title).toBe('מלכי הכופרים')
+      expect(patch?.author).toBe('פול קארני')
+    })
+    expect(server.calls.some((c) => c.includes('/books/bk1'))).toBe(true)
+  })
+
+  it('picking a runner-up on a PENDING finding approves it as that book', async () => {
+    // Same click, a different write — there is no book to patch yet, so it
+    // is confirm-as-corrected. One act, one request, either way.
+    const server = fakeCaptureServer()
+    server.diffFor = () => ({
+      ...emptyDiff('sh1', 1, 'rd1'),
+      needs_decision: [outcome({
+        kind: 'needs_decision', reason: 'new_book_unconfirmed', book_key: 'k1',
+        claim: claim({
+          id: 'c1', title: 'מלכי הכופריט', tier: 'auto', score: 70,
+          alternatives: [{ title: 'מלכי הכופרים', author: 'פול קארני',
+                           score: 88, reason: '' }],
+        }),
+      })],
+    })
+    await startRun()
+    await userEvent.click(screen.getByRole('button', { name: 'התאמה אחרת?' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'בחירה' }))
+
+    await waitFor(() => {
+      const body = server.bodies.find(
+        (b) => (b as { answers?: { title?: string }[] }).answers?.[0]?.title)
+      const answer = (body as { answers: { kind: string; title: string }[] }).answers[0]!
+      expect(answer.kind).toBe('confirm')
+      expect(answer.title).toBe('מלכי הכופרים')
+    })
+  })
+
+  it('shows the author beside the title, and never the raw read on the row', async () => {
+    // The claim and the book deliberately DISAGREE: the engine read a typo
+    // and a human has since fixed the record. A settled row must show what
+    // the book says now — the claim is frozen evidence and would keep
+    // displaying the typo forever.
+    const server = fakeCaptureServer()
+    server.diffFor = () => ({
+      ...emptyDiff('sh1', 1, 'rd1'),
+      unchanged: [outcome({
+        kind: 'unchanged', reason: 'same_location', book_key: 'k1',
+        existing_book: fakeBook('bk1', { title: 'מלכי הכופרים',
+                                         author: 'פול קארני' }),
+        claim: claim({ id: 'c1', title: 'מלכי הכופריט', author: 'פ. קארני',
+                       tier: 'auto', score: 91, text: 'מלכי הכופריט פ קארני' }),
+      })],
+    })
     await startRun()
 
-    const shelfId = server.shelves[0]!.id
-    await userEvent.click(screen.getByRole('button', { name: 'פתחו את המדף →' }))
-
-    expect(globalThis.location.hash).toBe(`#/map/${shelfId}`)
-    globalThis.location.hash = ''
+    const title = await screen.findByText('מלכי הכופרים')
+    const row = title.closest('.rrow') as HTMLElement
+    expect(within(row).getByText('פול קארני')).toHaveClass('a')
+    expect(within(row).queryByText('מלכי הכופריט')).not.toBeInTheDocument()
+    // The guillemets line is gone from the row (it is in the panel now).
+    expect(within(row).queryByText(/«/)).not.toBeInTheDocument()
+    expect(server.calls.length).toBeGreaterThan(0)
   })
 
   it('a running read offers Stop, and Stop calls the stop endpoint', async () => {
@@ -358,5 +434,300 @@ describe('Capture tab — hydration on mount (P2.9)', () => {
       expect(server.calls.filter((c) => c.includes('/reads/rd1')).length)
         .toBeGreaterThan(before)
     }, { timeout: 700 })
+  })
+})
+
+describe('Capture tab — the image workspace (P2.10, §12.2 #10)', () => {
+  // The bug this section guards is the one §12.2 #10 names: the tab was a
+  // one-way pipeline — drop, run, and the result scrolled away with no route
+  // back, leaving *re-run on selected* as the only visible action on a photo
+  // that had already been processed.
+
+  function shelf(over: Partial<import('../api/client').Shelf> = {}) {
+    return {
+      id: 'sh1', label: '', depth_count: 1, virtual: false,
+      created_at: null, capture_count: 1, ...over,
+    }
+  }
+
+  const settled = (over = {}): import('../api/client').DiffDTO => ({
+    ...emptyDiff('sh1', 1, 'rd1'),
+    unchanged: [outcome({
+      kind: 'unchanged', reason: 'same_location', book_key: 'k1',
+      existing_book: fakeBook('bk1', { title: 'מלכי הכופרים' }),
+      claim: claim({ id: 'c1', capture_id: 'cap1', title: 'מלכי הכופרים',
+                     author: 'פול קארני', tier: 'auto', score: 91 }),
+    })],
+    ...over,
+  })
+
+  /** A hydrated photo that has already been read once — the state the
+   *  workspace exists for. */
+  function processedPhoto(diff?: import('../api/client').DiffDTO) {
+    const server = fakeCaptureServer([shelf()])
+    server.captures.cap1 = {
+      id: 'cap1', shelf_id: 'sh1', depth: 1, order: 0, image_id: 'img1',
+      captured_at: '2026-08-01T00:00:00Z',
+    }
+    const run = readSummary({
+      id: 'rd1', shelf_id: 'sh1', depth: 1, status: 'done',
+      finished_at: '2026-08-09T10:00:00Z',
+      diff_summary: { added: 2, corrected: 0, unchanged: 1, needs_decision: 0,
+                      not_seen: 0, rejected: 0, ignored: 0 },
+    })
+    server.reads.push(run)
+    server.readsForCapture.cap1 = [run]
+    if (diff) server.diffFor = () => diff
+    return server
+  }
+
+  async function openWorkspace() {
+    renderCapture()
+    await screen.findByText('img1')
+    await userEvent.click(screen.getAllByRole(
+      'button', { name: 'מה נמצא בתמונה' })[0]!)
+  }
+
+  it('opens a processed photo onto its runs and their findings — without re-reading it', async () => {
+    const server = processedPhoto(settled())
+    await openWorkspace()
+
+    expect(await screen.findByText('מלכי הכופרים')).toBeInTheDocument()
+    // The whole point (§12.2 #10): looking costs nothing. No read was
+    // started — a start always carries `mode` in its body.
+    expect(server.bodies.some((b) => 'mode' in b)).toBe(false)
+    expect(server.calls.some((c) => c.includes('/captures/cap1/reads'))).toBe(true)
+    // ...and it is the read-only diff, not an apply, that fetched them.
+    expect(server.calls.some((c) => c.includes('/reads/rd1/diff'))).toBe(true)
+  })
+
+  it('shows only the findings that came from THIS photo', async () => {
+    // A read covers every capture at its (shelf, depth) — §5.7 #1 forbids a
+    // partial read of a row — but the workspace was opened from one image.
+    const server = processedPhoto(settled({
+      added: [outcome({
+        kind: 'added', reason: 'new_book_auto', book_key: 'k2',
+        claim: claim({ id: 'c2', capture_id: 'cap-other',
+                       title: 'ספר של תמונה אחרת' }),
+      })],
+    }))
+    await openWorkspace()
+
+    expect(await screen.findByText('מלכי הכופרים')).toBeInTheDocument()
+    expect(screen.queryByText('ספר של תמונה אחרת')).not.toBeInTheDocument()
+    expect(server.calls.length).toBeGreaterThan(0)
+  })
+
+  it('approves a finding, and stops offering it once the book is approved', async () => {
+    const server = processedPhoto(settled())
+    await openWorkspace()
+    await screen.findByText('מלכי הכופרים')
+
+    server.diffFor = () => settled({
+      unchanged: [outcome({
+        kind: 'unchanged', reason: 'same_location', book_key: 'k1',
+        existing_book: fakeBook('bk1', { title: 'מלכי הכופרים',
+                                         status: 'approved' }),
+        claim: claim({ id: 'c1', capture_id: 'cap1', title: 'מלכי הכופרים' }),
+      })],
+    })
+    await userEvent.click(screen.getByRole('button', { name: 'אישור הספר' }))
+
+    await waitFor(() =>
+      expect(server.calls.some((c) => c.includes('/books/bk1/approve'))).toBe(true))
+    // An approved book has nothing left to approve — the row must not keep
+    // offering it (the ladder only goes up, `Status.merge`).
+    await waitFor(() => expect(
+      screen.queryByRole('button', { name: 'אישור הספר' })).not.toBeInTheDocument())
+  })
+
+  it('sends the corrected title when a finding is fixed by hand', async () => {
+    const server = processedPhoto(settled())
+    await openWorkspace()
+    await screen.findByText('מלכי הכופרים')
+
+    await userEvent.click(screen.getByRole('button', { name: 'תיקון פרטים' }))
+    const title = screen.getByLabelText('כותרת')
+    await userEvent.clear(title)
+    await userEvent.type(title, 'מלכי הכופרים המתוקן')
+    await userEvent.click(screen.getByRole('button', { name: 'שמירה' }))
+
+    await waitFor(() => {
+      const patch = server.bodies.find((b) => 'title' in (b ?? {}))
+      expect(patch?.title).toBe('מלכי הכופרים המתוקן')
+    })
+  })
+
+  it('retracts a finding and offers the undo, never leaving it silently gone', async () => {
+    const server = processedPhoto(settled())
+    const rejected: import('../api/client').DiffDTO = {
+      ...emptyDiff('sh1', 1, 'rd1'),
+      rejected: [outcome({
+        kind: 'rejected', reason: 'rejected', book_key: 'k1',
+        claim: claim({ id: 'c1', capture_id: 'cap1', title: 'מלכי הכופרים' }),
+      })],
+    }
+    server.findingResult = (action) => (action === 'retract' ? rejected : settled())
+    await openWorkspace()
+    await screen.findByText('מלכי הכופרים')
+
+    await userEvent.click(screen.getByRole('button', { name: 'הסרה' }))
+
+    await waitFor(() =>
+      expect(server.calls.some((c) => c.includes('/findings/c1/retract'))).toBe(true))
+    // A retracted finding stays on screen WITH its reason — "why isn't my
+    // book showing up" has an answer, and the undo has somewhere to live.
+    expect(await screen.findByText('נדחה')).toBeInTheDocument()
+    expect(screen.getByText(
+      'הוסר מכאן. קריאה נוספת של המדף לא תוסיף אותו שוב.')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'ביטול ההסרה' }))
+    await waitFor(() =>
+      expect(server.calls.some((c) => c.includes('/findings/c1/restore'))).toBe(true))
+  })
+
+  it('a photo that has never been read says so rather than showing nothing', async () => {
+    const server = fakeCaptureServer([shelf()])
+    server.captures.cap1 = {
+      id: 'cap1', shelf_id: 'sh1', depth: 1, order: 0, image_id: 'img1',
+      captured_at: null,
+    }
+    renderCapture()
+    await screen.findByText('img1')
+    await userEvent.click(screen.getAllByRole(
+      'button', { name: 'מה נמצא בתמונה' })[0]!)
+
+    expect(await screen.findByText('התמונה הזו עדיין לא נקראה')).toBeInTheDocument()
+  })
+
+  it('shows a pending finding of EITHER tier the same three controls', async () => {
+    // The owner's item 7, and the reason it is one line of code: after
+    // "nothing enters the library unapproved" an AUTO and a REVIEW finding
+    // are the same STATE, so the controls follow the state, not the tier.
+    const server = processedPhoto({
+      ...emptyDiff('sh1', 1, 'rd1'),
+      needs_decision: [
+        outcome({ kind: 'needs_decision', reason: 'new_book_unconfirmed',
+                  claim: claim({ id: 'c1', capture_id: 'cap1', title: 'זוהה',
+                                 tier: 'auto', score: 120 }) }),
+        outcome({ kind: 'needs_decision', reason: 'new_book_unconfirmed',
+                  claim: claim({ id: 'c2', capture_id: 'cap1', title: 'לבדיקה',
+                                 tier: 'review', score: 61 }) }),
+      ],
+    })
+    await openWorkspace()
+    await screen.findByText('זוהה')
+
+    for (const label of ['אישור הספר', 'תיקון פרטים', 'הסרה']) {
+      expect(screen.getAllByRole('button', { name: label })).toHaveLength(2)
+    }
+    expect(server.calls.length).toBeGreaterThan(0)
+  })
+
+  it('shows the match score against its real maximum, not as a percentage', async () => {
+    // `booksnap/match.py` scores 60·tcov_c + 25·tcov + 15·acov + 0.30·sim, so
+    // 130 is a perfect match. A bare "130" beside a tier reads as a broken
+    // percentage — which is exactly what the owner asked about.
+    processedPhoto({
+      ...emptyDiff('sh1', 1, 'rd1'),
+      unchanged: [outcome({
+        kind: 'unchanged', reason: 'same_location', book_key: 'k1',
+        existing_book: fakeBook('bk1'),
+        claim: claim({ id: 'c1', capture_id: 'cap1', title: 'ספר',
+                       tier: 'auto', score: 130 }),
+      })],
+    })
+    await openWorkspace()
+    expect(await screen.findByText(/130\/130/)).toBeInTheDocument()
+  })
+
+  it('approves every pending finding in one call, and only the pending ones', async () => {
+    const server = processedPhoto({
+      ...emptyDiff('sh1', 1, 'rd1'),
+      needs_decision: [
+        outcome({ kind: 'needs_decision', reason: 'new_book_unconfirmed',
+                  claim: claim({ id: 'c1', capture_id: 'cap1', title: 'א' }) }),
+        outcome({ kind: 'needs_decision', reason: 'new_book_unconfirmed',
+                  claim: claim({ id: 'c2', capture_id: 'cap1', title: 'ב' }) }),
+        // §5.4's duplicate question is a DIFFERENT question — "approve all"
+        // must never sweep it up, which is the POC's own hard-won rule.
+        outcome({ kind: 'needs_decision', reason: 'ambiguous_location',
+                  existing_book: fakeBook('bk9'),
+                  claim: claim({ id: 'c3', capture_id: 'cap1', title: 'ג' }) }),
+      ],
+    })
+    await openWorkspace()
+
+    const bulk = await screen.findByRole('button', { name: 'אישור הכל (2)' })
+    await userEvent.click(bulk)
+
+    await waitFor(() => {
+      const body = server.bodies.find(
+        (b) => Array.isArray((b as { answers?: unknown[] }).answers)
+          && ((b as { answers: unknown[] }).answers.length ?? 0) > 1)
+      expect(body).toBeTruthy()
+      const answers = (body as { answers: { claim_id: string; kind: string }[] }).answers
+      expect(answers.map((a) => a.claim_id).sort()).toEqual(['c1', 'c2'])
+      expect(answers.every((a) => a.kind === 'confirm')).toBe(true)
+    })
+  })
+
+  it('fixing a pending finding approves it as corrected, in one call', async () => {
+    const server = processedPhoto({
+      ...emptyDiff('sh1', 1, 'rd1'),
+      needs_decision: [outcome({
+        kind: 'needs_decision', reason: 'new_book_unconfirmed',
+        claim: claim({ id: 'c1', capture_id: 'cap1', title: 'מלכי הכופריט' }),
+      })],
+    })
+    await openWorkspace()
+    await screen.findByText('מלכי הכופריט')
+
+    await userEvent.click(screen.getByRole('button', { name: 'תיקון פרטים' }))
+    const title = screen.getByLabelText('כותרת')
+    await userEvent.clear(title)
+    await userEvent.type(title, 'מלכי הכופרים')
+    await userEvent.click(screen.getByRole('button', { name: 'תיקון ואישור' }))
+
+    await waitFor(() => {
+      const body = server.bodies.find(
+        (b) => (b as { answers?: { title?: string }[] }).answers?.[0]?.title)
+      const answer = (body as { answers: { kind: string; title: string }[] }).answers[0]!
+      expect(answer.kind).toBe('confirm')
+      expect(answer.title).toBe('מלכי הכופרים')
+    })
+  })
+
+  it('adds a book the engine missed, to this photo', async () => {
+    const server = processedPhoto(settled())
+    await openWorkspace()
+    await screen.findByText('מלכי הכופרים')
+
+    await userEvent.click(screen.getByRole('button', { name: '+ הוספת ספר שהמנוע פספס' }))
+    await userEvent.type(screen.getByLabelText('כותרת'), 'ספר שהמנוע פספס')
+    await userEvent.click(screen.getByRole('button', { name: 'הוספה' }))
+
+    await waitFor(() => {
+      expect(server.calls.some((c) => c.endsWith('/reads/rd1/findings'))).toBe(true)
+      const body = server.bodies.find((b) => 'title' in (b ?? {}) && !('answers' in (b ?? {})))
+      expect((body as { title: string }).title).toBe('ספר שהמנוע פספס')
+    })
+  })
+
+  it('offers the same approve / fix / remove loop on a LIVE run, not only in the workspace', async () => {
+    // §12.2 #10's real content: "right after the read" and "a week later" are
+    // the same act. If the live panel lost these, the tab would still be a
+    // pipeline for the first minutes of a photo's life.
+    const server = fakeCaptureServer()
+    server.diffFor = () => settled()
+    const { container } = renderCapture()
+    await dropOnePhoto(container)
+    await screen.findByText('לא משויך')
+    await userEvent.click(screen.getByRole('button', { name: /הרצה על הנבחרים/ }))
+
+    await screen.findByText('מלכי הכופרים')
+    expect(screen.getByRole('button', { name: 'אישור הספר' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'תיקון פרטים' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'הסרה' })).toBeInTheDocument()
   })
 })

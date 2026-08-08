@@ -664,8 +664,8 @@ class ClaimOutcomeDTO(BaseModel):
     existing_copy_id: str | None = None
     reason: str = Field(
         default="",
-        description="Machine reason: same_location | new_book_auto | "
-                    "review_tier_new_book | ambiguous_location | "
+        description="Machine reason: same_location | new_book_unconfirmed | "
+                    "manual_add | ambiguous_location | "
                     "relinked_by_decision | new_copy_by_decision | "
                     "duplicate_within_depth | no_identity | rejected | "
                     "wrong_book.",
@@ -737,14 +737,40 @@ class AnswerIn(BaseModel):
         description="Which existing copy, for 'already_listed' when the "
                     "book has more than one (§5.4).",
     )
+    title: str | None = Field(
+        default=None,
+        description="With 'confirm' only: approve this finding AS CORRECTED. "
+                    "The claim keeps the engine's own text (it is evidence); "
+                    "the correction lands on the book that gets created.",
+    )
+    author: str | None = None
 
 
 class ApplyDiffRequest(BaseModel):
     """Apply a read's diff: everything `reconcile()` already decided persists
     unconditionally; ``answers`` resolves whichever ``needs_decision`` claims
-    the caller is answering right now. Omitted ones simply stay open."""
+    the caller is answering right now. Omitted ones simply stay open.
+
+    "Approve all" is this route with one ``confirm`` per pending finding —
+    deliberately not its own endpoint: a bulk approval is N ordinary
+    approvals, and giving it a separate door would be a second place for the
+    rule "an already-answered finding never rides along with approve-all" to
+    be got wrong."""
 
     answers: list[AnswerIn] = Field(default_factory=list)
+
+
+class ManualFindingIn(BaseModel):
+    """*"The engine missed this book"* — a book the owner adds to a photo by
+    hand (P2.10, owner 2026-08-09).
+
+    It becomes a MANUAL-tier `Claim` on that read, which is what keeps the
+    photo's findings a complete account of what is in the picture rather than
+    only what a reader managed to see. Entering the library needs no approval
+    step: typing the title IS the approval (§5.1's ladder)."""
+
+    title: str = Field(min_length=1)
+    author: str = ""
 
 
 # --- the durable duplicates queue (P2.6, §5.4) ------------------------------

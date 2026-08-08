@@ -33,6 +33,17 @@
       "AnswerIn": {
         "description": "One human response to one still-open (``needs_decision``) claim.",
         "properties": {
+          "author": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author"
+          },
           "claim_id": {
             "minLength": 1,
             "title": "Claim Id",
@@ -54,6 +65,18 @@
             "description": "confirm | reject | already_listed | another_copy | wrong_book — see app.reconcile_apply.AnswerKind for which claims each fits.",
             "title": "Kind",
             "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "With 'confirm' only: approve this finding AS CORRECTED. The claim keeps the engine's own text (it is evidence); the correction lands on the book that gets created.",
+            "title": "Title"
           }
         },
         "required": [
@@ -64,7 +87,7 @@
         "type": "object"
       },
       "ApplyDiffRequest": {
-        "description": "Apply a read's diff: everything `reconcile()` already decided persists\nunconditionally; ``answers`` resolves whichever ``needs_decision`` claims\nthe caller is answering right now. Omitted ones simply stay open.",
+        "description": "Apply a read's diff: everything `reconcile()` already decided persists\nunconditionally; ``answers`` resolves whichever ``needs_decision`` claims\nthe caller is answering right now. Omitted ones simply stay open.\n\n\"Approve all\" is this route with one ``confirm`` per pending finding —\ndeliberately not its own endpoint: a bulk approval is N ordinary\napprovals, and giving it a separate door would be a second place for the\nrule \"an already-answered finding never rides along with approve-all\" to\nbe got wrong.",
         "properties": {
           "answers": {
             "items": {
@@ -568,7 +591,7 @@
           },
           "reason": {
             "default": "",
-            "description": "Machine reason: same_location | new_book_auto | review_tier_new_book | ambiguous_location | relinked_by_decision | new_copy_by_decision | duplicate_within_depth | no_identity | rejected | wrong_book.",
+            "description": "Machine reason: same_location | new_book_unconfirmed | manual_add | ambiguous_location | relinked_by_decision | new_copy_by_decision | duplicate_within_depth | no_identity | rejected | wrong_book.",
             "title": "Reason",
             "type": "string"
           }
@@ -1171,6 +1194,26 @@
           "label"
         ],
         "title": "LibraryRefDTO",
+        "type": "object"
+      },
+      "ManualFindingIn": {
+        "description": "*\"The engine missed this book\"* — a book the owner adds to a photo by\nhand (P2.10, owner 2026-08-09).\n\nIt becomes a MANUAL-tier `Claim` on that read, which is what keeps the\nphoto's findings a complete account of what is in the picture rather than\nonly what a reader managed to see. Entering the library needs no approval\nstep: typing the title IS the approval (§5.1's ladder).",
+        "properties": {
+          "author": {
+            "default": "",
+            "title": "Author",
+            "type": "string"
+          },
+          "title": {
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "title": "ManualFindingIn",
         "type": "object"
       },
       "MetaResponse": {
@@ -2088,6 +2131,49 @@
         ]
       }
     },
+    "/api/v1/books/{book_id}/approve": {
+      "post": {
+        "description": "*\"✓ — yes, that is the book\"* (P2.10, §12.2 #10).\n\nThe middle rung of §5.1's ladder, and the one the product had no route to\nuntil the image workspace needed it: a book the engine claimed at AUTO\nsits unexamined until a human looks at the photo and says so. Approving\nis what makes the \"a human decision outranks an auto one\" rule mean\nsomething on a per-book basis — and `Status.merge` is what makes this\nsafe to press twice, or on a book already edited by hand: it never lowers\na rung.\n\nNo copy_id parameter: approving is about the RECORD's identity (is this\nthe right book?), which is book-level, exactly like `patch_book`'s edit.\nPer-copy metadata has its own route.",
+        "operationId": "approve_book_api_v1_books__book_id__approve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "book_id",
+            "required": true,
+            "schema": {
+              "title": "Book Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Confirm the claim — auto becomes approved",
+        "tags": [
+          "books"
+        ]
+      }
+    },
     "/api/v1/books/{book_id}/copies": {
       "post": {
         "description": "§5.1: the ONLY path that creates a second copy. Lands ``manual`` — a\nperson declaring a duplicate is the strongest evidence the system gets;\nno re-read can produce this (`app.domain.book.add_copy`).",
@@ -2480,6 +2566,53 @@
           }
         },
         "summary": "Bind Capture",
+        "tags": [
+          "captures"
+        ]
+      }
+    },
+    "/api/v1/captures/{capture_id}/reads": {
+      "get": {
+        "description": "Every run that read this photo, most recent first — P2.10's *\"clicking\nan image opens its runs\"* (§12.2 #10).\n\nThe one place the product answers a run-shaped question, and it is\ndeliberate rather than a reversal of §5.5 (\"a run is not a user-facing\nconcept\"): §12.2 #10 settles that the split is by SURFACE. Books and the\nshelf view stay run-free; the Capture tab is where the owner is doing the\ncataloguing and the unit of work IS the photograph, so its history hangs\noff the image. There is still no global list of runs anywhere.\n\nReads are matched on the capture, not on its current shelf — see\n``ReadStore.list_reads_for_capture`` for why a re-bound photo must keep\nthe runs that already read it.",
+        "operationId": "list_capture_reads_api_v1_captures__capture_id__reads_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "capture_id",
+            "required": true,
+            "schema": {
+              "title": "Capture Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ReadSummaryDTO"
+                  },
+                  "title": "Response List Capture Reads Api V1 Captures  Capture Id  Reads Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Capture Reads",
         "tags": [
           "captures"
         ]
@@ -3535,6 +3668,190 @@
           }
         },
         "summary": "Get Diff",
+        "tags": [
+          "reads"
+        ]
+      }
+    },
+    "/api/v1/shelves/{shelf_id}/reads/{read_id}/findings": {
+      "post": {
+        "description": "*\"The engine missed this book\"* — add one to this photo by hand.\n\nFiles a MANUAL-tier :class:`~app.domain.read.Claim` on the read (see\n``app.domain.read.add_manual_claim`` for why a settled read accepts this\none kind of late claim and nothing else), then applies, so the book lands\nat its (shelf, depth) immediately: unlike a machine claim it needs no\napproval, because typing the title IS the approval.\n\nThe ``spine_id`` is minted ``manual-<id>`` rather than left blank —\n`Provenance.sighting` is ``(run_id, spine_id)``, so a blank one would make\nevery hand-added book on a single read look like the same sighting, and\n`observe()`'s idempotency would silently swallow the second.",
+        "operationId": "add_a_finding_by_hand_api_v1_shelves__shelf_id__reads__read_id__findings_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "shelf_id",
+            "required": true,
+            "schema": {
+              "title": "Shelf Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "read_id",
+            "required": true,
+            "schema": {
+              "title": "Read Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManualFindingIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiffDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add A Finding By Hand",
+        "tags": [
+          "reads"
+        ]
+      }
+    },
+    "/api/v1/shelves/{shelf_id}/reads/{read_id}/findings/{claim_id}/restore": {
+      "post": {
+        "description": "*\"↩ — undo that\"*: clear the standing decision suppressing this\nfinding here, then let the read apply itself again.\n\nComposed from two things that already exist rather than a third write\npath: ``DecisionStore.delete_decision`` (its own docstring calls this\n\"the undo of a mis-click\", and is explicit that clearing an answer never\nitself adds anything back) followed by the ordinary\n``apply_diff(answers=())`` — so an AUTO claim returns as the book it was,\nand a REVIEW-tier one returns to the open question it was, decided by the\nsame `reconcile()` rules as any other apply. Nothing here re-reads the\nphoto or invents a book.\n\n**409** when the finding is not actually suppressed: there is no decision\nto undo, and silently doing nothing would look identical to success.",
+        "operationId": "restore_a_finding_api_v1_shelves__shelf_id__reads__read_id__findings__claim_id__restore_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "shelf_id",
+            "required": true,
+            "schema": {
+              "title": "Shelf Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "read_id",
+            "required": true,
+            "schema": {
+              "title": "Read Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "claim_id",
+            "required": true,
+            "schema": {
+              "title": "Claim Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiffDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Restore A Finding",
+        "tags": [
+          "reads"
+        ]
+      }
+    },
+    "/api/v1/shelves/{shelf_id}/reads/{read_id}/findings/{claim_id}/retract": {
+      "post": {
+        "description": "*\"✕ — this finding is wrong\"*, on a claim already applied.\n\nAlways records the standing decision (§5.6: a rejected book must not be\nre-added by a later run — without it the next read of this row puts it\nstraight back). What happens to the library RECORD is\n`app.domain.retract.plan_retraction`'s rule: a book only a read ever\nclaimed, standing only here, is deleted; anything a human approved,\nedited, or holds a second copy of is merely taken off this shelf\n(UI_PLAN §5's two-destructive-actions separation).",
+        "operationId": "retract_a_finding_api_v1_shelves__shelf_id__reads__read_id__findings__claim_id__retract_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "shelf_id",
+            "required": true,
+            "schema": {
+              "title": "Shelf Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "read_id",
+            "required": true,
+            "schema": {
+              "title": "Read Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "claim_id",
+            "required": true,
+            "schema": {
+              "title": "Claim Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiffDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Retract A Finding",
         "tags": [
           "reads"
         ]

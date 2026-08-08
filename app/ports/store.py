@@ -353,3 +353,22 @@ class ReadStore(Protocol):
         covered, and a caller that could only ask "every read of this shelf"
         would have to re-derive that scoping every time.
         """
+
+    def list_reads_for_capture(
+        self, library: LibraryRef, capture_id: str,
+    ) -> tuple[Read, ...]:
+        """Every read that included this ONE photo, most recent first (P2.10).
+
+        The image workspace's *"clicking a photo opens its runs"* (§12.2 #10),
+        and the reason it is a store method rather than a filter over
+        :meth:`list_reads`: a capture can be RE-BOUND to another shelf or row
+        after it was read (P2.2's intake correction), and its earlier reads
+        stay filed — correctly — under the shelf as it was THEN. Deriving a
+        photo's runs from its CURRENT shelf would silently lose exactly the
+        history a workspace exists to show, and it would lose it only for
+        photos someone had to correct.
+
+        Matching is on ``Read.capture_ids``, so a read of a whole row lists
+        under every photo of that row — which is honest: it read them all
+        (§5.7 #1 forbids a partial read of one row).
+        """

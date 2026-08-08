@@ -89,6 +89,38 @@ export interface paths {
         patch: operations["patch_book_api_v1_books__book_id__patch"];
         trace?: never;
     };
+    "/api/v1/books/{book_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm the claim — auto becomes approved
+         * @description *"✓ — yes, that is the book"* (P2.10, §12.2 #10).
+         *
+         *     The middle rung of §5.1's ladder, and the one the product had no route to
+         *     until the image workspace needed it: a book the engine claimed at AUTO
+         *     sits unexamined until a human looks at the photo and says so. Approving
+         *     is what makes the "a human decision outranks an auto one" rule mean
+         *     something on a per-book basis — and `Status.merge` is what makes this
+         *     safe to press twice, or on a book already edited by hand: it never lowers
+         *     a rung.
+         *
+         *     No copy_id parameter: approving is about the RECORD's identity (is this
+         *     the right book?), which is book-level, exactly like `patch_book`'s edit.
+         *     Per-copy metadata has its own route.
+         */
+        post: operations["approve_book_api_v1_books__book_id__approve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/books/{book_id}/copies": {
         parameters: {
             query?: never;
@@ -224,6 +256,38 @@ export interface paths {
          *     exist would give reconciliation a location with no counterpart in the room.
          */
         patch: operations["bind_capture_api_v1_captures__capture_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/captures/{capture_id}/reads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Capture Reads
+         * @description Every run that read this photo, most recent first — P2.10's *"clicking
+         *     an image opens its runs"* (§12.2 #10).
+         *
+         *     The one place the product answers a run-shaped question, and it is
+         *     deliberate rather than a reversal of §5.5 ("a run is not a user-facing
+         *     concept"): §12.2 #10 settles that the split is by SURFACE. Books and the
+         *     shelf view stay run-free; the Capture tab is where the owner is doing the
+         *     cataloguing and the unit of work IS the photograph, so its history hangs
+         *     off the image. There is still no global list of runs anywhere.
+         *
+         *     Reads are matched on the capture, not on its current shelf — see
+         *     ``ReadStore.list_reads_for_capture`` for why a re-bound photo must keep
+         *     the runs that already read it.
+         */
+        get: operations["list_capture_reads_api_v1_captures__capture_id__reads_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/duplicates": {
@@ -670,6 +734,98 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/shelves/{shelf_id}/reads/{read_id}/findings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add A Finding By Hand
+         * @description *"The engine missed this book"* — add one to this photo by hand.
+         *
+         *     Files a MANUAL-tier :class:`~app.domain.read.Claim` on the read (see
+         *     ``app.domain.read.add_manual_claim`` for why a settled read accepts this
+         *     one kind of late claim and nothing else), then applies, so the book lands
+         *     at its (shelf, depth) immediately: unlike a machine claim it needs no
+         *     approval, because typing the title IS the approval.
+         *
+         *     The ``spine_id`` is minted ``manual-<id>`` rather than left blank —
+         *     `Provenance.sighting` is ``(run_id, spine_id)``, so a blank one would make
+         *     every hand-added book on a single read look like the same sighting, and
+         *     `observe()`'s idempotency would silently swallow the second.
+         */
+        post: operations["add_a_finding_by_hand_api_v1_shelves__shelf_id__reads__read_id__findings_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/shelves/{shelf_id}/reads/{read_id}/findings/{claim_id}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore A Finding
+         * @description *"↩ — undo that"*: clear the standing decision suppressing this
+         *     finding here, then let the read apply itself again.
+         *
+         *     Composed from two things that already exist rather than a third write
+         *     path: ``DecisionStore.delete_decision`` (its own docstring calls this
+         *     "the undo of a mis-click", and is explicit that clearing an answer never
+         *     itself adds anything back) followed by the ordinary
+         *     ``apply_diff(answers=())`` — so an AUTO claim returns as the book it was,
+         *     and a REVIEW-tier one returns to the open question it was, decided by the
+         *     same `reconcile()` rules as any other apply. Nothing here re-reads the
+         *     photo or invents a book.
+         *
+         *     **409** when the finding is not actually suppressed: there is no decision
+         *     to undo, and silently doing nothing would look identical to success.
+         */
+        post: operations["restore_a_finding_api_v1_shelves__shelf_id__reads__read_id__findings__claim_id__restore_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/shelves/{shelf_id}/reads/{read_id}/findings/{claim_id}/retract": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Retract A Finding
+         * @description *"✕ — this finding is wrong"*, on a claim already applied.
+         *
+         *     Always records the standing decision (§5.6: a rejected book must not be
+         *     re-added by a later run — without it the next read of this row puts it
+         *     straight back). What happens to the library RECORD is
+         *     `app.domain.retract.plan_retraction`'s rule: a book only a read ever
+         *     claimed, standing only here, is deleted; anything a human approved,
+         *     edited, or holds a second copy of is merely taken off this shelf
+         *     (UI_PLAN §5's two-destructive-actions separation).
+         */
+        post: operations["retract_a_finding_api_v1_shelves__shelf_id__reads__read_id__findings__claim_id__retract_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/shelves/{shelf_id}/reads/{read_id}/stop": {
         parameters: {
             query?: never;
@@ -730,6 +886,8 @@ export interface components {
          * @description One human response to one still-open (``needs_decision``) claim.
          */
         AnswerIn: {
+            /** Author */
+            author?: string | null;
             /** Claim Id */
             claim_id: string;
             /**
@@ -742,12 +900,23 @@ export interface components {
              * @description confirm | reject | already_listed | another_copy | wrong_book — see app.reconcile_apply.AnswerKind for which claims each fits.
              */
             kind: string;
+            /**
+             * Title
+             * @description With 'confirm' only: approve this finding AS CORRECTED. The claim keeps the engine's own text (it is evidence); the correction lands on the book that gets created.
+             */
+            title?: string | null;
         };
         /**
          * ApplyDiffRequest
          * @description Apply a read's diff: everything `reconcile()` already decided persists
          *     unconditionally; ``answers`` resolves whichever ``needs_decision`` claims
          *     the caller is answering right now. Omitted ones simply stay open.
+         *
+         *     "Approve all" is this route with one ``confirm`` per pending finding —
+         *     deliberately not its own endpoint: a bulk approval is N ordinary
+         *     approvals, and giving it a separate door would be a second place for the
+         *     rule "an already-answered finding never rides along with approve-all" to
+         *     be got wrong.
          */
         ApplyDiffRequest: {
             /** Answers */
@@ -1020,7 +1189,7 @@ export interface components {
             kind: string;
             /**
              * Reason
-             * @description Machine reason: same_location | new_book_auto | review_tier_new_book | ambiguous_location | relinked_by_decision | new_copy_by_decision | duplicate_within_depth | no_identity | rejected | wrong_book.
+             * @description Machine reason: same_location | new_book_unconfirmed | manual_add | ambiguous_location | relinked_by_decision | new_copy_by_decision | duplicate_within_depth | no_identity | rejected | wrong_book.
              * @default
              */
             reason: string;
@@ -1359,6 +1528,25 @@ export interface components {
              * @description Human-readable library name.
              */
             label: string;
+        };
+        /**
+         * ManualFindingIn
+         * @description *"The engine missed this book"* — a book the owner adds to a photo by
+         *     hand (P2.10, owner 2026-08-09).
+         *
+         *     It becomes a MANUAL-tier `Claim` on that read, which is what keeps the
+         *     photo's findings a complete account of what is in the picture rather than
+         *     only what a reader managed to see. Entering the library needs no approval
+         *     step: typing the title IS the approval (§5.1's ladder).
+         */
+        ManualFindingIn: {
+            /**
+             * Author
+             * @default
+             */
+            author: string;
+            /** Title */
+            title: string;
         };
         /**
          * MetaResponse
@@ -1835,6 +2023,37 @@ export interface operations {
             };
         };
     };
+    approve_book_api_v1_books__book_id__approve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                book_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     create_copy_api_v1_books__book_id__copies_post: {
         parameters: {
             query?: never;
@@ -2089,6 +2308,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaptureBinding"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_capture_reads_api_v1_captures__capture_id__reads_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                capture_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReadSummaryDTO"][];
                 };
             };
             /** @description Validation Error */
@@ -2797,6 +3047,108 @@ export interface operations {
             path: {
                 shelf_id: string;
                 read_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiffDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_a_finding_by_hand_api_v1_shelves__shelf_id__reads__read_id__findings_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shelf_id: string;
+                read_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManualFindingIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiffDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    restore_a_finding_api_v1_shelves__shelf_id__reads__read_id__findings__claim_id__restore_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shelf_id: string;
+                read_id: string;
+                claim_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiffDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retract_a_finding_api_v1_shelves__shelf_id__reads__read_id__findings__claim_id__retract_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shelf_id: string;
+                read_id: string;
+                claim_id: string;
             };
             cookie?: never;
         };

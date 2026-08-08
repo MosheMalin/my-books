@@ -827,6 +827,45 @@ a decision.
     money, it costs time, and it invites re-deciding questions already
     answered.
 
+11. **[SETTLED 2026-08-09, owner]** **Nothing enters the library until a human
+    approves it.** §5.6's table let an AUTO-tier claim for an unknown book
+    enter on its own, mirroring `booksnap/library.py::absorb_auto_claims`; the
+    owner watched one photo file fourteen books he was never asked about:
+
+    > *"until I do not manually approve, the books should not be added to the
+    > local library."*
+
+    So a read now produces **findings**, and a finding becomes a Book only
+    through an explicit ✓ (individually, or via *approve all*). Two
+    consequences worth stating, because both are visible and neither is a bug:
+
+    - **tier stops deciding entry** and decides only presentation. An AUTO and
+      a REVIEW finding are the same state — waiting — which is why they carry
+      the same controls (the owner's own follow-up: *"a review book should
+      have the same available controls as an auto book"*);
+    - **a read's archived diff summary leads with its pending count**, because
+      "+0 added" is what an honest engine read now produces. The finding list
+      under it still shows what each finding IS today; that disagreement is
+      §5.5/§5.6's snapshot-vs-live distinction, not drift.
+
+    The exception is a book the owner **types in** onto a photo (*"the engine
+    missed this one"*): it enters at once, at `manual`. There is nobody left
+    to ask, and demanding approval of what someone just typed is exactly the
+    ceremony §5.4 warns trains people to click through prompts.
+
+    UI_PLAN §6 already lists *auto-approve AUTO* as a Settings toggle. Until
+    that setting exists its value is OFF; when it ships, this is the rule it
+    turns back on.
+
+12. **[SETTLED 2026-08-09, owner]** **The Capture tab carries no shelf
+    plumbing.** *"Open the shelf →"* and *"add a row behind"* are both gone
+    from it: a photo is a shelf, or part of one, and binding it to a place in
+    the house — including how many rows deep that furniture is — is the **Map**
+    tab's job. §5.7's argument that nobody discovers depth unless it is offered
+    early stands; it just does not get to be answered here. The depth PICKER
+    stays, because an already-stacked shelf still has to say which row a photo
+    shows.
+
 ### 12.3 Technical questions to settle
 
 10. Deployment target — VPS + Docker Compose, a managed PaaS, or a cloud
