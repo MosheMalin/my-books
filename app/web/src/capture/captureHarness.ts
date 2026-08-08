@@ -14,6 +14,7 @@ import type {
   CaptureDTO,
   ClaimOutcomeDTO,
   DiffDTO,
+  ReadSummaryDTO,
   Shelf,
 } from '../api/client'
 
@@ -26,6 +27,12 @@ export interface FakeCaptureServer {
   bodies: Record<string, unknown>[]
   shelves: Shelf[]
   captures: Record<string, CaptureDTO>
+  /** Pre-seeded read history, keyed by nothing in particular — `GET
+   *  .../shelves/{id}/reads` filters this by `shelf_id` (and `depth`, if
+   *  asked) the same way the real store does. Tests hydrating a mount with
+   *  server-side state push here directly (`useCapture.test.tsx`'s
+   *  hydration cases); ordinary run/review tests never touch it. */
+  reads: ReadSummaryDTO[]
   /** status the NEXT `POST .../reads` returns — most tests want 'done' so
    *  no fake-timer polling is needed to reach the review panel. */
   nextReadStatus: 'running' | 'done' | 'stopped' | 'failed'
@@ -59,6 +66,16 @@ export function claim(over: Partial<ClaimOutcomeDTO['claim']> & { id: string }):
   }
 }
 
+export function readSummary(
+  over: Partial<ReadSummaryDTO> & { id: string; shelf_id: string },
+): ReadSummaryDTO {
+  return {
+    depth: 1, mode: 'llmpage', status: 'done', claim_count: 0,
+    started_at: null, finished_at: null, error: null, diff_summary: null,
+    ...over,
+  }
+}
+
 export function fakeCaptureServer(
   initialShelves: Shelf[] = [],
 ): FakeCaptureServer {
@@ -67,6 +84,7 @@ export function fakeCaptureServer(
     bodies: [],
     shelves: [...initialShelves],
     captures: {},
+    reads: [],
     nextReadStatus: 'done',
     diffFor: (readId, _answers) => emptyDiff('sh1', 1, readId),
     uploadShouldFail: false,
@@ -147,6 +165,24 @@ export function fakeCaptureServer(
 
     if (u.pathname === '/api/v1/shelves' && method === 'GET') {
       return respond(server.shelves)
+    }
+
+    if (parts[2] === 'shelves' && parts[3] && parts[4] === 'captures' && !parts[5]
+        && method === 'GET') {
+      const shelfId = parts[3]
+      const depth = u.searchParams.get('depth')
+      const here = Object.values(server.captures).filter((c) => c.shelf_id === shelfId
+        && (depth === null || c.depth === Number(depth)))
+      return respond(here)
+    }
+
+    if (parts[2] === 'shelves' && parts[3] && parts[4] === 'reads' && !parts[5]
+        && method === 'GET') {
+      const shelfId = parts[3]
+      const depth = u.searchParams.get('depth')
+      const here = server.reads.filter((r) => r.shelf_id === shelfId
+        && (depth === null || r.depth === Number(depth)))
+      return respond(here)
     }
 
     if (parts[2] === 'shelves' && parts[3] && parts[4] === 'depths' && method === 'POST') {

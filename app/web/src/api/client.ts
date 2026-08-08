@@ -349,9 +349,12 @@ export const applyDiff = (
          payload, opts) as Promise<DiffDTO>
 
 export const listReadHistory = (
-  shelfId: string, depth: number, opts: ApiOptions = {},
+  shelfId: string, depth?: number, opts: ApiOptions = {},
 ): Promise<ReadSummaryDTO[]> =>
-  getJson(`${readsPath(shelfId)}?depth=${depth}`, opts)
+  getJson(
+    readsPath(shelfId) + (depth !== undefined ? `?depth=${depth}` : ''),
+    opts,
+  )
 
 // --- the shelf-detail screen (P2.8) -----------------------------------------
 

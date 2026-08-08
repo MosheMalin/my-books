@@ -12,7 +12,7 @@ import { cleanup, render, screen, waitFor, within } from '@testing-library/react
 import userEvent from '@testing-library/user-event'
 import { I18nProvider } from '../lib/i18n'
 import { CaptureTab } from './CaptureTab'
-import { claim, emptyDiff, fakeCaptureServer, outcome } from './captureHarness'
+import { claim, emptyDiff, fakeCaptureServer, outcome, readSummary } from './captureHarness'
 
 afterEach(() => {
   cleanup()
@@ -273,5 +273,90 @@ describe('Capture tab — the default reading mode', () => {
       const started = server.bodies.find((b) => 'mode' in (b ?? {}))
       expect(started?.mode).toBe('llmpage')
     })
+  })
+})
+
+describe('Capture tab — hydration on mount (P2.9)', () => {
+  // The bug this section guards: upload -> run -> background the tab (or
+  // just refresh) -> come back, and the photo and the read's progress had
+  // both vanished, because `useCapture`'s state was session-only. Fixed by
+  // rebuilding both from the server on mount (`useCapture.ts`'s `hydrate`).
+
+  function shelf(over: Partial<import('../api/client').Shelf> = {}) {
+    return {
+      id: 'sh1', label: '', depth_count: 1, virtual: false,
+      created_at: null, capture_count: 1, ...over,
+    }
+  }
+
+  it('rebuilds the intake list from the server, surviving a refresh', async () => {
+    const server = fakeCaptureServer([shelf()])
+    server.captures.cap1 = {
+      id: 'cap1', shelf_id: 'sh1', depth: 1, order: 0, image_id: 'img1',
+      captured_at: '2026-08-01T00:00:00Z',
+    }
+
+    renderCapture()
+
+    // No upload happened in THIS render — the row came back purely from
+    // GET /shelves + GET .../captures, the same as after a real refresh.
+    expect(await screen.findByText('img1')).toBeInTheDocument()
+  })
+
+  it('re-attaches an in-flight read instead of restarting it', async () => {
+    const server = fakeCaptureServer([shelf()])
+    server.captures.cap1 = {
+      id: 'cap1', shelf_id: 'sh1', depth: 1, order: 0, image_id: 'img1',
+      captured_at: null,
+    }
+    server.reads.push(readSummary({ id: 'rd1', shelf_id: 'sh1', depth: 1, status: 'running' }))
+    // The poll that follows hydration reports the read has since settled —
+    // exactly the "it finished while I was away" case.
+    server.nextReadStatus = 'done'
+    server.diffFor = (readId) => emptyDiff('sh1', 1, readId)
+
+    renderCapture()
+    await screen.findByText('img1')
+
+    // The review panel appears once the (re-attached) poll notices 'done' —
+    // proof the read is being watched, not that a fresh one was started.
+    await screen.findByText(
+      'אישור כאן הוא רק קיצור דרך. המדף הוא הבית של הספרים והיסטוריית הקריאות.',
+      {}, { timeout: 3000 },
+    )
+
+    // No `POST .../reads` (start) ever fired — that body always carries
+    // `mode`; only `GET` (poll) and `POST .../apply` did.
+    expect(server.bodies.some((b) => 'mode' in b)).toBe(false)
+    expect(server.calls.some((c) => c.includes('/reads/rd1'))).toBe(true)
+  })
+
+  it('polls an in-flight read immediately on visibilitychange, not only from the timer', async () => {
+    const server = fakeCaptureServer([shelf()])
+    server.captures.cap1 = {
+      id: 'cap1', shelf_id: 'sh1', depth: 1, order: 0, image_id: 'img1',
+      captured_at: null,
+    }
+    server.reads.push(readSummary({ id: 'rd1', shelf_id: 'sh1', depth: 1, status: 'running' }))
+    server.nextReadStatus = 'running' // stays running until this test says otherwise
+
+    renderCapture()
+    await screen.findByText('img1')
+    const before = server.calls.filter((c) => c.includes('/reads/rd1')).length
+
+    Object.defineProperty(document, 'visibilityState', {
+      value: 'visible', configurable: true,
+    })
+    document.dispatchEvent(new Event('visibilitychange'))
+
+    // The polling interval is 1000ms — a poll landing comfortably inside
+    // that window can only be the visibilitychange handler, not the timer.
+    // (700ms, not a tighter margin: under a loaded test run the assertion
+    // itself can be scheduled late, and this only needs to beat the OTHER
+    // side's 1000ms, not race it to the millisecond.)
+    await waitFor(() => {
+      expect(server.calls.filter((c) => c.includes('/reads/rd1')).length)
+        .toBeGreaterThan(before)
+    }, { timeout: 700 })
   })
 })

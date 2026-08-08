@@ -1344,6 +1344,15 @@ def _read_shelf_and_capture(c, *, image_key: str | None = None):
 
 
 def test_diff_reports_added_unchanged_and_not_seen():
+    """GET .../diff RECOMPUTES live (its own contract, `diff_for`'s docstring)
+    — and since P2.9, a settled read has already applied itself server-side
+    before this GET ever runs (see `test_a_settled_read_applies_its_diff_
+    with_no_client_call_at_all` below), so "ספר חדש" already stands at this
+    (shelf, depth) by the time this test asks. That is WHY it shows up
+    `unchanged` here rather than `added` — not a weaker assertion, a
+    consequence of the diff being live rather than a fixed record of the
+    moment the read finished (that fixed record is `Read.diff_summary`,
+    checked separately)."""
     with _blobs() as blobs:
         store = MemoryBookStore()
         shelves = MemoryShelfStore()
@@ -1376,14 +1385,17 @@ def test_diff_reports_added_unchanged_and_not_seen():
         _wait_until_settled(c, shelf_id, read_id)
 
         diff = c.get(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/diff").json()
-        assert len(diff["added"]) == 1
-        assert diff["added"][0]["claim"]["title"] == "ספר חדש"
-        assert len(diff["unchanged"]) == 1
-        assert diff["unchanged"][0]["existing_book"]["id"] == "b-here"
+        assert not diff["added"], "already applied automatically by the time GET ran"
+        unchanged_titles = {o["existing_book"]["title"] for o in diff["unchanged"]}
+        assert unchanged_titles == {"כבר כאן", "ספר חדש"}
         assert len(diff["not_seen"]) == 1
         assert diff["not_seen"][0]["book"]["id"] == "b-missing"
-        # Read-only: nothing was written by GET.
-        assert store.count(TEST_LIBRARY) == 2
+        # b-missing + b-here + the automatically-applied "ספר חדש" — GET
+        # itself is still read-only; calling it twice must not change this.
+        assert store.count(TEST_LIBRARY) == 3
+        again = c.get(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/diff").json()
+        assert store.count(TEST_LIBRARY) == 3
+        assert {o["existing_book"]["title"] for o in again["unchanged"]} == unchanged_titles
 
 
 def test_diff_asks_for_a_book_claimed_on_another_shelf():
@@ -1414,6 +1426,266 @@ def test_diff_asks_for_a_book_claimed_on_another_shelf():
         assert len(diff["needs_decision"]) == 1
         assert diff["needs_decision"][0]["reason"] == "ambiguous_location"
         assert diff["needs_decision"][0]["existing_book"]["id"] == "b-elsewhere"
+
+
+# --- P2.9: a settled read applies itself, server-side, with no client -------
+#
+# The bug this section guards against, from live phone use: upload -> press
+# Run -> switch app -> come back. The read had finished; nothing had been
+# added, because the ONLY thing that ever called POST .../apply was the
+# browser's own poll loop noticing the read settle — and a backgrounded
+# mobile tab does not reliably keep running that loop (§5.6's own inversion,
+# "a read is an event that UPDATES the list", was being violated by the
+# implementation). The fix moves the apply into `_job` itself, right where
+# P2.8 already computes the settle-time diff for its snapshot.
+
+class RaisingBookStore:
+    """Wraps a real `BookStore` but makes `.save()` explode — the tool for
+    proving that a failed AUTOMATIC apply does not take the read down with
+    it. Every other method (`.list`, `.get`, `.count`, ...) is forwarded
+    untouched via `__getattr__`, so the job's own claim-processing (which
+    never calls `.save()` — only `apply_diff` does) is unaffected."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def save(self, library, book):
+        raise RuntimeError("boom: simulated apply-time storage failure")
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+def test_a_settled_read_applies_its_diff_with_no_client_call_at_all():
+    """THE regression test for the bug: reproduces "no client ever calls
+    apply" by never calling it — not even the usual `POST .../apply` this
+    file's other tests make out of habit. If this fails, the fix regressed
+    back to depending on a client that might not be there."""
+    with _blobs() as blobs:
+        store = MemoryBookStore()
+        shelves = MemoryShelfStore()
+        reads_store = MemoryReadStore()
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_store,
+                            blobs=blobs, reader=StubReader()))
+        shelf_id, cap_id = _read_shelf_and_capture(c)
+
+        reader = StubReader([ReadClaim(spine_id="sp1", capture_id=cap_id,
+                                       title="ספר חדש", author="סופר",
+                                       tier="auto", score=90.0)])
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_store,
+                            blobs=blobs, reader=reader))
+        read_id = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
+                         json={"depth": 1}).json()["id"]
+        _wait_until_settled(c, shelf_id, read_id)
+
+        # No GET .../diff, no POST .../apply — the read settling is the only
+        # thing that happened. The book must already be in the library.
+        assert store.count(TEST_LIBRARY) == 1
+        got = store.list(TEST_LIBRARY).items[0]
+        assert got.title == "ספר חדש" and got.status is Status.AUTO
+        assert got.copies[0].shelf_id == shelf_id
+        sighting = got.copies[0].provenance[0].sighting
+        assert sighting == (read_id, "sp1"), (
+            "the sighting must carry THIS read's own (run_id, spine_id), the "
+            "same provenance an explicit client apply would have written"
+        )
+
+
+def test_the_automatic_apply_never_auto_resolves_a_needs_decision_claim():
+    """§5.4's central rule, re-asserted at the exact new call site: settling
+    automatically must NEVER stand in for a human's answer. An
+    `ambiguous_location` claim is opened in the duplicates queue (same as an
+    explicit no-answer apply would do) rather than resolved one way or the
+    other, and a `review_tier_new_book` claim (a bare REVIEW-tier read, no
+    prior record anywhere) is left open rather than promoted to a real book."""
+    with _blobs() as blobs:
+        store = MemoryBookStore()
+        shelves = MemoryShelfStore()
+        reads_store = MemoryReadStore()
+        duplicates = MemoryDuplicateQueue()
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_store,
+                            blobs=blobs, duplicates=duplicates,
+                            reader=StubReader()))
+        shelf_id, cap_id = _read_shelf_and_capture(c)
+
+        store.save(TEST_LIBRARY, new_book(
+            id="b-elsewhere", library_id=TEST_LIBRARY.id, title="ספר אחר",
+            author="מחבר", copy_id="c-elsewhere", shelf_id="some-other-shelf",
+            depth=1,
+        ))
+        reader = StubReader([
+            ReadClaim(spine_id="sp1", capture_id=cap_id, title="ספר אחר",
+                     author="מחבר", tier="auto", score=90.0),
+            ReadClaim(spine_id="sp2", capture_id=cap_id, title="ספר חדש ולא ברור",
+                     author="", tier="review", score=55.0),
+        ])
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_store,
+                            blobs=blobs, duplicates=duplicates, reader=reader))
+        read_id = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
+                         json={"depth": 1}).json()["id"]
+        _wait_until_settled(c, shelf_id, read_id)
+
+        # Nothing new was CREATED — only the pre-existing book still has its
+        # one original copy, and no book exists for the REVIEW-tier claim.
+        assert store.count(TEST_LIBRARY) == 1
+        assert store.get(TEST_LIBRARY, "b-elsewhere").copy_count == 1
+
+        # The ambiguous claim is durably queued, exactly as an explicit
+        # no-answer `POST .../apply` would have left it (P2.6, §5.4).
+        open_qs = duplicates.list_open_questions(TEST_LIBRARY)
+        assert len(open_qs) == 1
+        assert open_qs[0].book_key == store.get(TEST_LIBRARY, "b-elsewhere").key
+
+        # Both claims are still open on a live GET .../diff.
+        diff = c.get(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/diff").json()
+        reasons = {o["reason"] for o in diff["needs_decision"]}
+        assert reasons == {"ambiguous_location", "review_tier_new_book"}
+
+
+def test_the_diff_summary_snapshot_is_captured_before_the_automatic_apply_runs():
+    """P2.8's `diff_summary` must keep meaning "what this read changed" even
+    though the automatic apply (P2.9) now runs moments later in the SAME
+    call — reversing the order would let the book this apply just added
+    reconcile as `unchanged` in the very summary meant to record it as
+    `added`, silently rewriting the read's own history."""
+    with _blobs() as blobs:
+        store = MemoryBookStore()
+        shelves = MemoryShelfStore()
+        reads_store = MemoryReadStore()
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_store,
+                            blobs=blobs, reader=StubReader()))
+        shelf_id, cap_id = _read_shelf_and_capture(c)
+
+        reader = StubReader([ReadClaim(spine_id="sp1", capture_id=cap_id,
+                                       title="ספר חדש", author="סופר",
+                                       tier="auto", score=90.0)])
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_store,
+                            blobs=blobs, reader=reader))
+        read_id = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
+                         json={"depth": 1}).json()["id"]
+        body = _wait_until_settled(c, shelf_id, read_id)
+
+        # By now the book IS in the library (the automatic apply already
+        # ran) — but the archived snapshot must still say "added", the truth
+        # at the moment reconcile() looked, before that apply touched it.
+        assert store.count(TEST_LIBRARY) == 1
+        assert body["diff_summary"] == {
+            "added": 1, "corrected": 0, "unchanged": 0, "needs_decision": 0,
+            "not_seen": 0, "rejected": 0, "ignored": 0,
+        }
+
+
+def test_a_failed_read_applies_nothing():
+    """A read whose engine blew up mid-way has an arbitrary partial claim
+    list — §5.5/§5.6 already say that is not evidence worth summarising, and
+    the same reasoning means it must not be applied either."""
+    with _blobs() as blobs:
+        store = MemoryBookStore()
+        shelves = MemoryShelfStore()
+        reads_store = MemoryReadStore()
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_store,
+                            blobs=blobs, reader=StubReader()))
+        shelf_id, cap_id = _read_shelf_and_capture(c)
+
+        class BlowingUpReader:
+            def read(self, library, requests, *, mode, progress=None,
+                     should_stop=None):
+                raise RuntimeError("engine exploded")
+
+            def unavailable(self, mode: str) -> str | None:
+                return None
+
+            def code_version(self) -> dict:
+                return {}
+
+            def config_snapshot(self) -> dict:
+                return {}
+
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_store,
+                            blobs=blobs, reader=BlowingUpReader()))
+        read_id = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
+                         json={"depth": 1}).json()["id"]
+        body = _wait_until_settled(c, shelf_id, read_id)
+
+        assert body["status"] == "failed"
+        assert body["diff_summary"] is None
+        assert store.count(TEST_LIBRARY) == 0
+
+
+def test_the_automatic_apply_is_idempotent_against_a_later_client_apply_call():
+    """The client's own `commitDiff` still calls `POST .../apply` on every
+    settle (harmless-by-design, kept for the moment the server-side apply
+    itself fails) — this proves "harmless" rather than assuming it:
+    `Provenance.sighting` (`run_id`, `spine_id`) makes `observe()` idempotent,
+    so the SAME claim reconciling twice must not create a second copy, a
+    second sighting, or a second book."""
+    with _blobs() as blobs:
+        store = MemoryBookStore()
+        shelves = MemoryShelfStore()
+        reads_store = MemoryReadStore()
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_store,
+                            blobs=blobs, reader=StubReader()))
+        shelf_id, cap_id = _read_shelf_and_capture(c)
+
+        reader = StubReader([ReadClaim(spine_id="sp1", capture_id=cap_id,
+                                       title="ספר חדש", author="סופר",
+                                       tier="auto", score=90.0)])
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_store,
+                            blobs=blobs, reader=reader))
+        read_id = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
+                         json={"depth": 1}).json()["id"]
+        _wait_until_settled(c, shelf_id, read_id)
+        assert store.count(TEST_LIBRARY) == 1
+
+        # The client's own apply, exactly as it fires today — twice, even,
+        # since a flaky connection can retry it.
+        for _ in range(2):
+            r = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/apply",
+                      json={"answers": []})
+            assert r.status_code == 200, r.text
+
+        assert store.count(TEST_LIBRARY) == 1, "a repeat apply must not add a second book"
+        got = store.list(TEST_LIBRARY).items[0]
+        assert got.copy_count == 1, "a repeat apply must not add a second copy"
+        assert len(got.copies[0].provenance) == 1, (
+            "the SAME (run_id, spine_id) sighting must not be recorded twice"
+        )
+
+
+def test_a_failed_automatic_apply_does_not_fail_the_read():
+    """If the automatic apply itself blows up (a store hiccup, a shelf
+    deleted in the instant between finishing and applying), the read is
+    still a real record of a successful attempt — the claims and the P2.8
+    snapshot survive; only the write-through is lost, and the client's own
+    apply (still called on every settle) is the retry path for it. This is
+    NOT a case that should ever surface as a `failed` read — that status
+    means the ENGINE failed, and here it plainly did not."""
+    with _blobs() as blobs:
+        store = RaisingBookStore(MemoryBookStore())
+        shelves = MemoryShelfStore()
+        reads_store = MemoryReadStore()
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_store,
+                            blobs=blobs, reader=StubReader()))
+        shelf_id, cap_id = _read_shelf_and_capture(c)
+
+        reader = StubReader([ReadClaim(spine_id="sp1", capture_id=cap_id,
+                                       title="ספר חדש", author="סופר",
+                                       tier="auto", score=90.0)])
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_store,
+                            blobs=blobs, reader=reader))
+        read_id = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
+                         json={"depth": 1}).json()["id"]
+        body = _wait_until_settled(c, shelf_id, read_id)
+
+        assert body["status"] == "done", (
+            "the read itself succeeded; only its automatic follow-up apply "
+            "failed, and that must not relabel the read as failed"
+        )
+        assert len(body["claims"]) == 1, "the claim the engine found is kept"
+        assert body["diff_summary"] == {
+            "added": 1, "corrected": 0, "unchanged": 0, "needs_decision": 0,
+            "not_seen": 0, "rejected": 0, "ignored": 0,
+        }, "the summary, computed before the failed apply, must still be saved"
 
 
 def test_apply_persists_added_and_unchanged_without_any_answers():
