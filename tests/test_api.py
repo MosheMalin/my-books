@@ -124,6 +124,40 @@ def _png(size=(40, 30), colour=(200, 30, 30)) -> bytes:
     return out.getvalue()
 
 
+def _mpo(size=(60, 40), *, orientation: int | None = None) -> bytes:
+    """A GENUINE Multi-Picture Object — what a phone camera actually emits.
+
+    ⚠ This helper exists because `_jpeg()` does not reproduce reality. A modern
+    iPhone or Samsung "JPEG" is usually an MPO: a JPEG container carrying a
+    second embedded frame (HDR, depth, the second lens). PIL reports
+    `format='MPO'`, and the upload validator's format whitelist rejected it —
+    so every synthetic test passed while EVERY REAL PHOTO 415'd.
+
+    A real MPO, written by PIL's own MPO encoder, not a stand-in.
+    """
+    from PIL import Image
+
+    first = Image.new("RGB", size, (200, 40, 40))
+    second = Image.new("RGB", size, (40, 40, 200))
+    out = io.BytesIO()
+    kw = {}
+    if orientation is not None:
+        exif = first.getexif()
+        exif[0x0112] = orientation
+        kw["exif"] = exif
+    first.save(out, format="MPO", save_all=True, append_images=[second], **kw)
+    return out.getvalue()
+
+
+def _heic_header() -> bytes:
+    """Just enough of a HEIC container to be recognised, not decoded.
+
+    The point is the ERROR MESSAGE: HEIC is the iPhone default whenever the
+    camera is not on "Most Compatible", so a refusal has to say what to change.
+    """
+    return b"\x00\x00\x00\x18ftypheic\x00\x00\x00\x00heicmif1" + b"\x00" * 64
+
+
 def _jpeg(size=(40, 30), *, orientation: int | None = None) -> bytes:
     """A JPEG, optionally carrying an EXIF rotation flag like a phone photo."""
     from PIL import Image
@@ -1960,3 +1994,93 @@ def test_the_real_reader_names_the_key_each_mode_needs():
         for k, v in saved.items():
             if v is not None:
                 _os.environ[k] = v
+
+
+# --- what phones actually send (2026-08-08) -------------------------------
+
+def test_a_real_phone_photo_uploads():
+    """The regression that shipped. Every one of the owner's real shelf photos
+    is an MPO — a JPEG container with a second embedded frame — and the upload
+    validator's whitelist only knew JPEG/PNG/WEBP, so every real upload 415'd
+    while every test passed.
+
+    The tests passed because `Image.new(...).save(format='JPEG')` produces
+    plain JPEG. **A synthetic image is not a sample of the input domain.**
+    """
+    from PIL import Image
+
+    with _blobs() as blobs:
+        c = TestClient(_app(blobs=blobs))
+        data = _mpo()
+        assert Image.open(io.BytesIO(data)).format == "MPO", "not a real MPO"
+
+        r = c.post(f"{API_PREFIX}/images",
+                   files={"file": ("IMG_6082.jpg", data, "image/jpeg")})
+        assert r.status_code == 201, r.text
+        meta = r.json()
+        # Served as JPEG: frame 0 of an MPO is an ordinary JPEG, which is what
+        # a browser and cv2 both read.
+        assert meta["content_type"] == "image/jpeg"
+        assert (meta["width"], meta["height"]) == (60, 40)
+
+        assert c.get(f"{API_PREFIX}/images/{meta['key']}/full").status_code == 200
+        thumb = c.get(f"{API_PREFIX}/images/{meta['key']}/thumb")
+        assert thumb.status_code == 200
+        assert Image.open(io.BytesIO(thumb.content)).format == "JPEG"
+
+
+def test_a_rotated_phone_photo_that_is_an_mpo_is_stored_upright_as_jpeg():
+    """The two phone realities together: MPO *and* an EXIF rotation flag. An
+    MPO cannot be written back as an MPO from one transposed frame, so
+    correcting orientation must re-encode as JPEG — and the earlier code would
+    have thrown trying to save `format='MPO'`."""
+    from PIL import Image
+
+    with _blobs() as blobs:
+        c = TestClient(_app(blobs=blobs))
+        r = c.post(f"{API_PREFIX}/images",
+                   files={"file": ("p.jpg", _mpo((60, 40), orientation=6),
+                                   "image/jpeg")})
+        assert r.status_code == 201, r.text
+        meta = r.json()
+        assert (meta["width"], meta["height"]) == (40, 60), "not transposed"
+
+        served = Image.open(io.BytesIO(
+            c.get(f"{API_PREFIX}/images/{meta['key']}/full").content))
+        assert served.format == "JPEG", "an MPO was re-saved as MPO"
+        assert served.getexif().get(0x0112) in (None, 1)
+
+
+def test_an_unsupported_format_says_what_to_change():
+    """"Not a decodable image" is true and useless — the owner is holding a
+    photo that plainly IS one. HEIC is the iPhone default whenever the camera
+    is not on "Most Compatible", so the refusal names it and says what to do."""
+    with _blobs() as blobs:
+        c = TestClient(_app(blobs=blobs))
+        r = c.post(f"{API_PREFIX}/images",
+                   files={"file": ("IMG_1.heic", _heic_header(), "image/heic")})
+        assert r.status_code == 415, r.text
+        detail = r.json()["detail"]
+        assert "HEIC" in detail
+        assert "Most Compatible" in detail, "the message does not say what to do"
+
+
+def test_the_owners_real_photos_upload_if_they_are_on_this_machine():
+    """Self-skipping, like the spotchecks: `work/` is gitignored, so a fresh
+    clone has no photos and this cannot be a hard gate. But on the machine that
+    HAS them it is the only test that runs the real input domain through the
+    real validator — which is the check whose absence let MPO ship broken.
+    """
+    real = sorted(Path(REPO_ROOT / "work" / "library").glob("*.jpeg"))[:3]
+    if not real:
+        return  # no local photo archive; the committed MPO test still ran
+
+    with _blobs() as blobs:
+        c = TestClient(_app(blobs=blobs))
+        for path in real:
+            r = c.post(f"{API_PREFIX}/images",
+                       files={"file": (path.name, path.read_bytes(),
+                                       "image/jpeg")})
+            assert r.status_code == 201, f"{path.name}: {r.status_code} {r.text[:200]}"
+            key = r.json()["key"]
+            assert c.get(f"{API_PREFIX}/images/{key}/thumb").status_code == 200

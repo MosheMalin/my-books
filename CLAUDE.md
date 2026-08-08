@@ -519,9 +519,9 @@ names to run a subset (`python tests/run_all.py test_api`).
 | `test_legacy_import.py` | 21 | `work/*.json` → entities, against a committed fixture |
 | `test_search.py` | 15 | Hebrew search, against 24 real queries on the real 251 books |
 | `test_layering.py` | 9 | the one-way import rules (plan H1) |
-| `test_api.py` | 91 | `/api/v1` shapes + the versioning/tenancy meta-tests |
+| `test_api.py` | 95 | `/api/v1` shapes + the versioning/tenancy meta-tests |
 
-508 python tests as of P2.8 (+28 since P2.7: the diff-summary snapshot and
+512 python tests as of P2.8 (+32 since P2.7: the diff-summary snapshot and
 the not-seen-streak/staleness rules — `app.domain.history` (new module),
 `DiffSummary`/`summarize`/`with_diff_summary` in `read.py`/`reconcile.py`,
 schema **v11** — and the two new endpoints, `GET /shelves/{id}/overview` and
@@ -531,6 +531,17 @@ dependency, deliberately — the repo has never had one and the accuracy gate
 runs on bare python. Counts grow with each run's fixes; the commit log is
 the history (`SESSION_NOTES.md` was a one-time handoff and is gone —
 session scratch belongs in `notes/`, which is gitignored).
+
+**Test the real input, not a fixture you invented.** Added after uploads
+shipped broken with a green suite (see the MPO warning under "Images are
+real"): every test image was one the tests generated, so they validated the
+code against the same model of the input that wrote the bug. Where real inputs
+exist on this machine but cannot be committed (`work/` is gitignored), the
+pattern is the spotchecks': a **committed fixture that reproduces the real
+shape** plus a **self-skipping test over the real data**. One proves the shape
+on every clone; the other catches the day reality stops matching the fixture.
+Applies to photos, OCR text, and anything else arriving from the physical
+world.
 
 **`test_domain.py` is not coverage** — it is one test per sentence of VISION
 that someone could plausibly "fix" later, and every one was verified to FAIL
@@ -964,6 +975,34 @@ same. It also makes the hash agree: the same photo uploaded upright and
 rotated is one key, not two. Bytes that need no correction are stored
 **untouched** — a JPEG round-tripped through PIL loses quality for nothing, and
 accuracy is measured on the pixels the engine is given.
+
+⚠⚠ **A synthetic image is not a sample of the input domain — MPO.** Uploads
+shipped broken and every test was green. A "JPEG" out of a modern iPhone or
+Samsung is usually a **Multi-Picture Object**: a JPEG container carrying a
+second embedded frame (HDR, depth, the second lens). PIL reports
+`format='MPO'`, the accepted-format whitelist listed only JPEG/PNG/WEBP, and
+so **every real photo 415'd** — including all of the owner's, every one of
+which is MPO. The tests passed because `Image.new(...).save(format='JPEG')`
+produces plain JPEG. Frame 0 of an MPO is an ordinary JPEG, which is what
+browsers and cv2 both read, so it is accepted and served as `image/jpeg`.
+
+The generalised lesson, and the reason this is the loudest warning in the
+file: **the repo had the real photos in `work/` the whole time and the tests
+used images they generated themselves.** A fixture you construct tests the code
+against your own model of the input, which is the same model that wrote the
+bug. `tests/test_api.py` now carries (a) `_mpo()`, a GENUINE MPO written by
+PIL's MPO encoder, committed and always run, and (b)
+`test_the_owners_real_photos_upload_if_they_are_on_this_machine`, which walks
+`work/library/*.jpeg` and **self-skips** on a fresh clone — the same shape as
+the spotchecks, and the only test that runs the real input domain through the
+real validator.
+
+⚠ **HEIC is the next one waiting.** It is the iPhone default whenever the
+camera is not set to "Most Compatible", and PIL cannot open it without
+`pillow-heif`. Rather than "not a decodable image", the refusal sniffs the
+container magic and names the format with the fix ("Settings → Camera →
+Formats → Most Compatible"). Supporting it properly means adding `pillow-heif`
+— worth doing the first time a real HEIC actually arrives, not before.
 
 ⚠ **A variant carries its own extension, not the original's.** Every rendition
 is a JPEG, so deriving the variant path from the key's extension writes JPEG

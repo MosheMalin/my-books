@@ -48,10 +48,44 @@ THUMB_QUALITY = 82
 _VARIANT_EXT = "jpg"
 VARIANT_CONTENT_TYPE = "image/jpeg"
 
-# What we will decode AND serve back. Deliberately short: an image format we
-# cannot re-encode a thumbnail from is one the review grid cannot show.
-_FORMATS = {"JPEG": ("image/jpeg", "jpg"), "PNG": ("image/png", "png"),
-            "WEBP": ("image/webp", "webp")}
+# What we will decode AND serve back, keyed by what PIL reports as the format.
+#
+# ⚠ **MPO is here because it is what phones actually produce.** A "JPEG" out of
+# a modern iPhone or Samsung is usually a Multi-Picture Object: a JPEG
+# container carrying a second embedded frame (HDR, depth, or the second lens).
+# PIL reports `format='MPO'`, not `'JPEG'`, so a whitelist of the obvious three
+# rejects EVERY REAL PHOTO while passing every synthetic test image — PIL's own
+# `Image.new(...).save(format='JPEG')` produces plain JPEG. That is exactly how
+# this shipped broken: the tests were green and every upload from the owner's
+# phone 415'd. Frame 0 of an MPO is an ordinary JPEG, which is what browsers
+# and cv2 both read, so it is served as `image/jpeg`.
+_FORMATS = {
+    "JPEG": ("image/jpeg", "jpg"),
+    "MPO": ("image/jpeg", "jpg"),
+    "PNG": ("image/png", "png"),
+    "WEBP": ("image/webp", "webp"),
+}
+
+# What to RE-ENCODE as when orientation has to be corrected. The second frame
+# is not wanted — the product needs the picture, not the depth map.
+#
+# ⚠ Honest note: this line is NOT load-bearing, and removing it survives the
+# test suite. PIL writing a single transposed frame with `format='MPO'`
+# produces output byte-identical to `format='JPEG'` (measured: 678 bytes
+# either way, read back as JPEG). It stays because it states the intent
+# explicitly rather than leaning on that undocumented equivalence — but it is
+# belt-and-braces, not a rule, and it is written down that way so nobody
+# mistakes a passing suite for coverage of it.
+_REENCODE_AS = {"MPO": "JPEG"}
+
+# Formats PIL cannot open at all but whose container is recognisable, so the
+# refusal can say what to do instead of "not a decodable image". HEIC is the
+# iPhone default whenever the camera is NOT set to "Most Compatible", so this
+# is the single most likely upload failure after MPO.
+_MAGIC_HINTS = (
+    (b"ftypheic", "HEIC"), (b"ftypheix", "HEIC"), (b"ftyphevc", "HEIC"),
+    (b"ftypmif1", "HEIF"), (b"ftypavif", "AVIF"),
+)
 
 
 class DiskBlobStore:
@@ -242,7 +276,7 @@ def _normalise(data: bytes) -> tuple[bytes, str, str, tuple[int, int]]:
             if fmt not in _FORMATS:
                 raise UnsupportedImage(
                     f"{fmt or 'unknown'} is not a format this system serves; "
-                    f"use one of {sorted(_FORMATS)}"
+                    f"use JPEG, PNG or WEBP"
                 )
             content_type, ext = _FORMATS[fmt]
             upright = ImageOps.exif_transpose(img)
@@ -250,13 +284,34 @@ def _normalise(data: bytes) -> tuple[bytes, str, str, tuple[int, int]]:
                 # Nothing to correct — keep the ORIGINAL bytes rather than
                 # re-encoding. A JPEG round-tripped through PIL loses quality
                 # for no reason, and the engine's accuracy is measured on the
-                # pixels it is given.
+                # pixels it is given. An MPO kept whole is a little larger than
+                # it needs to be (it still carries its second frame), which is
+                # a cheap price for not touching the pixels the reader sees.
                 return data, content_type, ext, img.size
             out = io.BytesIO()
-            upright.save(out, format=fmt, quality=95)
+            upright.save(out, format=_REENCODE_AS.get(fmt, fmt), quality=95)
             return out.getvalue(), content_type, ext, upright.size
     except UnidentifiedImageError as exc:
-        raise UnsupportedImage("not a decodable image") from exc
+        raise UnsupportedImage(_undecodable_reason(data)) from exc
+
+
+def _undecodable_reason(data: bytes) -> str:
+    """Name the format when the container is recognisable.
+
+    "not a decodable image" is true and useless: the owner is holding a photo
+    that plainly IS one. HEIC in particular is the iPhone default whenever the
+    camera is not set to "Most Compatible", so the message has to say what to
+    change rather than leaving them to conclude the app is broken.
+    """
+    head = data[:32]
+    for magic, name in _MAGIC_HINTS:
+        if magic in head:
+            return (
+                f"{name} images are not supported yet. On iPhone: Settings → "
+                "Camera → Formats → Most Compatible, then re-take or "
+                "re-export the photo as JPEG."
+            )
+    return "not a decodable image"
 
 
 def _orientation(img) -> int | None:
