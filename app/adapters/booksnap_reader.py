@@ -146,6 +146,44 @@ class BooksnapReader:
                 break
         return tuple(out)
 
+    # What each mode needs from the environment, and the sentence the owner
+    # sees if it is missing. This adapter is the ONLY place that knows the
+    # mapping: the route asks `unavailable()` and prints the answer, so it
+    # never learns which engine wants which key.
+    #
+    # `spines` is absent on purpose — Tesseract is the free offline path, and
+    # it stays the answer when no credential exists at all.
+    _CREDENTIALS: dict[str, tuple[str, str]] = {
+        "llmpage": (
+            "ANTHROPIC_API_KEY",
+            "LLM reading needs ANTHROPIC_API_KEY — put it in .env at the repo "
+            "root and restart the server. Until then, use 'split to spines' "
+            "(free, offline).",
+        ),
+        "fullpage": (
+            "GOOGLE_APPLICATION_CREDENTIALS",
+            "Whole-photo reading needs GOOGLE_APPLICATION_CREDENTIALS — put "
+            "the path to the service-account JSON in .env at the repo root "
+            "and restart the server. Until then, use 'split to spines' (free, "
+            "offline).",
+        ),
+    }
+
+    def unavailable(self, mode: str) -> str | None:
+        """Why ``mode`` cannot run, or ``None``. See the port for the why.
+
+        Checked against the environment as it stands NOW rather than cached at
+        construction: `.env` is read at import, but a key can also be exported
+        into a running shell, and a preflight that lies is worse than none.
+        """
+        if mode not in ("spines", "fullpage", "llmpage"):
+            return (f"unknown reading mode {mode!r} — "
+                    "expected 'spines', 'fullpage' or 'llmpage'")
+        needed = self._CREDENTIALS.get(mode)
+        if needed and not os.environ.get(needed[0]):
+            return needed[1]
+        return None
+
     def code_version(self) -> dict[str, Any]:
         """Git sha + dirty flag — same shape and reasoning as
         ``booksnap/server.py``'s ``_code_version``: while developing, the

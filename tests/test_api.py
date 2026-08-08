@@ -974,13 +974,21 @@ class StubReader:
     is mutable so a test can set it up AFTER learning a real capture id from
     the API, then let the (already-submitted-later) job pick it up."""
 
-    def __init__(self, claims: list[ReadClaim] | None = None):
+    def __init__(self, claims: list[ReadClaim] | None = None,
+                 unavailable: str | None = None):
         self._claims = claims or []
+        # Every mode is available to a stub — it needs no credential, which is
+        # exactly why the preflight lives on the port and not in the route.
+        # A test that wants the refusal sets this.
+        self._unavailable = unavailable
 
     def read(self, library, requests, *, mode, progress=None, should_stop=None):
         if progress:
             progress({"stage": "done", "total": len(requests)})
         return list(self._claims)
+
+    def unavailable(self, mode: str) -> str | None:
+        return self._unavailable
 
     def code_version(self) -> dict:
         return {"sha": "stub", "branch": "test", "dirty": False}
@@ -1009,6 +1017,9 @@ class SlowStubReader:
                                  title=f"claim {i}", tier="auto"))
             time.sleep(self._step_s)
         return out
+
+    def unavailable(self, mode: str) -> str | None:
+        return None
 
     def code_version(self) -> dict:
         return {"sha": "stub", "dirty": False}
@@ -1874,3 +1885,78 @@ if __name__ == "__main__":
     raise SystemExit(subprocess.call(
         [sys.executable, str(Path(__file__).parent / "run_all.py"), __file__]
     ))
+
+
+# --- the default reading mode, and its preflight (2026-08-08) -------------
+
+def test_a_read_defaults_to_the_llm_mode():
+    """Owner's call. The measured gap is not close: the Tesseract path is
+    ~10s/spine and tops out near 76% title-correct, and CLAUDE.md already
+    records llmpage as the engine's own default.
+
+    The project's deterministic-first rule is about not paying an LLM for work
+    cheap code can do — it was never an argument for making the worse reader
+    the one everybody meets first. Pinned because "restore the deterministic
+    default" is exactly the kind of tidy-looking change that would quietly
+    hand every new user the weaker engine.
+    """
+    with _blobs() as blobs:
+        c = TestClient(_app(blobs=blobs, reader=StubReader()))
+        key = c.post(f"{API_PREFIX}/images",
+                     files={"file": ("a.png", _png(), "image/png")}).json()["key"]
+        made = c.post(f"{API_PREFIX}/captures", json={"image_id": key}).json()
+        # A body with no `mode` at all — the default is what is under test.
+        started = c.post(f"{API_PREFIX}/shelves/{made['shelf']['id']}/reads",
+                         json={})
+    assert started.status_code == 202, started.text
+    assert started.json()["mode"] == "llmpage"
+
+
+def test_a_mode_whose_credential_is_missing_is_refused_at_the_door():
+    """A read runs in a WORKER THREAD. A missing key discovered there surfaces
+    as a `failed` read with a traceback in a log nobody is watching, minutes
+    after the click — and the owner is left guessing whether the photo, the
+    shelf or the engine was the problem.
+
+    The answer comes from the Reader, not from this route: which credential
+    which engine needs is the adapter's knowledge, and encoding it in the API
+    layer would couple the route to whichever adapter is bound — and would
+    give this ring an environment it deliberately does not have.
+    """
+    with _blobs() as blobs:
+        refuses = StubReader(unavailable="needs A_KEY — set it and restart")
+        c = TestClient(_app(blobs=blobs, reader=refuses))
+        key = c.post(f"{API_PREFIX}/images",
+                     files={"file": ("a.png", _png(), "image/png")}).json()["key"]
+        made = c.post(f"{API_PREFIX}/captures", json={"image_id": key}).json()
+        r = c.post(f"{API_PREFIX}/shelves/{made['shelf']['id']}/reads",
+                   json={"mode": "llmpage"})
+
+    assert r.status_code == 409, r.text
+    # The message must say what to DO, not merely what is absent — it is shown
+    # to the owner, who cannot read a traceback.
+    assert "set it and restart" in r.json()["detail"]
+
+
+def test_the_real_reader_names_the_key_each_mode_needs():
+    """The adapter is the one place that knows the mapping. Asserted directly
+    because the API ring stubs the Reader, so nothing else exercises it — and
+    a preflight that never fires is indistinguishable from no preflight."""
+    import os as _os
+
+    from app.adapters.booksnap_reader import BooksnapReader
+
+    reader = BooksnapReader.__new__(BooksnapReader)   # no engine construction
+    saved = {k: _os.environ.pop(k, None)
+             for k in ("ANTHROPIC_API_KEY", "GOOGLE_APPLICATION_CREDENTIALS")}
+    try:
+        assert "ANTHROPIC_API_KEY" in (reader.unavailable("llmpage") or "")
+        assert "GOOGLE_APPLICATION_CREDENTIALS" in (
+            reader.unavailable("fullpage") or "")
+        # Tesseract needs nothing, and stays the answer when no key exists.
+        assert reader.unavailable("spines") is None
+        assert "unknown reading mode" in (reader.unavailable("nope") or "")
+    finally:
+        for k, v in saved.items():
+            if v is not None:
+                _os.environ[k] = v

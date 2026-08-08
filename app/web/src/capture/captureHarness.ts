@@ -19,6 +19,11 @@ import type {
 
 export interface FakeCaptureServer {
   calls: string[]
+  /** Parsed JSON bodies of every request that had one, in order. `calls`
+   *  answers "was it asked?"; this answers "asked WHAT?" — which is the
+   *  difference between a control that looks right and one that sends the
+   *  right thing. */
+  bodies: Record<string, unknown>[]
   shelves: Shelf[]
   captures: Record<string, CaptureDTO>
   /** status the NEXT `POST .../reads` returns — most tests want 'done' so
@@ -59,6 +64,7 @@ export function fakeCaptureServer(
 ): FakeCaptureServer {
   const server: FakeCaptureServer = {
     calls: [],
+    bodies: [],
     shelves: [...initialShelves],
     captures: {},
     nextReadStatus: 'done',
@@ -75,6 +81,16 @@ export function fakeCaptureServer(
     const url = String(input)
     server.calls.push(url)
     const method = init?.method ?? 'GET'
+    if (typeof init?.body === 'string') {
+      // Multipart uploads arrive as FormData, not a string, so they simply
+      // do not land here — this is for the JSON calls, which is where the
+      // decisions are.
+      try {
+        server.bodies.push(JSON.parse(init.body))
+      } catch {
+        /* not JSON; the call itself is still recorded above */
+      }
+    }
     const u = new URL(url, 'http://test')
     const parts = u.pathname.split('/').filter(Boolean) // ['api','v1',...]
 

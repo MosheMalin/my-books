@@ -243,3 +243,35 @@ describe('Capture tab — review', () => {
     await waitFor(() => expect(server.calls.some((c) => c.includes('/stop'))).toBe(true))
   })
 })
+
+describe('Capture tab — the default reading mode', () => {
+  it('preselects LLM reading, not the free Tesseract path', async () => {
+    // Owner's call (2026-08-08). The measured gap is not close: the spine
+    // path is ~10s/spine and tops out near 76% title-correct, and CLAUDE.md
+    // already records llmpage as the engine's own default. Pinned because
+    // "restore the deterministic default" is exactly the kind of tidy-looking
+    // change that would silently hand every new user the worse reader.
+    fakeCaptureServer()
+    renderCapture()
+
+    const llm = await screen.findByRole('radio', { name: /קריאת LLM/ })
+    expect((llm as HTMLInputElement).checked).toBe(true)
+
+    const spines = screen.getByRole('radio', { name: /פיצול לשדרות/ })
+    expect((spines as HTMLInputElement).checked).toBe(false)
+  })
+
+  it('sends that mode when a read starts', async () => {
+    // The selection has to reach the wire. A default that looks right on
+    // screen and posts something else is the failure this catches.
+    const server = fakeCaptureServer()
+    const { container } = renderCapture()
+    await dropOnePhoto(container)
+
+    await userEvent.click(await screen.findByRole('button', { name: /הרצה/ }))
+    await waitFor(() => {
+      const started = server.bodies.find((b) => 'mode' in (b ?? {}))
+      expect(started?.mode).toBe('llmpage')
+    })
+  })
+})

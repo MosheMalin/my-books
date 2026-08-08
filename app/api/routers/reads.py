@@ -78,6 +78,19 @@ router = APIRouter(prefix="/shelves/{shelf_id}/reads", tags=["reads"])
 _FULL_LIBRARY_SCAN_LIMIT = 100_000
 
 
+def _check_mode_is_usable(reader: Reader, mode: str) -> None:
+    """409 before starting, rather than a read that fails a minute later.
+
+    The ANSWER comes from the Reader, not from this module: which credential
+    which engine needs is the adapter's knowledge, and encoding it here would
+    couple the route to whichever adapter is bound (and would make the API ring
+    depend on an environment it deliberately does not have).
+    """
+    why = reader.unavailable(mode)
+    if why:
+        raise HTTPException(status.HTTP_409_CONFLICT, why)
+
+
 def _load_shelf(store: ShelfStore, library: LibraryRef, shelf_id: str) -> Shelf:
     shelf = store.get_shelf(library, shelf_id)
     if shelf is None:
@@ -119,6 +132,7 @@ def start_read(
     settle into ``done``/``stopped``/``failed``.
     """
     shelf = _load_shelf(shelves, library, shelf_id)
+    _check_mode_is_usable(reader, body.mode)
     try:
         shelf.check_depth(body.depth)
     except UnknownDepth as exc:

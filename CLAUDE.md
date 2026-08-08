@@ -519,9 +519,9 @@ names to run a subset (`python tests/run_all.py test_api`).
 | `test_legacy_import.py` | 21 | `work/*.json` → entities, against a committed fixture |
 | `test_search.py` | 15 | Hebrew search, against 24 real queries on the real 251 books |
 | `test_layering.py` | 9 | the one-way import rules (plan H1) |
-| `test_api.py` | 88 | `/api/v1` shapes + the versioning/tenancy meta-tests |
+| `test_api.py` | 91 | `/api/v1` shapes + the versioning/tenancy meta-tests |
 
-505 python tests as of P2.8 (+25 since P2.7: the diff-summary snapshot and
+508 python tests as of P2.8 (+28 since P2.7: the diff-summary snapshot and
 the not-seen-streak/staleness rules — `app.domain.history` (new module),
 `DiffSummary`/`summarize`/`with_diff_summary` in `read.py`/`reconcile.py`,
 schema **v11** — and the two new endpoints, `GET /shelves/{id}/overview` and
@@ -631,6 +631,22 @@ one can read `var(--muted)` and so follows dark mode.
 before P1.5 answered `?q=…` with the whole 251-book library and a 200. The
 client looked broken; the server was stale. **Restart the API server after any
 route change** — there is no `--reload` in `.claude/launch.json`.
+
+⚠ **The product did not read `.env` at all until 2026-08-08.** Only
+`booksnap/server.py` had a `_load_dotenv`, so `:8756` could reach the
+catalogues and the LLM reader while `:8757` silently could not — and nobody
+noticed, because the product's default mode was the free offline one.
+`app/main.py` now has its own copy (a COPY, not an import: the product must
+not import the tuning server, and eight duplicated lines are the intended
+cost of H1).
+
+⚠ **`:8757` and `:5173` bind `0.0.0.0`, not loopback.** Capture is a PHONE
+flow — photograph a shelf, upload from the camera roll — so a server only its
+own machine can reach cannot do the one thing the tab exists for. The tuning
+server always bound all interfaces; the product's `127.0.0.1` was an oversight
+that made the phone hint in its own UI a lie. Note this is an **unauthenticated
+API on the LAN** until pillar 4 lands login; that is a deliberate,
+single-household trade, not an oversight.
 
 ⚠ **Port 8757 serves a BUILD, and the build is gitignored — so it goes stale
 silently.** `app/main.py` mounts `app/web/dist/` at `/`, and nothing rebuilds
@@ -843,6 +859,37 @@ because `Shelf.__post_init__` rejects the same state, and the sqlite shelf
 *other* line of each pair IS caught. Worth knowing before reading a survivor
 as a missing test — the question to ask is "what else enforces this?", and
 only if nothing does is it a gap.
+
+## The default reading mode is `llmpage` (owner, 2026-08-08)
+
+The Capture tab preselects **LLM reading**, and `ReadCreate.mode` defaults to
+it server-side. The modes are listed best-first, so the default is also first —
+a default sitting third down a list reads as an afterthought rather than a
+recommendation.
+
+This does **not** contradict "deterministic first". That rule is about not
+paying an LLM for work cheap deterministic code can do — it was never an
+argument for making the *worse reader* the one everybody meets first. The
+measured gap is not close: the spine path costs ~10s/spine and tops out around
+76% title-correct, and this file already recorded llmpage as the engine's own
+default. Tesseract stays, stays free, and stays the answer when no key exists.
+Cost is stated **on the control** (`~$0.15/photo`), because the place to say
+what something costs is where the choice is made; metering proper is P5.1.
+
+**A mode whose credential is missing is refused at the door with 409**, and the
+refusal says what to DO ("set it in .env and restart"), not merely what is
+absent. A read runs in a WORKER THREAD, so a missing key discovered there
+surfaces as a `failed` read with a traceback in a log nobody is watching,
+minutes after the click — and the owner is left guessing whether the photo, the
+shelf or the engine was the problem. `booksnap/server.py:start_run` learned
+this first; this is the product's own copy.
+
+⚠ **The preflight lives on the `Reader` PORT, not in the route.** Which
+credential which engine needs is the adapter's knowledge. A first draft put an
+`os.environ` check in `reads.py` and it was wrong twice over: it coupled the
+route to whichever adapter was bound, and it broke the API ring, whose
+`StubReader` needs no environment at all — which is exactly the property that
+keeps that ring offline. `Reader.unavailable(mode) -> str | None` is the seam.
 
 ## Capture → shelf binding (P2.2, API half)
 
@@ -1683,7 +1730,7 @@ arrive in P2.1. The importer reports them loudly rather than dropping them —
 until P2.3 lands, a re-read could re-add those books.
 
 Client ring (needs `npm install --prefix app/web` once):
-`npm --prefix app/web run test` (vitest + React Testing Library, **55 tests**
+`npm --prefix app/web run test` (vitest + React Testing Library, **57 tests**
 as of P2.8) and `npm --prefix app/web run typecheck`. Test what encodes a
 *decision*, not layout and not DTO plumbing — same standard as the Python
 rings. The suite mocks `fetch`, never `useBooks`/`useCapture`/`useShelfDetail`:

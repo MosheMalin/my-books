@@ -110,6 +110,27 @@ class Reader(Protocol):
         claims already produced are RETURNED, not discarded, when it fires.
         """
 
+    def unavailable(self, mode: str) -> str | None:
+        """Why ``mode`` cannot run right now, or ``None`` if it can.
+
+        A preflight, asked at the HTTP door before a read is accepted. It
+        exists because a read runs in a WORKER THREAD: a missing
+        ``ANTHROPIC_API_KEY`` discovered there surfaces as a ``failed`` read
+        with a traceback in a log nobody is watching, minutes after the click,
+        and the owner is left guessing whether the photo or the shelf was the
+        problem. The tuning server learned the same lesson
+        (``booksnap/server.py:start_run`` rejects a keyless mode up front).
+
+        **On the port rather than in the route** — the route must not know
+        which credential which engine needs, or it is coupled to whichever
+        adapter happens to be bound. A stub reader answers ``None`` for every
+        mode and needs no environment at all, which is exactly why the API ring
+        stays offline.
+
+        The returned string is shown to the user, so it says what to DO ("set
+        X, then restart"), not merely what is absent.
+        """
+
     def code_version(self) -> dict:
         """Git sha + dirty flag, or whatever a stub wants to report — the
         same idea as ``booksnap/server.py``'s run archive, so a Read can be

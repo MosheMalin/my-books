@@ -14,11 +14,16 @@ import { CaptureRow } from './CaptureRow'
 import { ReviewPanel } from './ReviewPanel'
 import { useCapture, type Mode } from './useCapture'
 
+// Ordered best-first, which is also default-first: llmpage is what
+// `useCapture` selects, and a default sitting third down the list reads as an
+// afterthought rather than as the recommendation. Tesseract stays last and
+// stays free — it is the answer when there is no key, not a lesser option
+// hidden away.
 const MODES: { value: Mode; nameKey: 'mode_spines' | 'mode_full' | 'mode_llm';
               descKey: 'mode_spines_d' | 'mode_full_d' | 'mode_llm_d' }[] = [
-  { value: 'spines', nameKey: 'mode_spines', descKey: 'mode_spines_d' },
-  { value: 'fullpage', nameKey: 'mode_full', descKey: 'mode_full_d' },
   { value: 'llmpage', nameKey: 'mode_llm', descKey: 'mode_llm_d' },
+  { value: 'fullpage', nameKey: 'mode_full', descKey: 'mode_full_d' },
+  { value: 'spines', nameKey: 'mode_spines', descKey: 'mode_spines_d' },
 ]
 
 export function CaptureTab() {

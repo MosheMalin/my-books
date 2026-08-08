@@ -1405,8 +1405,8 @@ export interface components {
             depth: number;
             /**
              * Mode
-             * @description Engine mode: 'spines' (Tesseract, free, ~10s/spine), 'fullpage' (Google Vision) or 'llmpage' (Claude vision, the engine's own current default per CLAUDE.md). Passed straight through to booksnap.Pipeline.run — modes are the engine's own, not redefined here.
-             * @default spines
+             * @description Engine mode: 'llmpage' (Claude vision — the DEFAULT, and the engine's own current default per CLAUDE.md), 'fullpage' (Google Vision) or 'spines' (Tesseract, free, ~10s/spine). Passed straight through to booksnap.Pipeline.run — modes are the engine's own, not redefined here. A mode whose credential is missing is refused at the door with 409 rather than failing inside the worker thread.
+             * @default llmpage
              */
             mode: string;
         };

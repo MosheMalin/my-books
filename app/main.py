@@ -49,6 +49,36 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 WEB_DIST = REPO_ROOT / "app" / "web" / "dist"
 
 
+def _load_dotenv() -> None:
+    """Read ``REPO_ROOT/.env`` into ``os.environ`` (existing vars win).
+
+    A COPY of ``booksnap/server.py``'s, not an import — the product must not
+    import the tuning server (that is the whole point of H1, and the layering
+    test enforces it). Eight lines duplicated is the intended cost.
+
+    Without this the product had no ``ANTHROPIC_API_KEY``/``NLI_API_KEY`` at
+    all: `.env` was read by the tuning server only, so `:8756` could reach the
+    catalogues and the LLM reader while `:8757` silently could not. It went
+    unnoticed because the default mode was the free offline one — the moment
+    llmpage became the default, every read would have failed inside a worker
+    thread with a missing key.
+
+    Deliberately tiny — no dependency, and it never logs or echoes a value.
+    """
+    path = REPO_ROOT / ".env"
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, val = line.split("=", 1)
+        os.environ.setdefault(key.strip(), val.strip())
+
+
+_load_dotenv()
+
+
 def _work() -> Path:
     return Path(os.environ.get("BOOKSNAP_WORK", REPO_ROOT / "work"))
 

@@ -88,7 +88,13 @@ export function useCapture() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [shelves, setShelves] = useState<Shelf[]>([])
   const [shelvesLoading, setShelvesLoading] = useState(true)
-  const [mode, setMode] = useState<Mode>('spines')
+  // llmpage, not spines (owner, 2026-08-08). The measured gap is not close:
+  // the Tesseract path is ~10s/spine and tops out around 76% title-correct,
+  // and CLAUDE.md already records llmpage as the engine's own default. The
+  // project's deterministic-first rule is about not paying an LLM for work
+  // cheap code can do — it was never an argument for shipping the worse
+  // reader as the one everybody meets first. Cost is stated on the control.
+  const [mode, setMode] = useState<Mode>('llmpage')
   const [runs, setRuns] = useState<RunState[]>([])
 
   const itemsRef = useRef(items)

@@ -614,12 +614,15 @@ class ReadCreate(BaseModel):
 
     depth: int = Field(default=1, ge=1)
     mode: str = Field(
-        default="spines",
-        description="Engine mode: 'spines' (Tesseract, free, ~10s/spine), "
-                    "'fullpage' (Google Vision) or 'llmpage' (Claude vision, "
-                    "the engine's own current default per CLAUDE.md). Passed "
-                    "straight through to booksnap.Pipeline.run — modes are "
-                    "the engine's own, not redefined here.",
+        default="llmpage",
+        description="Engine mode: 'llmpage' (Claude vision — the DEFAULT, and "
+                    "the engine's own current default per CLAUDE.md), "
+                    "'fullpage' (Google Vision) or 'spines' (Tesseract, free, "
+                    "~10s/spine). Passed straight through to "
+                    "booksnap.Pipeline.run — modes are the engine's own, not "
+                    "redefined here. A mode whose credential is missing is "
+                    "refused at the door with 409 rather than failing inside "
+                    "the worker thread.",
     )
 
 
