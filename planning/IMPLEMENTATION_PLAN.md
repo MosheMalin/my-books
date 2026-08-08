@@ -430,12 +430,21 @@ H1's argument, and the reason the layering test exists.
 | **P2.6** | **Copy resolution** (§5.4): the fire / never-fire table as an explicit decision table + tests; three answers; default already-listed; the **duplicates queue** as a filter on Books; the two cheap wins (a lent-out book reappears → "is it back?"; several copies → pick which). | M | |
 | **P2.7** | **The Capture tab**: drop zone → a row per photo with shelf + depth assigned inline (*Unassigned* = not yet named), add-a-row-behind surfaced even at `depth_count` 1 (§5.7 — most users won't know it exists), mode selector, run/stop, live progress, and inline review of each claim (crop, tier, diff badge, ✓/✕, alternatives, `why?`). | L | |
 | **P2.8** | **Shelf view + read history**: books at a depth in physical order with the photo; the depth bar; the durable review on the shelf; history as diffs (`+3 added · 1 corrected · 12 unchanged · 1 not seen`); soft "not seen in the last 3 reads" badge. | L | |
-| **P2.9** | **Complete the inversion**: `/api/v1` has no run root; reads are `/shelves/{id}/reads`; run detail is reachable only through the audit surface. Test: no `/api/v1` route takes a `run_id` as its primary key. | S | |
+| **P2.9** | **Complete the inversion**: `/api/v1` has no run root; reads are `/shelves/{id}/reads`; run detail is reachable only through the audit surface. Test: no `/api/v1` route takes a `run_id` as its primary key. | S | done |
+| **P2.10** | **The image workspace** (§12.2 #10, owner 2026-08-09) — the Capture tab stops being a one-way pipeline. An image is a durable object: clicking it opens **its runs**, each run lists **its findings**, and each finding can be **approved / edited / removed**, the loop the engine POC already had. A processed photo is never re-read just to see what it found. | L | |
 
 **Done when:** the owner uploads a shelf photo in the product, presses read,
-and the books appear in his library — then re-photographs the same shelf and
-the second read produces a *diff*, not a second result set, with nothing
-auto-removed.
+and the books appear in his library — then **opens that photo again and works
+through what it found**, approving, editing and removing, without re-reading
+it. Re-photographing the same shelf later produces a *diff*, not a second
+result set, with nothing auto-removed.
+
+⚠ **The tab is a workspace, not a pipeline** (§12.2 #10). The first build of
+P2.7 read "capture" as drop → run → review-now, so a settled read had no route
+back and the only visible action was *re-run on selected* — which costs money,
+costs time, and invites re-deciding answered questions. P2.10 corrects it. The
+shape to hold on to: **the image is the durable object**, runs hang off the
+image, findings hang off the run.
 
 **Explicitly NOT in this pillar**, so it cannot creep back in: tenants and
 policy (pillar 3 — one library, dev-resolved, as today), login (4), metering

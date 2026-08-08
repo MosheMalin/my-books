@@ -804,6 +804,28 @@ a decision.
    borrower could see "books I'm holding" in their own app and be reminded
    automatically — genuinely useful, and it also covers lending *within* a
    family library, where borrower and member are the same person.
+10. **[SETTLED 2026-08-09, owner]** §5.5 says "there is no global list of runs"
+    and a run surfaces only as an event on a shelf. That is right for the
+    *Library* mental model and **wrong for the Capture tab**, where the owner
+    is doing the cataloguing and the unit of work is the photograph:
+
+    > *"The heart of this tab are the images and the analysis. In Books we see
+    > the list and act on books. In Map we arrange the physical aspects. But
+    > here, in Capture and Read, we focus on the images."*
+
+    So the resolution is a **split by surface, not a reversal**: an image is a
+    durable object with a history, clicking it opens that image's **runs**, and
+    each run lists its **findings** with approve / edit / remove — the review
+    loop the engine POC already had. Books and Map stay run-free exactly as
+    §5.5 requires; the run-shaped view lives where the work is, which is also
+    what §5.5's own "audit view, reachable but not on the main path" allows.
+
+    What this rules out is the reading that produced the current tab: a
+    one-way pipeline (drop → run → the result scrolls away) with **no route
+    back to a finished analysis**. Re-running a photo you have already
+    processed is not a substitute for looking at what it found — it costs
+    money, it costs time, and it invites re-deciding questions already
+    answered.
 
 ### 12.3 Technical questions to settle
 
