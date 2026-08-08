@@ -109,9 +109,10 @@ def build() -> object:
     principal = DevPrincipal()
     path = db_path()
     blobs = DiskBlobStore(blob_root())
+    books = SqliteBookStore(path)
     return create_app(
         principal_provider=lambda: principal,
-        book_store=SqliteBookStore(path),
+        book_store=books,
         # The SAME file, three aggregates now. Separate ports because their
         # lifetimes are independent (a shelf exists before any book is on it;
         # a read is created, runs, and settles), separate stores because a
@@ -133,8 +134,11 @@ def build() -> object:
         blob_store=blobs,
         # BooksnapReader wraps booksnap.Pipeline (P2.4) — it needs the SAME
         # blob store to turn a capture's image_id into bytes the engine can
-        # read, and to save the spine crops a read produces.
-        reader=BooksnapReader(blob_store=blobs),
+        # read, and to save the spine crops a read produces. It also takes the
+        # book store, so the owner's already-confirmed books join the retrieval
+        # chain: a book confirmed once should match instantly on every later
+        # shelf, which is what the tuning server gets from ConfirmedCatalog.
+        reader=BooksnapReader(blob_store=blobs, book_store=books),
         # In-process, single-user (P2.4; P3.4 replaces it with a real queue).
         # One instance here, on the composition root, is what H2/§1.3 asks
         # for — every job's state lives on THIS object, never a module global.

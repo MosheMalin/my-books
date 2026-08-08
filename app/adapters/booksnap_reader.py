@@ -30,6 +30,7 @@ from booksnap.pipeline import Pipeline
 from app.domain import LibraryRef
 from app.ports.blobs import BlobStore
 from app.ports.reader import ReadAlternative, ReadClaim, ReadRequest
+from app.ports.store import BookStore
 
 # booksnap.types.Match.tier -> this port's lower-case vocabulary. A spine
 # with no match at all (`match is None`) is "unmatched", handled below rather
@@ -45,8 +46,13 @@ _MAX_ALTERNATIVES = 5
 class BooksnapReader:
     """Implements ``app.ports.reader.Reader``."""
 
-    def __init__(self, blob_store: BlobStore) -> None:
+    def __init__(self, blob_store: BlobStore,
+                 book_store: BookStore | None = None) -> None:
         self.blob_store = blob_store
+        # Optional so a caller that only wants `code_version()`/`unavailable()`
+        # need not build one. Without it the confirmed library simply does not
+        # join the retrieval chain — a measurable loss, not a broken read.
+        self.book_store = book_store
 
     # --- Reader ------------------------------------------------------------
 
@@ -61,7 +67,7 @@ class BooksnapReader:
     ) -> list[ReadClaim]:
         if not requests:
             return []
-        catalog, fallback, page_reader = self._build(mode)
+        catalog, fallback, page_reader = self._build(mode, library)
 
         with tempfile.TemporaryDirectory(prefix="booksnap-read-") as tmp:
             tmp_dir = Path(tmp)
@@ -209,23 +215,39 @@ class BooksnapReader:
         except Exception:
             return ""
 
-    def _build(self, mode: str):
+    def _build(self, mode: str, library: LibraryRef | None = None):
         """Retrieval chain + fallback + page reader for one read.
 
-        Deliberately NARROWER than ``booksnap/server.py``'s
-        ``_build_catalog``: that function also wires an experimental
-        Simania/Rebooks/Booksefer chain (``BOOKSNAP_CATALOG_BACKEND=simania``)
-        that is prototype-grade and not part of the measured baseline
-        CLAUDE.md documents. Copying it here would duplicate untested surface
-        for no product benefit; the two backends that ARE documented as
-        measured (``local``, ``nli``) are what this reads. Promote the wider
-        chain here the same way CLAUDE.md says to promote any new retrieval
-        source into ``_build_catalog``'s baseline — after a measured win, not
-        by default. (Judgment call — flag if the product needs the wider
-        chain sooner than accuracy work promotes it.)
+        A COPY of ``booksnap/server.py``'s ``_build_catalog``, not an import —
+        the product must not import the tuning server (H1). Kept deliberately
+        in step with it: the chain IS the measured baseline, so the two must
+        not drift.
+
+        ⚠ **This is what "no books" looked like.** An earlier version had only
+        ``nli`` and a ``local`` fallthrough, on the reading that the
+        Simania/Rebooks/Booksefer chain was "prototype-grade and not part of
+        the measured baseline". That was backwards: `local` is
+        ``sample_catalog.json``, the **57-entry hand-typed stand-in** from
+        early prototyping, and the simania chain is exactly what every measured
+        number in CLAUDE.md was produced with (`sweep --live --sources
+        simania,nli,...`, baseline row 20260806-142543). So a correctly-set
+        ``BOOKSNAP_CATALOG_BACKEND=simania`` fell through to a 57-book catalog
+        and a real shelf of 69 read spines matched **nothing**. The engine was
+        never at fault; the product handed it a toy catalog.
+
+        Two rules fall out of that and are worth keeping:
+
+          - the DEFAULT is the real chain. A product whose out-of-the-box
+            catalog is a 57-entry stand-in is broken for its actual purpose,
+            and `local` is now opt-in for offline/dev work;
+          - an unrecognised backend **raises**. Silently degrading to the
+            stand-in is what turned a one-line config gap into an afternoon of
+            "why does the engine find nothing".
         """
-        backend = os.environ.get("BOOKSNAP_CATALOG_BACKEND", "local").lower()
-        if backend == "nli":
+        backend = os.environ.get("BOOKSNAP_CATALOG_BACKEND", "simania").lower()
+        if backend == "simania":
+            catalog = self._chain(library)
+        elif backend == "nli":
             from booksnap.nli_catalog import NLICatalog
             key = os.environ.get("NLI_API_KEY", "")
             if not key:
@@ -233,10 +255,17 @@ class BooksnapReader:
                     "BOOKSNAP_CATALOG_BACKEND=nli but NLI_API_KEY is not set."
                 )
             catalog = NLICatalog(cache_dir=CONFIG.paths.work_dir / "nli_cache")
-        else:
+        elif backend == "local":
             cat_path = Path(os.environ.get(
                 "BOOKSNAP_CATALOG", REPO_ROOT / "sample_catalog.json"))
             catalog = LocalCatalog.from_json(cat_path)
+        else:
+            raise RuntimeError(
+                f"BOOKSNAP_CATALOG_BACKEND={backend!r} is not a backend this "
+                "reads (expected 'simania', 'nli' or 'local'). Refusing rather "
+                "than falling back to the 57-entry sample catalog, which reads "
+                "a real shelf as zero books."
+            )
 
         fallback = None
         fb_name = os.environ.get("BOOKSNAP_FALLBACK", "none").lower()
@@ -257,6 +286,46 @@ class BooksnapReader:
                                                  image_ctor=vision.Image)
 
         return catalog, fallback, page_reader
+
+    def _chain(self, library: LibraryRef | None):
+        """The measured retrieval chain, precise -> broad, each source
+        on-empty. Copied from ``booksnap/server.py:_build_catalog``.
+
+        Simania (edition-true Hebrew spellings, series metadata) -> NLI (legal
+        deposit authority) -> the used-book shops (out-of-print residue like
+        old SF that neither of the first two carries).
+
+        The primaries are ALWAYS unioned rather than cascaded: a thin union let
+        junk block exact hits (see ``UnionCatalog``). The shop tail joins only
+        when that union comes back thin.
+
+        The confirmed library is unioned in FRONT of all of it — a book the
+        owner confirmed once should match instantly on every later shelf — but
+        via the product's OWN books (``ProductLibraryCatalog``), never
+        ``booksnap.library.ConfirmedCatalog``, which reads the tuning server's
+        ``work/library.json``. Same idea, correct store.
+        """
+        from booksnap.extra_catalogs import (BooksferCatalog, ChainCatalog,
+                                             RebooksCatalog, UnionCatalog)
+        from booksnap.library import LibraryFirstCatalog
+        from booksnap.simania_catalog import SimaniaCatalog
+
+        work = CONFIG.paths.work_dir
+        primaries = [SimaniaCatalog(cache_dir=work / "simania_cache")]
+        if os.environ.get("NLI_API_KEY"):
+            from booksnap.nli_catalog import NLICatalog
+            primaries.append(NLICatalog(cache_dir=work / "nli_cache"))
+
+        chain = ChainCatalog([
+            UnionCatalog(primaries),
+            RebooksCatalog(cache_dir=work / "rebooks_cache"),
+            BooksferCatalog(cache_dir=work / "booksefer_cache"),
+        ])
+        if self.book_store is None or library is None:
+            return chain
+        from app.adapters.library_catalog import ProductLibraryCatalog
+        return LibraryFirstCatalog(
+            ProductLibraryCatalog(self.book_store, library), chain)
 
 
 def _jsonable(v: Any) -> Any:

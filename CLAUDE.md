@@ -520,17 +520,11 @@ names to run a subset (`python tests/run_all.py test_api`).
 | `test_search.py` | 15 | Hebrew search, against 24 real queries on the real 251 books |
 | `test_layering.py` | 9 | the one-way import rules (plan H1) |
 | `test_api.py` | 101 | `/api/v1` shapes + the versioning/tenancy meta-tests |
+| `test_reader_wiring.py` | 8 | WHICH catalog the product hands the engine |
 
-518 python tests as of P2.9 (+6 since P2.8, all in `test_api.py`: a settled
-read applying itself with zero client involvement, a `needs_decision` claim
-never auto-resolving, the diff-summary snapshot surviving the automatic
-apply, a failed read applying nothing, the automatic apply being idempotent
-against a later client apply, and a failed automatic apply NOT failing the
-read — see "Reads apply themselves now (P2.9)"). No pytest
-dependency, deliberately — the repo has never had one and the accuracy gate
-runs on bare python. Counts grow with each run's fixes; the commit log is
-the history (`SESSION_NOTES.md` was a one-time handoff and is gone —
-session scratch belongs in `notes/`, which is gitignored).
+526 python tests as of the catalog-wiring fix (+8: `test_reader_wiring.py`,
+which exists because the product silently handed the engine a 57-entry
+stand-in catalog and a real shelf matched nothing).
 
 **Test the real input, not a fixture you invented.** Added after uploads
 shipped broken with a green suite (see the MPO warning under "Images are
@@ -870,6 +864,51 @@ because `Shelf.__post_init__` rejects the same state, and the sqlite shelf
 *other* line of each pair IS caught. Worth knowing before reading a survivor
 as a missing test — the question to ask is "what else enforces this?", and
 only if nothing does is it a gap.
+
+## ⚠⚠ The product must hand the engine the SAME catalog (2026-08-09)
+
+A real shelf read **69 spines correctly and matched zero books**. It looked
+exactly like an engine regression. Nothing was wrong with the engine.
+
+`BooksnapReader._build` had `if backend == "nli": … else: LocalCatalog(...)`
+and no `simania` branch — so the owner's correctly-set
+`BOOKSNAP_CATALOG_BACKEND=simania` fell through the `else` and loaded
+**`sample_catalog.json`, the 57-entry hand-typed stand-in** from early
+prototyping. 69 real Hebrew titles were matched against 57 books.
+
+The reasoning that produced it, recorded because it is the trap: the simania
+chain was judged "prototype-grade and not part of the measured baseline". That
+is **backwards**. Every measured number in this file comes from that chain
+(`sweep --live --sources simania,nli,…`, baseline row 20260806-142543, and
+`booksnap-ui`'s own `launch.json` env). `local`/`sample_catalog.json` is the
+stand-in the honest-results section calls "a 57-entry hand-typed stand-in
+catalog". After the fix, the same photo: **15–17 matched of 35**, real books
+(MacLean, Wouk, Philip Roth, Clavell, Čapek).
+
+Three rules now hold, each mutation-checked in `tests/test_reader_wiring.py`:
+
+- **the product's default IS the chain.** A product whose out-of-the-box
+  catalog is the stand-in is broken for its actual purpose; `local` is opt-in
+  for offline work;
+- **an unrecognised backend RAISES.** Quietly degrading to the sample catalog
+  is what turned a one-line config gap into an afternoon of "why does the
+  engine find nothing". The refusal names the risk;
+- **the confirmed library joins the chain from the PRODUCT's store**
+  (`app/adapters/library_catalog.py:ProductLibraryCatalog`), never
+  `booksnap.library.ConfirmedCatalog` — that one reads `work/library.json`,
+  which belongs to the tuning server. Same idea, correct store. Note the
+  asymmetry with the sweep, which excludes the confirmed library on purpose
+  (there it is an *outcome* being measured, here it is evidence); do not
+  "fix" the inconsistency by making them agree.
+
+The general lesson, which is the same one MPO taught in a different costume:
+**when the product wraps the engine, the wrapper's defaults are part of the
+engine's accuracy.** `second_pass_retrieval`, the matcher gates and the
+post-match path all came through `Pipeline.run_page` untouched — the one thing
+the product chose for itself, the catalog, was the one thing that was wrong.
+Anything else the tuning server configures through env or `launch.json` is a
+candidate for the same bug; check `booksnap/server.py`'s `_build_*` against
+`BooksnapReader._build` when either changes.
 
 ## The default reading mode is `llmpage` (owner, 2026-08-08)
 
