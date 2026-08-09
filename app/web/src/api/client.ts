@@ -222,6 +222,12 @@ export const returnCopy = (bookId: string, copyId: string, opts?: ApiOptions) =>
 
 /** Export is a file download, so it is a URL rather than a fetch — letting the
  *  browser handle Content-Disposition is what makes "Save as…" work. */
+/** Authors already in the library, for the add-a-book form's completion.
+ *  Same measured Hebrew matching as every other search here — see
+ *  `app/api/routers/books.py:list_authors`. */
+export const listAuthors = (q: string, opts: ApiOptions = {}): Promise<string[]> =>
+  getJson(`/api/v1/books/authors?q=${encodeURIComponent(q)}`, opts)
+
 export const exportUrl = (format: 'csv' | 'json'): string =>
   `/api/v1/books/export?format=${format}`
 

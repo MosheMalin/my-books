@@ -14,7 +14,7 @@
 import type { Shelf } from '../api/client'
 import { useI18n } from '../lib/i18n'
 import { FindingList } from './FindingList'
-import type { FindingOp } from './findingOps'
+import type { Approvable, FindingOp } from './findingOps'
 import type { RunState } from './useCapture'
 
 export interface ReviewPanelProps {
@@ -25,7 +25,7 @@ export interface ReviewPanelProps {
   /** P2.10 — approve / fix / remove, on the same rows, right after the read.
    *  The workspace offers the identical loop days later. */
   onFinding: (claimId: string, op: FindingOp) => void
-  onApproveAll: (claimIds: string[]) => void
+  onApproveAll: (what: Approvable) => void
 }
 
 export function ReviewPanel({

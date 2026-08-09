@@ -32,11 +32,18 @@ import {
   applyDiff,
   getDiff,
   listCaptureReads,
+  listAuthors,
   lookupFindings,
   type DiffDTO,
   type ReadSummaryDTO,
 } from '../api/client'
-import { approveAllPending, performFindingOp, type FindingOp } from './findingOps'
+import {
+  approvableCount,
+  approveAll as approveAllRemote,
+  performFindingOp,
+  type Approvable,
+  type FindingOp,
+} from './findingOps'
 
 export interface ImageWorkspaceState {
   runs: ReadSummaryDTO[]
@@ -169,10 +176,9 @@ export function useImageWorkspace(captureId: string | null) {
    *  function that renders the count (`pendingApprovals`), so the two cannot
    *  drift. `_all` is a single busy key rather than one per claim: the whole
    *  batch is one request and one thing to wait for. */
-  const approveAll = useCallback((claimIds: readonly string[]) => {
-    if (!run || claimIds.length === 0) return
-    void withBusy('_all', () =>
-      approveAllPending(run.shelf_id, run.id, claimIds))
+  const approveAll = useCallback((what: Approvable) => {
+    if (!run || approvableCount(what) === 0) return
+    void withBusy('_all', () => approveAllRemote(run.shelf_id, run.id, what))
   }, [run, withBusy])
 
   /** *"The engine missed this book"* — files a MANUAL claim on this read and
@@ -183,6 +189,43 @@ export function useImageWorkspace(captureId: string | null) {
     void withBusy('_add', () =>
       addFindingByHand(run.shelf_id, run.id, { title, author }))
   }, [run, withBusy])
+
+  /**
+   * *"This one spine is really N volumes"* (owner, 2026-08-09).
+   *
+   * Part 1 IS this finding, re-titled — confirm-as-corrected while it is
+   * still pending, a plain book patch once it has landed, which are the two
+   * doors ✎ already uses. Parts 2..N are ordinary hand-added findings on the
+   * same read, so they arrive at `manual` and need no approval of their own.
+   *
+   * Sequential, not parallel: every call returns the diff, and the last one
+   * to answer is the one that must win. Firing them together would let the
+   * response to part 2 land after part 5 and paint a list missing three
+   * volumes that are, in fact, already saved.
+   */
+  const split = useCallback((claimId: string, titles: string[]) => {
+    if (!run || titles.length === 0) return
+    const outcome = [...(diff?.added ?? []), ...(diff?.corrected ?? []),
+                     ...(diff?.unchanged ?? []), ...(diff?.needs_decision ?? [])]
+      .find((o) => o.claim.id === claimId)
+    if (!outcome) return
+    const book = outcome.existing_book
+    const settled = ['added', 'corrected', 'unchanged'].includes(outcome.kind)
+    const author = settled && book ? (book.author ?? '') : outcome.claim.author
+
+    void withBusy(claimId, async () => {
+      let latest = await performFindingOp(
+        settled && book
+          ? { kind: 'edit', bookId: book.id, title: titles[0]!, author }
+          : { kind: 'confirm', title: titles[0]!, author },
+        run.shelf_id, run.id, claimId,
+      )
+      for (const title of titles.slice(1)) {
+        latest = await addFindingByHand(run.shelf_id, run.id, { title, author })
+      }
+      return latest
+    })
+  }, [run, diff, withBusy])
 
   /** *"Did this read already find it?"* while typing a title in by hand.
    *  A plain pass-through to the server — the matching rules live there
@@ -195,7 +238,8 @@ export function useImageWorkspace(captureId: string | null) {
   return {
     runs, runsLoading, error, openRunId, diff, diffLoading, diffError,
     runInFlight, busy,
-    openRun, answer, finding, approveAll, addByHand, lookup,
+    openRun, answer, finding, approveAll, addByHand, lookup, split,
+    authors: listAuthors,
   }
 }
 

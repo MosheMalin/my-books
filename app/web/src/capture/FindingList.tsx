@@ -22,7 +22,12 @@ import { useEffect, useRef, useState } from 'react'
 import type { ClaimOutcomeDTO, DiffDTO, FindingMatchDTO } from '../api/client'
 import { useI18n } from '../lib/i18n'
 import { ClaimRow } from './ClaimRow'
-import { pendingApprovals, type FindingOp } from './findingOps'
+import {
+  approvableCount,
+  approvableFindings,
+  type Approvable,
+  type FindingOp,
+} from './findingOps'
 
 export interface FindingListProps {
   diff: DiffDTO
@@ -31,28 +36,38 @@ export interface FindingListProps {
   busy: Set<string>
   onAnswer: (claimId: string, kind: string, copyId?: string | null) => void
   onFinding?: (claimId: string, op: FindingOp) => void
-  /** Approve every pending finding at once — the POC's own bulk action. The
-   *  ids it is handed are exactly the ones the button counted. */
-  onApproveAll?: (claimIds: string[]) => void
+  /** Approve everything unvouched-for at once — the POC's own bulk action.
+   *  What it is handed is exactly what the button counted. */
+  onApproveAll?: (what: Approvable) => void
   /** *"The engine missed this book"*. Absent on the live review panel: a
    *  read that is still settling has no stable set of findings to add to. */
   onAddByHand?: (title: string, author: string) => void
+  /** *"One spine, several volumes"* — see `ClaimRow`'s own prop. */
+  onSplit?: (claimId: string, titles: string[]) => void
   /** *"Did this read already find it?"*, asked as the title is typed. Absent
    *  wherever adding is (the two arrive together). */
   onLookup?: (q: string) => Promise<FindingMatchDTO[]>
+  /** Authors already in the library, for the author field's completion —
+   *  retyping one is how ``דויד גרוסמן`` and ``דוד גרוסמן`` become two
+   *  people (owner, 2026-08-09). */
+  onAuthors?: (q: string) => Promise<string[]>
   /** Rendered when the (possibly narrowed) list is empty. */
   emptyText: string
 }
 
 export function FindingList({
   diff, captureId, busy, onAnswer, onFinding, onApproveAll, onAddByHand,
-  onLookup, emptyText,
+  onLookup, onAuthors, onSplit, emptyText,
 }: FindingListProps) {
   const { t } = useI18n()
   const [adding, setAdding] = useState(false)
-  const pending = pendingApprovals(diff, captureId)
   const mine = (o: ClaimOutcomeDTO) =>
     captureId === undefined || o.claim.capture_id === captureId
+  const approvable = approvableFindings(diff, captureId)
+  const approvableN = approvableCount(approvable)
+  const pending = diff.needs_decision
+    .filter((o) => o.reason === 'new_book_unconfirmed')
+    .filter(mine)
 
   const rows = [
     ...diff.added, ...diff.corrected, ...diff.needs_decision,
@@ -91,16 +106,16 @@ export function FindingList({
         )}
       </div>
 
-      {(onApproveAll && pending.length > 0) || onAddByHand ? (
+      {(onApproveAll && approvableN > 0) || onAddByHand ? (
         <div className="chiprow findingbar">
-          {onApproveAll && pending.length > 0 && (
+          {onApproveAll && approvableN > 0 && (
             <button
               type="button"
               className="btn sm act-approve"
               disabled={busy.has('_all')}
-              onClick={() => onApproveAll(pending)}
+              onClick={() => onApproveAll(approvable)}
             >
-              {t.approve_all(pending.length)}
+              {t.approve_all(approvableN)}
             </button>
           )}
           {onAddByHand && !adding && (
@@ -116,6 +131,7 @@ export function FindingList({
         <AddByHand
           busy={busy.has('_add')}
           {...(onLookup ? { onLookup } : {})}
+          {...(onAuthors ? { onAuthors } : {})}
           onCancel={() => setAdding(false)}
           onSave={(title, author) => {
             setAdding(false)
@@ -136,6 +152,9 @@ export function FindingList({
             {...(onFinding
               ? { onFinding: (op: FindingOp) => onFinding(outcome.claim.id, op) }
               : {})}
+            {...(onSplit && onFinding
+              ? { onSplit: (titles: string[]) => onSplit(outcome.claim.id, titles) }
+              : {})}
           />
         ))
       )}
@@ -146,9 +165,10 @@ export function FindingList({
 /** The owner typing in a book the reader missed. Inline, like every other
  *  form on this screen — a modal for two fields would be the heavier of the
  *  two options and buy nothing. */
-function AddByHand({ busy, onLookup, onSave, onCancel }: {
+function AddByHand({ busy, onLookup, onAuthors, onSave, onCancel }: {
   busy: boolean
   onLookup?: (q: string) => Promise<FindingMatchDTO[]>
+  onAuthors?: (q: string) => Promise<string[]>
   onSave: (title: string, author: string) => void
   onCancel: () => void
 }) {
@@ -156,6 +176,8 @@ function AddByHand({ busy, onLookup, onSave, onCancel }: {
   const [title, setTitle] = useState('')
   const [author, setAuthor] = useState('')
   const [found, setFound] = useState<FindingMatchDTO[]>([])
+  const [authors, setAuthors] = useState<string[]>([])
+  const authorSeq = useRef(0)
   // Ignore out-of-order replies — typing outruns the network, and a slow
   // answer to "מל" landing after the answer to "מלכי" would show the wrong
   // hint. Exactly the guard `booksnap/static/index.html`'s own version uses
@@ -177,6 +199,28 @@ function AddByHand({ busy, onLookup, onSave, onCancel }: {
     return () => clearTimeout(timer)
   }, [title, onLookup])
 
+  // Authors the library already knows, completing what is typed. Same
+  // debounce and same out-of-order guard as the title lookup above; the
+  // MATCHING is the server's (`GET /books/authors`), for the reason every
+  // search in this codebase is server-side.
+  useEffect(() => {
+    if (!onAuthors) return
+    const q = author.trim()
+    if (q.length < 1) { setAuthors([]); return }
+    const mine = ++authorSeq.current
+    const timer = setTimeout(() => {
+      void onAuthors(q)
+        .then((hits) => {
+          // An exact match is not a suggestion — it is what you already typed.
+          if (mine === authorSeq.current) {
+            setAuthors(hits.filter((a) => a !== q))
+          }
+        })
+        .catch(() => { if (mine === authorSeq.current) setAuthors([]) })
+    }, 250)
+    return () => clearTimeout(timer)
+  }, [author, onAuthors])
+
   return (
     <form
       className="fixbox"
@@ -194,6 +238,16 @@ function AddByHand({ busy, onLookup, onSave, onCancel }: {
         <span className="tiny muted">{t.author_label}</span>
         <input className="rtl-safe" value={author} aria-label={t.author_label}
                onChange={(e) => setAuthor(e.target.value)} />
+        {authors.length > 0 && (
+          <span className="chiprow authorhints">
+            {authors.map((a) => (
+              <button key={a} type="button" className="chip rtl-safe"
+                      onClick={() => { setAuthor(a); setAuthors([]) }}>
+                {a}
+              </button>
+            ))}
+          </span>
+        )}
       </label>
       <div className="chiprow">
         <button type="submit" className="btn sm act-approve"

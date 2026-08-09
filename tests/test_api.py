@@ -2746,6 +2746,46 @@ def test_adding_a_book_to_a_photo_by_hand_files_it_immediately_at_manual():
             == ["manual"]
 
 
+def test_the_author_field_completes_against_the_library():
+    """Retyping an author is how "דויד גרוסמן" and "דוד גרוסמן" become two
+    people the author chip then treats as two shelves' worth of books (owner,
+    2026-08-09). Matching is `app.domain.search`'s, so "the search mechanism"
+    means ONE thing across this codebase."""
+    store = MemoryBookStore()
+    c = TestClient(_app(store=store))
+    for n, (title, author) in enumerate([
+        ("ספר א", "דוד גרוסמן"),
+        ("ספר ב", "דוד גרוסמן"),   # same author, listed once
+        ("ספר ג", "עמוס עוז"),
+        ("ספר ד", ""),               # no author at all
+    ]):
+        store.save(TEST_LIBRARY, new_book(
+            id=f"b{n}", library_id=TEST_LIBRARY.id, title=title, author=author,
+            copy_id=f"c{n}"))
+
+    everyone = c.get(f"{API_PREFIX}/books/authors").json()
+    assert everyone == ["דוד גרוסמן", "עמוס עוז"], (
+        "authors must be distinct, and a book with no author is not one"
+    )
+
+    narrowed = c.get(f"{API_PREFIX}/books/authors", params={"q": "גרוס"}).json()
+    assert narrowed == ["דוד גרוסמן"]
+    assert c.get(f"{API_PREFIX}/books/authors", params={"q": "זזז"}).json() == []
+
+
+def test_the_author_list_is_spelled_the_way_the_owner_spells_it():
+    """Normalisation is for MATCHING. An autocomplete that filled in the
+    nikud-stripped, final-letter-folded form would quietly rewrite the
+    library's own data one accepted suggestion at a time."""
+    store = MemoryBookStore()
+    c = TestClient(_app(store=store))
+    store.save(TEST_LIBRARY, new_book(
+        id="b1", library_id=TEST_LIBRARY.id, title="ספר",
+        author="אפרים קישון", copy_id="c1"))
+
+    assert c.get(f"{API_PREFIX}/books/authors", params={"q": "קיש"}).json()         == ["אפרים קישון"]
+
+
 def test_adding_by_hand_first_asks_whether_this_read_already_found_it():
     """The expensive human error `booksnap/server.py:lookup` names: adding a
     book by hand that the run DID find and the eye skipped, on a forty-row

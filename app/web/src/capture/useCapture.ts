@@ -59,7 +59,13 @@ import {
   type ReadSummaryDTO,
   type Shelf,
 } from '../api/client'
-import { approveAllPending, performFindingOp, type FindingOp } from './findingOps'
+import {
+  approvableCount,
+  approveAll as approveAllRemote,
+  performFindingOp,
+  type Approvable,
+  type FindingOp,
+} from './findingOps'
 
 export type Mode = 'spines' | 'fullpage' | 'llmpage'
 export type ReadStage = 'unread' | 'queued' | 'done'
@@ -594,9 +600,9 @@ export function useCapture() {
   /** "Approve all" on a LIVE run — the same bulk act the workspace offers,
    *  through the same `approveAllPending`. */
   const approveAllOnRun = useCallback(
-    async (key: string, claimIds: readonly string[]) => {
+    async (key: string, what: Approvable) => {
       const run = runsRef.current.find((r) => r.key === key)
-      if (!run || claimIds.length === 0) return
+      if (!run || approvableCount(what) === 0) return
       setRuns((rs) => rs.map((r) => (r.key === key
         ? {
             ...r, answerError: null,
@@ -604,7 +610,7 @@ export function useCapture() {
           }
         : r)))
       try {
-        const diff = await approveAllPending(run.shelfId, run.readId, claimIds)
+        const diff = await approveAllRemote(run.shelfId, run.readId, what)
         setRuns((rs) => rs.map((r) => {
           if (r.key !== key) return r
           const answeringClaimIds = new Set(r.answeringClaimIds)

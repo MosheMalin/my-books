@@ -37,6 +37,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/books/authors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Authors in the library, for an autocomplete
+         * @description The distinct authors already in this library, narrowed by ``q``.
+         *
+         *     For the *"add a book the engine missed"* form (owner, 2026-08-09): typing
+         *     an author you already own should complete, not be retyped — and retyped is
+         *     how ``דויד גרוסמן`` and ``דוד גרוסמן`` end up as two authors that the
+         *     author chip then treats as two people. The tuning UI grew the same control
+         *     for the same reason (``booksnap/static/index.html``'s ``libAuthors``).
+         *
+         *     Matching is `app.domain.search`'s, so "the search mechanism" means one
+         *     thing across this codebase: the same particle tolerance and the same
+         *     normalisation the book search and the finding lookup use.
+         *
+         *     Returned in the AUTHOR's own spelling, never normalized — normalisation is
+         *     for matching, and an autocomplete that filled in a nikud-stripped,
+         *     final-letter-folded string would quietly rewrite the owner's own data.
+         */
+        get: operations["list_authors_api_v1_books_authors_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/books/export": {
         parameters: {
             query?: never;
@@ -1947,6 +1981,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BookDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_authors_api_v1_books_authors_get: {
+        parameters: {
+            query?: {
+                /** @description What the owner is typing. */
+                q?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": string[];
                 };
             };
             /** @description Validation Error */

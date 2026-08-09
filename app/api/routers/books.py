@@ -57,6 +57,7 @@ from app.domain import (
     new_book,
     return_copy,
 )
+from app.domain.search import matches, parse
 from app.ports import Clock, IdGen
 from app.ports.duplicates import DuplicateQueue
 from app.ports.store import BookSort, BookStore, DuplicateBookKey
@@ -65,6 +66,12 @@ router = APIRouter(prefix="/books", tags=["books"])
 
 MAX_LIMIT = 200
 EXPORT_MAX = 100_000
+
+# The author list is a scan, same honest O(library) trade `EXPORT_MAX` and the
+# diff endpoints already take: §6's sizes are a few thousand books, there is no
+# author index to narrow with, and inventing one before it is measured to
+# matter is the premature half of optimisation.
+_AUTHOR_SCAN_LIMIT = 100_000
 # Excel opens a UTF-8 CSV as mojibake without it, and "my export is broken" is
 # then indistinguishable from "your data is broken".
 UTF8_BOM = b"\xef\xbb\xbf"
@@ -189,6 +196,45 @@ def list_books(
 # literal path registered after a parameterised one is unreachable — "export"
 # would arrive as a book id and 404. There is a test for this precisely
 # because the bug is invisible until someone clicks Export.
+@router.get("/authors", response_model=list[str],
+            summary="Authors in the library, for an autocomplete")
+def list_authors(
+    library: LibraryRef = Depends(current_library),
+    store: BookStore = Depends(get_book_store),
+    q: str = Query("", description="What the owner is typing."),
+    limit: int = Query(8, ge=1, le=50),
+) -> list[str]:
+    """The distinct authors already in this library, narrowed by ``q``.
+
+    For the *"add a book the engine missed"* form (owner, 2026-08-09): typing
+    an author you already own should complete, not be retyped — and retyped is
+    how ``דויד גרוסמן`` and ``דוד גרוסמן`` end up as two authors that the
+    author chip then treats as two people. The tuning UI grew the same control
+    for the same reason (``booksnap/static/index.html``'s ``libAuthors``).
+
+    Matching is `app.domain.search`'s, so "the search mechanism" means one
+    thing across this codebase: the same particle tolerance and the same
+    normalisation the book search and the finding lookup use.
+
+    Returned in the AUTHOR's own spelling, never normalized — normalisation is
+    for matching, and an autocomplete that filled in a nikud-stripped,
+    final-letter-folded string would quietly rewrite the owner's own data.
+    """
+    query = parse(q)
+    seen: dict[str, str] = {}
+    for book in store.list(library, limit=_AUTHOR_SCAN_LIMIT).items:
+        author = book.author.strip()
+        if not author or book.normalized_author in seen:
+            continue
+        if query and not matches(query, book.normalized_author):
+            continue
+        seen[book.normalized_author] = author
+    # Alphabetical on the normalized form: a list of names has no relevance
+    # order worth inventing, and the same string must not move between two
+    # keystrokes that both match it.
+    return [seen[k] for k in sorted(seen)][:limit]
+
+
 @router.get("/export", summary="Export the whole library (CSV or JSON)")
 def export_books(
     library: LibraryRef = Depends(current_library),

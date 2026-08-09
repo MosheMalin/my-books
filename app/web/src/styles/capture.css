@@ -254,6 +254,25 @@
   margin: 3px 0 0;
   padding-inline-start: 16px;
 }
+.authorhints {
+  margin-top: 4px;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.authorhints .chip {
+  font-size: 12px;
+  padding: 2px 8px;
+}
+.splitbox select {
+  font-size: 12px;
+  padding: 2px 6px;
+  width: auto;
+  margin-inline-start: 5px;
+}
+.splitbox label {
+  display: inline-flex;
+  align-items: center;
+}
 .altbox td:last-child {
   text-align: end;
   white-space: nowrap;

@@ -38,7 +38,13 @@
 import { useState } from 'react'
 import type { ClaimOutcomeDTO } from '../api/client'
 import { useI18n } from '../lib/i18n'
-import type { FindingOp } from './findingOps'
+import {
+  DEFAULT_VOLUMES,
+  MAX_VOLUMES,
+  volumeTitles,
+  type FindingOp,
+  type VolumeStyle,
+} from './findingOps'
 
 const TIER_CLASS: Record<string, string> = {
   auto: 'b-auto', review: 'b-review', unmatched: 'b-none', manual: 'b-manual',
@@ -63,12 +69,19 @@ export interface ClaimRowProps {
    *  findings are shown read-only — and then no action buttons are drawn at
    *  all, rather than disabled ones (the "absent, not disabled" rule). */
   onFinding?: (op: FindingOp) => void
+  /** *"This one spine is really N volumes"* — hands back every volume title,
+   *  part 1 first. The caller re-titles this finding to part 1 and adds the
+   *  rest by hand; see `volumeTitles`. */
+  onSplit?: (titles: string[]) => void
 }
 
-export function ClaimRow({ outcome, answering, onAnswer, onFinding }: ClaimRowProps) {
+export function ClaimRow({
+  outcome, answering, onAnswer, onFinding, onSplit,
+}: ClaimRowProps) {
   const { t } = useI18n()
   const [showWhy, setShowWhy] = useState(false)
   const [editing, setEditing] = useState(false)
+  const [splitting, setSplitting] = useState(false)
   const { claim } = outcome
 
   const tierClass = TIER_CLASS[claim.tier] ?? 'b-none'
@@ -149,7 +162,14 @@ export function ClaimRow({ outcome, answering, onAnswer, onFinding }: ClaimRowPr
               {claim.score ? ` ${Math.round(claim.score)}/${MAX_SCORE}` : ''}
             </span>
             <span className={`badge ${diffClass}`}>{diffLabel}</span>
-            {book?.status === 'approved' && (
+            {/* Anything a human has vouched for, not only the literal
+                `approved` rung. A book the owner TYPED IN is `manual` —
+                stronger evidence than approval, §5.1's ladder — and showing
+                no badge for it made a hand-added finding look like the one
+                thing nobody had confirmed (owner, 2026-08-09). The status
+                itself is left alone: downgrading manual to approved would
+                throw away which of the two actually happened. */}
+            {book && book.status !== 'auto' && (
               <span className="badge b-approved">{t.finding_approved_note}</span>
             )}
             <button type="button" className="linkish"
@@ -189,6 +209,16 @@ export function ClaimRow({ outcome, answering, onAnswer, onFinding }: ClaimRowPr
             >
               {t.finding_edit}
             </button>
+            {onSplit && (
+              <button
+                type="button"
+                className="btn sm act-fix"
+                disabled={answering}
+                onClick={() => setSplitting((v) => !v)}
+              >
+                {t.finding_split}
+              </button>
+            )}
             <button
               type="button"
               className="btn sm act-remove"
@@ -212,6 +242,18 @@ export function ClaimRow({ outcome, answering, onAnswer, onFinding }: ClaimRowPr
           </div>
         )}
       </div>
+
+      {splitting && onSplit && (
+        <SplitIntoVolumes
+          title={shownTitle}
+          busy={answering}
+          onCancel={() => setSplitting(false)}
+          onSplit={(titles) => {
+            setSplitting(false)
+            onSplit(titles)
+          }}
+        />
+      )}
 
       {editing && (
         <FixDetails
@@ -290,6 +332,60 @@ function FixDetails({ title, author, busy, saveLabel, onSave, onCancel }: {
     </form>
   )
 }
+
+/** *"One spine, several volumes"* — pick how many and how they are marked,
+ *  and see the result before committing to it. The preview is the control's
+ *  whole justification: "א/ב" versus "1/2" versus "I/II" is a choice about
+ *  what is printed on the owner's own books, and no label describes that as
+ *  well as showing it. */
+function SplitIntoVolumes({ title, busy, onSplit, onCancel }: {
+  title: string
+  busy: boolean
+  onSplit: (titles: string[]) => void
+  onCancel: () => void
+}) {
+  const { t } = useI18n()
+  const [count, setCount] = useState(DEFAULT_VOLUMES)
+  const [style, setStyle] = useState<VolumeStyle>('hebrew')
+  const titles = volumeTitles(title, count, style)
+
+  return (
+    <div className="dupbox splitbox">
+      <div className="chiprow">
+        <label className="tiny muted">
+          {t.split_count}
+          <select value={count} aria-label={t.split_count}
+                  onChange={(e) => setCount(Number(e.target.value))}>
+            {Array.from({ length: MAX_VOLUMES - 1 }, (_, i) => i + 2).map((n) => (
+              <option key={n} value={n}>{n}</option>
+            ))}
+          </select>
+        </label>
+        <label className="tiny muted">
+          {t.split_style}
+          <select value={style} aria-label={t.split_style}
+                  onChange={(e) => setStyle(e.target.value as VolumeStyle)}>
+            <option value="hebrew">{t.split_hebrew}</option>
+            <option value="numbers">{t.split_numbers}</option>
+            <option value="roman">{t.split_roman}</option>
+            <option value="signal">{t.split_signal}</option>
+          </select>
+        </label>
+        <button type="button" className="btn sm act-approve" disabled={busy}
+                onClick={() => onSplit(titles)}>
+          {t.split_do}
+        </button>
+        <button type="button" className="btn sm" onClick={onCancel}>
+          {t.cancel}
+        </button>
+      </div>
+      <div className="tiny muted rtl-safe" style={{ marginTop: 6 }}>
+        {titles.join(' · ')}
+      </div>
+    </div>
+  )
+}
+
 
 function DupPrompt({ outcome, answering, onAnswer }: ClaimRowProps) {
   const { t } = useI18n()

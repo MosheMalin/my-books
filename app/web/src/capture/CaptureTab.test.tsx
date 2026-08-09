@@ -644,34 +644,32 @@ describe('Capture tab — the image workspace (P2.10, §12.2 #10)', () => {
     expect(await screen.findByText(/130\/130/)).toBeInTheDocument()
   })
 
-  it('approves every pending finding in one call, and only the pending ones', async () => {
+  it('never sweeps a duplicate question into a bulk approval', async () => {
+    // The POC's own hard-won rule. A duplicate question is a DIFFERENT
+    // question — "which copy is this?" — and answering it by bulk-approving
+    // would invent a second copy of a book that never moved.
     const server = processedPhoto({
       ...emptyDiff('sh1', 1, 'rd1'),
       needs_decision: [
         outcome({ kind: 'needs_decision', reason: 'new_book_unconfirmed',
-                  claim: claim({ id: 'c1', capture_id: 'cap1', title: 'א' }) }),
-        outcome({ kind: 'needs_decision', reason: 'new_book_unconfirmed',
-                  claim: claim({ id: 'c2', capture_id: 'cap1', title: 'ב' }) }),
-        // §5.4's duplicate question is a DIFFERENT question — "approve all"
-        // must never sweep it up, which is the POC's own hard-won rule.
+                  claim: claim({ id: 'c1', capture_id: 'cap1', title: 'A',
+                                 tier: 'auto' }) }),
         outcome({ kind: 'needs_decision', reason: 'ambiguous_location',
                   existing_book: fakeBook('bk9'),
-                  claim: claim({ id: 'c3', capture_id: 'cap1', title: 'ג' }) }),
+                  claim: claim({ id: 'c3', capture_id: 'cap1', title: 'C',
+                                 tier: 'auto' }) }),
       ],
     })
     await openWorkspace()
 
-    const bulk = await screen.findByRole('button', { name: 'אישור הכל (2)' })
-    await userEvent.click(bulk)
+    await userEvent.click(await screen.findByRole(
+      'button', { name: '\u05d0\u05d9\u05e9\u05d5\u05e8 \u05db\u05dc \u05d4\u05d6\u05d9\u05d4\u05d5\u05d9\u05d9\u05dd \u05d4\u05d0\u05d5\u05d8\u05d5\u05de\u05d8\u05d9\u05d9\u05dd (1)' }))
 
     await waitFor(() => {
       const body = server.bodies.find(
-        (b) => Array.isArray((b as { answers?: unknown[] }).answers)
-          && ((b as { answers: unknown[] }).answers.length ?? 0) > 1)
-      expect(body).toBeTruthy()
-      const answers = (body as { answers: { claim_id: string; kind: string }[] }).answers
-      expect(answers.map((a) => a.claim_id).sort()).toEqual(['c1', 'c2'])
-      expect(answers.every((a) => a.kind === 'confirm')).toBe(true)
+        (b) => (b as { answers?: { claim_id: string }[] }).answers?.length)
+      const answers = (body as { answers: { claim_id: string }[] }).answers
+      expect(answers.map((a) => a.claim_id)).toEqual(['c1'])
     })
   })
 
@@ -738,6 +736,125 @@ describe('Capture tab — the image workspace (P2.10, §12.2 #10)', () => {
       expect(server.calls.some((c) => c.includes('/findings/lookup?q='))).toBe(true))
     // ...and it never blocks: the add button stays live.
     expect(screen.getByRole('button', { name: 'הוספה' })).toBeEnabled()
+  })
+
+  it('bulk-approves every unvouched-for finding, pending or already landed', async () => {
+    // What the owner went looking for and did not find: his photo's rows were
+    // books already in the library but still on the `auto` rung, each with
+    // its own Approve — the POC's "approve all auto" covered exactly those.
+    const server = processedPhoto({
+      ...emptyDiff('sh1', 1, 'rd1'),
+      unchanged: [
+        outcome({ kind: 'unchanged', reason: 'same_location', book_key: 'k1',
+                  existing_book: fakeBook('bk1', { status: 'auto' }),
+                  claim: claim({ id: 'c1', capture_id: 'cap1', title: 'A' }) }),
+        outcome({ kind: 'unchanged', reason: 'same_location', book_key: 'k2',
+                  existing_book: fakeBook('bk2', { status: 'approved' }),
+                  claim: claim({ id: 'c2', capture_id: 'cap1', title: 'B' }) }),
+      ],
+      needs_decision: [
+        outcome({ kind: 'needs_decision', reason: 'new_book_unconfirmed',
+                  claim: claim({ id: 'c3', capture_id: 'cap1', title: 'C',
+                                 tier: 'auto' }) }),
+        // A REVIEW-tier guess is NOT swept up — the POC's rule, and a bulk
+        // click is not where you accept the engine's low-confidence reads.
+        outcome({ kind: 'needs_decision', reason: 'new_book_unconfirmed',
+                  claim: claim({ id: 'c4', capture_id: 'cap1', title: 'D',
+                                 tier: 'review' }) }),
+      ],
+    })
+    await openWorkspace()
+
+    // 1 auto-rung book + 1 pending AUTO finding. Not the approved book, not
+    // the review-tier guess.
+    const bulk = await screen.findByRole(
+      'button', { name: '\u05d0\u05d9\u05e9\u05d5\u05e8 \u05db\u05dc \u05d4\u05d6\u05d9\u05d4\u05d5\u05d9\u05d9\u05dd \u05d4\u05d0\u05d5\u05d8\u05d5\u05de\u05d8\u05d9\u05d9\u05dd (2)' })
+    await userEvent.click(bulk)
+
+    await waitFor(() => {
+      expect(server.calls.some((c) => c.includes('/books/bk1/approve'))).toBe(true)
+      const body = server.bodies.find(
+        (b) => (b as { answers?: { claim_id: string }[] }).answers?.length)
+      const answers = (body as { answers: { claim_id: string }[] }).answers
+      expect(answers.map((a) => a.claim_id)).toEqual(['c3'])
+    })
+    expect(server.calls.some((c) => c.includes('/books/bk2/approve'))).toBe(false)
+  })
+
+  it('marks a hand-typed book as vouched for, not as something nobody confirmed', async () => {
+    processedPhoto({
+      ...emptyDiff('sh1', 1, 'rd1'),
+      unchanged: [outcome({
+        kind: 'unchanged', reason: 'same_location', book_key: 'k1',
+        existing_book: fakeBook('bk1', { title: '\u05d4\u05d5\u05e7\u05dc\u05d3', status: 'manual' }),
+        claim: claim({ id: 'c1', capture_id: 'cap1', title: '\u05d4\u05d5\u05e7\u05dc\u05d3',
+                       tier: 'manual' }),
+      })],
+    })
+    await openWorkspace()
+
+    const row = (await screen.findByText('\u05d4\u05d5\u05e7\u05dc\u05d3')).closest('.rrow') as HTMLElement
+    // `manual` is STRONGER than approved (the ladder), so the badge that says
+    // "a human vouched for this" has to fire for it too.
+    expect(within(row).getByText('\u05d0\u05d5\u05e9\u05e8')).toBeInTheDocument()
+    expect(within(row).queryByRole('button', { name: '\u05d0\u05d9\u05e9\u05d5\u05e8 \u05d4\u05e1\u05e4\u05e8' }))
+      .not.toBeInTheDocument()
+  })
+
+  it('splits one finding into volumes, named in the chosen style', async () => {
+    const server = processedPhoto({
+      ...emptyDiff('sh1', 1, 'rd1'),
+      needs_decision: [outcome({
+        kind: 'needs_decision', reason: 'new_book_unconfirmed', book_key: 'k1',
+        claim: claim({ id: 'c1', capture_id: 'cap1', title: '\u05e9\u05e8 \u05d4\u05d8\u05d1\u05e2\u05d5\u05ea',
+                       author: '\u05d8\u05d5\u05dc\u05e7\u05d9\u05df', tier: 'auto' }),
+      })],
+    })
+    await openWorkspace()
+    await screen.findByText('\u05e9\u05e8 \u05d4\u05d8\u05d1\u05e2\u05d5\u05ea')
+
+    await userEvent.click(screen.getByRole('button', { name: '\u05e4\u05d9\u05e6\u05d5\u05dc \u05dc\u05db\u05e8\u05db\u05d9\u05dd' }))
+    await userEvent.selectOptions(screen.getByLabelText('\u05db\u05de\u05d4 \u05db\u05e8\u05db\u05d9\u05dd'), '3')
+    // The preview is the control's justification: the mark is a choice about
+    // what is printed on the owner's own books.
+    expect(screen.getByText(
+      '\u05e9\u05e8 \u05d4\u05d8\u05d1\u05e2\u05d5\u05ea \u05d0 \u00b7 \u05e9\u05e8 \u05d4\u05d8\u05d1\u05e2\u05d5\u05ea \u05d1 \u00b7 \u05e9\u05e8 \u05d4\u05d8\u05d1\u05e2\u05d5\u05ea \u05d2')).toBeInTheDocument()
+    await userEvent.selectOptions(screen.getByLabelText('\u05e1\u05d9\u05de\u05d5\u05df'), 'roman')
+    expect(screen.getByText(
+      '\u05e9\u05e8 \u05d4\u05d8\u05d1\u05e2\u05d5\u05ea I \u00b7 \u05e9\u05e8 \u05d4\u05d8\u05d1\u05e2\u05d5\u05ea II \u00b7 \u05e9\u05e8 \u05d4\u05d8\u05d1\u05e2\u05d5\u05ea III')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: '\u05e4\u05d9\u05e6\u05d5\u05dc' }))
+
+    await waitFor(() => {
+      // Part 1 answers the finding itself (confirm-as-corrected); parts 2..N
+      // are hand-added findings on the same read.
+      const confirm = server.bodies.find(
+        (b) => (b as { answers?: { title?: string }[] }).answers?.[0]?.title)
+      expect((confirm as { answers: { title: string }[] }).answers[0]!.title)
+        .toBe('\u05e9\u05e8 \u05d4\u05d8\u05d1\u05e2\u05d5\u05ea I')
+      const added = server.bodies.filter(
+        (b) => 'title' in (b ?? {}) && !('answers' in (b ?? {})))
+      expect(added.map((b) => (b as { title: string }).title))
+        .toEqual(['\u05e9\u05e8 \u05d4\u05d8\u05d1\u05e2\u05d5\u05ea II', '\u05e9\u05e8 \u05d4\u05d8\u05d1\u05e2\u05d5\u05ea III'])
+      // The author rides along — the volumes are by the same person.
+      expect((added[0] as { author: string }).author).toBe('\u05d8\u05d5\u05dc\u05e7\u05d9\u05df')
+    }, { timeout: 3000 })
+  })
+
+  it('completes the author against the library instead of retyping it', async () => {
+    const server = processedPhoto(settled())
+    server.authorsFor = () => ['\u05d3\u05d5\u05d3 \u05d2\u05e8\u05d5\u05e1\u05de\u05df']
+    await openWorkspace()
+    await screen.findByText('\u05de\u05dc\u05db\u05d9 \u05d4\u05db\u05d5\u05e4\u05e8\u05d9\u05dd')
+
+    await userEvent.click(screen.getByRole(
+      'button', { name: '+ \u05d4\u05d5\u05e1\u05e4\u05ea \u05e1\u05e4\u05e8 \u05e9\u05d4\u05de\u05e0\u05d5\u05e2 \u05e4\u05e1\u05e4\u05e1' }))
+    await userEvent.type(screen.getByLabelText('\u05de\u05d7\u05d1\u05e8'), '\u05d2\u05e8\u05d5\u05e1')
+
+    const hint = await screen.findByRole(
+      'button', { name: '\u05d3\u05d5\u05d3 \u05d2\u05e8\u05d5\u05e1\u05de\u05df' }, { timeout: 2000 })
+    await userEvent.click(hint)
+    expect(screen.getByLabelText('\u05de\u05d7\u05d1\u05e8')).toHaveValue('\u05d3\u05d5\u05d3 \u05d2\u05e8\u05d5\u05e1\u05de\u05df')
   })
 
   it('counts removals in the findings summary', async () => {

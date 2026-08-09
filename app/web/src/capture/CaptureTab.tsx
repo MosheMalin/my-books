@@ -187,7 +187,7 @@ export function CaptureTab() {
                 void cap.answerClaim(run.key, claimId, kind, copyId)}
               onFinding={(claimId, op) =>
                 void cap.findingOnRun(run.key, claimId, op)}
-              onApproveAll={(claimIds) => void cap.approveAllOnRun(run.key, claimIds)}
+              onApproveAll={(what) => void cap.approveAllOnRun(run.key, what)}
             />
           ))
         )}

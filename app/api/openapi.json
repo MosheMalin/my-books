@@ -1990,6 +1990,68 @@
         ]
       }
     },
+    "/api/v1/books/authors": {
+      "get": {
+        "description": "The distinct authors already in this library, narrowed by ``q``.\n\nFor the *\"add a book the engine missed\"* form (owner, 2026-08-09): typing\nan author you already own should complete, not be retyped — and retyped is\nhow ``דויד גרוסמן`` and ``דוד גרוסמן`` end up as two authors that the\nauthor chip then treats as two people. The tuning UI grew the same control\nfor the same reason (``booksnap/static/index.html``'s ``libAuthors``).\n\nMatching is `app.domain.search`'s, so \"the search mechanism\" means one\nthing across this codebase: the same particle tolerance and the same\nnormalisation the book search and the finding lookup use.\n\nReturned in the AUTHOR's own spelling, never normalized — normalisation is\nfor matching, and an autocomplete that filled in a nikud-stripped,\nfinal-letter-folded string would quietly rewrite the owner's own data.",
+        "operationId": "list_authors_api_v1_books_authors_get",
+        "parameters": [
+          {
+            "description": "What the owner is typing.",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "What the owner is typing.",
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 8,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "title": "Response List Authors Api V1 Books Authors Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Authors in the library, for an autocomplete",
+        "tags": [
+          "books"
+        ]
+      }
+    },
     "/api/v1/books/export": {
       "get": {
         "description": "The honest answer to lock-in (§6): everything, in one file, always.\n\nCSV is written with a UTF-8 BOM. Without it Excel opens a Hebrew CSV as\nmojibake, and \"my export is broken\" is indistinguishable from \"your data\nis broken\".",

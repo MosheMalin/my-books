@@ -48,6 +48,9 @@ export interface FakeCaptureServer {
    *  `reconcile()`; a test hands back the hits its case is about. */
   lookupFor: (q: string) => { claim_id: string; title: string; author: string;
                               tier: string }[]
+  /** What `GET /books/authors?q=` answers with — again, the real matching is
+   *  `app.domain.search` on the server. */
+  authorsFor: (q: string) => string[]
   /** status the NEXT `POST .../reads` returns — most tests want 'done' so
    *  no fake-timer polling is needed to reach the review panel. */
   nextReadStatus: 'running' | 'done' | 'stopped' | 'failed'
@@ -124,6 +127,7 @@ export function fakeCaptureServer(
     diffFor: (readId, _answers) => emptyDiff('sh1', 1, readId),
     findingResult: (_action, _claimId) => emptyDiff('sh1', 1, 'rd1'),
     lookupFor: (_q) => [],
+    authorsFor: (_q) => [],
     uploadShouldFail: false,
   }
 
@@ -221,10 +225,22 @@ export function fakeCaptureServer(
       return respond(q.length < 2 ? [] : server.lookupFor(q))
     }
 
+    // The hand-added finding (P2.10). Answers with the diff `diffFor` gives,
+    // like every other write here — this fake does not model what adding a
+    // book does to a diff, it models the CALL.
+    if (parts[2] === 'shelves' && parts[4] === 'reads' && parts[6] === 'findings'
+        && !parts[7] && method === 'POST') {
+      return respond(server.diffFor(parts[5]!, []), 201)
+    }
+
     if (parts[2] === 'shelves' && parts[4] === 'reads' && parts[6] === 'findings'
         && parts[8] && method === 'POST') {
       const action = parts[8] as 'retract' | 'restore'
       return respond(server.findingResult(action, parts[7]!))
+    }
+
+    if (parts[2] === 'books' && parts[3] === 'authors' && method === 'GET') {
+      return respond(server.authorsFor(u.searchParams.get('q') ?? ''))
     }
 
     if (parts[2] === 'books' && parts[3] && parts[4] === 'approve'

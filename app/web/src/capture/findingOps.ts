@@ -66,33 +66,118 @@ export async function performFindingOp(
 }
 
 /**
- * *"Approve all"* — every pending finding in one call (the POC's own bulk
- * action, restored 2026-08-09).
+ * *"Approve all auto"* — the POC's own bulk action, restored 2026-08-09 and
+ * corrected the same day when the owner went looking for it and did not find
+ * one that covered what he meant.
  *
- * Two rules the POC learned the hard way and this keeps:
- *   - it approves exactly the set the button counted. A finding already
- *     answered — or one the human marked wrong — must never ride along;
- *   - it is the ordinary apply route with N confirms, not a bulk endpoint.
- *     A second door would be a second place to get that first rule wrong.
+ * It covers everything sitting UNVOUCHED-FOR, which is two states, not one:
+ *   - an AUTO-tier finding still waiting for a yes (confirm it — creates the
+ *     book, approved);
+ *   - a finding that already became a book still on the `auto` rung, because
+ *     it entered before "nothing enters the library unapproved", or because
+ *     an older read placed it (raise that book).
+ *
+ * REVIEW-tier findings are deliberately NOT swept up. That is the POC's rule
+ * and the reason for it has not changed: a bulk click is not the place to
+ * accept the engine's low-confidence guesses, and those rows keep their own
+ * ✓ one tap away. §5.4's duplicate questions are excluded for the stronger
+ * reason that they are a different question entirely.
+ *
+ * Two invariants the POC learned the hard way and this keeps: it approves
+ * EXACTLY the set the button counted (a finding already answered, or marked
+ * wrong, never rides along), and it is composed from the ordinary routes
+ * rather than a bulk endpoint — a second door would be a second place to get
+ * that first rule wrong.
  */
-export async function approveAllPending(
-  shelfId: string, readId: string, claimIds: readonly string[],
+export interface Approvable {
+  /** Pending AUTO-tier findings — confirmed through `POST .../apply`. */
+  claimIds: string[]
+  /** Books already in the library but still `auto` — raised through
+   *  `POST /books/{id}/approve`. */
+  bookIds: string[]
+}
+
+export function approvableFindings(
+  diff: DiffDTO, captureId?: string,
+): Approvable {
+  const mine = (o: { claim: { capture_id: string } }) =>
+    captureId === undefined || o.claim.capture_id === captureId
+
+  const claimIds = diff.needs_decision
+    .filter((o) => o.reason === 'new_book_unconfirmed')
+    .filter((o) => o.claim.tier === 'auto')
+    .filter(mine)
+    .map((o) => o.claim.id)
+
+  const bookIds = [...diff.added, ...diff.corrected, ...diff.unchanged]
+    .filter(mine)
+    .map((o) => o.existing_book)
+    .filter((b): b is NonNullable<typeof b> => !!b && b.status === 'auto')
+    .map((b) => b.id)
+
+  // One book can back two findings (two spines of one title); approving it
+  // twice is harmless but the COUNT would lie about how much is left.
+  return { claimIds, bookIds: [...new Set(bookIds)] }
+}
+
+export function approvableCount(a: Approvable): number {
+  return a.claimIds.length + a.bookIds.length
+}
+
+export async function approveAll(
+  shelfId: string, readId: string, what: Approvable,
 ): Promise<DiffDTO> {
+  // The book approvals first: they are independent of the read, and doing
+  // them before the apply means the diff this returns already reflects them.
+  await Promise.all(what.bookIds.map((id) => approveBook(id)))
+  if (what.claimIds.length === 0) return getDiff(shelfId, readId)
   return applyDiff(shelfId, readId, {
-    answers: claimIds.map((claim_id) => ({
+    answers: what.claimIds.map((claim_id) => ({
       claim_id, kind: 'confirm', copy_id: null, title: null, author: null,
     })),
   })
 }
 
-/** The findings *"approve all"* would act on: pending new-book questions
- *  only, optionally narrowed to one photo. Exported so the button's COUNT and
- *  its ACTION are computed from one function and cannot disagree. */
-export function pendingApprovals(
-  diff: DiffDTO, captureId?: string,
+
+/* --- one spine, several volumes (owner, 2026-08-09) -----------------------
+ *
+ * A shelf holds "X א" and "X ב" side by side and the read produced ONE
+ * finding for X. Splitting it files the volumes as the separate books they
+ * are, and it needs no new server surface at all: part 1 IS the original
+ * finding, answered with a corrected title (confirm-as-corrected for a
+ * pending one, a patch for a settled one — the same two doors ✎ already
+ * uses), and parts 2..N are ordinary hand-added findings on the same read.
+ *
+ * That the original finding stays SETTLED afterwards, even though its book
+ * is now called something else, is the sighting rule doing its job
+ * (`app.domain.reconcile`): a claim is answered by the book its own
+ * (read_id, spine_id) produced, whatever that book ended up being called.
+ */
+
+export type VolumeStyle = 'hebrew' | 'numbers' | 'roman' | 'signal'
+
+/** How far a set can be split in one go. Two is the overwhelming case; five
+ *  is where "type them by hand" becomes the better tool anyway. */
+export const MAX_VOLUMES = 5
+export const DEFAULT_VOLUMES = 2
+
+const HEBREW = ['א', 'ב', 'ג', 'ד', 'ה']
+const ROMAN = ['I', 'II', 'III', 'IV', 'V']
+
+/** The suffix for volume `n` (1-based) in the chosen style. Hebrew letters
+ *  are the default because that is how Hebrew volumes are actually marked on
+ *  a spine — the other three exist because the owner's shelves have all of
+ *  them. */
+export function volumeMark(n: number, style: VolumeStyle): string {
+  if (style === 'numbers') return String(n)
+  if (style === 'roman') return ROMAN[n - 1] ?? String(n)
+  if (style === 'signal') return '*'.repeat(n)
+  return HEBREW[n - 1] ?? String(n)
+}
+
+export function volumeTitles(
+  title: string, count: number, style: VolumeStyle,
 ): string[] {
-  return diff.needs_decision
-    .filter((o) => o.reason === 'new_book_unconfirmed')
-    .filter((o) => captureId === undefined || o.claim.capture_id === captureId)
-    .map((o) => o.claim.id)
+  return Array.from({ length: count },
+                    (_, i) => `${title} ${volumeMark(i + 1, style)}`)
 }

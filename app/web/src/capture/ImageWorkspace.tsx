@@ -103,6 +103,8 @@ export function ImageWorkspace({ item, shelves, ws, onClose }: ImageWorkspacePro
                 onApproveAll={ws.approveAll}
                 onAddByHand={ws.addByHand}
                 onLookup={ws.lookup}
+                onAuthors={ws.authors}
+                onSplit={ws.split}
                 emptyText={t.workspace_no_findings}
               />
             )}

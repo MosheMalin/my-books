@@ -526,10 +526,10 @@ names to run a subset (`python tests/run_all.py test_api`).
 | `test_legacy_import.py` | 21 | `work/*.json` → entities, against a committed fixture |
 | `test_search.py` | 15 | Hebrew search, against 24 real queries on the real 251 books |
 | `test_layering.py` | 9 | the one-way import rules (plan H1) |
-| `test_api.py` | 119 | `/api/v1` shapes + the versioning/tenancy meta-tests |
+| `test_api.py` | 121 | `/api/v1` shapes + the versioning/tenancy meta-tests |
 | `test_reader_wiring.py` | 8 | WHICH catalog the product hands the engine |
 
-573 python tests as of P2.10 and the owner's feedback rounds (+47: the
+575 python tests as of P2.10 and the owner's feedback rounds (+49: the
 retraction rule, a photo's runs across both store implementations,
 `retract_finding`'s writes, the workspace routes, the approval reversal —
 which also REPLACED the test that asserted an AUTO claim auto-enters — and
@@ -2071,6 +2071,55 @@ ones already approved, corrected or REMOVED — the book you retracted a moment
 ago is exactly the one you might be about to re-add — and it **never blocks**
 the add. Sometimes the right answer really is "add it anyway".
 
+## "Approve all auto" means both kinds of unvouched-for
+
+The owner went looking for the POC's bulk button and did not find one that
+covered what he meant. Ours counted only *pending* findings; his photo's rows
+were books already IN the library but still on the `auto` rung — one **Approve**
+each, fourteen of them. Both are the same state to a reader: nobody has said
+yes. So `approvableFindings` returns two lists and the button counts their sum:
+
+  - pending AUTO-tier findings → confirmed through `POST .../apply`;
+  - settled findings whose book is still `auto` → raised through
+    `POST /books/{id}/approve`.
+
+REVIEW-tier findings are deliberately NOT swept up — the POC's rule, and the
+reason has not changed: a bulk click is not where you accept the engine's
+low-confidence guesses, and those rows keep their own ✓ one tap away. §5.4's
+duplicate questions are excluded for the stronger reason that they are a
+different question entirely. Both exclusions are mutation-checked.
+
+⚠ **A hand-typed book wears the "approved" badge too.** It is stored `manual`,
+which OUTRANKS approved (§5.1's ladder) — but the badge only fired on the
+literal `approved` rung, so the one record a human had typed with their own
+hands looked like the one thing nobody had confirmed. The badge now fires for
+anything off the `auto` rung; the stored status is untouched, because
+downgrading manual to approved would throw away which of the two happened.
+
+## One spine, several volumes
+
+*"Split into volumes"* (owner, 2026-08-09): 2–5 parts, marked in Hebrew
+letters (the default — that is how Hebrew volumes are marked on a spine),
+numbers, roman numerals or asterisks, with a live preview because "א/ב" versus
+"I/II" is a choice about what is printed on the owner's own books and no label
+describes that as well as showing it.
+
+**It needed no new server surface.** Part 1 IS the original finding, answered
+with a corrected title — confirm-as-corrected while pending, a book patch once
+landed, the two doors ✎ already uses — and parts 2..N are ordinary hand-added
+findings on the same read. The volumes inherit the author.
+
+That the original finding stays SETTLED afterwards, though its book is now
+called something else, is the sighting rule doing its job: a claim is answered
+by the book its own `(read_id, spine_id)` produced, whatever that book ended
+up being called. The split is the second feature that rule silently made
+possible.
+
+⚠ The parts are written SEQUENTIALLY, not in parallel. Every call returns the
+diff and the last one to answer wins; firing them together lets the response
+for part 2 land after part 5 and paint a list missing three volumes that are
+already saved.
+
 ## A run row shows how many findings, not what became of them
 
 The workspace's run rows used to render `Read.diff_summary`. That snapshot is a
@@ -2086,6 +2135,20 @@ change"* asked long afterwards. And the live findings line now counts
 **removals**, which it never did — a retracted finding used to leave the
 pending count and appear in no other, so the line silently under-reported what
 had happened to the photo.
+
+## The author field completes against the library
+
+`GET /books/authors?q=` — distinct authors already in the library, narrowed by
+the same `app.domain.search` matching as everything else, so *"the search
+mechanism"* means one thing across this codebase. Retyping an author is how
+`דויד גרוסמן` and `דוד גרוסמן` become two people the author chip then treats
+as two shelves' worth of books; the tuning UI grew the same control
+(`libAuthors`) for the same reason.
+
+⚠ Returned in the AUTHOR's own spelling, never normalized. Normalisation is
+for MATCHING — an autocomplete that filled in the nikud-stripped,
+final-letter-folded form would quietly rewrite the library's own data one
+accepted suggestion at a time. Mutation-checked.
 
 ## The match score is out of 130, not 100
 
@@ -2227,7 +2290,7 @@ arrive in P2.1. The importer reports them loudly rather than dropping them —
 until P2.3 lands, a re-read could re-add those books.
 
 Client ring (needs `npm install --prefix app/web` once):
-`npm --prefix app/web run test` (vitest + React Testing Library, **76 tests**
+`npm --prefix app/web run test` (vitest + React Testing Library, **80 tests**
 as of P2.10) and `npm --prefix app/web run typecheck`. Test what encodes a
 *decision*, not layout and not DTO plumbing — same standard as the Python
 rings. The suite mocks `fetch`, never `useBooks`/`useCapture`/`useShelfDetail`:
@@ -2237,7 +2300,7 @@ what needs exercising, and the Capture/shelf fake servers
 `reconcile()`/`apply_diff`/`not_seen_streak`/`depth_staleness` either — each
 test hands back the exact overview/books/diff a call should answer with, the
 way the Python API ring injects a `StubReader`.
-Mutation-checked — thirty-three reversed decisions (dropped race guard, missing
+Mutation-checked — thirty-nine reversed decisions (dropped race guard, missing
 `.rtl-safe`, edit not abandoned on book change, delete without confirmation,
 409 clearing the form, focus not restored, drawer left open on promote,
 sort direction surviving a key change, tags not trimmed/blanks-dropped, the
@@ -2260,8 +2323,12 @@ no *use this*, picking one on a pending finding patching instead of
 confirming, a row sourced from the claim rather than the book it became, and
 the author line dropped; the removed count missing from the findings line,
 the run row echoing a snapshot that cannot see a later removal, and the
-add-a-book lookup not actually asking the server — P2.10's feedback rounds)
-each fail a named test.
+add-a-book lookup not actually asking the server, the vouched-for badge
+narrowed back to the literal `approved` rung, review-tier guesses swept into
+a bulk approval, already-vouched books counted in one, a volume style
+dropped, the author list unfiltered, and the author list normalized rather
+than spelled as the owner spells it — P2.10's feedback rounds) each fail a
+named test.
 
 Two P2.7/P2.8 tests were DELETED rather than fixed in that round (*"add a row
 behind"*, the *"open the shelf →"* chip): the owner removed both controls, and
