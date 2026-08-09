@@ -221,7 +221,13 @@ export function useImageWorkspace(captureId: string | null) {
         run.shelf_id, run.id, claimId,
       )
       for (const title of titles.slice(1)) {
-        latest = await addFindingByHand(run.shelf_id, run.id, { title, author })
+        // `after_spine_id` is what puts the new parts NEXT TO the part they
+        // were split from instead of at the bottom of the photo (owner,
+        // 2026-08-09) — the server mints `<parent>~m<n>` and `FindingList`
+        // orders on it.
+        latest = await addFindingByHand(run.shelf_id, run.id, {
+          title, author, after_spine_id: outcome.claim.spine_id,
+        })
       }
       return latest
     })

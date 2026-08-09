@@ -787,10 +787,17 @@ export interface paths {
          *     at its (shelf, depth) immediately: unlike a machine claim it needs no
          *     approval, because typing the title IS the approval.
          *
-         *     The ``spine_id`` is minted ``manual-<id>`` rather than left blank —
-         *     `Provenance.sighting` is ``(run_id, spine_id)``, so a blank one would make
-         *     every hand-added book on a single read look like the same sighting, and
-         *     `observe()`'s idempotency would silently swallow the second.
+         *     The ``spine_id`` is minted rather than left blank — `Provenance.sighting`
+         *     is ``(run_id, spine_id)``, so a blank one would make every hand-added book
+         *     on a single read look like the same sighting, and `observe()`'s
+         *     idempotency would silently swallow the second.
+         *
+         *     With ``after_spine_id`` it is minted as ``<that spine>~m<n>``, which is
+         *     how a volume ends up next to the volume it was split from instead of at
+         *     the bottom of the photo. The structure IS in the string, the same way the
+         *     engine's own ``IMG_1234_b0_s07`` encodes a band and a position that
+         *     `shelves.py` parses back out — honest for ordering, and no new column for
+         *     a relationship nothing else needs to query.
          */
         post: operations["add_a_finding_by_hand_api_v1_shelves__shelf_id__reads__read_id__findings_post"];
         delete?: never;
@@ -1637,6 +1644,11 @@ export interface components {
          *     step: typing the title IS the approval (§5.1's ladder).
          */
         ManualFindingIn: {
+            /**
+             * After Spine Id
+             * @description File this finding immediately after that one, rather than at the end. Used when one spine turns out to be several volumes: the parts belong next to the part they were split from, not at the bottom of the photo.
+             */
+            after_spine_id?: string | null;
             /**
              * Author
              * @default

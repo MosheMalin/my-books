@@ -787,6 +787,13 @@ class ManualFindingIn(BaseModel):
 
     title: str = Field(min_length=1)
     author: str = ""
+    after_spine_id: str | None = Field(
+        default=None,
+        description="File this finding immediately after that one, rather "
+                    "than at the end. Used when one spine turns out to be "
+                    "several volumes: the parts belong next to the part they "
+                    "were split from, not at the bottom of the photo.",
+    )
 
 
 # --- the durable duplicates queue (P2.6, §5.4) ------------------------------

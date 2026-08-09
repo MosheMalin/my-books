@@ -1228,6 +1228,18 @@
       "ManualFindingIn": {
         "description": "*\"The engine missed this book\"* — a book the owner adds to a photo by\nhand (P2.10, owner 2026-08-09).\n\nIt becomes a MANUAL-tier `Claim` on that read, which is what keeps the\nphoto's findings a complete account of what is in the picture rather than\nonly what a reader managed to see. Entering the library needs no approval\nstep: typing the title IS the approval (§5.1's ladder).",
         "properties": {
+          "after_spine_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "File this finding immediately after that one, rather than at the end. Used when one spine turns out to be several volumes: the parts belong next to the part they were split from, not at the bottom of the photo.",
+            "title": "After Spine Id"
+          },
           "author": {
             "default": "",
             "title": "Author",
@@ -3766,7 +3778,7 @@
     },
     "/api/v1/shelves/{shelf_id}/reads/{read_id}/findings": {
       "post": {
-        "description": "*\"The engine missed this book\"* — add one to this photo by hand.\n\nFiles a MANUAL-tier :class:`~app.domain.read.Claim` on the read (see\n``app.domain.read.add_manual_claim`` for why a settled read accepts this\none kind of late claim and nothing else), then applies, so the book lands\nat its (shelf, depth) immediately: unlike a machine claim it needs no\napproval, because typing the title IS the approval.\n\nThe ``spine_id`` is minted ``manual-<id>`` rather than left blank —\n`Provenance.sighting` is ``(run_id, spine_id)``, so a blank one would make\nevery hand-added book on a single read look like the same sighting, and\n`observe()`'s idempotency would silently swallow the second.",
+        "description": "*\"The engine missed this book\"* — add one to this photo by hand.\n\nFiles a MANUAL-tier :class:`~app.domain.read.Claim` on the read (see\n``app.domain.read.add_manual_claim`` for why a settled read accepts this\none kind of late claim and nothing else), then applies, so the book lands\nat its (shelf, depth) immediately: unlike a machine claim it needs no\napproval, because typing the title IS the approval.\n\nThe ``spine_id`` is minted rather than left blank — `Provenance.sighting`\nis ``(run_id, spine_id)``, so a blank one would make every hand-added book\non a single read look like the same sighting, and `observe()`'s\nidempotency would silently swallow the second.\n\nWith ``after_spine_id`` it is minted as ``<that spine>~m<n>``, which is\nhow a volume ends up next to the volume it was split from instead of at\nthe bottom of the photo. The structure IS in the string, the same way the\nengine's own ``IMG_1234_b0_s07`` encodes a band and a position that\n`shelves.py` parses back out — honest for ordering, and no new column for\na relationship nothing else needs to query.",
         "operationId": "add_a_finding_by_hand_api_v1_shelves__shelf_id__reads__read_id__findings_post",
         "parameters": [
           {

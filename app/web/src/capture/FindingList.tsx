@@ -55,6 +55,46 @@ export interface FindingListProps {
   emptyText: string
 }
 
+/** The bucket order, with one exception: a finding split off another sits
+ *  directly under the part it came from, not at the end of the photo (owner,
+ *  2026-08-09).
+ *
+ *  The link is in the spine id — the server mints `<parent>~m<n>` for a part
+ *  (`app/api/routers/reads.py:_mint_spine_id`), the same "structure in the
+ *  string" the engine's own `IMG_1234_b0_s07` uses and `shelves.py` already
+ *  parses. A part whose parent is not in this list keeps its bucket position
+ *  rather than disappearing. */
+export function placeVolumesAfterTheirPart(
+  rows: ClaimOutcomeDTO[],
+): ClaimOutcomeDTO[] {
+  const partsOf = new Map<string, ClaimOutcomeDTO[]>()
+  const rest: ClaimOutcomeDTO[] = []
+  const ids = new Set(rows.map((o) => o.claim.spine_id))
+
+  for (const o of rows) {
+    const at = o.claim.spine_id.lastIndexOf('~m')
+    const parent = at > 0 ? o.claim.spine_id.slice(0, at) : ''
+    if (parent && ids.has(parent)) {
+      const group = partsOf.get(parent) ?? []
+      group.push(o)
+      partsOf.set(parent, group)
+    } else {
+      rest.push(o)
+    }
+  }
+  if (partsOf.size === 0) return rows
+
+  return rest.flatMap((o) => {
+    const parts = partsOf.get(o.claim.spine_id)
+    // Numeric, so ~m10 does not sort before ~m2 — the same trap
+    // `shelves.py:_physical_order_key` documents for its own spine suffix.
+    parts?.sort((a, b) => Number(a.claim.spine_id.split('~m').pop())
+                        - Number(b.claim.spine_id.split('~m').pop()))
+    return parts ? [o, ...parts] : [o]
+  })
+}
+
+
 export function FindingList({
   diff, captureId, busy, onAnswer, onFinding, onApproveAll, onAddByHand,
   onLookup, onAuthors, onSplit, emptyText,
@@ -69,10 +109,10 @@ export function FindingList({
     .filter((o) => o.reason === 'new_book_unconfirmed')
     .filter(mine)
 
-  const rows = [
+  const rows = placeVolumesAfterTheirPart([
     ...diff.added, ...diff.corrected, ...diff.needs_decision,
     ...diff.unchanged, ...diff.rejected,
-  ].filter(mine)
+  ].filter(mine))
 
   return (
     <>
@@ -178,6 +218,11 @@ function AddByHand({ busy, onLookup, onAuthors, onSave, onCancel }: {
   const [found, setFound] = useState<FindingMatchDTO[]>([])
   const [authors, setAuthors] = useState<string[]>([])
   const authorSeq = useRef(0)
+  // Set the moment a suggestion is taken. Filtering the exact match out of
+  // the next answer is not enough on its own: the query "ארנסטו סבאטו" can
+  // still match a DIFFERENT author, so a chosen name would leave a list of
+  // near-misses sitting under a field that is already answered.
+  const [authorChosen, setAuthorChosen] = useState(false)
   // Ignore out-of-order replies — typing outruns the network, and a slow
   // answer to "מל" landing after the answer to "מלכי" would show the wrong
   // hint. Exactly the guard `booksnap/static/index.html`'s own version uses
@@ -204,7 +249,7 @@ function AddByHand({ busy, onLookup, onAuthors, onSave, onCancel }: {
   // MATCHING is the server's (`GET /books/authors`), for the reason every
   // search in this codebase is server-side.
   useEffect(() => {
-    if (!onAuthors) return
+    if (!onAuthors || authorChosen) return
     const q = author.trim()
     if (q.length < 1) { setAuthors([]); return }
     const mine = ++authorSeq.current
@@ -219,7 +264,7 @@ function AddByHand({ busy, onLookup, onAuthors, onSave, onCancel }: {
         .catch(() => { if (mine === authorSeq.current) setAuthors([]) })
     }, 250)
     return () => clearTimeout(timer)
-  }, [author, onAuthors])
+  }, [author, onAuthors, authorChosen])
 
   return (
     <form
@@ -237,18 +282,27 @@ function AddByHand({ busy, onLookup, onAuthors, onSave, onCancel }: {
       <label>
         <span className="tiny muted">{t.author_label}</span>
         <input className="rtl-safe" value={author} aria-label={t.author_label}
-               onChange={(e) => setAuthor(e.target.value)} />
-        {authors.length > 0 && (
-          <span className="chiprow authorhints">
-            {authors.map((a) => (
-              <button key={a} type="button" className="chip rtl-safe"
-                      onClick={() => { setAuthor(a); setAuthors([]) }}>
-                {a}
-              </button>
-            ))}
-          </span>
-        )}
+               onChange={(e) => {
+                 setAuthor(e.target.value)
+                 setAuthorChosen(false)   // typing again reopens the question
+               }} />
       </label>
+      {/* Outside the labels on purpose: inside one, the chips make that
+          field taller than the other and the two inputs stop sitting level. */}
+      {authors.length > 0 && (
+        <div className="chiprow authorhints">
+          {authors.map((a) => (
+            <button key={a} type="button" className="chip rtl-safe"
+                    onClick={() => {
+                      setAuthor(a)
+                      setAuthors([])
+                      setAuthorChosen(true)
+                    }}>
+              {a}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="chiprow">
         <button type="submit" className="btn sm act-approve"
                 disabled={busy || !title.trim()}>

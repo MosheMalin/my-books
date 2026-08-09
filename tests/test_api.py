@@ -2858,6 +2858,40 @@ def test_two_hand_added_books_are_two_findings_not_one():
         assert {b.title for b in store.list(TEST_LIBRARY).items} >= {"ראשון", "שני"}
 
 
+def test_a_volume_is_filed_next_to_the_part_it_was_split_from():
+    """Otherwise the new volumes land at the bottom of the photo, away from
+    the book they belong to (owner, 2026-08-09). The link is in the spine id
+    — the same "structure in the string" the engine's own IMG_1234_b0_s07
+    uses — so nothing needed a new column for a relationship only ordering
+    cares about."""
+    with _blobs() as blobs:
+        store, shelves, reads_ = MemoryBookStore(), MemoryShelfStore(), MemoryReadStore()
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_,
+                            blobs=blobs, reader=StubReader()))
+        c, shelf_id, cap_id, read_id = _settled_read(
+            c, claims=[_auto_claim(spine="sp1")], store=store, shelves=shelves,
+            reads=reads_, blobs=blobs)
+
+        for title in ("\u05db\u05e8\u05da \u05d1", "\u05db\u05e8\u05da \u05d2"):
+            r = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/findings",
+                       json={"title": title, "after_spine_id": "sp1"})
+            assert r.status_code == 201, r.text
+
+        read = c.get(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}").json()
+        parts = sorted(cl["spine_id"] for cl in read["claims"]
+                       if cl["spine_id"].startswith("sp1~m"))
+        assert parts == ["sp1~m1", "sp1~m2"], (
+            "each part needs its OWN id, or Provenance.sighting collides and "
+            "observe() swallows the second"
+        )
+        # Without a parent it is a standalone hand-add, not a part of anything.
+        c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/findings",
+               json={"title": "\u05dc\u05d1\u05d3"})
+        read = c.get(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}").json()
+        loose = [cl["spine_id"] for cl in read["claims"] if cl["title"] == "\u05dc\u05d1\u05d3"]
+        assert loose and loose[0].startswith("manual-")
+
+
 def test_a_book_cannot_be_added_by_hand_to_a_read_that_is_still_running():
     """The one guard that keeps `add_manual_claim` a narrow exception rather
     than a hole in "claims are never mutated after a read finishes"."""

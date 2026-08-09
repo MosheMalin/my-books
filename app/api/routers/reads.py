@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 from typing import Sequence
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
@@ -375,6 +376,21 @@ def apply_read_diff(
 # `POST .../apply`, so the client replaces one object and every badge on the
 # screen follows.
 
+def _mint_spine_id(read: Read, body: ManualFindingIn) -> str:
+    """A spine id for a hand-added finding — see the route's docstring.
+
+    The counter is over the claims that already carry this parent's prefix, so
+    splitting the same finding twice keeps producing distinct, ordered ids
+    rather than colliding on ``~m1``.
+    """
+    parent = (body.after_spine_id or "").strip()
+    if not parent:
+        return f"manual-{uuid4().hex[:12]}"
+    prefix = f"{parent}~m"
+    n = sum(1 for c in read.claims if c.spine_id.startswith(prefix)) + 1
+    return f"{prefix}{n}"
+
+
 @router.get("/{read_id}/findings/lookup", response_model=list[FindingMatchDTO])
 def lookup_findings(
     shelf_id: str,
@@ -446,14 +462,21 @@ def add_a_finding_by_hand(
     at its (shelf, depth) immediately: unlike a machine claim it needs no
     approval, because typing the title IS the approval.
 
-    The ``spine_id`` is minted ``manual-<id>`` rather than left blank —
-    `Provenance.sighting` is ``(run_id, spine_id)``, so a blank one would make
-    every hand-added book on a single read look like the same sighting, and
-    `observe()`'s idempotency would silently swallow the second.
+    The ``spine_id`` is minted rather than left blank — `Provenance.sighting`
+    is ``(run_id, spine_id)``, so a blank one would make every hand-added book
+    on a single read look like the same sighting, and `observe()`'s
+    idempotency would silently swallow the second.
+
+    With ``after_spine_id`` it is minted as ``<that spine>~m<n>``, which is
+    how a volume ends up next to the volume it was split from instead of at
+    the bottom of the photo. The structure IS in the string, the same way the
+    engine's own ``IMG_1234_b0_s07`` encodes a band and a position that
+    `shelves.py` parses back out — honest for ordering, and no new column for
+    a relationship nothing else needs to query.
     """
     read = _load_read(reads, library, shelf_id, read_id)
     try:
-        claim = Claim(id=ids.new_id(), spine_id=f"manual-{ids.new_id()}",
+        claim = Claim(id=ids.new_id(), spine_id=_mint_spine_id(read, body),
                       # A hand-added book belongs to the photo the owner is
                       # looking at; a read of one (shelf, depth) may cover
                       # several, and the first is the only honest default the

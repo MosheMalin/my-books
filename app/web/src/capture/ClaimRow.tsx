@@ -176,6 +176,17 @@ export function ClaimRow({
                     onClick={() => setShowWhy((s) => !s)}>
               {t.try_match}
             </button>
+            {/* A link, not a button, and on this side: it OPENS A PANEL, which
+                is what *try a better match?* does, rather than committing
+                anything — which is what the three coloured buttons do (owner,
+                2026-08-09). The caption is one word; the tooltip carries the
+                rest. */}
+            {canAct && onSplit && (
+              <button type="button" className="linkish" title={t.finding_split}
+                      onClick={() => setSplitting((v) => !v)}>
+                {t.finding_split_short}
+              </button>
+            )}
           </div>
           {retracted && (
             <div className="tiny muted" style={{ marginTop: 5 }}>
@@ -209,16 +220,6 @@ export function ClaimRow({
             >
               {t.finding_edit}
             </button>
-            {onSplit && (
-              <button
-                type="button"
-                className="btn sm act-fix"
-                disabled={answering}
-                onClick={() => setSplitting((v) => !v)}
-              >
-                {t.finding_split}
-              </button>
-            )}
             <button
               type="button"
               className="btn sm act-remove"

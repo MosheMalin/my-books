@@ -813,7 +813,7 @@ describe('Capture tab — the image workspace (P2.10, §12.2 #10)', () => {
     await openWorkspace()
     await screen.findByText('\u05e9\u05e8 \u05d4\u05d8\u05d1\u05e2\u05d5\u05ea')
 
-    await userEvent.click(screen.getByRole('button', { name: '\u05e4\u05d9\u05e6\u05d5\u05dc \u05dc\u05db\u05e8\u05db\u05d9\u05dd' }))
+    await userEvent.click(screen.getByRole('button', { name: '\u05e4\u05d9\u05e6\u05d5\u05dc' }))
     await userEvent.selectOptions(screen.getByLabelText('\u05db\u05de\u05d4 \u05db\u05e8\u05db\u05d9\u05dd'), '3')
     // The preview is the control's justification: the mark is a choice about
     // what is printed on the owner's own books.
@@ -823,7 +823,7 @@ describe('Capture tab — the image workspace (P2.10, §12.2 #10)', () => {
     expect(screen.getByText(
       '\u05e9\u05e8 \u05d4\u05d8\u05d1\u05e2\u05d5\u05ea I \u00b7 \u05e9\u05e8 \u05d4\u05d8\u05d1\u05e2\u05d5\u05ea II \u00b7 \u05e9\u05e8 \u05d4\u05d8\u05d1\u05e2\u05d5\u05ea III')).toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole('button', { name: '\u05e4\u05d9\u05e6\u05d5\u05dc' }))
+    await userEvent.click(screen.getByRole('button', { name: '\u05e6\u05e8\u05d5 \u05db\u05e8\u05db\u05d9\u05dd' }))
 
     await waitFor(() => {
       // Part 1 answers the finding itself (confirm-as-corrected); parts 2..N
@@ -855,6 +855,83 @@ describe('Capture tab — the image workspace (P2.10, §12.2 #10)', () => {
       'button', { name: '\u05d3\u05d5\u05d3 \u05d2\u05e8\u05d5\u05e1\u05de\u05df' }, { timeout: 2000 })
     await userEvent.click(hint)
     expect(screen.getByLabelText('\u05de\u05d7\u05d1\u05e8')).toHaveValue('\u05d3\u05d5\u05d3 \u05d2\u05e8\u05d5\u05e1\u05de\u05df')
+  })
+
+  it('lists a split volume directly under the part it came from', async () => {
+    // Not at the bottom of the photo, which is where the bucket order alone
+    // would put it (owner, 2026-08-09).
+    processedPhoto({
+      ...emptyDiff('sh1', 1, 'rd1'),
+      unchanged: [
+        outcome({ kind: 'unchanged', reason: 'same_location', book_key: 'k1',
+                  existing_book: fakeBook('bk1', { title: 'First' }),
+                  claim: claim({ id: 'c1', capture_id: 'cap1', title: 'First',
+                                 spine_id: 'sp1' }) }),
+        outcome({ kind: 'unchanged', reason: 'same_location', book_key: 'k2',
+                  existing_book: fakeBook('bk2', { title: 'Second' }),
+                  claim: claim({ id: 'c2', capture_id: 'cap1', title: 'Second',
+                                 spine_id: 'sp2' }) }),
+        // Two parts of sp1, arriving last and out of order — ~m10 must not
+        // sort before ~m2 either.
+        outcome({ kind: 'unchanged', reason: 'same_location', book_key: 'k3',
+                  existing_book: fakeBook('bk3', { title: 'PartTen' }),
+                  claim: claim({ id: 'c3', capture_id: 'cap1', title: 'PartTen',
+                                 spine_id: 'sp1~m10' }) }),
+        outcome({ kind: 'unchanged', reason: 'same_location', book_key: 'k4',
+                  existing_book: fakeBook('bk4', { title: 'PartTwo' }),
+                  claim: claim({ id: 'c4', capture_id: 'cap1', title: 'PartTwo',
+                                 spine_id: 'sp1~m2' }) }),
+      ],
+    })
+    await openWorkspace()
+    await screen.findByText('First')
+
+    const titles = [...document.querySelectorAll('.workspace .rrow .t')]
+      .map((e) => e.textContent)
+    expect(titles).toEqual(['First', 'PartTwo', 'PartTen', 'Second'])
+  })
+
+  it('closes the author suggestions once one is taken', async () => {
+    const server = processedPhoto(settled())
+    // The server keeps answering with a near-miss even after the exact name
+    // is in the field — filtering the exact match alone would leave it.
+    server.authorsFor = () => ['\u05d3\u05d5\u05d3 \u05d2\u05e8\u05d5\u05e1\u05de\u05df', '\u05d3\u05d5\u05d9\u05d3 \u05d2\u05e8\u05d5\u05e1\u05de\u05df']
+    await openWorkspace()
+    await screen.findByText('\u05de\u05dc\u05db\u05d9 \u05d4\u05db\u05d5\u05e4\u05e8\u05d9\u05dd')
+
+    await userEvent.click(screen.getByRole(
+      'button', { name: '+ \u05d4\u05d5\u05e1\u05e4\u05ea \u05e1\u05e4\u05e8 \u05e9\u05d4\u05de\u05e0\u05d5\u05e2 \u05e4\u05e1\u05e4\u05e1' }))
+    await userEvent.type(screen.getByLabelText('\u05de\u05d7\u05d1\u05e8'), '\u05d2\u05e8\u05d5\u05e1')
+    await userEvent.click(await screen.findByRole(
+      'button', { name: '\u05d3\u05d5\u05d3 \u05d2\u05e8\u05d5\u05e1\u05de\u05df' }, { timeout: 2000 }))
+
+    expect(screen.getByLabelText('\u05de\u05d7\u05d1\u05e8')).toHaveValue('\u05d3\u05d5\u05d3 \u05d2\u05e8\u05d5\u05e1\u05de\u05df')
+    // No leftovers, not even the other name that still matches.
+    //
+    // Waited THROUGH the debounce, not polled: `waitFor` passes on its first
+    // tick — the list is empty the instant the chip is clicked — so it would
+    // go green against a version that re-opens the suggestions 250ms later,
+    // which is exactly the bug. Found by mutation testing.
+    await new Promise((r) => { setTimeout(r, 700) })
+    expect(screen.queryByRole('button', { name: '\u05d3\u05d5\u05d9\u05d3 \u05d2\u05e8\u05d5\u05e1\u05de\u05df' }))
+      .not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '\u05d3\u05d5\u05d3 \u05d2\u05e8\u05d5\u05e1\u05de\u05df' }))
+      .not.toBeInTheDocument()
+  })
+
+  it('offers Split as a link beside "try a better match", not as a button', async () => {
+    processedPhoto(settled())
+    await openWorkspace()
+    const row = (await screen.findByText('\u05de\u05dc\u05db\u05d9 \u05d4\u05db\u05d5\u05e4\u05e8\u05d9\u05dd'))
+      .closest('.rrow') as HTMLElement
+
+    const split = within(row).getByRole('button', { name: '\u05e4\u05d9\u05e6\u05d5\u05dc' })
+    // A link, like the panel-opening control next to it — the three coloured
+    // buttons COMMIT something, and this only opens a panel.
+    expect(split).toHaveClass('linkish')
+    expect(split.closest('.acts')).toBeNull()
+    // One word on screen; the rest in the tooltip.
+    expect(split).toHaveAttribute('title', '\u05e4\u05d9\u05e6\u05d5\u05dc \u05dc\u05db\u05e8\u05db\u05d9\u05dd')
   })
 
   it('counts removals in the findings summary', async () => {
