@@ -29,6 +29,8 @@ from app.domain import (
     DepthStatus,
     DiffSummary,
     Lending,
+    Library,
+    Membership,
     Provenance,
     Read,
     Shelf,
@@ -48,13 +50,67 @@ class LibraryRefDTO(BaseModel):
     label: str = Field(description="Human-readable library name.")
 
 
+class AccountDTO(BaseModel):
+    """Who the server thinks is asking (§4.1).
+
+    Dev-trusted until pillar 4: there is no login, so this is whichever
+    principal the composition root built. It is on the wire now because the
+    switcher's list is *this account's* libraries, and a client that cannot
+    name the account cannot explain an empty list.
+    """
+
+    id: str = Field(description="Opaque account identifier.")
+    display_name: str = Field(default="", description="Shown in the UI, if set.")
+
+
+class LibraryDTO(BaseModel):
+    """One library the caller is a member of, with the role they hold.
+
+    A superset of :class:`LibraryRefDTO` rather than a replacement: the REF is
+    what travels on every request, and the switcher needs the role too. See
+    ``app/domain/tenancy.py`` for why the two types exist.
+    """
+
+    id: str
+    label: str = Field(description="Human-readable name; blank only for a "
+                                   "library backfilled by schema v12.")
+    role: str = Field(description="viewer | editor | admin (§4.2). Stored and "
+                                  "reported; what it PERMITS is P3.2.")
+    created_at: str | None = None
+
+    @classmethod
+    def of(cls, library: Library, membership: Membership) -> "LibraryDTO":
+        return cls(id=library.id, label=library.label,
+                   role=membership.role.value, created_at=library.created_at)
+
+
+class LibraryCreate(BaseModel):
+    """A library is created with a name (§4.3) — see `new_library`.
+
+    ⚠ No ``min_length`` here on purpose, tempting though it is. Pydantic would
+    then answer 422 for ``""`` while ``"   "`` reached the domain and came
+    back 400 — two status codes for one mistake, decided by whitespace. The
+    rule lives in :func:`app.domain.tenancy.new_library`, which strips first,
+    so the API stays thin (H3) and the answer stays one thing.
+    """
+
+    label: str = Field(description="What the household calls it.")
+
+
+class LibraryPatch(BaseModel):
+    """Rename. The only mutable field a library has today."""
+
+    label: str
+
+
 class MetaResponse(BaseModel):
-    """Service identity + the caller's resolved library."""
+    """Service identity + who is asking + the library resolved for them."""
 
     app: str = Field(description="Service name.")
     version: str = Field(description="Server package version.")
     api_version: str = Field(description="API major version, e.g. 'v1'.")
     library: LibraryRefDTO = Field(description="Library resolved for this caller.")
+    account: AccountDTO = Field(description="The caller (dev-trusted until P4.1).")
 
 
 # --- books ---------------------------------------------------------------

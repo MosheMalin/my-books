@@ -86,6 +86,121 @@
   color: #fff;
 }
 
+/* The library switcher (P3.1, UI_PLAN §1). Tokens only, like every other
+   surface here, so it follows dark mode without a second palette. */
+.libswitch {
+  position: relative;
+  flex: none;
+}
+.libswitch-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 34ch;
+  padding: 6px 10px;
+  border-radius: 9px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.libswitch-btn:hover {
+  background: var(--bg);
+  color: var(--ink);
+}
+.libswitch-btn > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Drawn from two borders rather than a background image, for the reason the
+   sort control records: a drawn chevron reads var(--muted) and so follows
+   dark mode, while a data-URI one is a fixed colour. */
+.libswitch-caret {
+  width: 6px;
+  height: 6px;
+  border-inline-end: 1.6px solid currentColor;
+  border-block-end: 1.6px solid currentColor;
+  transform: rotate(45deg) translate(-1px, -1px);
+  opacity: 0.75;
+  flex: none;
+}
+.libswitch-menu {
+  position: absolute;
+  inset-block-start: calc(100% + 6px);
+  /* inset-INLINE, so the panel hangs off the button's own edge in both
+     directions (UI_PLAN §7.1: every rule uses logical properties). */
+  inset-inline-start: 0;
+  z-index: 50;
+  min-width: 240px;
+  padding: 5px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.14);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.libswitch-menu > button {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 14px;
+  text-align: start;
+}
+.libswitch-menu > button:hover {
+  background: var(--bg);
+}
+.libswitch-menu > button.on {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+.libswitch-role {
+  font-size: 12px;
+  flex: none;
+}
+.libswitch-add {
+  border-top: 1px solid var(--line);
+  border-radius: 0 0 8px 8px !important;
+  color: var(--accent);
+}
+.libswitch-new {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--line);
+}
+.libswitch-new input {
+  flex: 1 1 100%;
+  min-width: 0;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+}
+.libswitch-new button {
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 13.5px;
+  border: 1px solid var(--line);
+}
+.libswitch-new button[type='submit'] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.libswitch-new button[disabled] {
+  opacity: 0.55;
+}
+
 .page {
   padding: 18px 20px 60px;
   max-width: 1500px;

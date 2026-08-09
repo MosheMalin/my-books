@@ -110,7 +110,10 @@ describe('Books tab', () => {
     server.holdWhen = (url) => !url.includes('q=')
     renderApp(<App />)
 
-    await userEvent.type(screen.getByRole('searchbox'), 'Sapiens')
+    // `findBy`, not `getBy`: since P3.1 nothing renders until the library is
+    // known (see `LibraryProvider`), so the first paint is a tick later than
+    // it used to be.
+    await userEvent.type(await screen.findByRole('searchbox'), 'Sapiens')
     expect(await screen.findByText('Sapiens')).toBeInTheDocument()
     expect(screen.queryByText('היער השיכור')).not.toBeInTheDocument()
 
@@ -237,6 +240,39 @@ describe('mixed-script alignment (UI_PLAN §7.2)', () => {
     // uses logical properties (§7.1).
     await waitFor(() => expect(document.documentElement.dir).toBe('ltr'))
     expect(screen.getByText('List')).toBeInTheDocument()
+  })
+})
+
+describe('coming back to the tab', () => {
+  it('refetches on RE-entry, so work done on another tab is visible', async () => {
+    // Owner, live use: approving a finding and adding a book by hand both
+    // happen on the Capture tab, through routes this store never sees, and
+    // its only other refetch trigger is a change of query. So the list showed
+    // state from before that work — and typing in the search box "fixed" it,
+    // which is exactly how the bug was found.
+    const server = fakeServer([DURRELL])
+    renderApp(<App />)
+    await screen.findByText('היער השיכור')
+
+    // Something else adds a book — the Capture tab, in reality. Leaving via
+    // the book route rather than that tab keeps this case inside the Books
+    // harness's world; what is being tested is the UNMOUNT and return, which
+    // every route away from the feed does identically.
+    server.books = [DURRELL, SAPIENS]
+    globalThis.location.hash = '#/book/b1'
+    await screen.findByRole('button', { name: /חזרה/ })
+    globalThis.location.hash = '#/library'
+
+    expect(await screen.findByText('Sapiens')).toBeInTheDocument()
+  })
+
+  it('does not double the request on the FIRST visit', async () => {
+    // A fix that costs an extra request per session start is a second bug:
+    // the store's own query effect is already in flight on the first mount.
+    const server = fakeServer([DURRELL])
+    renderApp(<App />)
+    await screen.findByText('היער השיכור')
+    expect(server.calls.filter((c) => c.includes('/api/v1/books?'))).toHaveLength(1)
   })
 })
 

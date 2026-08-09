@@ -29,8 +29,17 @@ from app.api.deps import (
     get_read_store,
     get_reader,
     get_shelf_store,
+    get_tenancy_store,
 )
-from app.api.routers import books, duplicates, images, meta, reads, shelves
+from app.api.routers import (
+    books,
+    duplicates,
+    images,
+    libraries,
+    meta,
+    reads,
+    shelves,
+)
 from app.ports import Clock, IdGen, Principal
 from app.ports.blobs import BlobStore
 from app.ports.decisions import DecisionStore
@@ -38,6 +47,7 @@ from app.ports.duplicates import DuplicateQueue
 from app.ports.jobs import JobRunner
 from app.ports.reader import Reader
 from app.ports.store import BookStore, ReadStore, ShelfStore
+from app.ports.tenancy import TenancyStore
 
 API_TITLE = "booksnap product API"
 
@@ -71,6 +81,7 @@ def create_app(
     duplicate_queue: DuplicateQueue | None = None,
     reader: Reader | None = None,
     job_runner: JobRunner | None = None,
+    tenancy_store: TenancyStore | None = None,
     web_dist: Path | None = None,
 ) -> FastAPI:
     """Build the product API.
@@ -97,6 +108,10 @@ def create_app(
         redoc_url=None,
     )
     app.include_router(meta.router, prefix=API_PREFIX)
+    # Account-scoped, unlike every other router here — these are the routes a
+    # caller uses to find out which libraries it may name (see the router's
+    # own ⚠⚠, and the closed exemption list in tests/test_api.py).
+    app.include_router(libraries.router, prefix=API_PREFIX)
     app.include_router(books.router, prefix=API_PREFIX)
     app.include_router(shelves.router, prefix=API_PREFIX)
     app.include_router(shelves.captures, prefix=API_PREFIX)
@@ -110,7 +125,8 @@ def create_app(
                       (get_blob_store, blob_store), (get_read_store, read_store),
                       (get_decision_store, decision_store),
                       (get_duplicate_queue, duplicate_queue),
-                      (get_reader, reader), (get_job_runner, job_runner)):
+                      (get_reader, reader), (get_job_runner, job_runner),
+                      (get_tenancy_store, tenancy_store)):
         if impl is not None:
             app.dependency_overrides[dep] = _always(impl)
 

@@ -5,35 +5,22 @@
  * a tab change later — and so there is exactly one of it. Two drawer mounts
  * would be two focus traps fighting over the same page.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { BookDrawer } from './book/BookDrawer'
 import { BookPage } from './book/BookPage'
 import { BooksTab } from './books/BooksTab'
 import { CaptureTab } from './capture/CaptureTab'
 import { ShelfPage } from './shelf/ShelfPage'
-import { getMeta, type Meta } from './api/client'
 import { useBooks } from './lib/books'
 import { useI18n } from './lib/i18n'
+import { LibrarySwitcher } from './lib/LibrarySwitcher'
 import { bookHash, CAPTURE_HASH, LIBRARY_HASH, useRoute } from './lib/route'
 
 export function App() {
   const { t, lang, toggleLang } = useI18n()
   const books = useBooks()
   const { route, navigate, back } = useRoute()
-  const [meta, setMeta] = useState<Meta | null>(null)
   const [drawerId, setDrawerId] = useState<string | null>(null)
-
-  useEffect(() => {
-    let live = true
-    getMeta()
-      .then((m) => live && setMeta(m))
-      // The library name is chrome, not content: failing to load it must not
-      // take the books down with it.
-      .catch(() => undefined)
-    return () => {
-      live = false
-    }
-  }, [])
 
   // Promoting the drawer to the full page closes the drawer — otherwise the
   // same surface renders twice, and the focus trap stays over a page the user
@@ -64,7 +51,13 @@ export function App() {
     <>
       <header className="appbar">
         <span className="brand">{t.app}</span>
-        <span className="rtl-safe muted">{meta?.library.label ?? ''}</span>
+        {/* P3.1 replaces P1.0's plain label: §4.1 makes Library the tenancy
+            boundary and an account may belong to several, so the app bar has
+            to let you change which one you are looking at, not just name it.
+            `meta` still loads (it is how the client learns the server is
+            there); its library is the RESOLVED one, which is what the
+            switcher's own list is checked against server-side. */}
+        <LibrarySwitcher />
         <nav className="nav" aria-label={t.app}>
           <button
             type="button"

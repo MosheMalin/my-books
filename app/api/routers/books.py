@@ -29,6 +29,7 @@ from app.api.deps import (
     current_library,
     get_book_store,
     get_clock,
+    get_decision_store,
     get_duplicate_queue,
     get_id_gen,
 )
@@ -46,11 +47,14 @@ from app.domain import (
     CopyAlreadyLentOut,
     CopyFields,
     CopyNotLentOut,
+    Decision,
+    DecisionKind,
     LibraryRef,
     Status,
     UnknownCopy,
     add_copy,
     approve,
+    deletion_sites,
     edit,
     edit_copy,
     lend,
@@ -59,6 +63,7 @@ from app.domain import (
 )
 from app.domain.search import matches, parse
 from app.ports import Clock, IdGen
+from app.ports.decisions import DecisionStore
 from app.ports.duplicates import DuplicateQueue
 from app.ports.store import BookSort, BookStore, DuplicateBookKey
 
@@ -364,12 +369,45 @@ def delete_book(
     book_id: str,
     library: LibraryRef = Depends(current_library),
     store: BookStore = Depends(get_book_store),
+    decisions: DecisionStore = Depends(get_decision_store),
+    clock: Clock = Depends(get_clock),
 ) -> Response:
     """*Delete from the library* — the destructive one of UI_PLAN §5's two
     actions. *Remove from shelf* is a different thing entirely and does not
-    live here; it changes a copy, it does not remove a record."""
-    if not store.delete(library, book_id):
+    live here; it changes a copy, it does not remove a record.
+
+    **It also records a standing "no" wherever the book stood** (owner,
+    2026-08-10). Two things were wrong without it, and they are the same
+    thing seen from both ends:
+
+      - §5.6 says a rejected book must not be re-added by a later run, and
+        deleting is the plainest rejection the product offers — but it wrote
+        no decision, so the next read of that shelf would put the book
+        straight back;
+      - the finding that produced it reverted to an ordinary unanswered
+        question. The owner asked for what is actually true: the finding
+        should read as **removed** — struck through, with its undo — which is
+        exactly how `reconcile()` reports a claim a standing decision
+        suppresses.
+
+    `REJECTED`, not `WRONG_BOOK`: the two suppress identically and the kind is
+    the audit trail of WHICH question was answered
+    (:class:`~app.domain.reconcile.DecisionKind`). Deleting answers "I do not
+    have this book", not §5.4's "is this the copy I already have".
+
+    Undo is the workspace's ↩ (`POST .../findings/{id}/restore`), which
+    clears the decision and lets the read apply itself again — the book comes
+    back as the pending finding it was, not as a record nobody approved.
+    """
+    book = store.get(library, book_id)
+    if book is None or not store.delete(library, book_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no such book")
+    now = clock.now_iso()
+    for shelf_id, depth in deletion_sites(book):
+        decisions.save_decision(library, Decision(
+            library_id=library.id, shelf_id=shelf_id, depth=depth,
+            book_key=book.key, kind=DecisionKind.REJECTED, decided_at=now,
+        ))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

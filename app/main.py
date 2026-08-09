@@ -30,6 +30,7 @@ Populate it once with::
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from pathlib import Path
 
 from app.adapters.booksnap_reader import BooksnapReader
@@ -42,8 +43,10 @@ from app.adapters.sqlite_store import (
     SqliteDuplicateQueue,
     SqliteReadStore,
     SqliteShelfStore,
+    SqliteTenancyStore,
 )
 from app.api.app import create_app
+from app.domain import Account, Library, Membership, Role
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WEB_DIST = REPO_ROOT / "app" / "web" / "dist"
@@ -101,6 +104,43 @@ def blob_root() -> Path:
     return Path(explicit) if explicit else _work() / "product_blobs"
 
 
+def _bootstrap_dev_account(tenancy: SqliteTenancyStore, principal) -> None:
+    """Make the dev principal a real, stored account with a real membership.
+
+    P3.1's resolver serves ``principal.library`` without a store lookup (the
+    dev-trusted case), but ``GET /libraries`` deliberately does NOT patch that
+    library into its answer — one copy of that rule, in one module. So the
+    switcher would be missing the very library on screen unless the row
+    exists. Creating it here is what keeps the two in step, and
+    ``test_the_library_meta_resolves_is_always_one_the_switcher_lists`` is
+    what fails if this is dropped.
+
+    It also names the library that schema v12 backfilled. The migration
+    deliberately leaves ``label`` blank — it cannot know what the owner calls
+    their collection, and an invented English "My library" would be our string
+    in a Hebrew switcher. The name comes from the same env var that has been
+    producing the label on screen since P1.0, so nothing visibly changes.
+
+    Idempotent, and it never renames a library the owner has named: only a
+    blank label is filled in. P4.1 replaces this whole function with a real
+    sign-up.
+    """
+    account = tenancy.get_account(principal.id)
+    if account is None:
+        tenancy.save_account(Account(id=principal.id))
+    ref = principal.library
+    library = tenancy.get_library(ref.id)
+    if library is None:
+        tenancy.save_library(Library(id=ref.id, label=ref.label))
+    elif not library.label and ref.label:
+        tenancy.save_library(replace(library, label=ref.label))
+    if tenancy.membership(principal.id, ref.id) is None:
+        # ADMIN: this is the household's own owner, and §4.2 puts every
+        # library-level capability behind that role. P3.2 gives the role
+        # meaning; P3.1 only has to store the true one.
+        tenancy.save_membership(Membership(principal.id, ref.id, Role.ADMIN))
+
+
 def build() -> object:
     """Bind adapters to ports and return the ASGI app."""
     # One instance is correct today (a hardcoded dev identity is immutable and
@@ -110,8 +150,15 @@ def build() -> object:
     path = db_path()
     blobs = DiskBlobStore(blob_root())
     books = SqliteBookStore(path)
+    tenancy = SqliteTenancyStore(path)
+    _bootstrap_dev_account(tenancy, principal)
     return create_app(
         principal_provider=lambda: principal,
+        # P3.1: accounts, libraries and memberships — the SIXTH aggregate in
+        # this one file, and the sharpest version of the reason they share it.
+        # "May this person see this?" and "what is there to see?" must never be
+        # answerable from two databases that could disagree about the moment.
+        tenancy_store=tenancy,
         book_store=books,
         # The SAME file, three aggregates now. Separate ports because their
         # lifetimes are independent (a shelf exists before any book is on it;

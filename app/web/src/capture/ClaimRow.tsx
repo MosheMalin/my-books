@@ -36,7 +36,7 @@
  * human typing the right answer rather than the machine picking a runner-up.
  */
 import { useState } from 'react'
-import type { ClaimOutcomeDTO } from '../api/client'
+import { imageUrl, type ClaimOutcomeDTO } from '../api/client'
 import { useI18n } from '../lib/i18n'
 import {
   DEFAULT_VOLUMES,
@@ -136,7 +136,7 @@ export function ClaimRow({
     <div className={`rrow${retracted ? ' retracted' : ''}`}>
       <div className="top">
         {claim.crop_key ? (
-          <img className="spine" src={`/api/v1/images/${claim.crop_key}/thumb`} alt="" />
+          <img className="spine" src={imageUrl(claim.crop_key)} alt="" />
         ) : (
           <span className="spine" aria-hidden="true" />
         )}

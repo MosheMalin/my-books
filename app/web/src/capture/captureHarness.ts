@@ -54,6 +54,10 @@ export interface FakeCaptureServer {
   /** status the NEXT `POST .../reads` returns — most tests want 'done' so
    *  no fake-timer polling is needed to reach the review panel. */
   nextReadStatus: 'running' | 'done' | 'stopped' | 'failed'
+  /** The live progress dict a running read reports (P2.4's `ReadDTO.progress`,
+   *  never persisted). The engine emits one per tile, block and spine; the
+   *  panel renders it. */
+  nextProgress: Record<string, unknown> | null
   /** What `POST .../reads/{id}/apply` answers with, given the answers it
    *  was called with — the test's own stand-in for `reconcile()`. */
   diffFor: (readId: string, answers: { claim_id: string; kind: string }[]) => DiffDTO
@@ -124,6 +128,7 @@ export function fakeCaptureServer(
     reads: [],
     readsForCapture: {},
     nextReadStatus: 'done',
+    nextProgress: null,
     diffFor: (readId, _answers) => emptyDiff('sh1', 1, readId),
     findingResult: (_action, _claimId) => emptyDiff('sh1', 1, 'rd1'),
     lookupFor: (_q) => [],
@@ -288,7 +293,7 @@ export function fakeCaptureServer(
         id, shelf_id: shelfId, depth: body.depth, capture_ids: [],
         mode: body.mode, status: server.nextReadStatus, code_version: null,
         config: null, started_at: null, finished_at: null, error: null,
-        claims: [], progress: null,
+        claims: [], progress: server.nextProgress,
       }, 202)
     }
 
@@ -316,7 +321,7 @@ export function fakeCaptureServer(
         id: readId, shelf_id: shelfId, depth: 1, capture_ids: [], mode: 'spines',
         status: server.nextReadStatus, code_version: null, config: null,
         started_at: null, finished_at: null, error: null, claims: [],
-        progress: null,
+        progress: server.nextProgress,
       })
     }
 

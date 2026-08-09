@@ -95,6 +95,8 @@ export interface BooksApi extends BooksState {
   setQuery: (patch: Partial<BooksQuery>) => void
   resetQuery: () => void
   loadMore: () => void
+  /** Refetch the current query from the top — see the implementation's ⚠. */
+  reload: () => void
   /** Sorting is ignored by the server while searching — relevance IS the
    *  order — so the UI must say so rather than pretend the control applies. */
   sortApplies: boolean
@@ -225,6 +227,28 @@ export function BooksProvider({ children }: { children: ReactNode }) {
 
   const resetQuery = useCallback(() => setQueryState(EMPTY_QUERY), [])
 
+  /**
+   * Refetch the first page of the CURRENT query, keeping the query itself.
+   *
+   * ⚠ This exists because the list is not the only thing that writes books.
+   * Approving a finding, adding one by hand, splitting a spine into volumes —
+   * all happen on the Capture tab, through routes this store never sees, and
+   * the store's only other refetch trigger is a change of `query`. So
+   * returning to the Books tab showed a list from before that work, and
+   * typing anything in the search box "fixed" it — which is exactly how the
+   * owner found it: *"after searching, the books appeared"*.
+   *
+   * A cross-tab invalidation channel (an event bus, a query library) is the
+   * general answer and is not worth it for two tabs: the moment that matters
+   * is ENTERING the tab, and `BooksTab` unmounts when you leave it, so its
+   * own mount is the signal. Revisit if a third writer appears that does not
+   * come with a mount.
+   */
+  const reload = useCallback(() => {
+    const id = ++queryId.current
+    void run(query, 0, id)
+  }, [query, run])
+
   const loadMore = useCallback(() => {
     setState((s) => {
       if (s.loading || s.loadingMore || !s.hasMore) return s
@@ -327,6 +351,7 @@ export function BooksProvider({ children }: { children: ReactNode }) {
       setQuery,
       resetQuery,
       loadMore,
+      reload,
       sortApplies: query.q.trim().length === 0,
       filtersActive:
         query.q.trim() !== '' ||
@@ -345,7 +370,7 @@ export function BooksProvider({ children }: { children: ReactNode }) {
       lendCopy,
       returnCopy,
     }),
-    [state, query, setQuery, resetQuery, loadMore, get, edit, add, remove,
+    [state, query, setQuery, resetQuery, loadMore, reload, get, edit, add, remove,
      addCopy, patchCopy, lendCopy, returnCopy],
   )
 

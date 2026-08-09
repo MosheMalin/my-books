@@ -477,3 +477,26 @@
   color: var(--review);
   background: var(--review-bg);
 }
+
+/* A running read's progress (owner, live use): the engine reports per-tile,
+   per-block and per-spine events, and the tab used to show one static
+   "reading…" for minutes. Tokens only, like every other rule here. */
+.runprogress .loading {
+  margin-bottom: 6px;
+}
+.progbar {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--line);
+  overflow: hidden;
+}
+.progbar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  /* The bar only ever moves forward, and a jump of one tile is small — a
+     short transition reads as motion rather than as a stutter. Poll interval
+     is 1s, so anything longer would still be animating when the next tick
+     lands. */
+  transition: width 0.3s ease;
+}

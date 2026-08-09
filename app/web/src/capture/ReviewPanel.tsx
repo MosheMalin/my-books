@@ -14,6 +14,7 @@
 import type { Shelf } from '../api/client'
 import { useI18n } from '../lib/i18n'
 import { FindingList } from './FindingList'
+import { RunProgress } from './RunProgress'
 import type { Approvable, FindingOp } from './findingOps'
 import type { RunState } from './useCapture'
 
@@ -53,9 +54,7 @@ export function ReviewPanel({
         </span>
       </h3>
       <div className="body">
-        {run.status === 'running' && (
-          <p className="loading">{t.reading_now}</p>
-        )}
+        {run.status === 'running' && <RunProgress progress={run.progress} />}
 
         {run.status === 'failed' && !run.diff && (
           <p className="errorbox" role="alert">

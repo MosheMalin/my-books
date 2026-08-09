@@ -16,7 +16,7 @@ import { formatDate } from '../lib/format'
 import { CopyBadges, StatusBadge } from '../books/Feed'
 import { ReadHistory } from './ReadHistory'
 import { useShelfDetail } from './useShelfDetail'
-import type { Book, DepthStatusDTO } from '../api/client'
+import { imageUrl, type Book, type DepthStatusDTO } from '../api/client'
 
 export interface ShelfPageProps {
   shelfId: string
@@ -88,7 +88,7 @@ export function ShelfPage({ shelfId, onBack, onOpen }: ShelfPageProps) {
                 {shelfDetail.photoImageId ? (
                   <img
                     className="shelfphoto"
-                    src={`/api/v1/images/${encodeURIComponent(shelfDetail.photoImageId)}/thumb`}
+                    src={imageUrl(shelfDetail.photoImageId)}
                     alt={t.shelf_untitled_photo_alt}
                   />
                 ) : (

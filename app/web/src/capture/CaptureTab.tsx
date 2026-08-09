@@ -147,14 +147,23 @@ export function CaptureTab() {
                 ))}
               </div>
               <div className="runactions">
+                {/* Disabled while ANY read is running (owner, live use).
+                    Pressing it again starts a second read of the same
+                    (shelf, depth) — legal server-side, and a waste of money
+                    and minutes that also replaces the panel you were
+                    watching. The reason is stated rather than left to a
+                    greyed-out button nobody can explain. */}
                 <button
                   type="button"
                   className="btn primary"
-                  disabled={cap.pendingGroupCount === 0}
+                  disabled={cap.pendingGroupCount === 0 || cap.running}
                   onClick={() => void cap.start()}
                 >
                   {t.run(cap.selectedReadyCount)}
                 </button>
+                {cap.running && (
+                  <span className="tiny muted">{t.run_busy}</span>
+                )}
               </div>
             </div>
           </div>

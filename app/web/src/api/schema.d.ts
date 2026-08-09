@@ -111,6 +111,29 @@ export interface paths {
          * @description *Delete from the library* — the destructive one of UI_PLAN §5's two
          *     actions. *Remove from shelf* is a different thing entirely and does not
          *     live here; it changes a copy, it does not remove a record.
+         *
+         *     **It also records a standing "no" wherever the book stood** (owner,
+         *     2026-08-10). Two things were wrong without it, and they are the same
+         *     thing seen from both ends:
+         *
+         *       - §5.6 says a rejected book must not be re-added by a later run, and
+         *         deleting is the plainest rejection the product offers — but it wrote
+         *         no decision, so the next read of that shelf would put the book
+         *         straight back;
+         *       - the finding that produced it reverted to an ordinary unanswered
+         *         question. The owner asked for what is actually true: the finding
+         *         should read as **removed** — struck through, with its undo — which is
+         *         exactly how `reconcile()` reports a claim a standing decision
+         *         suppresses.
+         *
+         *     `REJECTED`, not `WRONG_BOOK`: the two suppress identically and the kind is
+         *     the audit trail of WHICH question was answered
+         *     (:class:`~app.domain.reconcile.DecisionKind`). Deleting answers "I do not
+         *     have this book", not §5.4's "is this the copy I already have".
+         *
+         *     Undo is the workspace's ↩ (`POST .../findings/{id}/restore`), which
+         *     clears the decision and lets the read apply itself again — the book comes
+         *     back as the pending finding it was, not as a record nobody approved.
          */
         delete: operations["delete_book_api_v1_books__book_id__delete"];
         options?: never;
@@ -497,6 +520,69 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/libraries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Libraries this account belongs to
+         * @description Ordered by the domain's own key, so the switcher never reshuffles.
+         *
+         *     An account that belongs to nothing gets ``[]``, not an error — a real
+         *     state (P4.3's sign-up, before the first library) the client has to render.
+         *
+         *     ⚠ **Store data only, with no special case for the principal's own default
+         *     library** — even though :func:`app.api.deps.current_library` serves that
+         *     one without consulting the store. Patching it in here would put a second
+         *     copy of the resolver's dev-trusted rule in a second module, and the day
+         *     they disagreed the switcher would be missing the very library on screen.
+         *     Guaranteeing the membership row exists is the composition root's job
+         *     (``app.main:_bootstrap_dev_account``), and
+         *     ``test_the_library_meta_resolves_is_always_one_the_switcher_lists`` pins
+         *     the agreement rather than trusting it.
+         */
+        get: operations["list_libraries_api_v1_libraries_get"];
+        put?: never;
+        /**
+         * Create a library
+         * @description The creator becomes its admin, in the same domain call and the same
+         *     two writes — see the module note.
+         */
+        post: operations["create_library_api_v1_libraries_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/libraries/{library_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Rename a library
+         * @description 404 for a library this account is not a member of — never 403 (§4.2).
+         *
+         *     The membership is looked up FIRST and the library second: asking the other
+         *     way round would answer "no such library" for a real library and "not
+         *     found" for a fictional one from two different branches, and only one of
+         *     them stays honest when P3.2 adds roles.
+         */
+        patch: operations["patch_library_api_v1_libraries__library_id__patch"];
+        trace?: never;
+    };
     "/api/v1/meta": {
         parameters: {
             query?: never;
@@ -504,7 +590,13 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Service and library identity */
+        /**
+         * Service and library identity
+         * @description The library here is the RESOLVED one — what the request's own header
+         *     asked for (P3.1), not a server-side constant. A client that sends a
+         *     library it may not have gets 404 from the resolver rather than a
+         *     misleading 200 naming a different one.
+         */
         get: operations["get_meta_api_v1_meta_get"];
         put?: never;
         post?: never;
@@ -935,6 +1027,28 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AccountDTO
+         * @description Who the server thinks is asking (§4.1).
+         *
+         *     Dev-trusted until pillar 4: there is no login, so this is whichever
+         *     principal the composition root built. It is on the wire now because the
+         *     switcher's list is *this account's* libraries, and a client that cannot
+         *     name the account cannot explain an empty list.
+         */
+        AccountDTO: {
+            /**
+             * Display Name
+             * @description Shown in the UI, if set.
+             * @default
+             */
+            display_name: string;
+            /**
+             * Id
+             * @description Opaque account identifier.
+             */
+            id: string;
+        };
         /**
          * AlternativeDTO
          * @description One ranked runner-up `booksnap.match.explain()` considered for a
@@ -1614,6 +1728,55 @@ export interface components {
             returned_at?: string | null;
         };
         /**
+         * LibraryCreate
+         * @description A library is created with a name (§4.3) — see `new_library`.
+         *
+         *     ⚠ No ``min_length`` here on purpose, tempting though it is. Pydantic would
+         *     then answer 422 for ``""`` while ``"   "`` reached the domain and came
+         *     back 400 — two status codes for one mistake, decided by whitespace. The
+         *     rule lives in :func:`app.domain.tenancy.new_library`, which strips first,
+         *     so the API stays thin (H3) and the answer stays one thing.
+         */
+        LibraryCreate: {
+            /**
+             * Label
+             * @description What the household calls it.
+             */
+            label: string;
+        };
+        /**
+         * LibraryDTO
+         * @description One library the caller is a member of, with the role they hold.
+         *
+         *     A superset of :class:`LibraryRefDTO` rather than a replacement: the REF is
+         *     what travels on every request, and the switcher needs the role too. See
+         *     ``app/domain/tenancy.py`` for why the two types exist.
+         */
+        LibraryDTO: {
+            /** Created At */
+            created_at?: string | null;
+            /** Id */
+            id: string;
+            /**
+             * Label
+             * @description Human-readable name; blank only for a library backfilled by schema v12.
+             */
+            label: string;
+            /**
+             * Role
+             * @description viewer | editor | admin (§4.2). Stored and reported; what it PERMITS is P3.2.
+             */
+            role: string;
+        };
+        /**
+         * LibraryPatch
+         * @description Rename. The only mutable field a library has today.
+         */
+        LibraryPatch: {
+            /** Label */
+            label: string;
+        };
+        /**
          * LibraryRefDTO
          * @description The tenant reference the client echoes back on every request.
          *
@@ -1659,9 +1822,11 @@ export interface components {
         };
         /**
          * MetaResponse
-         * @description Service identity + the caller's resolved library.
+         * @description Service identity + who is asking + the library resolved for them.
          */
         MetaResponse: {
+            /** @description The caller (dev-trusted until P4.1). */
+            account: components["schemas"]["AccountDTO"];
             /**
              * Api Version
              * @description API major version, e.g. 'v1'.
@@ -2722,6 +2887,94 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_libraries_api_v1_libraries_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryDTO"][];
+                };
+            };
+        };
+    };
+    create_library_api_v1_libraries_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LibraryCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_library_api_v1_libraries__library_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LibraryPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryDTO"];
                 };
             };
             /** @description Validation Error */

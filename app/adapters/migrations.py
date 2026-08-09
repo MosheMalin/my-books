@@ -419,6 +419,71 @@ _V11 = """
 ALTER TABLE reads ADD COLUMN diff_summary TEXT;  -- JSON object, or NULL
 """
 
+# --- v12: accounts, libraries, memberships (P3.1, §4.1) --------------------
+#
+# The tenancy tables, and the first ones in this file that are not scoped BY a
+# library — `libraries` is the table every other `library_id` column has been
+# referring to since v1 without anything to point at.
+#
+# ⚠ The backfill is the load-bearing half. Every row the owner already owns
+# carries `library_id = 'dev-library'` (or whatever BOOKSNAP_DEV_LIBRARY was
+# set to), and from this item on the resolver only serves a library it can
+# find. Without a row per existing library_id, the first request after the
+# upgrade answers 404 and the 251 books look deleted. So the step derives one
+# from the data itself rather than from anything the app knows: every distinct
+# library_id in every table that carries one, UNIONed (which dedups).
+#
+# `label` is left EMPTY there on purpose. A migration cannot know what the
+# owner calls their library, and inventing an English "My library" would write
+# a string of ours into the Hebrew UI's switcher. Naming it is the composition
+# root's job (`app.main:_bootstrap_dev_account`, from the same env var that
+# already produced the label on screen) — and `Library` tolerates a blank one
+# for exactly these rows while `new_library` refuses to mint another.
+#
+# No accounts are backfilled: before this item nothing recorded a person, so
+# there is no account to derive. The dev one is created at composition time.
+_V12 = """
+CREATE TABLE accounts (
+    id           TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL DEFAULT '',
+    email        TEXT,
+    created_at   TEXT
+);
+
+-- Partial, so the many rows with no address yet (there is no login until
+-- pillar 4) do not collide with each other on NULL.
+CREATE UNIQUE INDEX accounts_by_email ON accounts (email) WHERE email IS NOT NULL;
+
+CREATE TABLE libraries (
+    id         TEXT PRIMARY KEY,
+    label      TEXT NOT NULL DEFAULT '',
+    created_at TEXT
+);
+
+CREATE TABLE memberships (
+    account_id TEXT NOT NULL REFERENCES accounts (id)  ON DELETE CASCADE,
+    library_id TEXT NOT NULL REFERENCES libraries (id) ON DELETE CASCADE,
+    role       TEXT NOT NULL,        -- viewer | editor | admin
+    joined_at  TEXT,
+    PRIMARY KEY (account_id, library_id)
+);
+
+-- The PRIMARY KEY already covers "this account's membership of this library"
+-- and "every library of this account" (leftmost prefix). This one serves the
+-- other direction, "everyone in this library", which `set_role`/`remove_member`
+-- need in full to answer "is there still an admin?".
+CREATE INDEX memberships_of_library ON memberships (library_id, role);
+
+INSERT INTO libraries (id)
+    SELECT library_id FROM books
+    UNION SELECT library_id FROM copies
+    UNION SELECT library_id FROM shelves
+    UNION SELECT library_id FROM captures
+    UNION SELECT library_id FROM reads
+    UNION SELECT library_id FROM decisions
+    UNION SELECT library_id FROM duplicate_questions;
+"""
+
 # A step is either SQL to execute or a callable to run — both inside the same
 # once-only transaction. Callables exist because a derived column whose rule
 # lives in the domain must be backfilled BY that rule, not by a re-statement
@@ -435,6 +500,7 @@ MIGRATIONS: tuple[tuple[int, str | Step], ...] = (
     (9, _V9),
     (10, _V10),
     (11, _V11),
+    (12, _V12),
 )
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]

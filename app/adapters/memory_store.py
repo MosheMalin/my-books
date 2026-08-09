@@ -13,17 +13,22 @@ frozen, so there is nothing to defensively copy.
 from __future__ import annotations
 
 from app.domain import (
+    Account,
     Book,
     Capture,
     Decision,
     DuplicateQuestion,
+    Library,
     LibraryRef,
+    Membership,
     Read,
+    Role,
     Shelf,
     Status,
 )
 from app.domain.search import parse
 from app.domain.search import search as domain_search
+from app.ports.tenancy import UnknownAccount, UnknownLibrary
 from app.ports.store import (
     BookPage,
     BookSort,
@@ -364,6 +369,64 @@ class MemoryDuplicateQueue:
     ) -> bool:
         key = (shelf_id, depth, book_key)
         return self._q(library).pop(key, None) is not None
+
+
+class MemoryTenancyStore:
+    """Implements ``app.ports.tenancy.TenancyStore`` (P3.1).
+
+    ⚠ The one memory store with no ``_by_library`` dict — see the port's own
+    ⚠⚠: this is the store that ANSWERS which libraries exist, so scoping it by
+    a library would be circular. Its narrowing key is the account.
+    """
+
+    def __init__(self) -> None:
+        self._accounts: dict[str, Account] = {}
+        self._libraries: dict[str, Library] = {}
+        self._members: dict[tuple[str, str], Membership] = {}
+
+    # --- accounts --------------------------------------------------------
+
+    def save_account(self, account: Account) -> None:
+        self._accounts[account.id] = account
+
+    def get_account(self, account_id: str) -> Account | None:
+        return self._accounts.get(account_id)
+
+    # --- libraries -------------------------------------------------------
+
+    def save_library(self, library: Library) -> None:
+        self._libraries[library.id] = library
+
+    def get_library(self, library_id: str) -> Library | None:
+        return self._libraries.get(library_id)
+
+    # --- memberships -----------------------------------------------------
+
+    def save_membership(self, membership: Membership) -> None:
+        if membership.account_id not in self._accounts:
+            raise UnknownAccount(f"no account {membership.account_id!r}")
+        if membership.library_id not in self._libraries:
+            raise UnknownLibrary(f"no library {membership.library_id!r}")
+        self._members[(membership.account_id, membership.library_id)] = membership
+
+    def membership(self, account_id: str, library_id: str) -> Membership | None:
+        return self._members.get((account_id, library_id))
+
+    def delete_membership(self, account_id: str, library_id: str) -> bool:
+        return self._members.pop((account_id, library_id), None) is not None
+
+    def list_libraries(
+        self, account_id: str,
+    ) -> tuple[tuple[Library, Membership], ...]:
+        rows = [(self._libraries[m.library_id], m)
+                for (acc, _lib), m in self._members.items() if acc == account_id]
+        rows.sort(key=lambda pair: pair[0].sort_key)
+        return tuple(rows)
+
+    def list_members(self, library_id: str) -> tuple[Membership, ...]:
+        rows = [m for m in self._members.values() if m.library_id == library_id]
+        rows.sort(key=lambda m: (m.role is not Role.ADMIN, m.account_id))
+        return tuple(rows)
 
 
 def _any_copy_out(book: Book) -> bool:

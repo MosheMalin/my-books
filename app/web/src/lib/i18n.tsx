@@ -220,6 +220,32 @@ const HE = {
     split_signal: 'כוכביות (*, **)',
     split_do: 'צרו כרכים',
     author_known: 'מחברים בספרייה:',
+    // P3.1 — the library switcher (§4.1, UI_PLAN §1). "ספרייה" is the
+    // TENANCY boundary, the household's collection; a place you keep books
+    // is a different word and arrives with the map (pillar 6).
+    // The engine has always reported these; the tab used to show one static
+    // "reading…" for minutes, which is indistinguishable from a hung job.
+    run_busy: 'קריאה כבר רצה',
+    stage_reading: (done: number, total: number) =>
+      `קורא את התמונה… ${done}/${total}`,
+    stage_page_read: (n: number) => `נקראו ${n} ספרים מהתמונה`,
+    stage_segmented: (n: number) => `זוהו ${n} שדרות`,
+    stage_ocr: (done: number, total: number) => `קורא שדרות… ${done}/${total}`,
+    stage_matching: (done: number, total: number) =>
+      `מזהה ספרים בקטלוג… ${done}/${total}`,
+    stage_stopping: 'עוצר…',
+    library_switch: 'החלפת ספרייה',
+    library_new: '+ ספרייה חדשה',
+    library_name: 'שם הספרייה',
+    library_name_placeholder: 'למשל משפחת מלין',
+    library_create: 'יצירה',
+    library_unnamed: 'ספרייה',
+    library_unknown: 'ספרייה',
+    role: {
+      viewer: 'צפייה',
+      editor: 'עריכה',
+      admin: 'ניהול',
+    } as Record<string, string>,
   lang: 'EN',
 }
 
@@ -425,6 +451,27 @@ const EN: Strings = {
     split_signal: 'Signal (*, **)',
     split_do: 'Create volumes',
     author_known: 'Authors in your library:',
+    run_busy: 'A read is already running',
+    stage_reading: (done: number, total: number) =>
+      `Reading the photo… ${done}/${total}`,
+    stage_page_read: (n: number) => `Read ${n} books off the photo`,
+    stage_segmented: (n: number) => `Found ${n} spines`,
+    stage_ocr: (done: number, total: number) => `Reading spines… ${done}/${total}`,
+    stage_matching: (done: number, total: number) =>
+      `Matching against the catalogue… ${done}/${total}`,
+    stage_stopping: 'Stopping…',
+    library_switch: 'Switch library',
+    library_new: '+ New library',
+    library_name: 'Library name',
+    library_name_placeholder: 'e.g. The Malin family',
+    library_create: 'Create',
+    library_unnamed: 'Library',
+    library_unknown: 'Library',
+    role: {
+      viewer: 'Viewer',
+      editor: 'Editor',
+      admin: 'Admin',
+    },
   lang: 'עב',
 }
 

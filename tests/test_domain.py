@@ -24,6 +24,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from app.domain import (
     FIRE_TABLE,
+    Account,
     AmbiguousCopy,
     Book,
     Claim,
@@ -38,16 +39,22 @@ from app.domain import (
     DomainError,
     DuplicateQuestion,
     FireDecision,
+    Library,
+    LibraryNeedsAName,
+    Membership,
+    NoAdminLeft,
     Provenance,
     PromptKind,
     Read,
     ReadAlreadyFinished,
     ReadStatus,
     RetractAction,
+    Role,
     Shelf,
     Status,
     UnknownCopy,
     UnknownDepth,
+    UnknownMember,
     VirtualShelfHasNoDepth,
     add_copy,
     add_depth,
@@ -57,6 +64,7 @@ from app.domain import (
     capture_onto_a_new_shelf,
     book_key,
     counts_toward_library,
+    deletion_sites,
     depth_staleness,
     edit,
     edit_copy,
@@ -66,6 +74,7 @@ from app.domain import (
     lend,
     new_book,
     new_capture,
+    new_library,
     new_read,
     new_shelf,
     not_seen_streak,
@@ -76,8 +85,11 @@ from app.domain import (
     reconcile,
     relink_copy,
     remove_from_shelf,
+    remove_member,
+    rename_library,
     rename_shelf,
     return_copy,
+    set_role,
     set_work_fields,
     stop_read,
     summarize,
@@ -1703,6 +1715,140 @@ def test_a_retraction_never_mutates_the_book_it_is_about():
     before = book
     plan_retraction(book, "sh1", 1, read=_read_for_retract())
     assert book == before
+
+
+def test_deleting_a_book_records_a_no_at_every_row_it_stood_on():
+    """A book seen on two rows was claimed on two rows, and a decision is
+    scoped to one (shelf, depth) by §5.7 #1 — one decision per site is the
+    only answer that suppresses everywhere it was actually found."""
+    book = observe(_book(shelf_id="sh1", depth=1),
+                   Provenance("r1", "sp1", shelf_id="sh1", depth=1))
+    book = add_copy(book, copy_id="c2", shelf_id="sh2", depth=2)
+    assert deletion_sites(book) == (("sh1", 1), ("sh2", 2))
+
+
+def test_deleting_an_unlocated_book_suppresses_nothing():
+    """The 251 imported books have no shelf. There is no row for a future
+    read to re-find them on, so there is nothing to say no to."""
+    assert deletion_sites(_book()) == ()
+
+
+def test_two_copies_on_one_row_record_one_no_not_two():
+    """The decision's key is (library, shelf, depth, book_key) — a second
+    write for the same site is the same row, and duplicating it would only
+    make the intent look ambiguous."""
+    book = observe(_book(shelf_id="sh1", depth=1),
+                   Provenance("r1", "sp1", shelf_id="sh1", depth=1))
+    book = add_copy(book, copy_id="c2", shelf_id="sh1", depth=1)
+    assert deletion_sites(book) == (("sh1", 1),)
+
+
+# --- tenancy (P3.1, §4.1/§4.2/§4.3) ---------------------------------------
+
+OWNER = Account(id="acc-1", display_name="משה")
+
+
+def test_creating_a_library_makes_its_creator_an_admin():
+    """A library saved without a membership is invisible to the person who
+    made it (listing is BY ACCOUNT) and administrable by nobody. Returning
+    both from one call is what makes that state unreachable from a caller
+    that simply forgot the second write."""
+    library, membership = new_library(id="lib-1", label="משפחת מלין", owner=OWNER)
+    assert membership.library_id == library.id
+    assert membership.account_id == OWNER.id
+    assert membership.role is Role.ADMIN
+
+
+def test_a_library_is_created_with_a_name():
+    """The deliberate asymmetry with `Shelf`, whose label is optional because
+    an unnamed shelf is shown by its own photograph. A library has no
+    photograph — it is a row in the app-bar switcher, and two blank rows are
+    two libraries the owner cannot tell apart (§4.3: "create a Library, name
+    it")."""
+    _raises(LibraryNeedsAName, new_library, id="lib-1", label="  ", owner=OWNER)
+    _raises(LibraryNeedsAName, rename_library, Library(id="lib-1", label="x"), "")
+
+
+def test_a_backfilled_library_may_be_nameless_even_though_a_new_one_may_not():
+    """Schema v12 backfills a row for every library id that already existed in
+    the owner's data, and there is no label to recover. So the ENTITY must be
+    able to represent one while the CONSTRUCTOR refuses to mint another —
+    the same split as `Book`/`new_book`."""
+    assert Library(id="dev-library").label == ""
+
+
+def test_the_last_admin_cannot_be_demoted_or_removed():
+    """§4.2 gives only an admin "invite/remove members, change roles", so a
+    library whose last admin steps down can never invite anyone, be renamed
+    or be deleted — an unadministrable tenant only a database edit rescues."""
+    members = (Membership("acc-1", "lib-1", Role.ADMIN),
+               Membership("acc-2", "lib-1", Role.EDITOR))
+    _raises(NoAdminLeft, set_role, members, "acc-1", Role.VIEWER)
+    _raises(NoAdminLeft, remove_member, members, "acc-1")
+
+
+def test_an_admin_may_step_down_once_another_admin_exists():
+    """The rule is "at least one", not "the first one forever" — otherwise
+    handing the library over to someone else is impossible."""
+    members = (Membership("acc-1", "lib-1", Role.ADMIN),
+               Membership("acc-2", "lib-1", Role.ADMIN))
+    left = remove_member(members, "acc-1")
+    assert [m.account_id for m in left] == ["acc-2"]
+    demoted = set_role(members, "acc-1", Role.VIEWER)
+    assert {m.account_id: m.role for m in demoted}["acc-1"] is Role.VIEWER
+
+
+def test_changing_a_role_replaces_it_rather_than_adding_a_second_membership():
+    """One membership per (account, library) — the store declares it as a
+    composite primary key, and a domain op that appended instead would make
+    "what is my role here" ambiguous before the store ever saw it."""
+    members = (Membership("acc-1", "lib-1", Role.ADMIN),
+               Membership("acc-2", "lib-1", Role.VIEWER))
+    after = set_role(members, "acc-2", Role.EDITOR)
+    assert len(after) == 2
+    assert [m.role for m in after] == [Role.ADMIN, Role.EDITOR]
+
+
+def test_acting_on_a_non_member_raises_rather_than_inventing_a_membership():
+    members = (Membership("acc-1", "lib-1", Role.ADMIN),)
+    _raises(UnknownMember, set_role, members, "acc-9", Role.EDITOR)
+    _raises(UnknownMember, remove_member, members, "acc-9")
+
+
+def test_a_role_says_who_you_are_and_never_what_you_may_do():
+    """§4.2's matrix is P3.2's item — data, with ONE enforcement point. A
+    `can()`/CAPABILITIES here would be a second enforcement point built
+    before the first one exists, and the two would drift the first time a
+    capability moved a column. Structural on purpose, like the shelf-address
+    test: the tempting mistake is to add it "while we're at it"."""
+    src = (REPO_ROOT / "app" / "domain" / "tenancy.py").read_text(encoding="utf-8")
+    names = {
+        node.name for node in ast.walk(ast.parse(src))
+        if isinstance(node, ast.FunctionDef)
+    } | {
+        t.id for node in ast.walk(ast.parse(src))
+        if isinstance(node, ast.Assign) for t in node.targets
+        if isinstance(t, ast.Name)
+    }
+    banned = {"can", "may", "allows", "permits", "CAPABILITIES", "PERMISSIONS",
+              "MATRIX", "POLICY"}
+    assert not (names & banned), (
+        f"§4.2's matrix is P3.2's, with one enforcement point: {sorted(names & banned)}"
+    )
+
+
+def test_a_library_is_not_a_place():
+    """§4.1's own warning: Library is the PERMISSION boundary ("the Malin
+    family collection"); a place you keep books (home, office, parents') is a
+    PhysicalLibrary — an address inside it, and addresses arrive with the map
+    (plan §1.1). Collapsing the two here is what would make the map's own
+    hierarchy have to reconcile with this one."""
+    fields = set(Library.__dataclass_fields__)
+    address = {"place", "place_id", "places", "bookcase", "room", "address",
+               "col", "level", "geometry"}
+    assert not (fields & address), (
+        f"physical-place fields on the tenancy boundary: {sorted(fields & address)}"
+    )
 
 
 if __name__ == "__main__":

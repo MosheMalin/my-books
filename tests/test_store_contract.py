@@ -37,6 +37,7 @@ from app.adapters.memory_store import (
     MemoryDuplicateQueue,
     MemoryReadStore,
     MemoryShelfStore,
+    MemoryTenancyStore,
 )
 from app.adapters.migrations import SCHEMA_VERSION, current_version, migrate
 from app.adapters.sqlite_store import (
@@ -45,8 +46,10 @@ from app.adapters.sqlite_store import (
     SqliteDuplicateQueue,
     SqliteReadStore,
     SqliteShelfStore,
+    SqliteTenancyStore,
 )
 from app.domain import (
+    Account,
     Alternative,
     Capture,
     Claim,
@@ -55,8 +58,11 @@ from app.domain import (
     DecisionKind,
     DiffSummary,
     DuplicateQuestion,
+    Library,
     LibraryRef,
+    Membership,
     Provenance,
+    Role,
     Status,
     add_copy,
     append_claim,
@@ -66,6 +72,7 @@ from app.domain import (
     lend,
     new_book,
     new_capture,
+    new_library,
     new_read,
     new_shelf,
     observe,
@@ -84,6 +91,7 @@ from app.ports.store import (
     UnknownShelf,
     WrongLibrary,
 )
+from app.ports.tenancy import UnknownAccount, UnknownLibrary
 
 LIB = LibraryRef("lib-a", "Library A")
 OTHER = LibraryRef("lib-b", "Library B")
@@ -93,6 +101,11 @@ SHELF_CONTRACT: list = []
 READ_CONTRACT: list = []
 DECISION_CONTRACT: list = []
 DUPLICATE_CONTRACT: list = []
+TENANCY_CONTRACT: list = []
+
+# The tenancy suite's own axis: accounts, not libraries (P3.1).
+ACC = Account(id="acc-a", display_name="משה")
+ACC2 = Account(id="acc-b", display_name="Dana")
 
 
 def contract(fn):
@@ -130,6 +143,18 @@ def duplicate_contract(fn):
     """Mark a function as part of the DuplicateQueue spec (P2.6). A fifth
     list, same reasoning as the others."""
     DUPLICATE_CONTRACT.append(fn)
+    return fn
+
+
+def tenancy_contract(fn):
+    """Mark a function as part of the TenancyStore spec (P3.1).
+
+    ⚠ A sixth list, and the only one whose cases take no ``LibraryRef`` — this
+    is the store that ANSWERS which libraries exist, so it is scoped by the
+    ACCOUNT instead (see the port's own ⚠⚠). Everything above narrows by
+    ``LIB``/``OTHER``; everything here narrows by ``ACC``/``ACC2``.
+    """
+    TENANCY_CONTRACT.append(fn)
     return fn
 
 
@@ -1282,6 +1307,159 @@ def every_duplicate_queue_method_takes_a_library(store):
         assert hasattr(store, name), f"{type(store).__name__} lacks {name}()"
 
 
+# --- the tenancy spec (P3.1, §4.1) ------------------------------------------
+#
+# Scoped by ACCOUNT, not by library — the one suite in this file that is. See
+# `tenancy_contract`'s own note.
+
+def _seed_two_libraries(store):
+    """One account in two libraries, another account in one of them."""
+    store.save_account(ACC)
+    store.save_account(ACC2)
+    a, mine_a = new_library(id="lib-1", label="משפחת מלין", owner=ACC,
+                            created_at="2026-01-01T00:00:00+00:00")
+    b, mine_b = new_library(id="lib-2", label="Office", owner=ACC,
+                            created_at="2026-02-01T00:00:00+00:00")
+    for lib, m in ((a, mine_a), (b, mine_b)):
+        store.save_library(lib)
+        store.save_membership(m)
+    store.save_membership(Membership(ACC2.id, "lib-2", Role.EDITOR))
+    return a, b
+
+
+@tenancy_contract
+def an_account_round_trips(store):
+    store.save_account(ACC)
+    got = store.get_account(ACC.id)
+    assert got is not None and got.display_name == "משה"
+    assert store.get_account("nobody") is None
+
+
+@tenancy_contract
+def a_library_round_trips_and_yields_the_tenant_key(store):
+    """`Library.ref` is the one-way door to `LibraryRef`, so nothing
+    downstream has to know which of the two it was handed."""
+    store.save_account(ACC)
+    lib, membership = new_library(id="lib-1", label="משפחת מלין", owner=ACC)
+    store.save_library(lib)
+    store.save_membership(membership)
+    got = store.get_library("lib-1")
+    assert got is not None and got.ref == LibraryRef("lib-1", "משפחת מלין")
+
+
+@tenancy_contract
+def an_account_only_ever_sees_the_libraries_it_belongs_to(store):
+    """The isolation property of THIS store. Every other aggregate leaks one
+    record when its scope is dropped; this one leaks a whole library."""
+    _seed_two_libraries(store)
+    # A set: the ORDER is a separate rule with its own case below, and a
+    # Latin label sorts before a Hebrew one, which says nothing about scope.
+    assert {lib.id for lib, _ in store.list_libraries(ACC.id)} == {"lib-1", "lib-2"}
+    assert [lib.id for lib, _ in store.list_libraries(ACC2.id)] == ["lib-2"]
+    assert store.list_libraries("acc-nobody") == ()
+
+
+@tenancy_contract
+def a_listed_library_carries_the_role_that_was_granted(store):
+    """The switcher renders this list directly, and P3.2's policy reads the
+    role off it — a listing that dropped it would send every caller back for
+    a second lookup per row."""
+    _seed_two_libraries(store)
+    roles = {lib.id: m.role for lib, m in store.list_libraries(ACC2.id)}
+    assert roles == {"lib-2": Role.EDITOR}
+    mine = {lib.id: m.role for lib, m in store.list_libraries(ACC.id)}
+    assert mine == {"lib-1": Role.ADMIN, "lib-2": Role.ADMIN}
+
+
+@tenancy_contract
+def libraries_are_listed_in_the_domains_order_not_the_adapters(store):
+    """`Library.sort_key`: named alphabetically, then the nameless v12
+    backfill oldest-first, id last. An order that varies between adapters is
+    an order the user experiences as the switcher reshuffling itself."""
+    store.save_account(ACC)
+    rows = [
+        Library(id="l-z", label="Zebra", created_at="2026-01-01"),
+        Library(id="l-a", label="Aleph", created_at="2026-03-01"),
+        # The backfilled shape: no label, no created_at.
+        Library(id="l-old"),
+        Library(id="l-mid", created_at="2020-01-01"),
+    ]
+    for lib in rows:
+        store.save_library(lib)
+        store.save_membership(Membership(ACC.id, lib.id, Role.ADMIN))
+    assert [lib.id for lib, _ in store.list_libraries(ACC.id)] == \
+        ["l-old", "l-mid", "l-a", "l-z"]
+
+
+@tenancy_contract
+def a_role_change_replaces_the_membership_rather_than_adding_one(store):
+    """One membership per (account, library) — the store declares it as a
+    composite key, so `save_membership` is a plain upsert."""
+    _seed_two_libraries(store)
+    store.save_membership(Membership(ACC2.id, "lib-2", Role.ADMIN))
+    rows = store.list_libraries(ACC2.id)
+    assert len(rows) == 1
+    assert rows[0][1].role is Role.ADMIN
+
+
+@tenancy_contract
+def a_membership_naming_a_missing_account_or_library_is_refused(store):
+    """The row it would create is a permission granted to nobody, or to
+    nothing. SQLite declares it as a foreign key; the memory store has none,
+    so both check explicitly or the two adapters disagree."""
+    store.save_account(ACC)
+    store.save_library(Library(id="lib-1", label="משפחת מלין"))
+    _raises(UnknownAccount, store.save_membership,
+            Membership("acc-ghost", "lib-1", Role.EDITOR))
+    _raises(UnknownLibrary, store.save_membership,
+            Membership(ACC.id, "lib-ghost", Role.EDITOR))
+
+
+@tenancy_contract
+def membership_answers_the_resolvers_question_and_nothing_else(store):
+    """The hot path: `deps.current_library` calls it on every request that
+    names a library."""
+    _seed_two_libraries(store)
+    assert store.membership(ACC.id, "lib-1").role is Role.ADMIN
+    assert store.membership(ACC2.id, "lib-1") is None
+    assert store.membership("acc-nobody", "lib-1") is None
+
+
+@tenancy_contract
+def removing_a_member_removes_nobody_elses_membership_and_no_library(store):
+    """UI_PLAN §5's separation, one level up: the person leaves, the
+    collection stays."""
+    _seed_two_libraries(store)
+    assert store.delete_membership(ACC2.id, "lib-2") is True
+    assert store.delete_membership(ACC2.id, "lib-2") is False
+    assert store.get_library("lib-2") is not None
+    assert {lib.id for lib, _ in store.list_libraries(ACC.id)} == {"lib-1", "lib-2"}
+
+
+@tenancy_contract
+def list_members_returns_the_whole_list_the_domain_rules_need(store):
+    """`set_role`/`remove_member` take the WHOLE member list, because "is
+    there still an admin?" is unanswerable from one row. Admins first, so a
+    members screen does not have to re-sort what the store already knows."""
+    _seed_two_libraries(store)
+    members = store.list_members("lib-2")
+    assert [m.account_id for m in members] == [ACC.id, ACC2.id]
+    assert [m.role for m in members] == [Role.ADMIN, Role.EDITOR]
+    assert store.list_members("lib-nobody") == ()
+
+
+@tenancy_contract
+def a_library_is_readable_by_id_even_by_a_caller_with_no_membership(store):
+    """⚠ Deliberate: 404-not-403 is about what the API SAYS, and the route
+    needs "no such library" and "not yours" to stay distinguishable INSIDE the
+    server to answer correctly. A store that conflated them would make the
+    two indistinguishable everywhere, including in a log."""
+    _seed_two_libraries(store)
+    assert store.get_library("lib-1") is not None
+    assert store.membership(ACC2.id, "lib-1") is None
+    assert store.get_library("lib-nothing") is None
+
+
 # --- registration ---------------------------------------------------------
 
 @contextmanager
@@ -1354,6 +1532,20 @@ def _sqlite_duplicate_queue():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+@contextmanager
+def _memory_tenancy_store():
+    yield MemoryTenancyStore()
+
+
+@contextmanager
+def _sqlite_tenancy_store():
+    tmp = tempfile.mkdtemp(prefix="booksnap-tenancy-")
+    try:
+        yield SqliteTenancyStore(Path(tmp) / "books.db")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 IMPLEMENTATIONS = (("memory", _memory_store), ("sqlite", _sqlite_store))
 SHELF_IMPLEMENTATIONS = (("memory", _memory_shelf_store),
                          ("sqlite", _sqlite_shelf_store))
@@ -1363,6 +1555,8 @@ DECISION_IMPLEMENTATIONS = (("memory", _memory_decision_store),
                             ("sqlite", _sqlite_decision_store))
 DUPLICATE_IMPLEMENTATIONS = (("memory", _memory_duplicate_queue),
                              ("sqlite", _sqlite_duplicate_queue))
+TENANCY_IMPLEMENTATIONS = (("memory", _memory_tenancy_store),
+                           ("sqlite", _sqlite_tenancy_store))
 
 
 def _bind(fn, factory, name):
@@ -1399,6 +1593,11 @@ for _label, _factory in DECISION_IMPLEMENTATIONS:
 
 for _label, _factory in DUPLICATE_IMPLEMENTATIONS:
     for _fn in DUPLICATE_CONTRACT:
+        _name = f"test_{_fn.__name__}__{_label}"
+        globals()[_name] = _bind(_fn, _factory, _name)
+
+for _label, _factory in TENANCY_IMPLEMENTATIONS:
+    for _fn in TENANCY_CONTRACT:
         _name = f"test_{_fn.__name__}__{_label}"
         globals()[_name] = _bind(_fn, _factory, _name)
 
@@ -1655,6 +1854,74 @@ def test_a_v8_database_upgrades_and_creates_the_duplicate_questions_table():
         # And the store built on the upgraded file actually works.
         store.save_question(LIB, _dq())
         assert store.get_question(LIB, "sh1", 1, "k|a") is not None
+
+
+def test_a_v11_database_backfills_a_library_row_for_the_data_it_already_holds():
+    """H6, and the migration in this file with the most to lose (P3.1).
+
+    Every row the owner already owns carries `library_id = 'dev-library'`, and
+    from P3.1 on the resolver only serves a library it can FIND. Without a
+    backfilled row per existing library_id, the first request after the
+    upgrade answers 404 and 251 books look deleted — the failure mode is not a
+    missing column, it is an empty library.
+
+    The label is left blank on purpose: a migration cannot know what the owner
+    calls their collection, and inventing an English "My library" would write
+    one of our strings into a Hebrew switcher. Naming it is the composition
+    root's job.
+    """
+    import sqlite3
+
+    from app.adapters.migrations import MIGRATIONS
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "v11.db"
+        conn = sqlite3.connect(str(path))
+        try:
+            for version, step in MIGRATIONS:
+                if version > 11:
+                    break
+                if isinstance(step, str):
+                    conn.executescript(step)
+                else:
+                    step(conn)
+            conn.execute("PRAGMA user_version = 11")
+            # Two libraries' worth of data, in two different tables — the
+            # backfill has to find both, and a shelf with no book is exactly
+            # the row a books-only UNION would miss.
+            conn.execute(
+                "INSERT INTO books (id, library_id, title, author, norm_title,"
+                " norm_author, book_key, notes, search_text, sort_author)"
+                " VALUES ('b1', 'dev-library', 'ספר', 'מחבר', 'ספר', 'מחבר',"
+                " 'ספר|מחבר', '', 'ספר | מחבר', 'מחבר')"
+            )
+            conn.execute(
+                "INSERT INTO shelves (id, library_id, label) VALUES"
+                " ('sh1', 'lib-second', '')"
+            )
+            conn.commit()
+            tables = {r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()}
+            assert "libraries" not in tables, "the fixture is not really v11"
+        finally:
+            conn.close()
+
+        store = SqliteTenancyStore(path)        # migrates on construction
+        conn = sqlite3.connect(str(path))
+        try:
+            assert current_version(conn) == SCHEMA_VERSION
+        finally:
+            conn.close()
+
+        for library_id in ("dev-library", "lib-second"):
+            found = store.get_library(library_id)
+            assert found is not None, f"{library_id} lost its books to a 404"
+            assert found.label == "", "the migration invented a name"
+
+        # Nobody is a member yet — accounts arrive at composition time, not
+        # from a migration, because before this item nothing recorded a person.
+        assert store.list_libraries("acc-anyone") == ()
 
 
 def test_deleting_a_shelf_never_touches_the_books_that_stood_on_it():

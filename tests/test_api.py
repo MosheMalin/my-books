@@ -41,14 +41,19 @@ from app.adapters.memory_store import (
     MemoryDuplicateQueue,
     MemoryReadStore,
     MemoryShelfStore,
+    MemoryTenancyStore,
 )
 from app.api import deps
 from app.api.app import create_app
 from app.domain import (
+    Account,
     Decision,
     DecisionKind,
+    Library,
     LibraryRef,
+    Membership,
     Provenance,
+    Role,
     Status,
     new_book,
 )
@@ -89,12 +94,31 @@ class StubPrincipal:
         return self._library
 
 
+def _tenancy(principal: StubPrincipal) -> MemoryTenancyStore:
+    """A tenancy store that already knows this principal and its library.
+
+    Seeded rather than empty because that is the state every app reaches at
+    startup: `app/main.py` bootstraps the account and its membership, and a
+    test whose store disagreed with its own principal would be testing a
+    wiring bug, not a rule. Tests that WANT the disagreement (a foreign
+    library, an unknown one) build their own.
+    """
+    store = MemoryTenancyStore()
+    store.save_account(Account(id=principal.id))
+    store.save_library(Library(id=principal.library.id,
+                               label=principal.library.label))
+    store.save_membership(
+        Membership(principal.id, principal.library.id, Role.ADMIN))
+    return store
+
+
 def _app(principal: StubPrincipal | None = None, store=None, shelves=None,
          blobs=None, reads=None, reader=None, jobs=None, decisions=None,
-         duplicates=None):
+         duplicates=None, tenancy=None):
     p = principal or StubPrincipal()
     return create_app(
         principal_provider=lambda: p,
+        tenancy_store=tenancy if tenancy is not None else _tenancy(p),
         book_store=store if store is not None else MemoryBookStore(),
         shelf_store=shelves if shelves is not None else MemoryShelfStore(),
         blob_store=blobs,
@@ -235,6 +259,183 @@ def test_meta_follows_the_principal_not_a_global():
         b = c2.get(f"{API_PREFIX}/meta").json()
     assert a["library"]["id"] == "lib-test"
     assert b["library"]["id"] == "lib-other"
+
+
+# --- tenancy: the resolver and the switcher (P3.1, §1.3/§4.1) --------------
+
+def _second_library(principal: StubPrincipal, tenancy: MemoryTenancyStore,
+                    *, member: bool = True, library_id: str = "lib-2",
+                    label: str = "Office") -> None:
+    tenancy.save_library(Library(id=library_id, label=label,
+                                 created_at="2026-08-01T00:00:00+00:00"))
+    if member:
+        tenancy.save_membership(Membership(principal.id, library_id, Role.EDITOR))
+
+
+def test_the_request_chooses_the_library_not_the_server():
+    """§1.3's whole point: a library reference travels on every request. Until
+    P3.1 the header was sent by the client and ignored by the server."""
+    p = StubPrincipal()
+    tenancy = _tenancy(p)
+    _second_library(p, tenancy)
+    with TestClient(_app(p, tenancy=tenancy)) as client:
+        body = client.get(f"{API_PREFIX}/meta",
+                          headers={deps.LIBRARY_HEADER: "lib-2"}).json()
+    assert body["library"] == {"id": "lib-2", "label": "Office"}
+
+
+def test_the_books_a_request_sees_follow_the_library_it_named():
+    """The resolver is one function, so proving it on `meta` proves the shape
+    — but the failure that matters is a WRITE or a LIST answering from the
+    wrong tenant, so it is asserted on the books route too."""
+    p = StubPrincipal()
+    tenancy = _tenancy(p)
+    _second_library(p, tenancy)
+    store = MemoryBookStore()
+    _seed(store, TEST_LIBRARY, "ספר של הבית")
+    _seed(store, LibraryRef("lib-2", "Office"), "ספר של המשרד")
+    with TestClient(_app(p, store=store, tenancy=tenancy)) as client:
+        here = client.get(f"{API_PREFIX}/books").json()
+        there = client.get(f"{API_PREFIX}/books",
+                           headers={deps.LIBRARY_HEADER: "lib-2"}).json()
+    assert [b["title"] for b in here["items"]] == ["ספר של הבית"]
+    assert [b["title"] for b in there["items"]] == ["ספר של המשרד"]
+
+
+def test_a_library_the_caller_is_not_a_member_of_is_404_not_403():
+    """§4.2: a foreign library must not be distinguishable from a fictional
+    one. Asserted from the ONE place that can see every library, because a
+    403 here would confirm the existence of another household's collection."""
+    p = StubPrincipal()
+    tenancy = _tenancy(p)
+    _second_library(p, tenancy, member=False)
+    with TestClient(_app(p, tenancy=tenancy)) as client:
+        foreign = client.get(f"{API_PREFIX}/meta",
+                             headers={deps.LIBRARY_HEADER: "lib-2"})
+        fictional = client.get(f"{API_PREFIX}/meta",
+                               headers={deps.LIBRARY_HEADER: "lib-nothing"})
+    assert foreign.status_code == 404, foreign.text
+    assert fictional.status_code == 404
+    assert foreign.json() == fictional.json(), \
+        "a foreign library answers differently from one that does not exist"
+
+
+def test_a_request_with_no_library_header_still_gets_the_default_one():
+    """Every curl, every OpenAPI example and most of this suite send no
+    header. Refusing them would buy no safety — a caller with no header still
+    reaches only their own library."""
+    with TestClient(_app()) as client:
+        assert client.get(f"{API_PREFIX}/meta").json()["library"]["id"] == "lib-test"
+
+
+def test_the_switcher_lists_this_accounts_libraries_with_their_roles():
+    p = StubPrincipal()
+    tenancy = _tenancy(p)
+    _second_library(p, tenancy)
+    _second_library(p, tenancy, member=False, library_id="lib-3",
+                    label="Someone else's")
+    with TestClient(_app(p, tenancy=tenancy)) as client:
+        rows = client.get(f"{API_PREFIX}/libraries").json()
+    assert [r["id"] for r in rows] == ["lib-2", "lib-test"]  # by label
+    assert {r["id"]: r["role"] for r in rows} == \
+        {"lib-2": "editor", "lib-test": "admin"}
+
+
+def test_creating_a_library_makes_the_caller_its_admin_and_it_is_usable_at_once():
+    """The two halves of §4.3's step 2: the library exists, and the person who
+    made it can immediately name it on a request."""
+    p = StubPrincipal()
+    tenancy = _tenancy(p)
+    with TestClient(_app(p, tenancy=tenancy)) as client:
+        created = client.post(f"{API_PREFIX}/libraries",
+                              json={"label": "משפחת מלין"})
+        assert created.status_code == 201, created.text
+        new_id = created.json()["id"]
+        assert created.json()["role"] == "admin"
+        resolved = client.get(f"{API_PREFIX}/meta",
+                              headers={deps.LIBRARY_HEADER: new_id})
+    assert resolved.status_code == 200, resolved.text
+    assert resolved.json()["library"]["label"] == "משפחת מלין"
+    assert tenancy.membership(p.id, new_id).role is Role.ADMIN
+
+
+def test_a_library_created_with_a_blank_name_is_refused():
+    """§4.3, and the deliberate asymmetry with a shelf (whose label is
+    optional because an unnamed shelf is shown by its own photograph).
+
+    Both spellings of blank answer the SAME way: the rule is the domain's, not
+    a pydantic constraint that would make `""` a 422 and `"   "` a 400."""
+    with TestClient(_app()) as client:
+        assert client.post(f"{API_PREFIX}/libraries",
+                           json={"label": "   "}).status_code == 400
+        assert client.post(f"{API_PREFIX}/libraries",
+                           json={"label": ""}).status_code == 400
+        assert client.patch(f"{API_PREFIX}/libraries/lib-test",
+                            json={"label": " "}).status_code == 400
+
+
+def test_renaming_a_library_the_caller_does_not_belong_to_is_404():
+    p = StubPrincipal()
+    tenancy = _tenancy(p)
+    _second_library(p, tenancy, member=False)
+    with TestClient(_app(p, tenancy=tenancy)) as client:
+        r = client.patch(f"{API_PREFIX}/libraries/lib-2", json={"label": "Mine"})
+        mine = client.patch(f"{API_PREFIX}/libraries/lib-test",
+                            json={"label": "הספרייה שלי"})
+    assert r.status_code == 404, r.text
+    assert mine.status_code == 200 and mine.json()["label"] == "הספרייה שלי"
+    assert tenancy.get_library("lib-2").label == "Office", "a 404 still wrote"
+
+
+def test_a_photo_is_reachable_from_an_img_tag_in_a_second_library():
+    """⚠ The bug the switcher shipped with, found in live use the same day.
+
+    An `<img src>` and a download `<a href>` are built by the BROWSER, which
+    cannot be told to send `X-Booksnap-Library`. So every photo, every spine
+    crop and both export links resolved against the caller's DEFAULT library
+    — and in a second library they 404'd: a shelf photo that had just been
+    read correctly rendered as an empty box.
+
+    The query parameter is the escape hatch for exactly those requests. This
+    asserts BOTH halves, because either alone is the bug: the photo is found
+    with `?library=`, and it is NOT found without it.
+    """
+    p = StubPrincipal()
+    tenancy = _tenancy(p)
+    _second_library(p, tenancy)
+    with _blobs() as blobs:
+        c = TestClient(_app(p, blobs=blobs, tenancy=tenancy))
+        key = c.post(f"{API_PREFIX}/images",
+                     files={"file": ("shelf.png", _png(), "image/png")},
+                     headers={deps.LIBRARY_HEADER: "lib-2"}).json()["key"]
+
+        as_img = c.get(f"{API_PREFIX}/images/{key}/thumb?library=lib-2")
+        assert as_img.status_code == 200, as_img.text
+
+        # No reference at all: the DEFAULT library, which never had this
+        # photo. This is what the browser was really sending.
+        assert c.get(f"{API_PREFIX}/images/{key}/thumb").status_code == 404
+
+
+def test_the_header_wins_over_a_stale_query_parameter():
+    """The client's own `fetch()` always sets the header, and a URL can
+    outlive a switch (a cached image src, a link someone kept). If the
+    parameter could override the header, one stale URL would drag a whole
+    request into the wrong library."""
+    p = StubPrincipal()
+    tenancy = _tenancy(p)
+    _second_library(p, tenancy)
+    with TestClient(_app(p, tenancy=tenancy)) as client:
+        body = client.get(
+            f"{API_PREFIX}/meta?library=lib-2",
+            headers={deps.LIBRARY_HEADER: "lib-test"},
+        ).json()
+    assert body["library"]["id"] == "lib-test"
+
+
+def test_meta_names_the_account_so_an_empty_switcher_can_be_explained():
+    with TestClient(_app()) as client:
+        assert client.get(f"{API_PREFIX}/meta").json()["account"]["id"] == "p-test"
 
 
 # --- books: the P1.4 surface ---------------------------------------------
@@ -635,26 +836,85 @@ def _dependency_calls(route: APIRoute) -> set:
     return seen
 
 
+# The ONLY routes allowed to skip `current_library` (P3.1). They are how a
+# caller learns which libraries it may name, so requiring them to resolve one
+# first is circular: a client with no valid selection — a fresh browser, a
+# membership just removed — could never recover. They are account-scoped
+# instead, which the second half of the meta-test below asserts, so "exempt"
+# never means "unscoped".
+#
+# A closed list, deliberately: adding a route here is an edit to a test, which
+# is the point at which someone has to justify it.
+_ACCOUNT_SCOPED = {
+    f"{API_PREFIX}/libraries",
+    f"{API_PREFIX}/libraries/{{library_id}}",
+}
+
+
 def test_every_api_route_resolves_its_library_from_the_principal():
     routes = _api_routes(_app())
     assert routes, "no API routes found — this meta-test would pass vacuously"
     bad = [p for p, r in routes
-           if deps.current_library not in _dependency_calls(r)]
+           if p not in _ACCOUNT_SCOPED
+           and deps.current_library not in _dependency_calls(r)]
     assert not bad, (
         f"routes not library-scoped: {bad} — every route resolves its library "
         f"through deps.current_library (H2)"
     )
 
 
+def test_the_account_scoped_routes_are_still_scoped_by_something():
+    """The exemption is from the LIBRARY axis, not from tenancy. A route that
+    resolved neither a library nor an account would serve everyone's data —
+    and it would pass the test above simply by being on the list."""
+    routes = {p: r for p, r in _api_routes(_app())}
+    for path in _ACCOUNT_SCOPED:
+        assert path in routes, f"{path} is exempted but does not exist"
+        assert deps.get_principal in _dependency_calls(routes[path]), \
+            f"{path} resolves neither a library nor an account"
+
+
 def test_library_resolution_has_exactly_one_implementation():
-    """H2 says 'exactly one function'. Assert the count, so a second resolver
-    added for convenience is a test failure and not a discovery at pillar 3."""
+    """H2 says 'exactly one function'. Assert it structurally, so a second
+    resolver added for convenience is a test failure and not a discovery at
+    pillar 4.
+
+    ⚠ This used to count occurrences of the string `principal.library`. P3.1
+    made the resolver read it twice (the no-header default, and the
+    header-names-my-own-library short circuit), so the string count stopped
+    meaning anything — what the rule was always about is that no OTHER
+    function decides which library a request operates on.
+    """
+    import ast
     import inspect
 
     src = inspect.getsource(deps)
     assert src.count("def current_library") == 1
-    assert src.count("principal.library") == 1, \
-        "principal.library is read in more than one place in app/api/deps.py"
+    tree = ast.parse(src)
+    for fn in ast.walk(tree):
+        if not isinstance(fn, ast.FunctionDef) or fn.name == "current_library":
+            continue
+        reads = [n for n in ast.walk(fn)
+                 if isinstance(n, ast.Attribute) and n.attr == "library"]
+        assert not reads, (
+            f"{fn.name}() in app/api/deps.py resolves a library too — H2 says "
+            "exactly one function does"
+        )
+
+
+def test_the_library_meta_resolves_is_always_one_the_switcher_lists():
+    """The invariant `list_libraries` deliberately does NOT patch over: the
+    resolver serves the principal's default library without a store lookup,
+    and the switcher lists store rows, so a missing membership would show the
+    user a library the switcher says they do not have."""
+    with TestClient(_app()) as client:
+        current = client.get(f"{API_PREFIX}/meta").json()["library"]["id"]
+        listed = [row["id"] for row in
+                  client.get(f"{API_PREFIX}/libraries").json()]
+    assert current in listed, (
+        f"{current} is resolvable but unlisted — app/main.py's bootstrap is "
+        "what keeps these two in step"
+    )
 
 
 def test_no_module_level_mutable_state_in_api():
@@ -2631,6 +2891,82 @@ def test_retracting_a_finding_removes_the_phantom_and_suppresses_it_here():
                        json={"depth": 1}).json()["id"]
         _wait_until_settled(c, shelf_id, again)
         assert store.count(TEST_LIBRARY) == 0, "the retracted book came back"
+
+
+def test_deleting_a_book_marks_its_finding_removed_and_keeps_it_that_way():
+    """Owner, 2026-08-10, from live use: *"removing a book in the books tab
+    should mark it as removed (strike through) in the image"*.
+
+    Two halves of one write. Before this, deleting a book recorded nothing —
+    so the finding reverted to an ordinary unanswered question (its ✓ back on
+    screen, as if nobody had decided), AND the next read of that shelf put the
+    book straight back, which is the §5.6 rule going unenforced for the
+    plainest rejection the product has.
+    """
+    with _blobs() as blobs:
+        store, shelves, reads_ = MemoryBookStore(), MemoryShelfStore(), MemoryReadStore()
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_,
+                            blobs=blobs, reader=StubReader()))
+        c, shelf_id, cap_id, read_id = _settled_read(
+            c, claims=[_auto_claim()], store=store, shelves=shelves,
+            reads=reads_, blobs=blobs)
+        diff = c.get(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/diff").json()
+        claim_id = (diff["unchanged"] + diff["added"])[0]["claim"]["id"]
+        book_id = c.get(f"{API_PREFIX}/books").json()["items"][0]["id"]
+
+        assert c.delete(f"{API_PREFIX}/books/{book_id}").status_code == 204
+
+        after = c.get(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/diff").json()
+        assert [o["claim"]["id"] for o in after["rejected"]] == [claim_id], (
+            "a deleted book's finding must read as REMOVED, not as a question "
+            "nobody has answered"
+        )
+        assert not after["needs_decision"]
+
+        # And the other half: a later read does not put it back (§5.6).
+        again = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads",
+                       json={"depth": 1}).json()["id"]
+        _wait_until_settled(c, shelf_id, again)
+        assert store.count(TEST_LIBRARY) == 0, "the deleted book came back"
+
+
+def test_undo_brings_a_deleted_books_finding_back_as_a_question():
+    """↩ clears the standing decision and lets the read apply itself again —
+    so the finding returns as the PENDING one it was, never as a book nobody
+    approved (the rule that outranks every other path into the library)."""
+    with _blobs() as blobs:
+        store, shelves, reads_ = MemoryBookStore(), MemoryShelfStore(), MemoryReadStore()
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_,
+                            blobs=blobs, reader=StubReader()))
+        c, shelf_id, cap_id, read_id = _settled_read(
+            c, claims=[_auto_claim()], store=store, shelves=shelves,
+            reads=reads_, blobs=blobs)
+        diff = c.get(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/diff").json()
+        claim_id = (diff["unchanged"] + diff["added"])[0]["claim"]["id"]
+        book_id = c.get(f"{API_PREFIX}/books").json()["items"][0]["id"]
+        c.delete(f"{API_PREFIX}/books/{book_id}")
+
+        r = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}"
+                   f"/findings/{claim_id}/restore")
+        assert r.status_code == 200, r.text
+        assert not r.json()["rejected"], "the suppression was not lifted"
+        assert [o["claim"]["id"] for o in r.json()["needs_decision"]] == [claim_id]
+        assert store.count(TEST_LIBRARY) == 0, \
+            "undo must not re-enter a book nobody approved"
+
+
+def test_deleting_an_unshelved_book_records_nothing_and_still_deletes():
+    """P1.3's 251 imported books have no shelf. There is no row for a future
+    read to re-find them on, so a deletion there has nothing to suppress —
+    and must still delete."""
+    store = MemoryBookStore()
+    _seed(store, TEST_LIBRARY, "ספר בלי מדף")
+    decisions = MemoryDecisionStore()
+    with TestClient(_app(store=store, decisions=decisions)) as c:
+        book_id = c.get(f"{API_PREFIX}/books").json()["items"][0]["id"]
+        assert c.delete(f"{API_PREFIX}/books/{book_id}").status_code == 204
+    assert store.count(TEST_LIBRARY) == 0
+    assert decisions.list_decisions(TEST_LIBRARY, "", 1) == ()
 
 
 def test_retracting_never_deletes_a_book_that_predates_this_read():

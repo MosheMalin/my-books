@@ -29,6 +29,7 @@ from typing import Iterator
 
 from app.adapters.migrations import migrate
 from app.domain import (
+    Account,
     Alternative,
     Book,
     Capture,
@@ -41,16 +42,20 @@ from app.domain import (
     DiffSummary,
     DuplicateQuestion,
     Lending,
+    Library,
     LibraryRef,
+    Membership,
     Provenance,
     Read,
     ReadStatus,
+    Role,
     Shelf,
     Status,
     WorkFields,
 )
 from app.domain.search import compile_sql_like, haystack, parse
 from app.domain.search import search as domain_search
+from app.ports.tenancy import UnknownAccount, UnknownLibrary
 from app.ports.store import (
     BookPage,
     BookSort,
@@ -726,6 +731,146 @@ def _load_question(row: sqlite3.Row) -> DuplicateQuestion:
         claim_author=row["claim_author"], existing_book_id=row["existing_book_id"],
         opened_at=row["opened_at"], captured_at=row["captured_at"],
     )
+
+
+class SqliteTenancyStore(_SqliteStore):
+    """Implements ``app.ports.tenancy.TenancyStore`` (P3.1).
+
+    ⚠ The one store here whose methods do not take a :class:`LibraryRef` — see
+    the port's own ⚠⚠. Same file as the rest, and for a sharper version of the
+    usual reason: a membership and the books it grants access to must never end
+    up in two databases, because then "may this person see this?" and "what is
+    there to see?" could be answered from two different points in time.
+    """
+
+    def __init__(self, path: str | Path) -> None:
+        super().__init__(path, kind="SqliteTenancyStore")
+
+    # --- accounts --------------------------------------------------------
+
+    def save_account(self, account: Account) -> None:
+        with self._connect() as conn:
+            with conn:
+                conn.execute(
+                    "INSERT INTO accounts (id, display_name, email, created_at)"
+                    " VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET"
+                    " display_name=excluded.display_name, email=excluded.email,"
+                    " created_at=excluded.created_at",
+                    (account.id, account.display_name, account.email,
+                     account.created_at),
+                )
+
+    def get_account(self, account_id: str) -> Account | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM accounts WHERE id = ?",
+                               (account_id,)).fetchone()
+        return _load_account(row) if row else None
+
+    # --- libraries -------------------------------------------------------
+
+    def save_library(self, library: Library) -> None:
+        with self._connect() as conn:
+            with conn:
+                conn.execute(
+                    "INSERT INTO libraries (id, label, created_at) VALUES (?,?,?)"
+                    " ON CONFLICT(id) DO UPDATE SET label=excluded.label,"
+                    " created_at=excluded.created_at",
+                    (library.id, library.label, library.created_at),
+                )
+
+    def get_library(self, library_id: str) -> Library | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM libraries WHERE id = ?",
+                               (library_id,)).fetchone()
+        return _load_library(row) if row else None
+
+    # --- memberships -----------------------------------------------------
+
+    def save_membership(self, membership: Membership) -> None:
+        with self._connect() as conn:
+            # Checked here as well as declared as a foreign key: the FK raises
+            # sqlite3.IntegrityError, which is a driver detail the port must
+            # not leak — and the memory store has no FKs at all, so without
+            # this the two adapters would answer differently for the same
+            # call, which is exactly what the contract suite exists to catch.
+            if conn.execute("SELECT 1 FROM accounts WHERE id = ?",
+                            (membership.account_id,)).fetchone() is None:
+                raise UnknownAccount(f"no account {membership.account_id!r}")
+            if conn.execute("SELECT 1 FROM libraries WHERE id = ?",
+                            (membership.library_id,)).fetchone() is None:
+                raise UnknownLibrary(f"no library {membership.library_id!r}")
+            with conn:
+                conn.execute(
+                    "INSERT INTO memberships (account_id, library_id, role,"
+                    " joined_at) VALUES (?,?,?,?)"
+                    " ON CONFLICT(account_id, library_id) DO UPDATE SET"
+                    " role=excluded.role, joined_at=excluded.joined_at",
+                    (membership.account_id, membership.library_id,
+                     membership.role.value, membership.joined_at),
+                )
+
+    def membership(self, account_id: str, library_id: str) -> Membership | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM memberships WHERE account_id = ? AND library_id = ?",
+                (account_id, library_id),
+            ).fetchone()
+        return _load_membership(row) if row else None
+
+    def delete_membership(self, account_id: str, library_id: str) -> bool:
+        with self._connect() as conn:
+            with conn:
+                cur = conn.execute(
+                    "DELETE FROM memberships WHERE account_id = ? AND library_id = ?",
+                    (account_id, library_id),
+                )
+            return cur.rowcount > 0
+
+    def list_libraries(
+        self, account_id: str,
+    ) -> tuple[tuple[Library, Membership], ...]:
+        # ORDER BY mirrors `Library.sort_key`: named alphabetically, then the
+        # v12-backfilled nameless ones oldest-first, id last so it is total.
+        # COALESCE because created_at is NULL on exactly those rows, and NULL
+        # sorts before '' in SQLite while Python's key makes them equal.
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT l.*, m.role AS m_role, m.joined_at AS m_joined_at"
+                " FROM memberships m JOIN libraries l ON l.id = m.library_id"
+                " WHERE m.account_id = ?"
+                " ORDER BY TRIM(l.label), COALESCE(l.created_at, ''), l.id",
+                (account_id,),
+            ).fetchall()
+        return tuple(
+            (_load_library(r),
+             Membership(account_id=account_id, library_id=r["id"],
+                        role=Role(r["m_role"]), joined_at=r["m_joined_at"]))
+            for r in rows
+        )
+
+    def list_members(self, library_id: str) -> tuple[Membership, ...]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM memberships WHERE library_id = ?"
+                " ORDER BY role <> 'admin', account_id",
+                (library_id,),
+            ).fetchall()
+        return tuple(_load_membership(r) for r in rows)
+
+
+def _load_account(row: sqlite3.Row) -> Account:
+    return Account(id=row["id"], display_name=row["display_name"],
+                   email=row["email"], created_at=row["created_at"])
+
+
+def _load_library(row: sqlite3.Row) -> Library:
+    return Library(id=row["id"], label=row["label"],
+                   created_at=row["created_at"])
+
+
+def _load_membership(row: sqlite3.Row) -> Membership:
+    return Membership(account_id=row["account_id"], library_id=row["library_id"],
+                      role=Role(row["role"]), joined_at=row["joined_at"])
 
 
 # --- row <-> entity -------------------------------------------------------

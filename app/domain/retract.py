@@ -89,6 +89,43 @@ class Retraction:
     copy_id: str | None = None
 
 
+def deletion_sites(book: Book) -> tuple[tuple[str, int], ...]:
+    """Where a *delete from the library* has to record its "no" (owner,
+    2026-08-10).
+
+    Deleting a book is the strongest statement the product offers about a
+    record, and until now it recorded nothing anywhere — so the finding that
+    produced the book reverted to an ordinary unanswered question, and **the
+    next read of that shelf would put the book straight back**. That is the
+    §5.6 rule ("a rejected book must not be re-added by a later run") going
+    unenforced for the one action that most obviously means rejection.
+
+    It is also what the owner asked for from the other end: a deleted book's
+    finding should read as *removed* — struck through, with its undo — rather
+    than as a question nobody has answered yet. Both come from the same
+    write, because `reconcile()` already puts a claim in ``rejected`` exactly
+    when a standing decision suppresses it.
+
+    Returns the DISTINCT ``(shelf_id, depth)`` locations the book's copies
+    stand at, in a stable order. Empty when nothing is located — the 251
+    imported books have no shelf, and a deletion there suppresses nothing
+    because there is no row for a future read to re-find it on.
+
+    ⚠ Locations, not "the shelf": a book with copies on two rows was seen on
+    two rows, and a decision is scoped to one (shelf, depth) by §5.7 #1. One
+    decision per site is the only answer that suppresses everywhere it was
+    actually claimed.
+
+    Pure, like everything else in this module — the caller writes.
+    """
+    sites: list[tuple[str, int]] = []
+    for copy in book.copies:
+        here = copy.location
+        if here is not None and here not in sites:
+            sites.append(here)
+    return tuple(sites)
+
+
 def plan_retraction(
     book: Book | None,
     shelf_id: str,

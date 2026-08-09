@@ -39,10 +39,13 @@ export type Book = BookPage['items'][number]
 export type Copy = Book['copies'][number]
 
 /**
- * A library reference travels with every request (§1.3), even though there is
- * exactly one library until pillar 3. The header is the transport; the server
- * ignores it today and starts honouring it at P3.1 — at which point no call
- * site changes.
+ * A library reference travels with every request (§1.3). P1.0 built the
+ * transport and the server ignored it; P3.1 made the server resolve the
+ * library FROM it, and no call site had to change — which was the point.
+ *
+ * `libraryId` is per-call and rarely passed: the selection is a property of
+ * the session, so it lives in this module (see `setCurrentLibrary`) and every
+ * request picks it up. A call may still override it.
  */
 export interface ApiOptions {
   libraryId?: string | undefined
@@ -51,6 +54,62 @@ export interface ApiOptions {
   /** Query parameters. Kept separate from the path so the path stays a
    *  literal the generated types can key on. */
   query?: Record<string, string | number | boolean | undefined> | undefined
+}
+
+/**
+ * The selected library, for the whole client.
+ *
+ * ⚠ Module-level mutable state, which the SERVER forbids (H2/§1.3) — and the
+ * asymmetry is not an oversight. There, one process serves many people, so a
+ * module global is two members overwriting each other's job. Here, one module
+ * instance IS one person's tab; the selection is exactly as global as the
+ * browser window, the same as the language choice. Threading it through every
+ * hook instead would mean every call site could forget it, which is precisely
+ * the bug this replaces: before P3.1 `getJson` and `getBook` sent no header at
+ * all while `apiGet` and `send` did.
+ */
+let currentLibrary: string | undefined
+
+export function setCurrentLibrary(id: string | undefined): void {
+  currentLibrary = id
+}
+
+export function getCurrentLibrary(): string | undefined {
+  return currentLibrary
+}
+
+/**
+ * A URL the BROWSER fetches — an `<img src>`, a download `<a href>` — rather
+ * than one this module fetches itself.
+ *
+ * ⚠ Those requests are built by the browser, so they cannot carry
+ * `X-Booksnap-Library`. Without this the header transport is not merely
+ * incomplete, it is WRONG for every photo, every spine crop and both export
+ * links: they resolve against the caller's DEFAULT library, so in a second
+ * library a shelf photo that had just been read correctly renders as an
+ * empty box. Found in live use the day the switcher shipped.
+ *
+ * One function for the same reason `headersFor` is one: the next `<img>` a
+ * screen adds should not be able to forget the tenant.
+ */
+export function browserUrl(path: string, params: Record<string, string> = {}): string {
+  const qs = new URLSearchParams(params)
+  if (currentLibrary) qs.set('library', currentLibrary)
+  const s = qs.toString()
+  return s ? `${path}?${s}` : path
+}
+
+/** The photo, or one of its renditions, addressable from an `<img>`. */
+export const imageUrl = (key: string, variant: 'thumb' | 'full' = 'thumb'): string =>
+  browserUrl(`/api/v1/images/${encodeURIComponent(key)}/${variant}`)
+
+/** The headers EVERY request goes out with. One function, so a new request
+ *  helper cannot quietly omit the tenant. */
+function headersFor(opts: ApiOptions, extra?: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = { Accept: 'application/json', ...extra }
+  const library = opts.libraryId ?? currentLibrary
+  if (library) headers['X-Booksnap-Library'] = library
+  return headers
 }
 
 function withQuery(path: string, query: ApiOptions['query']): string {
@@ -68,12 +127,9 @@ export async function apiGet<P extends ApiPath>(
   opts: ApiOptions = {},
 ): Promise<GetResponse<P>> {
   const doFetch = opts.fetchImpl ?? globalThis.fetch
-  const headers: Record<string, string> = { Accept: 'application/json' }
-  if (opts.libraryId) headers['X-Booksnap-Library'] = opts.libraryId
-
   const url = withQuery(path, opts.query)
   const res = await doFetch(url, {
-    headers,
+    headers: headersFor(opts),
     ...(opts.signal ? { signal: opts.signal } : {}),
   })
   if (!res.ok) {
@@ -84,6 +140,25 @@ export async function apiGet<P extends ApiPath>(
 
 export const getMeta = (opts?: ApiOptions): Promise<Meta> =>
   apiGet('/api/v1/meta', opts)
+
+// --- tenancy (P3.1) --------------------------------------------------------
+//
+// The only calls here that are NOT about the selected library — they are how
+// the client learns which libraries there are. Sending the header on them is
+// harmless (the server ignores it for these routes) and keeps the "every
+// request carries it" rule literal rather than nearly-true.
+
+export type LibraryDTO = components['schemas']['LibraryDTO']
+
+export const listLibraries = (opts?: ApiOptions): Promise<LibraryDTO[]> =>
+  apiGet('/api/v1/libraries', opts)
+
+export const createLibrary = (label: string, opts?: ApiOptions) =>
+  send('POST', '/api/v1/libraries', { label }, opts) as Promise<LibraryDTO>
+
+export const renameLibrary = (id: string, label: string, opts?: ApiOptions) =>
+  send('PATCH', `/api/v1/libraries/${encodeURIComponent(id)}`, { label },
+       opts) as Promise<LibraryDTO>
 
 export const listBooks = (opts?: ApiOptions): Promise<BookPage> =>
   apiGet('/api/v1/books', opts)
@@ -108,7 +183,7 @@ export async function getBook(
   const doFetch = opts.fetchImpl ?? globalThis.fetch
   const path = `/api/v1/books/${encodeURIComponent(id)}`
   const res = await doFetch(path, {
-    headers: { Accept: 'application/json' },
+    headers: headersFor(opts),
     ...(opts.signal ? { signal: opts.signal } : {}),
   })
   if (!res.ok) throw new ApiError(res.status, path, `GET ${path}: ${res.status}`)
@@ -136,9 +211,10 @@ async function send(
   opts: ApiOptions = {},
 ): Promise<unknown> {
   const doFetch = opts.fetchImpl ?? globalThis.fetch
-  const headers: Record<string, string> = { Accept: 'application/json' }
-  if (body !== undefined) headers['Content-Type'] = 'application/json'
-  if (opts.libraryId) headers['X-Booksnap-Library'] = opts.libraryId
+  const headers = headersFor(
+    opts,
+    body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+  )
 
   const res = await doFetch(path, {
     method,
@@ -228,8 +304,13 @@ export const returnCopy = (bookId: string, copyId: string, opts?: ApiOptions) =>
 export const listAuthors = (q: string, opts: ApiOptions = {}): Promise<string[]> =>
   getJson(`/api/v1/books/authors?q=${encodeURIComponent(q)}`, opts)
 
+/** Export is a file download, so it is a URL rather than a fetch — letting the
+ *  browser handle Content-Disposition is what makes "Save as…" work. Which
+ *  means it needs the library in the query string, like every other URL the
+ *  browser fetches for itself: exporting from a second library used to
+ *  download the default one's books. */
 export const exportUrl = (format: 'csv' | 'json'): string =>
-  `/api/v1/books/export?format=${format}`
+  browserUrl('/api/v1/books/export', { format })
 
 // --- capture: images, shelves, captures, reads (P2.7) -----------------------
 //
@@ -270,7 +351,7 @@ export type DepthStatusDTO = components['schemas']['DepthStatusDTO']
 async function getJson<T>(path: string, opts: ApiOptions = {}): Promise<T> {
   const doFetch = opts.fetchImpl ?? globalThis.fetch
   const res = await doFetch(path, {
-    headers: { Accept: 'application/json' },
+    headers: headersFor(opts),
     ...(opts.signal ? { signal: opts.signal } : {}),
   })
   if (!res.ok) throw new ApiError(res.status, path, `GET ${path}: ${res.status}`)
@@ -306,11 +387,9 @@ export async function uploadImage(
   const body = new FormData()
   body.append('file', file, filename)
   body.append('filename', filename)
-  const headers: Record<string, string> = { Accept: 'application/json' }
-  if (opts.libraryId) headers['X-Booksnap-Library'] = opts.libraryId
   const path = '/api/v1/images'
   const res = await doFetch(path, {
-    method: 'POST', headers, body,
+    method: 'POST', headers: headersFor(opts), body,
     ...(opts.signal ? { signal: opts.signal } : {}),
   })
   if (!res.ok) {

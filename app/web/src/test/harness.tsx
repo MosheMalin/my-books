@@ -11,7 +11,8 @@ import { vi } from 'vitest'
 import type { ReactElement } from 'react'
 import { BooksProvider } from '../lib/books'
 import { I18nProvider } from '../lib/i18n'
-import type { Book, Copy } from '../api/client'
+import { LibraryProvider, LibraryScope, applyStoredLibrary } from '../lib/library'
+import type { Book, Copy, LibraryDTO } from '../api/client'
 
 export interface FakeBook {
   id: string
@@ -71,6 +72,17 @@ export interface FakeServer {
    *  `lentOut` (a fact on the copy itself) this cannot be derived from a
    *  fixture's own fields; a test opts a book in by adding its id here. */
   openDuplicateIds: Set<string>
+  /** The libraries this account belongs to (P3.1). One by default — the
+   *  household that has not created a second. */
+  libraries: LibraryDTO[]
+  /** Every request's `X-Booksnap-Library`, in order and index-aligned with
+   *  `calls`, so a test can assert that a switch actually reached the wire
+   *  and not just the UI. */
+  libraryHeaders: (string | null)[]
+  /** The tenant each request matching `part` went out under. Empty if the
+   *  request was never made — assert on that separately, or a test that
+   *  proves nothing passes. */
+  tenantsFor: (part: string) => (string | null)[]
 }
 
 export function fakeServer(initial: FakeBookRecord[] = []): FakeServer {
@@ -81,10 +93,22 @@ export function fakeServer(initial: FakeBookRecord[] = []): FakeServer {
     failNextWith: null,
     holdWhen: null,
     openDuplicateIds: new Set(),
+    libraries: [{ id: 'lib-test', label: 'ספרייה', role: 'admin',
+                  created_at: null }],
+    libraryHeaders: [],
+    tenantsFor: (part) =>
+      server.libraryHeaders.filter((_, i) => server.calls[i]?.includes(part)),
     release: () => {
       while (pending.length) pending.shift()?.()
     },
   }
+
+  // The selection is module state in `client.ts` (one module instance = one
+  // tab), so it outlives a test unless it is re-derived — the same reason
+  // every test file clears localStorage. Re-running the module's OWN restore
+  // step rather than clearing it is what makes "reopen the app" a real test:
+  // a fresh browser has empty storage, a returning one does not.
+  applyStoredLibrary()
 
   const respond = (body: unknown, status = 200) =>
     new Response(status === 204 ? null : JSON.stringify(body), {
@@ -97,6 +121,8 @@ export function fakeServer(initial: FakeBookRecord[] = []): FakeServer {
     server.calls.push(url)
     const method = init?.method ?? 'GET'
     const u = new URL(url, 'http://test')
+    const headers = new Headers(init?.headers)
+    server.libraryHeaders.push(headers.get('X-Booksnap-Library'))
 
     if (u.pathname === '/api/v1/meta') {
       return respond({
@@ -104,7 +130,24 @@ export function fakeServer(initial: FakeBookRecord[] = []): FakeServer {
         version: '0.1.0',
         api_version: 'v1',
         library: { id: 'lib-test', label: 'ספרייה' },
+        account: { id: 'p-test', display_name: '' },
       })
+    }
+
+    // --- tenancy (P3.1) ---------------------------------------------------
+    if (u.pathname === '/api/v1/libraries' && method === 'GET') {
+      return respond(server.libraries)
+    }
+    if (u.pathname === '/api/v1/libraries' && method === 'POST') {
+      const { label } = JSON.parse(String(init?.body)) as { label: string }
+      const made: LibraryDTO = {
+        id: `lib-${server.libraries.length + 1}`,
+        label,
+        role: 'admin',
+        created_at: '2026-08-09T00:00:00+00:00',
+      }
+      server.libraries.push(made)
+      return respond(made, 201)
     }
 
     if (u.pathname === '/api/v1/books' && method === 'POST') {
@@ -264,10 +307,18 @@ export function fakeServer(initial: FakeBookRecord[] = []): FakeServer {
   return server
 }
 
+/** The same three providers, in the same order, as `main.tsx` — including
+ *  `LibraryScope`, which is what makes a library switch discard the screen's
+ *  state. A harness that composed its own tree could not catch a regression
+ *  in that rule. */
 export function renderApp(ui: ReactElement): RenderResult {
   return render(
     <I18nProvider>
-      <BooksProvider>{ui}</BooksProvider>
+      <LibraryProvider>
+        <LibraryScope>
+          <BooksProvider>{ui}</BooksProvider>
+        </LibraryScope>
+      </LibraryProvider>
     </I18nProvider>,
   )
 }

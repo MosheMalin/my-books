@@ -6,7 +6,7 @@
  * and this list all read one record — "edit it anywhere, it changes
  * everywhere" (UI_PLAN §5).
  */
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useBooks, type SortKey, type StatusFilter } from '../lib/books'
 import { useI18n } from '../lib/i18n'
 import { AddBookModal } from './AddBookModal'
@@ -19,6 +19,34 @@ export function BooksTab({ onOpen }: { onOpen: (id: string) => void }) {
   const books = useBooks()
   const [view, setView] = useState<View>('list')
   const [adding, setAdding] = useState(false)
+
+  /**
+   * Refetch on ENTERING the tab (owner, live use).
+   *
+   * The store fetches when its query changes and never otherwise — but books
+   * are also created and approved on the Capture tab, through routes this
+   * store never sees. So coming back here showed a list from before that
+   * work, and typing in the search box "fixed" it, which is precisely how the
+   * bug was found: *"after searching, the books appeared"*.
+   *
+   * `BooksTab` unmounts when you leave the tab (`App.tsx` swaps what `<main>`
+   * renders), so a mount effect IS "the user came back".
+   *
+   * ⚠ `loading` is what distinguishes coming BACK from arriving: on the very
+   * first mount the store's own query effect is already in flight, and
+   * reloading there would fire a second request for the same page on every
+   * cold start — a fix that costs a request per session start is a second
+   * bug. A ref cannot tell them apart (it resets with the component, and the
+   * component remounts on exactly the event being detected).
+   */
+  const { reload, loading } = books
+  const wasLoading = useRef(loading)
+  useEffect(() => {
+    if (!wasLoading.current) reload()
+    // Mount only: `reload` closes over the current query, and re-running this
+    // on every query change would double every search.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // The chip shows the author's real name, not the normalized key it filters
   // on — the key is machine identity (§5.1: authors are strings, not entities)

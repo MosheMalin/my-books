@@ -21,6 +21,10 @@ never be silently reversed (plan H5):
   - the not-seen streak is a badge, never a removal .... §5.6  history.not_seen_streak
   - a diff summary is a snapshot, never recomputed ..... §5.5  read.DiffSummary
   - a retracted finding never deletes a vouched-for book  UI §5 retract.plan_retraction
+  - a deleted book is not re-added by the next read . §5.6  retract.deletion_sites
+  - a library is created with a name .................. §4.3  tenancy.new_library
+  - a library keeps at least one admin ................ §4.2  tenancy.NoAdminLeft
+  - a role says who you are, never what you may do .... §4.2  tenancy.Role
 """
 from __future__ import annotations
 
@@ -90,7 +94,12 @@ from app.domain.read import (
     stop_read,
     with_diff_summary,
 )
-from app.domain.retract import RetractAction, Retraction, plan_retraction
+from app.domain.retract import (
+    RetractAction,
+    Retraction,
+    deletion_sites,
+    plan_retraction,
+)
 from app.domain.shelf import (
     Capture,
     Shelf,
@@ -103,9 +112,23 @@ from app.domain.shelf import (
     new_shelf,
     rename_shelf,
 )
+from app.domain.tenancy import (
+    Account,
+    Library,
+    LibraryNeedsAName,
+    Membership,
+    NoAdminLeft,
+    Role,
+    UnknownMember,
+    new_library,
+    remove_member,
+    rename_library,
+    set_role,
+)
 from app.domain.text import author_sort_key, book_key, normalize
 
 __all__ = [
+    "Account",
     "Alternative",
     "AmbiguousCopy",
     "Book",
@@ -130,7 +153,11 @@ __all__ = [
     "FireDecision",
     "FireRule",
     "Lending",
+    "Library",
+    "LibraryNeedsAName",
     "LibraryRef",
+    "Membership",
+    "NoAdminLeft",
     "NotSeenEntry",
     "OutcomeKind",
     "PromptKind",
@@ -140,10 +167,12 @@ __all__ = [
     "ReadStatus",
     "RetractAction",
     "Retraction",
+    "Role",
     "Shelf",
     "Status",
     "UnknownCopy",
     "UnknownDepth",
+    "UnknownMember",
     "VirtualShelfHasNoDepth",
     "WorkFields",
     "add_copy",
@@ -156,6 +185,7 @@ __all__ = [
     "build_prompt",
     "capture_onto_a_new_shelf",
     "counts_toward_library",
+    "deletion_sites",
     "depth_staleness",
     "edit",
     "edit_copy",
@@ -165,6 +195,7 @@ __all__ = [
     "lend",
     "new_book",
     "new_capture",
+    "new_library",
     "new_read",
     "new_shelf",
     "normalize",
@@ -176,8 +207,11 @@ __all__ = [
     "reconcile",
     "relink_copy",
     "remove_from_shelf",
+    "remove_member",
+    "rename_library",
     "rename_shelf",
     "return_copy",
+    "set_role",
     "set_work_fields",
     "stop_read",
     "summarize",

@@ -47,6 +47,7 @@ import {
   applyDiff,
   createCapture,
   getRead,
+  imageUrl,
   listShelfCaptures,
   listShelves,
   listReadHistory,
@@ -218,7 +219,7 @@ export function useCapture() {
           item: {
             localId: cap.id,
             file: null,
-            previewUrl: `/api/v1/images/${encodeURIComponent(cap.image_id)}/thumb`,
+            previewUrl: imageUrl(cap.image_id),
             // The server has no original filename to give back (`CaptureDTO`
             // never stored one) — showing the real storage key beats
             // inventing a friendlier-looking name that isn't true.

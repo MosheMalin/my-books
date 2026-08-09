@@ -73,10 +73,14 @@ app/
                   for (P2.10)
     text.py       book_key() over booksnap.catalog.normalize — NOT a copy
     search.py     Hebrew search SEMANTICS: parse + rank, pure and portable
+    tenancy.py    Account/Library/Membership/Role — §4.1's boundary, and
+                  NOT a place (P3.1)
   ports/        Protocols: Principal, Clock, IdGen, BookStore, ShelfStore
     blobs.py      BlobStore — image bytes, keys in rows (D1)
     decisions.py  DecisionStore — standing §5.4 answers (P2.5)
     duplicates.py DuplicateQueue — the durable "duplicates to resolve" queue (P2.6)
+    tenancy.py    TenancyStore — the ONE store scoped by account, not by
+                  library (P3.1)
   adapters/     implementations behind the ports
     sqlite_store.py  the real one (D1); connection per operation, WAL
     disk_blobs.py    uploaded photos; content-addressed, EXIF-normalised
@@ -93,10 +97,14 @@ app/
     routers/reads.py  start/poll/stop a read; diff/apply (P2.4/P2.5);
                       retract/restore one finding (P2.10)
     routers/duplicates.py  the durable queue: list/answer/skip (P2.6)
+    routers/libraries.py   list/create/rename; the only account-scoped
+                      routes, and the only ones exempt from H2 (P3.1)
   api/openapi.json          committed contract, regenerated, never hand-edited
   main.py       the composition root — the ONE file allowed to cross layers
   web/          React + Vite + TS client; talks only to /api/v1
-    src/lib/        books.tsx (the store), i18n.tsx (he/en + dir), route.ts
+    src/lib/        books.tsx (the store), i18n.tsx (he/en + dir), route.ts;
+                    library.tsx + LibrarySwitcher.tsx — which library the
+                    client is looking at, and the app-bar control (P3.1)
     src/books/      Tab 1: Toolbar, FilterBar, Feed, AddBookModal
     src/book/       the book surface: ONE renderer, drawer + page mounts
     src/capture/    Tab 3: useCapture.ts, intake rows, review panel + claim
@@ -148,7 +156,11 @@ Rules that are enforced mechanically, not by intention
 - every `/api/v1` route resolves its library through the single function
   `app/api/deps.py:current_library`, and every API route is under `/api/v1`.
   Both are meta-tests over *all* routes, so they keep holding as routes are
-  added;
+  added. P3.1 adds the one exemption, as a CLOSED list: `/api/v1/libraries`
+  is how a caller learns which libraries it may name, so requiring it to
+  resolve one first is circular — a second meta-test asserts the exempt
+  routes still resolve an ACCOUNT, so "exempt" never comes to mean
+  "unscoped";
 - no module-level mutable state in `app/` (the tuning server's global job dict
   is exactly what a second tenant breaks).
 
@@ -520,17 +532,21 @@ names to run a subset (`python tests/run_all.py test_api`).
 |---|---|---|
 | `test_core.py` | 52 | matcher / normalize / evidence gates |
 | `test_integrations.py` | 24 | catalog + fallback adapters, fully mocked/offline |
-| `test_domain.py` | 119 | the VISION rules that can be silently reversed |
-| `test_store_contract.py` | 179 | one store spec × every implementation + isolation |
+| `test_domain.py` | 131 | the VISION rules that can be silently reversed |
+| `test_store_contract.py` | 202 | one store spec × every implementation + isolation |
 | `test_reconcile_apply.py` | 27 | `app.reconcile_apply` writing a `Diff` through real stores |
 | `test_legacy_import.py` | 21 | `work/*.json` → entities, against a committed fixture |
 | `test_search.py` | 15 | Hebrew search, against 24 real queries on the real 251 books |
 | `test_layering.py` | 9 | the one-way import rules (plan H1) |
-| `test_api.py` | 122 | `/api/v1` shapes + the versioning/tenancy meta-tests |
+| `test_api.py` | 138 | `/api/v1` shapes + the versioning/tenancy meta-tests |
 | `test_reader_wiring.py` | 8 | WHICH catalog the product hands the engine |
 
-576 python tests as of P2.10 and the owner's feedback rounds (+50: the
-retraction rule, a photo's runs across both store implementations,
+627 python tests as of P3.1 (+51: the tenancy rules, ONE store spec run
+against a sixth aggregate, the v12 backfill, the resolver's three cases and
+its 404-not-403, the two meta-tests that keep the account-scoped
+exemption honest, the query-parameter escape hatch an `<img>` needs, and the
+standing "no" a deletion records). Before that, 576 at P2.10 and the owner's feedback rounds
+(+50: the retraction rule, a photo's runs across both store implementations,
 `retract_finding`'s writes, the workspace routes, the approval reversal —
 which also REPLACED the test that asserted an AUTO claim auto-enters — and
 the sighting-resolution rule found live). The jump before that was the catalog-wiring fix's
@@ -2189,6 +2205,277 @@ owner asked what it meant, which is the bug report. It now renders `130/130`
 with the formula in the tooltip. If the weights in `match.py` ever change,
 `MAX_SCORE` in `ClaimRow.tsx` is the one place that has to follow.
 
+## Tenants: accounts, libraries, memberships (P3.1) — pillar 3 begins
+
+The first item of pillar 3, and the one that makes "the library" stop being a
+constant. `app/domain/tenancy.py` (Account / Library / Membership / Role),
+`app/ports/tenancy.py`, both adapters, schema **v12**, `/api/v1/libraries`,
+and the app-bar switcher. **The resolver stops being hardcoded**; there is
+still no login (P4.1) and roles still permit nothing (P3.2).
+
+**`Library` and `LibraryRef` are two types for one thing, on purpose.** The
+REF is the tenant key — tiny, on every store method and every persisted row
+since P1.0, deliberately unchanged. The ENTITY has a lifetime, gets renamed
+and is listed in a switcher. `Library.ref` is the one-way door, so nothing
+downstream has to know which it was handed.
+
+⚠ **Library is not PhysicalLibrary** (§4.1's own warning). Library is the
+PERMISSION boundary — "the Malin family collection". A place you keep books
+(home, office, parents') is an address inside it, and addresses arrive with
+the map (plan §1.1). `test_a_library_is_not_a_place` asserts the absence
+structurally, the same shape as P2.1's shelf-address test and for the same
+reason: the tempting mistake is to add `place` here "while we're at it".
+
+**Rules that live in the domain and are each mutation-checked:**
+
+- **creating a library returns the library AND its admin membership**, from
+  one call. A library saved without one is invisible to the person who made
+  it (listing is BY ACCOUNT) and administrable by nobody — a state a caller
+  that forgot the second write could otherwise reach;
+- **a library is created, and kept, named** — the deliberate asymmetry with a
+  shelf, whose label is optional *because identity is free* and an unnamed
+  shelf is shown by its own photograph. A library has no photograph; it is a
+  row in the switcher, and two blank rows are two libraries the owner cannot
+  tell apart (§4.3: "create a Library, **name it**");
+- **the last admin cannot be demoted or removed.** §4.2 gives only an admin
+  "invite/remove members, change roles", so a library whose last admin steps
+  down can never invite anyone again — an unadministrable tenant that only a
+  database edit rescues;
+- **a Role says who you are, never what you may do.** §4.2's matrix is P3.2's
+  item — data, with ONE enforcement point — so a `can()` here would be a
+  second enforcement point built before the first. `test_a_role_says_who_you_
+  are_and_never_what_you_may_do` walks the module's AST for it.
+
+⚠⚠ **`TenancyStore` is the one store that is NOT library-scoped.** Every other
+port leads with a `LibraryRef`; this one is scoped by the **account**, because
+it is the store that ANSWERS which libraries exist. A bug here does not leak
+one record between tenants, it hands over a whole library — so every method
+narrows by `account_id` in the store, never "list them all and filter in the
+caller". It is also ONE port for three entities, against the
+one-port-per-aggregate split the rest of the package follows: that split is
+justified by independent lifetimes, and a library is created together with the
+membership that administers it.
+
+**Schema v12's backfill is the load-bearing half of the migration.** Every row
+the owner already owns carries `library_id = 'dev-library'`, and from this
+item on the resolver only serves a library it can FIND — so without a
+`libraries` row per existing `library_id`, the first request after the upgrade
+answers 404 and 251 books look deleted. The step derives them from the data
+itself (a UNION of every table carrying a `library_id`), and leaves `label`
+**blank**: a migration cannot know what the owner calls their collection, and
+an invented English "My library" would be our string in a Hebrew switcher.
+Naming it is `app/main.py:_bootstrap_dev_account`'s job, from the same env var
+that has produced the label on screen since P1.0 — so nothing visibly changed.
+(Confirmed on the real `work/product.db`: v12, `dev-library` named, `dev-owner`
+admin, 251 books still there.)
+
+**The resolver, `app/api/deps.py:current_library`, still the only one (H2).**
+Three cases in order: no header → the principal's own library; the header
+names that same library → served without a store lookup (this is the
+*dev-trusted* half — a `Principal` is built by the server, never by a request);
+anything else → the account's membership decides. **A library that does not
+exist and one the caller is not a member of are the same answer, 404** (§4.2)
+— asserted from the one place that can see every library, because a 403 here
+confirms another household's collection exists.
+
+⚠ **`test_library_resolution_has_exactly_one_implementation` had to change
+shape.** It counted occurrences of the string `principal.library` in
+`deps.py`, and the resolver now legitimately reads it twice. Counting a string
+stopped meaning anything; what the rule was always about is that no OTHER
+function decides which library a request operates on, so it is an AST walk now.
+
+⚠ **`/api/v1/libraries` is exempt from the "every route resolves a library"
+meta-test, via a CLOSED list in `tests/test_api.py`.** The reason is
+circularity: these are the routes a caller uses to learn which libraries it
+may name, so a client with no valid selection could never recover. A second
+meta-test asserts the exempt routes still resolve an ACCOUNT — "exempt" must
+never come to mean "unscoped" — and adding a route to that list is an edit to
+a test, which is where someone has to justify it.
+
+**Deliberately absent, not disabled:** DELETE a library (it means deleting
+every book, shelf, read and photo in it — a cascade across six aggregates that
+do not know about each other; it needs P3.2's policy and P3.5's blob purge),
+and member management (an invite with no login to accept it is not a feature —
+P4.3).
+
+### The client half
+
+**The library reference now travels on EVERY request, literally.** P1.0 built
+the transport (`X-Booksnap-Library`) and predicted no call site would change
+at P3.1 — nearly true. What it missed is that only `apiGet`/`send`/
+`uploadImage` ever set the header: `getJson` and `getBook` did not, so a book
+opened from a deep link went out with no tenant at all. One `headersFor()`
+now builds the headers for every helper.
+
+⚠ **The selection is module-level mutable state in `client.ts`, which the
+server forbids — and the asymmetry is not an oversight.** There, one process
+serves many people, so a module global is two members overwriting each other's
+job. Here, one module instance IS one person's tab; the selection is exactly
+as global as the browser window, like the language choice. Threading it
+through every hook is what lets a call site forget it, which is the bug above.
+
+⚠ **`LibraryProvider` renders NOTHING until the library is known.** Every
+screen fetches on mount, so a screen mounted before `GET /libraries` answers
+sends its first request untenanted and never asks again. The alternative —
+remounting a moment later — throws away whatever was typed in that first
+second, and it is what broke the Books tab's search race-guard test when tried.
+The wait is one local request, and it is skipped when that request FAILS, so a
+switcher that cannot load never holds the books hostage.
+
+⚠ **Switching REMOUNTS the app** (`LibraryScope`, keyed on the selection) —
+`main.tsx` and the test harness compose the same providers in the same order,
+so the rule has one definition and the ring can catch a regression in it.
+Everything below it holds state about ONE library (the book store's record
+map, the intake queue, an open drawer, a shelf's read history); asking each to
+notice a switch is a list that grows with every screen and is wrong the first
+time someone forgets one — and "wrong" means one library's books under
+another's name. Switching also **leaves any deep link behind** (`#/book/<id>`
+names a record of the library being left, so following it is a guaranteed 404
+the user did not ask for).
+
+⚠ **A stored id the account no longer has recovers by itself** — a library
+someone left, or a browser carrying another install's key. Left selected,
+every request 404s and the app looks broken rather than merely pointing
+somewhere it should not.
+
+⚠ **`GET /libraries` returns store data only, with no special case for the
+principal's default library**, even though the resolver serves that one
+without a lookup. Patching it in would put a second copy of the dev-trusted
+rule in a second module, and the day they disagreed the switcher would be
+missing the library on screen. `app/main.py`'s bootstrap guarantees the row;
+`test_the_library_meta_resolves_is_always_one_the_switcher_lists` pins the
+agreement rather than trusting it.
+
+⚠⚠ **A header is the wrong transport for the requests the BROWSER makes, and
+that shipped broken for an afternoon.** An `<img src>` and a download
+`<a href>` are built by the browser, which cannot be told to send
+`X-Booksnap-Library`. So every photo, every spine crop and both export links
+resolved against the caller's DEFAULT library — and in a second library they
+404'd. The owner found it within minutes of live use: *"once processing done I
+got books, but the image itself became empty"*. Reproduced exactly, over real
+HTTP against the real store: `GET /images/<key>/thumb` → **404** without a
+reference, **200** with `?library=<id>`.
+
+The fix is `deps.LIBRARY_PARAM` — the same reference as a query parameter,
+read only when the header is absent — plus `client.ts:browserUrl()`/`imageUrl()`,
+which is the ONE place a URL the browser fetches gets built, for the same
+reason `headersFor()` is one place. **The header WINS** when both are present:
+the client's own `fetch()` always sets it, so a URL that outlived a switch (a
+cached `src`, a kept link) must not drag a request into the wrong library.
+
+The general lesson is the MPO one again in a third costume: *the transport you
+chose is only the transport for the requests you were thinking about*. Four
+call sites were already building image URLs by hand when the switcher shipped,
+and every one of them was invisible to a test suite that mocks `fetch` —
+jsdom does not load an `<img>`.
+
+⚠ **A shared URL still does not carry the library by default.** The header was
+chosen over a path prefix (`/api/v1/libraries/{id}/books`) so switching does
+not rewrite every URL the client holds — the cost is that opening someone
+else's deep link resolves it against the receiving client's own selection.
+The query parameter above is the escape hatch for browser-issued requests, not
+a general link format; if links ever have to travel between people, that is
+the seam to reuse.
+
+**Verified live** against the real `work/product.db` (snapshotted before,
+restored after — routine here since P1.7): the switcher named the owner's real
+library, creating *ספריית ההורים* switched to it and the feed went from 272
+books to none, switching back brought all 272 straight back, and the panel
+mirrors (`inset-inline-start`, so it hangs off the button's inline-start edge
+in both directions — measured, RTL right edges equal at 1153px). All four
+resolver cases were exercised over real HTTP: the new library 0 books,
+`dev-library` 272, an unknown library **404**, no header at all 272.
+
+⚠ The Browser pane did not composite frames this session either (screenshot
+timed out, same as P2.8/P2.10), so the checks above are DOM structure, layout
+geometry and API state — real verification of wiring, NOT of paint.
+`getBoundingClientRect` still returns real numbers without compositing, which
+is why the mirroring measurement stands; `getComputedStyle` would not have.
+
+## Three things live use found the day the switcher shipped (owner, 2026-08-10)
+
+All four of the owner's reports from one real scan in a second library. The
+image one is above (it was a tenancy bug); these three are not about tenants
+at all, which is why they are here.
+
+**A running read now says what it is DOING.** The engine has reported
+per-tile, per-block and per-spine progress all along — `llmreader.py` emits
+`{stage: 'reading', done, total}` per tile, `pipeline.py` emits `page_read`,
+`segmented`, `ocr` and `matching` — the job runner keeps the latest, and
+`ReadDTO.progress` has carried it on every poll since P2.4. The panel threw
+all of it away and printed one static *"קורא…"* for minutes, which is
+indistinguishable from a hung job. `capture/RunProgress.tsx` renders it, with
+a bar **only when the engine gave a real denominator**: a made-up fraction is
+worse than no bar, because it claims someone knows how far along this is.
+An unrecognised stage falls back to the plain line rather than printing a raw
+key — a new engine event should read as *less* detail, never as a broken
+screen.
+
+**Run is disabled while a read is running.** Pressing it again is legal
+server-side and starts a second read of the same (shelf, depth) — money, time,
+and it replaces the panel you were watching. The reason is stated next to the
+button rather than left to a greyed-out control nobody can explain.
+
+**The Books tab refetches when you come back to it.** The store fetched on a
+query change and never otherwise, but books are also created and approved on
+the Capture tab, through routes the store never sees — so returning showed a
+list from before that work, and typing in the search box "fixed" it, which is
+exactly how the owner found it: *"after searching, the books appeared"*.
+`BooksTab` unmounts when you leave the tab, so its own mount IS the signal.
+⚠ It distinguishes coming BACK from arriving by reading `loading` at mount
+time — on the first mount the store's query effect is already in flight, and
+reloading there costs an extra request on every cold start. A ref cannot tell
+them apart: it resets with the component, and the component remounts on
+exactly the event being detected. A cross-tab invalidation channel is the
+general answer and is not worth it for two tabs; revisit at the third writer.
+
+**Deleting a book marks its finding REMOVED — and records the "no" that makes
+that true** (owner, 2026-08-10: *"removing a book in the books tab should mark
+it as removed (strike through) in the image"*).
+
+The finding itself never disappears, and that part was always the design: a
+finding is evidence of what the photograph said, and deleting a library record
+does not change what the camera read. What was wrong is what it reverted TO.
+Deleting wrote no decision anywhere, so the claim came back as an ordinary
+unanswered question with its ✓ on screen — as if nobody had decided — and, the
+same fact seen from the other end, **the next read of that shelf would put the
+book straight back**. That is §5.6 ("a rejected book must not be re-added by a
+later run") going unenforced for the plainest rejection the product offers.
+
+`DELETE /books/{id}` now records a standing `REJECTED` `Decision` at every
+`(shelf, depth)` the book's copies stood at — `app/domain/retract.py:deletion_sites`,
+pure and mutation-checked. `reconcile()` already reports a suppressed claim in
+`rejected`, and P2.10 already renders that bucket struck through with its ↩,
+so both halves of the owner's ask came from one write and no new UI.
+
+- **locations, not "the shelf"**: a book with copies on two rows was claimed
+  on two rows, and a decision is scoped to one (shelf, depth) by §5.7 #1;
+- **`REJECTED`, not `WRONG_BOOK`**: the two suppress identically and the kind
+  is the audit trail of WHICH question was answered. Deleting says *"I do not
+  have this book"*, not §5.4's *"is this the copy I already have"*;
+- **an unshelved book suppresses nothing** — P1.3's 251 imports have no row
+  for a future read to re-find them on. Asserted, so the empty case is a
+  decision rather than an accident;
+- **↩ brings it back as the PENDING finding it was**, never as a book nobody
+  approved: restore clears the decision and re-applies, and "nothing enters
+  the library unapproved" outranks every path in.
+
+⚠ ✕ (retract) and *delete* are still two different doors and both are needed:
+✕ answers *"this reading was wrong"* for ONE photo's finding and deliberately
+keeps a book that has a life of its own (`plan_retraction`); delete removes the
+record outright. They now agree about the one thing they always should have:
+neither leaves the shelf ready to re-add what a human just removed.
+
+⚠ **`preview_start` reuses a running Vite dev server, and Vite can serve a
+STALE module graph after out-of-band writes.** Live verification of the image
+fix showed the old URLs; `fetch('/src/api/client.ts')` from the page proved
+the dev server was still serving pre-edit source (the new `browserUrl` was
+simply not in it) after a mutation-test script had rewritten those files
+repeatedly. Same family as the `:8757`-serves-a-stale-build trap already
+recorded here, and diagnosed the same way: **grep the served artefact for a
+string only the new code has**, rather than assuming HMR kept up. Restarting
+the dev server fixed it.
+
 ## Author sort, and why it needed a schema version
 
 "Sort by author" means the SHELF order — by surname. Sorting the stored string
@@ -2320,8 +2607,8 @@ arrive in P2.1. The importer reports them loudly rather than dropping them —
 until P2.3 lands, a re-read could re-add those books.
 
 Client ring (needs `npm install --prefix app/web` once):
-`npm --prefix app/web run test` (vitest + React Testing Library, **84 tests**
-as of P2.10) and `npm --prefix app/web run typecheck`. Test what encodes a
+`npm --prefix app/web run test` (vitest + React Testing Library, **98 tests**
+as of P3.1 and the owner's first live round) and `npm --prefix app/web run typecheck`. Test what encodes a
 *decision*, not layout and not DTO plumbing — same standard as the Python
 rings. The suite mocks `fetch`, never `useBooks`/`useCapture`/`useShelfDetail`:
 the store, the request-id race guard and the paging arithmetic are exactly
@@ -2330,7 +2617,7 @@ what needs exercising, and the Capture/shelf fake servers
 `reconcile()`/`apply_diff`/`not_seen_streak`/`depth_staleness` either — each
 test hands back the exact overview/books/diff a call should answer with, the
 way the Python API ring injects a `StubReader`.
-Mutation-checked — forty-three reversed decisions (dropped race guard, missing
+Mutation-checked — fifty reversed decisions (dropped race guard, missing
 `.rtl-safe`, edit not abandoned on book change, delete without confirmation,
 409 clearing the form, focus not restored, drawer left open on promote,
 sort direction surviving a key change, tags not trimmed/blanks-dropped, the
@@ -2359,8 +2646,15 @@ a bulk approval, already-vouched books counted in one, a volume style
 dropped, the author list unfiltered, and the author list normalized rather
 than spelled as the owner spells it, split volumes left at the end of the
 photo instead of under their part, `~m10` sorted before `~m2`, and the author
-suggestions left open after one was chosen — P2.10's feedback rounds) each
-fail a named test.
+suggestions left open after one was chosen — P2.10's feedback rounds;
+`getBook` sending no library header, the app not remounting on a switch, a
+stale stored library kept, the choice not persisted, a deep link carried into
+the new library, *create* not switching to what it just made, and the first
+render not waiting for the library to be known — P3.1; Run left enabled during
+a read, a running read's progress thrown away, an unknown engine stage printed
+raw, an `<img>` URL without the library, no refetch on returning to the Books
+tab, and a refetch on the first visit too — the owner's live round) each fail
+a named test.
 
 Two P2.7/P2.8 tests were DELETED rather than fixed in that round (*"add a row
 behind"*, the *"open the shelf →"* chip): the owner removed both controls, and

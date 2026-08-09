@@ -318,6 +318,60 @@ describe('Capture tab — review', () => {
 
     await waitFor(() => expect(server.calls.some((c) => c.includes('/stop'))).toBe(true))
   })
+
+  it('refuses to start a second read while one is running', async () => {
+    // Owner, live use. Pressing Run again starts another read of the same
+    // (shelf, depth) — legal server-side, and a waste of money and minutes
+    // that also replaces the panel you were watching.
+    const server = fakeCaptureServer()
+    server.nextReadStatus = 'running'
+    const { container } = renderCapture()
+    await dropOnePhoto(container)
+    await screen.findByText('לא משויך')
+
+    const run = screen.getByRole('button', { name: /הרצה על הנבחרים/ })
+    await userEvent.click(run)
+
+    await waitFor(() => expect(run).toBeDisabled())
+    expect(screen.getByText('קריאה כבר רצה')).toBeInTheDocument()
+    const started = server.calls.filter(
+      (c) => c.includes('/reads') && !c.includes('/reads/')).length
+    await userEvent.click(run)
+    expect(server.calls.filter(
+      (c) => c.includes('/reads') && !c.includes('/reads/')).length).toBe(started)
+  })
+
+  it('says what a running read is DOING, not just that it is reading', async () => {
+    // The engine has reported per-tile progress all along (`llmreader.py`,
+    // `pipeline.py`); the panel threw it away and showed one static line for
+    // minutes, which is indistinguishable from a hung job.
+    const server = fakeCaptureServer()
+    server.nextReadStatus = 'running'
+    server.nextProgress = { stage: 'reading', done: 3, total: 12 }
+    const { container } = renderCapture()
+    await dropOnePhoto(container)
+    await screen.findByText('לא משויך')
+    await userEvent.click(screen.getByRole('button', { name: /הרצה על הנבחרים/ }))
+
+    expect(await screen.findByText('קורא את התמונה… 3/12')).toBeInTheDocument()
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '25')
+  })
+
+  it('falls back to the plain line for a stage it has never heard of', async () => {
+    // The engine may grow a stage this client does not know. A new event must
+    // read as LESS detail, never as a broken screen or a raw key.
+    const server = fakeCaptureServer()
+    server.nextReadStatus = 'running'
+    server.nextProgress = { stage: 'quantum_reticulation', done: 1 }
+    const { container } = renderCapture()
+    await dropOnePhoto(container)
+    await screen.findByText('לא משויך')
+    await userEvent.click(screen.getByRole('button', { name: /הרצה על הנבחרים/ }))
+
+    expect(await screen.findByText('קורא…')).toBeInTheDocument()
+    expect(screen.queryByText(/quantum/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
+  })
 })
 
 describe('Capture tab — the default reading mode', () => {
