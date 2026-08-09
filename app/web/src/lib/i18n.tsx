@@ -207,6 +207,9 @@ const HE = {
     try_match: 'התאמה אחרת?',
     alt_use: 'בחירה',
     raw_read: 'מה שנקרא:',
+    read_removed: 'הוסרו',
+    run_findings: (n: number) => `${n} ממצאים`,
+    add_book_found: 'הקריאה הזו כבר מצאה:',
   lang: 'EN',
 }
 
@@ -399,6 +402,9 @@ const EN: Strings = {
     try_match: 'Try a better match?',
     alt_use: 'Use this',
     raw_read: 'Read as:',
+    read_removed: 'removed',
+    run_findings: (n: number) => `${n} findings`,
+    add_book_found: 'This read already found:',
   lang: 'עב',
 }
 

@@ -102,6 +102,7 @@ export function ImageWorkspace({ item, shelves, ws, onClose }: ImageWorkspacePro
                 onFinding={ws.finding}
                 onApproveAll={ws.approveAll}
                 onAddByHand={ws.addByHand}
+                onLookup={ws.lookup}
                 emptyText={t.workspace_no_findings}
               />
             )}
@@ -130,25 +131,20 @@ function RunLine({ run }: { run: ReadSummaryDTO }) {
       {run.status === 'stopped' && (
         <span className="badge b-none">{t.read_stopped_short}</span>
       )}
-      {run.diff_summary && (
-        // The ARCHIVED counts (P2.8's snapshot), which is why they can
-        // disagree with the findings below: this says what the read DID, the
-        // list says what each finding IS NOW. Since 2026-08-09 an engine read
-        // mostly produces questions rather than additions, so the pending
-        // count leads when there is one — otherwise the row would read "+0"
-        // for every honest read.
-        <span className="chiprow diffbits">
-          {run.diff_summary.needs_decision > 0 && (
-            <span className="p">
-              {run.diff_summary.needs_decision} {t.read_pending}
-            </span>
-          )}
-          {run.diff_summary.added > 0 && (
-            <span className="g">+{run.diff_summary.added} {t.read_added}</span>
-          )}
-          <span className="m">{run.diff_summary.unchanged} {t.read_unchanged}</span>
-        </span>
-      )}
+      {/* How MANY findings, not what became of them (owner, 2026-08-09).
+          This used to render `Read.diff_summary`, P2.8's archived snapshot —
+          which is a true record of what the read DID and a bad status line:
+          remove a book and the row still read "1 awaiting approval", because
+          a snapshot cannot know about something that happened after it was
+          taken. The count of claims is a fact that never goes stale, and the
+          findings list below carries the live state (including removals),
+          which is where a reader looks anyway once a run is open.
+
+          The snapshot is NOT gone — the shelf's own read history
+          (`shelf/ReadHistory.tsx`) still shows it, which is the surface P2.8
+          built it for: there the question really is "what did this read
+          change", asked long afterwards. */}
+      <span className="tiny muted">{t.run_findings(run.claim_count)}</span>
     </>
   )
 }

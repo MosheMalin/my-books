@@ -526,10 +526,10 @@ names to run a subset (`python tests/run_all.py test_api`).
 | `test_legacy_import.py` | 21 | `work/*.json` → entities, against a committed fixture |
 | `test_search.py` | 15 | Hebrew search, against 24 real queries on the real 251 books |
 | `test_layering.py` | 9 | the one-way import rules (plan H1) |
-| `test_api.py` | 117 | `/api/v1` shapes + the versioning/tenancy meta-tests |
+| `test_api.py` | 119 | `/api/v1` shapes + the versioning/tenancy meta-tests |
 | `test_reader_wiring.py` | 8 | WHICH catalog the product hands the engine |
 
-571 python tests as of P2.10 and the owner's feedback rounds (+45: the
+573 python tests as of P2.10 and the owner's feedback rounds (+47: the
 retraction rule, a photo's runs across both store implementations,
 `retract_finding`'s writes, the workspace routes, the approval reversal —
 which also REPLACED the test that asserted an AUTO claim auto-enters — and
@@ -2046,6 +2046,47 @@ book claim, and reading one should not feel like reading a log line (owner,
   that §5.4 is asking about — and showing its title as this spine's would be a
   lie. Mutation-checked in both directions.
 
+## Adding a book by hand asks the engine's own question first
+
+*"Did this read already find this book?"* — `GET .../reads/{id}/findings/lookup`,
+straight out of `booksnap/server.py:lookup`, whose docstring names the error it
+exists for: *"the review flow's expensive human error is adding a book by hand
+that the run DID find and the eye simply skipped (a 40-row shelf in a language
+read right-to-left)."*
+
+⚠ **Server-side, for the reason the engine's own version gives**: it reuses the
+project's normalisation and ranking rather than growing *"a second, subtly
+different JS implementation"*. Here that means `app.domain.search` — P1.5's
+MEASURED Hebrew rules (nikud stripped, final letters folded, in-word geresh
+deleted, leading particles tolerated in the query, P@1 1.00 on the fixture).
+Verified live: typing `מנהרה` surfaces the stored `המנהרה`.
+
+`search.TextEntry` is what made that reuse free: `haystack`/`matches`/`score`
+only ever touch `normalized_title` and `normalized_author`, so a `Claim` can be
+searched by the same rules a `Book` is without fabricating a whole Book (with
+an id, a library, a copy) to ask a question about two strings.
+
+Two scope calls: the lookup searches **all** of this read's claims, including
+ones already approved, corrected or REMOVED — the book you retracted a moment
+ago is exactly the one you might be about to re-add — and it **never blocks**
+the add. Sometimes the right answer really is "add it anyway".
+
+## A run row shows how many findings, not what became of them
+
+The workspace's run rows used to render `Read.diff_summary`. That snapshot is a
+true record of what a read DID and a **bad status line**: remove a book and the
+row still read *"1 awaiting approval"*, because a snapshot cannot know about
+something that happened after it was taken (owner's report, 2026-08-09). The
+claim count never goes stale, and the findings list below carries the live
+state — which is where a reader looks once a run is open anyway.
+
+The snapshot is not gone: `shelf/ReadHistory.tsx` still shows it, which is the
+surface P2.8 built it for, where the question really is *"what did this read
+change"* asked long afterwards. And the live findings line now counts
+**removals**, which it never did — a retracted finding used to leave the
+pending count and appear in no other, so the line silently under-reported what
+had happened to the photo.
+
 ## The match score is out of 130, not 100
 
 `booksnap/match.py:330` computes `60·tcov_c + 25·tcov + 15·acov +
@@ -2186,7 +2227,7 @@ arrive in P2.1. The importer reports them loudly rather than dropping them —
 until P2.3 lands, a re-read could re-add those books.
 
 Client ring (needs `npm install --prefix app/web` once):
-`npm --prefix app/web run test` (vitest + React Testing Library, **73 tests**
+`npm --prefix app/web run test` (vitest + React Testing Library, **76 tests**
 as of P2.10) and `npm --prefix app/web run typecheck`. Test what encodes a
 *decision*, not layout and not DTO plumbing — same standard as the Python
 rings. The suite mocks `fetch`, never `useBooks`/`useCapture`/`useShelfDetail`:
@@ -2196,7 +2237,7 @@ what needs exercising, and the Capture/shelf fake servers
 `reconcile()`/`apply_diff`/`not_seen_streak`/`depth_staleness` either — each
 test hands back the exact overview/books/diff a call should answer with, the
 way the Python API ring injects a `StubReader`.
-Mutation-checked — twenty-nine reversed decisions (dropped race guard, missing
+Mutation-checked — thirty-three reversed decisions (dropped race guard, missing
 `.rtl-safe`, edit not abandoned on book change, delete without confirmation,
 409 clearing the form, focus not restored, drawer left open on promote,
 sort direction surviving a key change, tags not trimmed/blanks-dropped, the
@@ -2217,7 +2258,10 @@ match score shown without its 130 denominator, and the ✎ form patching a book
 that does not exist yet instead of approving-as-corrected; a runner-up with
 no *use this*, picking one on a pending finding patching instead of
 confirming, a row sourced from the claim rather than the book it became, and
-the author line dropped — P2.10's feedback rounds) each fail a named test.
+the author line dropped; the removed count missing from the findings line,
+the run row echoing a snapshot that cannot see a later removal, and the
+add-a-book lookup not actually asking the server — P2.10's feedback rounds)
+each fail a named test.
 
 Two P2.7/P2.8 tests were DELETED rather than fixed in that round (*"add a row
 behind"*, the *"open the shelf →"* chip): the owner removed both controls, and

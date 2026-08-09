@@ -18,8 +18,8 @@
  *    still not listed — a within-read duplicate or a titleless spine is noise
  *    on this screen, not a decision anybody made.
  */
-import { useState } from 'react'
-import type { ClaimOutcomeDTO, DiffDTO } from '../api/client'
+import { useEffect, useRef, useState } from 'react'
+import type { ClaimOutcomeDTO, DiffDTO, FindingMatchDTO } from '../api/client'
 import { useI18n } from '../lib/i18n'
 import { ClaimRow } from './ClaimRow'
 import { pendingApprovals, type FindingOp } from './findingOps'
@@ -37,13 +37,16 @@ export interface FindingListProps {
   /** *"The engine missed this book"*. Absent on the live review panel: a
    *  read that is still settling has no stable set of findings to add to. */
   onAddByHand?: (title: string, author: string) => void
+  /** *"Did this read already find it?"*, asked as the title is typed. Absent
+   *  wherever adding is (the two arrive together). */
+  onLookup?: (q: string) => Promise<FindingMatchDTO[]>
   /** Rendered when the (possibly narrowed) list is empty. */
   emptyText: string
 }
 
 export function FindingList({
   diff, captureId, busy, onAnswer, onFinding, onApproveAll, onAddByHand,
-  emptyText,
+  onLookup, emptyText,
 }: FindingListProps) {
   const { t } = useI18n()
   const [adding, setAdding] = useState(false)
@@ -70,6 +73,15 @@ export function FindingList({
         </span>
         {pending.length > 0 && (
           <span className="p">{pending.length} {t.read_pending}</span>
+        )}
+        {/* Removals were invisible here until the owner asked for them
+            (2026-08-09): a retracted finding left the pending count and
+            appeared in no other, so the line silently under-reported what had
+            happened to the photo. */}
+        {diff.rejected.filter(mine).length > 0 && (
+          <span className="r">
+            {diff.rejected.filter(mine).length} {t.read_removed}
+          </span>
         )}
         {/* not_seen is about the SHELF, not about any one photo — a copy
             nothing reconfirmed has no claim and so no capture to belong to.
@@ -103,6 +115,7 @@ export function FindingList({
       {adding && onAddByHand && (
         <AddByHand
           busy={busy.has('_add')}
+          {...(onLookup ? { onLookup } : {})}
           onCancel={() => setAdding(false)}
           onSave={(title, author) => {
             setAdding(false)
@@ -133,14 +146,37 @@ export function FindingList({
 /** The owner typing in a book the reader missed. Inline, like every other
  *  form on this screen — a modal for two fields would be the heavier of the
  *  two options and buy nothing. */
-function AddByHand({ busy, onSave, onCancel }: {
+function AddByHand({ busy, onLookup, onSave, onCancel }: {
   busy: boolean
+  onLookup?: (q: string) => Promise<FindingMatchDTO[]>
   onSave: (title: string, author: string) => void
   onCancel: () => void
 }) {
   const { t } = useI18n()
   const [title, setTitle] = useState('')
   const [author, setAuthor] = useState('')
+  const [found, setFound] = useState<FindingMatchDTO[]>([])
+  // Ignore out-of-order replies — typing outruns the network, and a slow
+  // answer to "מל" landing after the answer to "מלכי" would show the wrong
+  // hint. Exactly the guard `booksnap/static/index.html`'s own version uses
+  // (`const mine = ++seq`), and the same one `lib/books.tsx` documents.
+  const seq = useRef(0)
+
+  useEffect(() => {
+    if (!onLookup) return
+    const q = title.trim()
+    if (q.length < 2) { setFound([]); return }
+    const mine = ++seq.current
+    // Debounced: this asks the server on every keystroke otherwise, and the
+    // answer is only interesting once a word is half-typed.
+    const timer = setTimeout(() => {
+      void onLookup(q)
+        .then((hits) => { if (mine === seq.current) setFound(hits) })
+        .catch(() => { if (mine === seq.current) setFound([]) })
+    }, 250)
+    return () => clearTimeout(timer)
+  }, [title, onLookup])
+
   return (
     <form
       className="fixbox"
@@ -168,6 +204,22 @@ function AddByHand({ busy, onSave, onCancel }: {
           {t.cancel}
         </button>
       </div>
+      {/* The expensive human error this exists for: hand-adding a book the
+          read DID find, on a forty-row shelf, in a language read
+          right-to-left. Shown, never enforced — sometimes the right answer
+          really is "add it anyway". */}
+      {found.length > 0 && (
+        <div className="foundhint tiny muted">
+          <div>{t.add_book_found}</div>
+          <ul>
+            {found.map((f) => (
+              <li key={f.claim_id} className="rtl-safe">
+                {f.title}{f.author ? ` · ${f.author}` : ''}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </form>
   )
 }

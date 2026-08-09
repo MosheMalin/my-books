@@ -2746,6 +2746,55 @@ def test_adding_a_book_to_a_photo_by_hand_files_it_immediately_at_manual():
             == ["manual"]
 
 
+def test_adding_by_hand_first_asks_whether_this_read_already_found_it():
+    """The expensive human error `booksnap/server.py:lookup` names: adding a
+    book by hand that the run DID find and the eye skipped, on a forty-row
+    shelf read right-to-left. Same question, same answer, one layer up."""
+    with _blobs() as blobs:
+        store, shelves, reads_ = MemoryBookStore(), MemoryShelfStore(), MemoryReadStore()
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_,
+                            blobs=blobs, reader=StubReader()))
+        c, shelf_id, cap_id, read_id = _settled_read(
+            c, claims=[_auto_claim(title="מלכי הכופרים", spine="sp1"),
+                       _auto_claim(title="ספינות מן המערב", spine="sp2")],
+            store=store, shelves=shelves, reads=reads_, blobs=blobs)
+        look = f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/findings/lookup"
+
+        hits = c.get(look, params={"q": "מלכי"}).json()
+        assert [h["title"] for h in hits] == ["מלכי הכופרים"]
+
+        # P1.5's own rules, reused rather than re-approximated: a leading
+        # particle in the QUERY is tolerated, and the stored text is never
+        # stripped. A JS re-implementation is what this endpoint exists to
+        # avoid having to keep in step.
+        assert [h["title"] for h in c.get(look, params={"q": "כופרים"}).json()]             == ["מלכי הכופרים"]
+        assert c.get(look, params={"q": "לא קיים"}).json() == []
+        # Empty means "match nothing", never "match everything" — a blank box
+        # is the caller's business, not a request for the whole read.
+        assert c.get(look, params={"q": ""}).json() == []
+
+
+def test_the_lookup_sees_findings_a_human_has_already_acted_on():
+    """Including a REMOVED one. The book you retracted a moment ago is
+    exactly the one you might be about to re-add by hand, and saying nothing
+    would be the unhelpful half of honest."""
+    with _blobs() as blobs:
+        store, shelves, reads_ = MemoryBookStore(), MemoryShelfStore(), MemoryReadStore()
+        c = TestClient(_app(store=store, shelves=shelves, reads=reads_,
+                            blobs=blobs, reader=StubReader()))
+        c, shelf_id, cap_id, read_id = _settled_read(
+            c, claims=[_auto_claim(title="מלכי הכופרים")], store=store,
+            shelves=shelves, reads=reads_, blobs=blobs)
+        diff = c.get(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}/diff").json()
+        claim_id = (diff["unchanged"] + diff["added"])[0]["claim"]["id"]
+        c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}"
+               f"/findings/{claim_id}/retract")
+
+        hits = c.get(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}"
+                     f"/findings/lookup", params={"q": "מלכי"}).json()
+        assert [h["title"] for h in hits] == ["מלכי הכופרים"]
+
+
 def test_two_hand_added_books_are_two_findings_not_one():
     """Each gets its own minted spine id. Sharing one would make
     `Provenance.sighting` identical for both, and `observe()`'s idempotency

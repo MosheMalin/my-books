@@ -243,6 +243,17 @@
 .altbox .rawread {
   margin-bottom: 7px;
 }
+/* "this read already found:" — a hint under the add-a-book form, never a
+   block: sometimes the right answer really is "add it anyway". */
+.foundhint {
+  flex-basis: 100%;
+  border-inline-start: 2px solid var(--review);
+  padding-inline-start: 9px;
+}
+.foundhint ul {
+  margin: 3px 0 0;
+  padding-inline-start: 16px;
+}
 .altbox td:last-child {
   text-align: end;
   white-space: nowrap;

@@ -42,6 +42,12 @@ export interface FakeCaptureServer {
    *  covers retract/restore, whose whole point is that they return a
    *  DIFFERENT diff from the one that was on screen. */
   findingResult: (action: 'retract' | 'restore', claimId: string) => DiffDTO
+  /** What `GET .../findings/lookup?q=` answers with. The REAL matching is
+   *  `app.domain.search` on the server (P1.5's measured Hebrew rules) — this
+   *  fake does not reimplement it, exactly as it does not reimplement
+   *  `reconcile()`; a test hands back the hits its case is about. */
+  lookupFor: (q: string) => { claim_id: string; title: string; author: string;
+                              tier: string }[]
   /** status the NEXT `POST .../reads` returns — most tests want 'done' so
    *  no fake-timer polling is needed to reach the review panel. */
   nextReadStatus: 'running' | 'done' | 'stopped' | 'failed'
@@ -117,6 +123,7 @@ export function fakeCaptureServer(
     nextReadStatus: 'done',
     diffFor: (readId, _answers) => emptyDiff('sh1', 1, readId),
     findingResult: (_action, _claimId) => emptyDiff('sh1', 1, 'rd1'),
+    lookupFor: (_q) => [],
     uploadShouldFail: false,
   }
 
@@ -206,6 +213,12 @@ export function fakeCaptureServer(
     if (parts[2] === 'shelves' && parts[4] === 'reads' && parts[6] === 'diff'
         && method === 'GET') {
       return respond(server.diffFor(parts[5]!, []))
+    }
+
+    if (parts[2] === 'shelves' && parts[4] === 'reads' && parts[6] === 'findings'
+        && parts[7] === 'lookup' && method === 'GET') {
+      const q = (u.searchParams.get('q') ?? '').trim()
+      return respond(q.length < 2 ? [] : server.lookupFor(q))
     }
 
     if (parts[2] === 'shelves' && parts[4] === 'reads' && parts[6] === 'findings'

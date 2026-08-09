@@ -470,9 +470,12 @@ describe('Capture tab — the image workspace (P2.10, §12.2 #10)', () => {
       captured_at: '2026-08-01T00:00:00Z',
     }
     const run = readSummary({
-      id: 'rd1', shelf_id: 'sh1', depth: 1, status: 'done',
+      id: 'rd1', shelf_id: 'sh1', depth: 1, status: 'done', claim_count: 3,
       finished_at: '2026-08-09T10:00:00Z',
-      diff_summary: { added: 2, corrected: 0, unchanged: 1, needs_decision: 0,
+      // An archived summary that DISAGREES with the live state on purpose:
+      // it says one finding is awaiting approval, and the run row must not
+      // repeat that as if it were current (owner, 2026-08-09).
+      diff_summary: { added: 2, corrected: 0, unchanged: 1, needs_decision: 1,
                       not_seen: 0, rejected: 0, ignored: 0 },
     })
     server.reads.push(run)
@@ -712,6 +715,57 @@ describe('Capture tab — the image workspace (P2.10, §12.2 #10)', () => {
       const body = server.bodies.find((b) => 'title' in (b ?? {}) && !('answers' in (b ?? {})))
       expect((body as { title: string }).title).toBe('ספר שהמנוע פספס')
     })
+  })
+
+  it('warns that this read already found a book you are typing in by hand', async () => {
+    // `booksnap/server.py:lookup`'s own error: adding by hand a book the run
+    // DID find and the eye skipped. Shown, never enforced.
+    const server = processedPhoto(settled())
+    server.lookupFor = () => [{ claim_id: 'c1', title: 'מלכי הכופרים',
+                                author: 'פול קארני', tier: 'auto' }]
+    await openWorkspace()
+    await screen.findByText('מלכי הכופרים')
+
+    await userEvent.click(screen.getByRole('button', { name: '+ הוספת ספר שהמנוע פספס' }))
+    await userEvent.type(screen.getByLabelText('כותרת'), 'מלכי')
+
+    expect(await screen.findByText('הקריאה הזו כבר מצאה:', {}, { timeout: 2000 }))
+      .toBeInTheDocument()
+    // The MATCHING is the server's (P1.5's Hebrew rules) — the client only
+    // asks. Anything else would be the second, subtly different
+    // implementation the engine refused to grow.
+    await waitFor(() =>
+      expect(server.calls.some((c) => c.includes('/findings/lookup?q='))).toBe(true))
+    // ...and it never blocks: the add button stays live.
+    expect(screen.getByRole('button', { name: 'הוספה' })).toBeEnabled()
+  })
+
+  it('counts removals in the findings summary', async () => {
+    // The owner's report: remove a book and the summary still said "1
+    // awaiting approval" and mentioned the removal nowhere.
+    processedPhoto({
+      ...emptyDiff('sh1', 1, 'rd1'),
+      rejected: [outcome({
+        kind: 'rejected', reason: 'rejected', book_key: 'k1',
+        claim: claim({ id: 'c1', capture_id: 'cap1', title: 'הוסר' }),
+      })],
+    })
+    await openWorkspace()
+
+    expect(await screen.findByText(/1 הוסרו/)).toBeInTheDocument()
+    expect(screen.queryByText(/ממתינים לאישור/)).not.toBeInTheDocument()
+  })
+
+  it('shows a run by how many findings it has, never by a count that can go stale', async () => {
+    // The run row used to render P2.8's archived snapshot, which cannot know
+    // about a removal made after it was taken — so it kept claiming "1
+    // awaiting approval" for a finding that was gone.
+    processedPhoto(settled())
+    await openWorkspace()
+
+    const runRow = document.querySelector('.runrow') as HTMLElement
+    expect(within(runRow).getByText(/ממצאים/)).toBeInTheDocument()
+    expect(within(runRow).queryByText(/ממתינים לאישור/)).not.toBeInTheDocument()
   })
 
   it('offers the same approve / fix / remove loop on a LIVE run, not only in the workspace', async () => {

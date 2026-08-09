@@ -760,6 +760,22 @@ class ApplyDiffRequest(BaseModel):
     answers: list[AnswerIn] = Field(default_factory=list)
 
 
+class FindingMatchDTO(BaseModel):
+    """One finding of THIS read that matches what the owner is typing into
+    *"add a book the engine missed"* (P2.10, owner 2026-08-09).
+
+    Deliberately thin — an id and the two strings. The client already holds
+    the whole diff, so it looks the state up by ``claim_id`` rather than
+    having it repeated here; what it cannot do for itself is the MATCHING,
+    which is why that stays on the server (see
+    ``app.domain.search.TextEntry``)."""
+
+    claim_id: str
+    title: str
+    author: str = ""
+    tier: str
+
+
 class ManualFindingIn(BaseModel):
     """*"The engine missed this book"* — a book the owner adds to a photo by
     hand (P2.10, owner 2026-08-09).

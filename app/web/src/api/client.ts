@@ -376,6 +376,18 @@ export const addFindingByHand = (
 ) => send('POST', readsPath(shelfId, `/${encodeURIComponent(readId)}/findings`),
          payload, opts) as Promise<DiffDTO>
 
+export type FindingMatchDTO = components['schemas']['FindingMatchDTO']
+
+/** *"Did this read already find this book?"* — asked while the owner types
+ *  one in by hand. Server-side on purpose: the matching rules are P1.5's
+ *  measured Hebrew search, and a second approximation of them in TypeScript
+ *  is exactly what `booksnap/server.py:lookup` refused to grow. */
+export const lookupFindings = (
+  shelfId: string, readId: string, q: string, opts: ApiOptions = {},
+): Promise<FindingMatchDTO[]> =>
+  getJson(readsPath(shelfId, `/${encodeURIComponent(readId)}/findings/lookup`)
+          + `?q=${encodeURIComponent(q)}`, opts)
+
 export const approveBook = (bookId: string, opts?: ApiOptions) =>
   send('POST', `/api/v1/books/${encodeURIComponent(bookId)}/approve`,
        undefined, opts) as Promise<Book>

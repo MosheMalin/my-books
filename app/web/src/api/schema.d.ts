@@ -765,6 +765,45 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/shelves/{shelf_id}/reads/{read_id}/findings/lookup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Lookup Findings
+         * @description *"Did this read already find this book?"* — asked while the owner is
+         *     typing one in by hand (P2.10, owner 2026-08-09).
+         *
+         *     Straight out of `booksnap/server.py:lookup`, whose docstring names the
+         *     error it exists for: *"the review flow's expensive human error is adding
+         *     a book by hand that the run DID find and the eye simply skipped (a 40-row
+         *     shelf in a language read right-to-left)."* Same error, same answer.
+         *
+         *     **Server-side for the reason the engine's version gives** — it reuses the
+         *     project's own normalisation and ranking (`app.domain.search`, P1.5's
+         *     measured Hebrew search: nikud stripped, final letters folded, in-word
+         *     geresh deleted, leading particles tolerated) rather than growing a second,
+         *     subtly different implementation in TypeScript. The client has every
+         *     finding loaded already; what it cannot reproduce is *what matching means
+         *     here*.
+         *
+         *     Scope is this read's claims, ALL of them — including ones already
+         *     approved, corrected or removed. A book you removed a moment ago is
+         *     exactly the one you might be about to re-add by hand, and staying silent
+         *     about it would be the unhelpful half of honest.
+         */
+        get: operations["lookup_findings_api_v1_shelves__shelf_id__reads__read_id__findings_lookup_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/shelves/{shelf_id}/reads/{read_id}/findings/{claim_id}/restore": {
         parameters: {
             query?: never;
@@ -1434,6 +1473,30 @@ export interface components {
             prompt_kind: string;
             /** Shelf Id */
             shelf_id: string;
+        };
+        /**
+         * FindingMatchDTO
+         * @description One finding of THIS read that matches what the owner is typing into
+         *     *"add a book the engine missed"* (P2.10, owner 2026-08-09).
+         *
+         *     Deliberately thin — an id and the two strings. The client already holds
+         *     the whole diff, so it looks the state up by ``claim_id`` rather than
+         *     having it repeated here; what it cannot do for itself is the MATCHING,
+         *     which is why that stays on the server (see
+         *     ``app.domain.search.TextEntry``).
+         */
+        FindingMatchDTO: {
+            /**
+             * Author
+             * @default
+             */
+            author: string;
+            /** Claim Id */
+            claim_id: string;
+            /** Tier */
+            tier: string;
+            /** Title */
+            title: string;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -3095,6 +3158,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DiffDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    lookup_findings_api_v1_shelves__shelf_id__reads__read_id__findings_lookup_get: {
+        parameters: {
+            query?: {
+                /** @description What the owner is typing. */
+                q?: string;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                shelf_id: string;
+                read_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FindingMatchDTO"][];
                 };
             };
             /** @description Validation Error */

@@ -102,7 +102,38 @@ def parse(text: str) -> Query:
     return Query(raw=text or "", normalized=norm, terms=terms)
 
 
-def haystack(book: Book) -> str:
+@dataclass(frozen=True)
+class TextEntry:
+    """Anything with a title and an author, searchable by the rules a `Book`
+    is searched by.
+
+    :func:`haystack`, :func:`matches` and :func:`score` only ever touch
+    ``normalized_title`` and ``normalized_author`` — this makes that contract
+    explicit and usable, instead of forcing a caller who has a title and an
+    author in hand to fabricate a whole `Book` (with an id, a library, a copy)
+    just to ask a question about two strings.
+
+    The caller that needed it first: *"did this read already find this book?"*
+    on a `Claim` (P2.10's add-a-book-by-hand). That search is deliberately
+    server-side and deliberately this function — `booksnap/server.py`'s own
+    version of it says why in its docstring: it reuses the matcher's
+    normalisation *"so the search behaves like the matcher rather than like a
+    second, subtly different JS implementation."* Same argument, one layer up.
+    """
+
+    title: str
+    author: str = ""
+
+    @property
+    def normalized_title(self) -> str:
+        return normalize(self.title)
+
+    @property
+    def normalized_author(self) -> str:
+        return normalize(self.author)
+
+
+def haystack(book: Book | TextEntry) -> str:
     """What a query is matched against: normalized title, then author.
 
     Title first so a title hit can be told from an author hit by position —
@@ -139,7 +170,7 @@ def matches(query: Query, hay: str) -> bool:
 
 # --- ranking ---------------------------------------------------------------
 
-def score(query: Query, book: Book) -> float:
+def score(query: Query, book: Book | TextEntry) -> float:
     """Relevance. Higher is better; ties broken by the caller, stably.
 
     Every signal is about *specificity*, because on a personal library the

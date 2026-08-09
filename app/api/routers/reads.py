@@ -40,6 +40,7 @@ from app.api.deps import (
 from app.api.dto import (
     ApplyDiffRequest,
     DiffDTO,
+    FindingMatchDTO,
     ManualFindingIn,
     ReadCreate,
     ReadDTO,
@@ -66,6 +67,7 @@ from app.domain import (
     with_diff_summary,
 )
 from app.domain.book import DomainError
+from app.domain.search import TextEntry, haystack, matches, parse, score
 from app.domain.shelf import UnknownDepth
 from app.ports import Clock, IdGen
 from app.ports.blobs import BlobStore
@@ -372,6 +374,54 @@ def apply_read_diff(
 # Both return the diff RECOMPUTED after writing — the same contract as
 # `POST .../apply`, so the client replaces one object and every badge on the
 # screen follows.
+
+@router.get("/{read_id}/findings/lookup", response_model=list[FindingMatchDTO])
+def lookup_findings(
+    shelf_id: str,
+    read_id: str,
+    q: str = Query("", description="What the owner is typing."),
+    limit: int = Query(3, ge=1, le=20),
+    library: LibraryRef = Depends(current_library),
+    reads: ReadStore = Depends(get_read_store),
+) -> list[FindingMatchDTO]:
+    """*"Did this read already find this book?"* — asked while the owner is
+    typing one in by hand (P2.10, owner 2026-08-09).
+
+    Straight out of `booksnap/server.py:lookup`, whose docstring names the
+    error it exists for: *"the review flow's expensive human error is adding
+    a book by hand that the run DID find and the eye simply skipped (a 40-row
+    shelf in a language read right-to-left)."* Same error, same answer.
+
+    **Server-side for the reason the engine's version gives** — it reuses the
+    project's own normalisation and ranking (`app.domain.search`, P1.5's
+    measured Hebrew search: nikud stripped, final letters folded, in-word
+    geresh deleted, leading particles tolerated) rather than growing a second,
+    subtly different implementation in TypeScript. The client has every
+    finding loaded already; what it cannot reproduce is *what matching means
+    here*.
+
+    Scope is this read's claims, ALL of them — including ones already
+    approved, corrected or removed. A book you removed a moment ago is
+    exactly the one you might be about to re-add by hand, and staying silent
+    about it would be the unhelpful half of honest.
+    """
+    read = _load_read(reads, library, shelf_id, read_id)
+    query = parse(q)
+    if not query:
+        # An empty or too-short query means "match nothing", never "match
+        # everything" — `Query.__bool__`'s own contract.
+        return []
+
+    hits = [(c, TextEntry(title=c.title, author=c.author)) for c in read.claims]
+    hits = [(c, e) for c, e in hits if matches(query, haystack(e))]
+    # Same total order `search()` uses — relevance, then title, then id — so a
+    # tie cannot reorder itself between two keystrokes.
+    hits.sort(key=lambda pair: (-score(query, pair[1]),
+                                pair[1].normalized_title, pair[0].id))
+    return [FindingMatchDTO(claim_id=c.id, title=c.title, author=c.author,
+                            tier=c.tier.value)
+            for c, _ in hits[:limit]]
+
 
 @router.post("/{read_id}/findings", response_model=DiffDTO,
              status_code=status.HTTP_201_CREATED)

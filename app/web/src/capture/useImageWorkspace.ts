@@ -32,6 +32,7 @@ import {
   applyDiff,
   getDiff,
   listCaptureReads,
+  lookupFindings,
   type DiffDTO,
   type ReadSummaryDTO,
 } from '../api/client'
@@ -183,10 +184,18 @@ export function useImageWorkspace(captureId: string | null) {
       addFindingByHand(run.shelf_id, run.id, { title, author }))
   }, [run, withBusy])
 
+  /** *"Did this read already find it?"* while typing a title in by hand.
+   *  A plain pass-through to the server — the matching rules live there
+   *  (`app.domain.search`), not in this hook. */
+  const lookup = useCallback(async (q: string) => {
+    if (!run) return []
+    return lookupFindings(run.shelf_id, run.id, q)
+  }, [run])
+
   return {
     runs, runsLoading, error, openRunId, diff, diffLoading, diffError,
     runInFlight, busy,
-    openRun, answer, finding, approveAll, addByHand,
+    openRun, answer, finding, approveAll, addByHand, lookup,
   }
 }
 
