@@ -3248,9 +3248,52 @@ internally; the budget is cores + 2, measured (47s at exactly-cores, 44s at
    height × 2 binarize × 2 model search; only worth pruning if that path is
    ever needed again — llmpage is the default mode.
 
+## ⚠⚠ Scratch space is `D:\tmp` — never bare `/tmp` (2026-08-10)
+
+**`/tmp` means two different directories on this machine**, and the mismatch is
+silent:
+
+| who | resolves `/tmp` to |
+|---|---|
+| Git Bash (MSYS) | `C:\Users\<user>\AppData\Local\Temp` — the `usertemp` automount in `C:\Program Files\Git\etc\fstab` |
+| the Windows-native file tools | `<current drive>:\tmp` — i.e. `D:\tmp` while the cwd is this repo |
+
+So a shell command and a file write that both name `/tmp/thing` touch
+**different files**, and neither errors. It cost a real near-miss: a git
+worktree created at `/tmp/tidy` (→ `C:\…\Temp\tidy`) was edited at
+`/tmp/tidy/...` (→ `D:\tmp\tidy\...`), the edit appeared to succeed, and the
+worktree still held the old file. The tests that then ran were verifying a
+stale tree while reporting success — the most expensive kind of wrong.
+
+**The rule: always name the drive.** `/d/tmp/x` in a shell, `D:\tmp\x` for a
+file tool. One real directory, no ambiguity, and it sits on the same volume as
+the repo (so worktrees are a fast local operation). `D:\tmp` is created; a
+worktree there was verified to round-trip through both toolchains.
+
+⚠ This is not fixable from inside the repo. `/tmp`'s mapping is set by the MSYS
+runtime at process start from `/etc/fstab`, so no `.bashrc` export can move it,
+and that file lives under Program Files and needs elevation. If bare `/tmp`
+should ALSO point at D: as a safety net, run **once, from an elevated shell**:
+
+```powershell
+Add-Content -Path "C:\Program Files\Git\etc\fstab" -Value "`nD:/tmp /tmp ntfs binary,posix=0,noacl 0 0" -Encoding utf8
+```
+
+Even then, prefer the explicit form: the file tools resolve `/tmp` against
+whatever drive the cwd is on, so bare `/tmp` is only ever correct *by
+coincidence*.
+
 ## Working style notes
 
 The owner is a senior engineer (25y) who values honest assessment over
 optimism, catches overstated claims, and wants deterministic/cost-efficient
 solutions. Report real numbers, flag what's unverified, don't oversell. When a
 refactor might regress accuracy, measure before and after on the sample photos.
+
+⚠ **Multiple sessions run against this one working tree.** A parallel session
+may have a different branch checked out, so a `git checkout` here can revert
+another agent's files underneath it. Do isolated work in a worktree
+(`git worktree add D:/tmp/<name> <branch>`) and merge from there; the primary
+tree stays where its owner left it. Landing a branch this way — build the
+commit, merge `--no-ff` in a worktree at `main`, push, remove the worktree —
+never moves this directory at all.
