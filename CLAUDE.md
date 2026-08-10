@@ -2628,6 +2628,47 @@ indistinguishability was P3.1's, and the route meta-test is above. Nothing
 new to build; the item's content is that the claims are now enforced from
 three directions (store, resolver, per-route policy declaration).
 
+## The job queue (P3.4) — bounded, fair, and reads still settle themselves
+
+`app/adapters/queued_jobs.py:QueuedJobRunner` replaced the thread-per-job
+`InProcessJobRunner` (deleted, not kept as a second implementation to keep
+honest). Same `JobRunner` port, so the reads router changed one line; what
+changed is capacity discipline, not meaning:
+
+- **a fixed pool of workers drains a queue** (2 in `app/main.py` — a read is
+  engine-CPU or a paid LLM call, and ten at once helps neither on 4 cores);
+- **fairness is round-robin ACROSS tenants, FIFO within one** — one deque per
+  tenant, a ring of tenant keys. `submit()` grew `tenant=` (the reads router
+  passes `library.id`) and the API test pins that wiring with a spy, because
+  dropping `tenant=` would silently collapse every library into one queue
+  and no adapter-ring test could see it;
+- **`retries=` exists and the reads job passes 0 ON PURPOSE.** The job
+  settles its own failure (`fail_read` + save); a runner-level retry would
+  re-run the ENGINE — paying for the same photos twice because the final
+  save hiccuped. Retry is for cheap idempotent callables; the option exists
+  so the queue is complete, not so reads use it;
+- **a queued job reports state `"running"` with progress
+  `{"stage": "queued"}`** rather than a fifth port state — every poller
+  would have to learn the new state and none can act on it; the client's
+  unknown-stage fallback (P3.1's live round) renders it as the plain line;
+- **a stopped-while-queued job still RUNS, with stop already set.** The
+  runner never settles a job from the scheduler: the caller's durable `Read`
+  (saved as `running` before submit) waits for `fn` to write its own ending,
+  so the work must run — it sees `should_stop()` true on its first poll and
+  settles as `stopped` in milliseconds. Settling from the scheduler is the
+  bug where a stopped read shows `running` forever, the same hang the
+  load-bearing try/except in `reads._job` guards against from the other side.
+
+`tests/test_jobs.py` (8) is the runner's own ring — fairness, retry budget,
+stop-while-queued, bounded concurrency, two-runners-share-nothing — all
+event-gated, never sleep-calibrated. The plan's named case ("two concurrent
+reads in two libraries do not observe each other") runs twice: adapter-level
+and over real HTTP (`test_two_concurrent_reads_in_two_libraries_do_not_
+observe_each_other`, whose GatedReader produces claims NAMING their library
+so a leak shows in data, not just timing). Mutation-checked: `tenant=`
+dropped in reads.py, round-robin broken, retry dead — each fails a named
+test.
+
 ## Author sort, and why it needed a schema version
 
 "Sort by author" means the SHELF order — by surname. Sorting the stored string

@@ -48,8 +48,8 @@ from app.api.dto import (
 )
 from app.api.policy import require
 from app.domain import (
-    Capability,
     Alternative,
+    Capability,
     Capture,
     Claim,
     ClaimTier,
@@ -186,9 +186,15 @@ def start_read(
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     reads.save_read(library, read)
 
+    # tenant= is the fairness key (P3.4): pending reads drain round-robin
+    # across libraries. retries stays 0 ON PURPOSE — the job settles its own
+    # failure (`fail_read` + save), and a runner-level retry would re-run the
+    # ENGINE, paying for the same photos twice because the final save
+    # hiccuped. See JobRunner.submit's own ⚠.
     jobs.submit(read.id, _job(read, shelf, library, captures, reads, shelves,
                               reader, blobs, books, decisions, duplicates,
-                              ids, clock))
+                              ids, clock),
+                tenant=library.id)
     return ReadDTO.of(read)
 
 

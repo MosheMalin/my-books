@@ -31,7 +31,13 @@ from app.api.deps import (
 from app.api.dto import BookDTO, DuplicateAnswerIn, DuplicateQuestionDTO
 from app.api.policy import require
 from app.api.routers.reads import diff_for
-from app.domain import Capability, DEFAULT_RESOLUTION, DecisionKind, LibraryRef, build_prompt
+from app.domain import (
+    DEFAULT_RESOLUTION,
+    Capability,
+    DecisionKind,
+    LibraryRef,
+    build_prompt,
+)
 from app.ports import Clock, IdGen
 from app.ports.decisions import DecisionStore
 from app.ports.duplicates import DuplicateQueue

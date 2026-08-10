@@ -78,7 +78,11 @@ class Capability(str, Enum):
 
     #: Browse/search books, see shelves — §4.2 row 1.
     BROWSE = "browse"
-    #: See lending state — §4.2 row 2.
+    #: See lending state — §4.2 row 2. ⚠ Currently VACUOUS on the wire:
+    #: lending rides inside ``BookDTO`` on BROWSE routes, so no route enforces
+    #: this cell separately. Tightening it without splitting the DTO would
+    #: make the table lie — ``test_see_lending_matches_browse_until_a_route_
+    #: splits_them`` pins the coupling until someone does the wire work.
     SEE_LENDING = "see_lending"
     #: See the original shelf photographs — §12.2 #1, settled Editor+.
     VIEW_PHOTOS = "view_photos"

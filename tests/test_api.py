@@ -35,7 +35,7 @@ from _fastclient import TestClient          # starlette's, on a shared portal
 
 from app import API_PREFIX, __version__
 from app.adapters.disk_blobs import DiskBlobStore
-from app.adapters.inprocess_jobs import InProcessJobRunner
+from app.adapters.queued_jobs import QueuedJobRunner
 from app.adapters.memory_store import (
     MemoryBookStore,
     MemoryDecisionStore,
@@ -167,7 +167,7 @@ def _app(principal: StubPrincipal | None = None, store=None, shelves=None,
         decision_store=decisions if decisions is not None else MemoryDecisionStore(),
         duplicate_queue=duplicates if duplicates is not None else MemoryDuplicateQueue(),
         reader=reader,
-        job_runner=jobs if jobs is not None else InProcessJobRunner(),
+        job_runner=jobs if jobs is not None else QueuedJobRunner(),
         clock=StubClock(),
         id_gen=SeqIdGen(),
     )
@@ -1009,6 +1009,24 @@ def test_an_editor_captures_but_only_an_admin_deletes_photos():
             assert r.status_code == 204
 
 
+def test_a_membership_row_on_your_own_library_outranks_the_dev_trusted_fallback():
+    """`_role` consults the membership row FIRST and falls back to ADMIN only
+    when no row exists for the principal's own library. Reordering those two
+    branches would silently grant ADMIN to anyone whose own-library row says
+    less — invisible today (the bootstrap writes ADMIN) and a landmine the
+    day P4.3 lets an admin demote someone. Pinned by planting a VIEWER row on
+    the principal's OWN library and watching a write refuse."""
+    p = StubPrincipal()
+    tenancy = _tenancy(p)   # seeds ADMIN…
+    tenancy.save_membership(Membership(p.id, p.library.id, Role.VIEWER))
+    with TestClient(_app(principal=p, tenancy=tenancy)) as c:
+        r = c.post(f"{API_PREFIX}/books", json={"title": "ס", "author": ""})
+        assert r.status_code == 403, (
+            "a stored viewer role on the caller's own library was ignored — "
+            "the dev-trusted ADMIN fallback must lose to a real row"
+        )
+
+
 def test_renaming_a_library_is_admin_only():
     """The account-scoped routes are exempt from `require()`'s transport, not
     from the matrix — the rename consults the same POLICY table directly."""
@@ -1441,7 +1459,7 @@ def test_deleting_a_photo_takes_its_renditions_with_it():
 #
 # StubReader/SlowStubReader implement app.ports.reader.Reader without
 # booksnap, cv2 or tesseract — H4 ring 3's rule: this ring never invokes the
-# real engine. InProcessJobRunner IS real (it is fast and pure-Python); only
+# real engine. QueuedJobRunner IS real (it is fast and pure-Python); only
 # the engine is stubbed.
 
 class StubReader:
@@ -1516,6 +1534,115 @@ def _wait_until_settled(client, shelf_id: str, read_id: str, *, timeout: float =
             return body
         time.sleep(0.01)
     raise AssertionError(f"read did not settle within {timeout}s: {body}")
+
+
+def test_two_concurrent_reads_in_two_libraries_do_not_observe_each_other():
+    """P3.4's named test case, over real HTTP: one account, two libraries,
+    one QueuedJobRunner. Each read reports its own library's progress,
+    stopping one leaves the other running, and the tenant key the router
+    hands the runner is the LIBRARY id — the fairness axis — pinned with a
+    spy, because dropping `tenant=` in reads.py would silently collapse
+    every library into one queue and no adapter-ring test could see it."""
+    import threading
+
+    p = StubPrincipal()
+    tenancy = _tenancy(p)
+    tenancy.save_library(Library(id="lib-2", label="שניה"))
+    tenancy.save_membership(Membership(p.id, "lib-2", Role.ADMIN))
+
+    release = {TEST_LIBRARY.id: threading.Event(), "lib-2": threading.Event()}
+
+    class GatedReader:
+        """Blocks per-library until the test releases it, then produces one
+        claim naming its own library — so a leak would be visible in the
+        claims themselves, not only in timing."""
+
+        def read(self, library, requests, *, mode, progress=None,
+                 should_stop=None):
+            if progress:
+                progress({"lib": library.id})
+            deadline = time.monotonic() + 5
+            while (not release[library.id].is_set()
+                   and not (should_stop and should_stop())):
+                if time.monotonic() > deadline:
+                    raise AssertionError("gate never released")
+                time.sleep(0.01)
+            return [ReadClaim(spine_id="sp1",
+                              capture_id=requests[0].capture_id,
+                              title=f"ספר {library.id}", tier="auto")]
+
+        def unavailable(self, mode):
+            return None
+
+        def code_version(self):
+            return {}
+
+        def config_snapshot(self):
+            return {}
+
+    class SpyRunner(QueuedJobRunner):
+        def __init__(self):
+            super().__init__(workers=2)
+            self.tenants = []
+
+        def submit(self, job_id, fn, *, tenant="", retries=0):
+            self.tenants.append(tenant)
+            super().submit(job_id, fn, tenant=tenant, retries=retries)
+
+    spy = SpyRunner()
+    with _blobs() as blobs:
+        c = TestClient(_app(principal=p, tenancy=tenancy, blobs=blobs,
+                            reader=GatedReader(), jobs=spy))
+        h2 = {deps.LIBRARY_HEADER: "lib-2"}
+
+        def setup(headers):
+            key = c.post(f"{API_PREFIX}/images", headers=headers,
+                         files={"file": ("a.png", _png(), "image/png")}
+                         ).json()["key"]
+            made = c.post(f"{API_PREFIX}/captures", headers=headers,
+                          json={"image_id": key}).json()
+            return made["shelf"]["id"]
+
+        shelf_a, shelf_b = setup({}), setup(h2)
+        read_a = c.post(f"{API_PREFIX}/shelves/{shelf_a}/reads",
+                        json={"depth": 1, "mode": "spines"}).json()["id"]
+        read_b = c.post(f"{API_PREFIX}/shelves/{shelf_b}/reads", headers=h2,
+                        json={"depth": 1, "mode": "spines"}).json()["id"]
+        assert spy.tenants == [TEST_LIBRARY.id, "lib-2"], (
+            "the runner's fairness key must be the library id (P3.4)"
+        )
+
+        def poll(shelf, read, headers):
+            return c.get(f"{API_PREFIX}/shelves/{shelf}/reads/{read}",
+                         headers=headers).json()
+
+        deadline = time.monotonic() + 5
+        while True:
+            a, b = poll(shelf_a, read_a, {}), poll(shelf_b, read_b, h2)
+            if a.get("progress") and b.get("progress"):
+                break
+            assert time.monotonic() < deadline, (a, b)
+            time.sleep(0.01)
+        assert a["progress"] == {"lib": TEST_LIBRARY.id}
+        assert b["progress"] == {"lib": "lib-2"}, \
+            "one library's read reported the other's progress"
+
+        c.post(f"{API_PREFIX}/shelves/{shelf_a}/reads/{read_a}/stop")
+        a = _wait_until_settled(c, shelf_a, read_a)
+        assert a["status"] == "stopped"
+        assert poll(shelf_b, read_b, h2)["status"] == "running", \
+            "stopping one library's read touched the other's"
+
+        release["lib-2"].set()
+        deadline = time.monotonic() + 5
+        while True:
+            b = poll(shelf_b, read_b, h2)
+            if b["status"] != "running":
+                break
+            assert time.monotonic() < deadline, b
+            time.sleep(0.01)
+        assert b["status"] == "done"
+        assert [cl["title"] for cl in b["claims"]] == ["ספר lib-2"]
 
 
 def test_starting_a_read_needs_captures_at_that_depth():

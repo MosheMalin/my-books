@@ -1911,6 +1911,15 @@ def test_a_viewer_reads_the_catalog_and_never_the_photographs():
     assert not allowed(Role.VIEWER, Capability.VIEW_PHOTOS)
 
 
+def test_see_lending_matches_browse_until_a_route_splits_them():
+    """Lending state is served INSIDE `BookDTO` on BROWSE routes — no route
+    enforces SEE_LENDING on its own, so a stricter cell there would change
+    nothing on the wire and the table would lie. If this fails you are
+    tightening the cell: split lending out of the browse payload first, then
+    delete this test."""
+    assert POLICY[Capability.SEE_LENDING] == POLICY[Capability.BROWSE]
+
+
 def test_destructive_and_governance_capabilities_are_admin_only():
     """§4.2's admin column, whole: deleting photos destroys the evidence every
     read points at, and members/keys/name are the tenant's own governance."""
