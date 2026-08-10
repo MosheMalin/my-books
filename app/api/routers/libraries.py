@@ -34,7 +34,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import get_clock, get_id_gen, get_principal, get_tenancy_store
 from app.api.dto import LibraryCreate, LibraryDTO, LibraryPatch
-from app.domain import Account, new_library, rename_library
+from app.domain import Account, Capability, allowed, new_library, rename_library
 from app.domain.tenancy import LibraryNeedsAName
 from app.ports import Clock, IdGen, Principal
 from app.ports.tenancy import TenancyStore
@@ -127,6 +127,18 @@ def patch_library(
     library = tenancy.get_library(library_id) if membership else None
     if membership is None or library is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no such library")
+    # P3.2: the one direct `allowed()` call outside app/api/policy.py, because
+    # this route is on the ACCOUNT axis — `require()` resolves a library
+    # through `current_library`, which these routes are exempt from (the
+    # closed list in tests/test_api.py). Same matrix, same data; only the
+    # transport of "which library" differs. 403 (not 404) is honest here: the
+    # membership above proves the caller may SEE the library — renaming the
+    # household's own name is what §4.2 reserves for its admin.
+    if not allowed(membership.role, Capability.MANAGE_LIBRARY):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "renaming a library is an admin action (§4.2)",
+        )
     try:
         renamed = rename_library(library, body.label)
     except LibraryNeedsAName as exc:

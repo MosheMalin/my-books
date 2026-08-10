@@ -26,7 +26,6 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from app.api.deps import (
-    current_library,
     get_book_store,
     get_clock,
     get_decision_store,
@@ -42,7 +41,9 @@ from app.api.dto import (
     CopyPatch,
     LendRequest,
 )
+from app.api.policy import require
 from app.domain import (
+    Capability,
     Book,
     CopyAlreadyLentOut,
     CopyFields,
@@ -135,7 +136,7 @@ def _save(store: BookStore, library: LibraryRef, book: Book) -> Book:
 
 @router.get("", response_model=BookPageDTO, summary="List or search books")
 def list_books(
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.BROWSE)),
     store: BookStore = Depends(get_book_store),
     q: str | None = Query(None,
                           description="Hebrew search over title and author. "
@@ -204,7 +205,7 @@ def list_books(
 @router.get("/authors", response_model=list[str],
             summary="Authors in the library, for an autocomplete")
 def list_authors(
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.BROWSE)),
     store: BookStore = Depends(get_book_store),
     q: str = Query("", description="What the owner is typing."),
     limit: int = Query(8, ge=1, le=50),
@@ -242,7 +243,7 @@ def list_authors(
 
 @router.get("/export", summary="Export the whole library (CSV or JSON)")
 def export_books(
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.BROWSE)),
     store: BookStore = Depends(get_book_store),
     clock: Clock = Depends(get_clock),
     format: str = Query("csv", pattern="^(csv|json)$"),
@@ -288,7 +289,7 @@ def export_books(
              status_code=status.HTTP_201_CREATED, summary="Add a book by hand")
 def create_book(
     payload: BookCreate,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.EDIT_BOOKS)),
     store: BookStore = Depends(get_book_store),
     clock: Clock = Depends(get_clock),
     ids: IdGen = Depends(get_id_gen),
@@ -311,7 +312,7 @@ def create_book(
 @router.get("/{book_id}", response_model=BookDTO, summary="One book")
 def get_book(
     book_id: str,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.BROWSE)),
     store: BookStore = Depends(get_book_store),
 ) -> BookDTO:
     return BookDTO.of(_load(store, library, book_id))
@@ -322,7 +323,7 @@ def get_book(
 def patch_book(
     book_id: str,
     payload: BookPatch,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.EDIT_BOOKS)),
     store: BookStore = Depends(get_book_store),
 ) -> BookDTO:
     """Editing marks the book ``manual`` (UI_PLAN §5). The domain applies
@@ -343,7 +344,7 @@ def patch_book(
              summary="Confirm the claim — auto becomes approved")
 def approve_book(
     book_id: str,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.REVIEW)),
     store: BookStore = Depends(get_book_store),
 ) -> BookDTO:
     """*"✓ — yes, that is the book"* (P2.10, §12.2 #10).
@@ -367,7 +368,7 @@ def approve_book(
                summary="Delete from the library (every copy)")
 def delete_book(
     book_id: str,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.EDIT_BOOKS)),
     store: BookStore = Depends(get_book_store),
     decisions: DecisionStore = Depends(get_decision_store),
     clock: Clock = Depends(get_clock),
@@ -442,7 +443,7 @@ def _apply_to_copy(fn, book: Book, *args: object, **kwargs: object) -> Book:
 def create_copy(
     book_id: str,
     payload: CopyCreate,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.EDIT_BOOKS)),
     store: BookStore = Depends(get_book_store),
     ids: IdGen = Depends(get_id_gen),
 ) -> BookDTO:
@@ -466,7 +467,7 @@ def patch_copy(
     book_id: str,
     copy_id: str,
     payload: CopyPatch,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.EDIT_BOOKS)),
     store: BookStore = Depends(get_book_store),
 ) -> BookDTO:
     """Object-level metadata, not identity — unlike :func:`patch_book` this
@@ -489,7 +490,7 @@ def lend_copy(
     book_id: str,
     copy_id: str,
     payload: LendRequest,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.LEND)),
     store: BookStore = Depends(get_book_store),
     clock: Clock = Depends(get_clock),
 ) -> BookDTO:
@@ -509,7 +510,7 @@ def lend_copy(
 def return_copy_route(
     book_id: str,
     copy_id: str,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.LEND)),
     store: BookStore = Depends(get_book_store),
     clock: Clock = Depends(get_clock),
 ) -> BookDTO:

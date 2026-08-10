@@ -473,6 +473,15 @@ the port is what makes that a swap.
 | **P3.5** | **Tenant-keyed blob storage** (D1): the disk adapter behind the `BlobStore` port with the `libraries/<library_id>/…` layout, path-from-DB-row rule, orphan reconciler, retention + user purge (§3), hash-based upload idempotency (§12.3 #13). | M |
 | **P3.6** | *Optional, cheap:* **per-library run rate cap** (§1.2) — one number, not a metering system. Guards against a retry loop, not against family. | S |
 
+⚠ **Two "admins", one word — do not conflate them** (owner, 2026-08-10). The
+Admin ROLE this pillar builds (§4.2) is an admin **inside a single account's
+library** — the household's own owner, governing one collection. The **System
+Admin console** (`app/admin/`, `app/staff_api/`, `planning/ADMIN_CONSOLE_PLAN.md`)
+is a separate surface for the operator of the whole service, developed in its
+own track; it authorizes on its own axis and never through §4.2's matrix.
+Nothing in this pillar's policy work grants or checks operator powers, and
+nothing in the console track should reuse `Role`/`POLICY` for staff.
+
 ### Pillar 4 — Login
 
 | # | Item | Size |

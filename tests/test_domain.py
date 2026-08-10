@@ -24,9 +24,11 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from app.domain import (
     FIRE_TABLE,
+    POLICY,
     Account,
     AmbiguousCopy,
     Book,
+    Capability,
     Claim,
     ClaimTier,
     CopyAlreadyLentOut,
@@ -43,6 +45,7 @@ from app.domain import (
     LibraryNeedsAName,
     Membership,
     NoAdminLeft,
+    PolicyUndeclared,
     Provenance,
     PromptKind,
     Read,
@@ -58,6 +61,7 @@ from app.domain import (
     VirtualShelfHasNoDepth,
     add_copy,
     add_depth,
+    allowed,
     append_claim,
     approve,
     build_prompt,
@@ -1816,11 +1820,11 @@ def test_acting_on_a_non_member_raises_rather_than_inventing_a_membership():
 
 
 def test_a_role_says_who_you_are_and_never_what_you_may_do():
-    """§4.2's matrix is P3.2's item — data, with ONE enforcement point. A
-    `can()`/CAPABILITIES here would be a second enforcement point built
-    before the first one exists, and the two would drift the first time a
-    capability moved a column. Structural on purpose, like the shelf-address
-    test: the tempting mistake is to add it "while we're at it"."""
+    """§4.2's matrix lives in `app/domain/policy.py` (P3.2) — data, with ONE
+    enforcement point. A `can()`/CAPABILITIES in the TENANCY module would be
+    a second copy of it, and the two would drift the first time a capability
+    moved a column. Structural on purpose, like the shelf-address test: the
+    tempting mistake is to add it "while we're at it"."""
     src = (REPO_ROOT / "app" / "domain" / "tenancy.py").read_text(encoding="utf-8")
     names = {
         node.name for node in ast.walk(ast.parse(src))
@@ -1849,6 +1853,74 @@ def test_a_library_is_not_a_place():
     assert not (fields & address), (
         f"physical-place fields on the tenancy boundary: {sorted(fields & address)}"
     )
+
+
+# --- policy (P3.2, §4.2) ----------------------------------------------------
+
+def test_the_policy_matrix_is_vision_4_2_cell_for_cell():
+    """The table-driven test the plan asks for by name: every (role ×
+    capability) cell, against a second transcription of §4.2. Two copies of
+    the table is the point — a cell change is a decision, and this is where
+    it gets written down twice."""
+    V, E, A = Role.VIEWER, Role.EDITOR, Role.ADMIN
+    expected = {
+        Capability.BROWSE: {V, E, A},
+        Capability.SEE_LENDING: {V, E, A},
+        # §12.2 #1, settled 2026-08-10: photos show the inside of a home.
+        Capability.VIEW_PHOTOS: {E, A},
+        Capability.CAPTURE: {E, A},
+        Capability.REVIEW: {E, A},
+        Capability.EDIT_BOOKS: {E, A},
+        Capability.LEND: {E, A},
+        Capability.EDIT_MAP: {E, A},
+        Capability.MANAGE_MEMBERS: {A},
+        Capability.MANAGE_KEYS: {A},
+        Capability.MANAGE_LIBRARY: {A},
+        Capability.DELETE_PHOTOS: {A},
+        Capability.DELETE_LIBRARY: {A},
+    }
+    assert set(expected) == set(Capability), "a capability is missing a row here"
+    for capability, grants in expected.items():
+        for role in Role:
+            assert allowed(role, capability) is (role in grants), (
+                f"§4.2 cell reversed: {role.value} × {capability.value}"
+            )
+
+
+def test_every_capability_has_a_policy_row_and_an_undeclared_one_raises():
+    """`allowed` must never DEFAULT an unknown capability — `False` reading as
+    "denied by policy" when the truth is "nobody wrote the policy" is exactly
+    how a new route ships unpoliced. Same stance as the fire table's
+    `fires()`."""
+    assert set(POLICY) == set(Capability)
+    row = POLICY.pop(Capability.BROWSE)
+    try:
+        _raises(PolicyUndeclared, allowed, Role.ADMIN, Capability.BROWSE)
+    finally:
+        POLICY[Capability.BROWSE] = row
+
+
+def test_a_viewer_reads_the_catalog_and_never_the_photographs():
+    """§12.2 #1's settled cell, pinned on its own because it is the one most
+    likely to be flipped casually: a Viewer browses what you own — titles,
+    authors, lending state — not photographs of the inside of your home.
+    Loosening later shows photos to people who could not see them; tightening
+    later cannot un-show them."""
+    assert allowed(Role.VIEWER, Capability.BROWSE)
+    assert allowed(Role.VIEWER, Capability.SEE_LENDING)
+    assert not allowed(Role.VIEWER, Capability.VIEW_PHOTOS)
+
+
+def test_destructive_and_governance_capabilities_are_admin_only():
+    """§4.2's admin column, whole: deleting photos destroys the evidence every
+    read points at, and members/keys/name are the tenant's own governance."""
+    admin_only = (Capability.MANAGE_MEMBERS, Capability.MANAGE_KEYS,
+                  Capability.MANAGE_LIBRARY, Capability.DELETE_PHOTOS,
+                  Capability.DELETE_LIBRARY)
+    for cap in admin_only:
+        assert allowed(Role.ADMIN, cap)
+        assert not allowed(Role.EDITOR, cap), f"{cap.value} leaked to editor"
+        assert not allowed(Role.VIEWER, cap), f"{cap.value} leaked to viewer"
 
 
 if __name__ == "__main__":

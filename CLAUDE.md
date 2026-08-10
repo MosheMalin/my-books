@@ -2555,6 +2555,79 @@ recorded here, and diagnosed the same way: **grep the served artefact for a
 string only the new code has**, rather than assuming HMR kept up. Restarting
 the dev server fixed it.
 
+## The permissions matrix is data (P3.2), and isolation closed out (P3.3)
+
+§4.2's matrix, settled and shipped: `app/domain/policy.py` holds `Capability`
+(13 members — the vision's rows, plus `VIEW_PHOTOS` for §12.2 #1 and
+`MANAGE_LIBRARY` for rename) and `POLICY`, a dict of capability →
+frozenset[Role]. `allowed(role, capability)` is the whole module API, and it
+**raises `PolicyUndeclared` for a capability with no row** rather than
+answering False — "denied by policy" and "nobody wrote the policy" must stay
+distinguishable, same stance as the fire table's `fires()`.
+
+**The one enforcement point is `app/api/policy.py:require(capability)`.**
+Every library-scoped route swapped `Depends(deps.current_library)` for
+`Depends(require(Capability.X))` — the checker itself depends on
+`current_library`, so H2's meta-test holds unchanged, and the route's own
+signature is otherwise untouched (the checker returns the `LibraryRef`).
+`tests/test_api.py:test_every_api_route_declares_exactly_one_policy_capability`
+is the meta-test the file's docstring promised since P3.1: a route with no
+declaration FAILS rather than defaulting to open. Exactly one, not at least
+one — two `require`s on a route would enforce the stricter intersection while
+reading as either-or.
+
+Decisions settled here (both recorded in VISION §12.2, both cheap to
+reverse because they are cells, not control flow):
+
+- **a Viewer never sees the photographs** (§12.2 #1). The photos show the
+  inside of a home; the catalog is what a Viewer is for. `VIEW_PHOTOS` gates
+  the image routes' GETs — metadata AND bytes, and the 403 comes from the
+  DEPENDENCY, before any store lookup, so a viewer cannot probe which keys
+  exist. Loosening later shows photos to people who could not see them;
+  tightening later cannot un-show them;
+- **two members reviewing one read need no locks** (§12.2 #3). The write
+  paths already have the right semantics: applies recompute against current
+  state and are idempotent by sighting, a second answer to a closed question
+  409s. Settled as "the schema already holds", which is exactly why guessing
+  it earlier would have produced lock tables nobody needs;
+- **`DELETE /images` is admin, not editor** — §4.2's own last row. Deleting
+  a photo destroys the evidence every read of it points at;
+- **renaming a library is admin.** The one direct `allowed()` call outside
+  `require()`, because `/libraries` is on the ACCOUNT axis (the closed
+  exemption list) — same matrix, different transport of "which library".
+  403 there is honest, not a §4.2 violation: the membership lookup already
+  proved the caller may SEE the library; §4.2's 404 protects OTHER
+  households' libraries, and it is answered by `current_library` one
+  dependency earlier. Order pinned by
+  `test_a_foreign_library_is_still_404_never_403_now_that_policy_exists`.
+
+⚠ **Two "admins", one word.** §4.2's Admin is an admin INSIDE one account's
+library — the household's owner. The System Admin console (`app/admin/`,
+`app/staff_api/`, `planning/ADMIN_CONSOLE_PLAN.md`) is the OPERATOR's
+surface, a separate track in a parallel session; it never authorizes through
+this matrix, and this matrix never grants operator powers.
+
+⚠ **Why the enforcement point is NOT in `deps.py`**:
+`test_library_resolution_has_exactly_one_implementation` walks every other
+function in that module and fails on any `.library` attribute read — and the
+role resolver legitimately reads `principal.library` for the dev-trusted
+case (its own library is ADMIN without a row, mirroring the resolver's case
+2; `app/main.py`'s bootstrap writes the real row anyway). A separate module
+keeps H2's structural test meaningful.
+
+Mutation-checked, each against a named test: a flipped `VIEW_PHOTOS` cell, a
+route quietly reverted to bare `current_library`, `allowed()` defaulting
+instead of raising, and the rename check deleted.
+
+**P3.3 arrived mostly by having been paid for earlier**, which was the plan's
+own bet ("P3.3 inherits a suite instead of writing one under pressure"): the
+store contract's isolation cases have run against two library refs since
+P2.1 for every aggregate, blob isolation is pinned at the API ring
+(`test_a_photo_in_another_library_is_404_not_403`), foreign-vs-fictional
+indistinguishability was P3.1's, and the route meta-test is above. Nothing
+new to build; the item's content is that the claims are now enforced from
+three directions (store, resolver, per-route policy declaration).
+
 ## Author sort, and why it needed a schema version
 
 "Sort by author" means the SHELF order — by surname. Sorting the stored string

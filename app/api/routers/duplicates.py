@@ -20,7 +20,6 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import (
-    current_library,
     get_book_store,
     get_clock,
     get_decision_store,
@@ -30,8 +29,9 @@ from app.api.deps import (
     get_shelf_store,
 )
 from app.api.dto import BookDTO, DuplicateAnswerIn, DuplicateQuestionDTO
+from app.api.policy import require
 from app.api.routers.reads import diff_for
-from app.domain import DEFAULT_RESOLUTION, DecisionKind, LibraryRef, build_prompt
+from app.domain import Capability, DEFAULT_RESOLUTION, DecisionKind, LibraryRef, build_prompt
 from app.ports import Clock, IdGen
 from app.ports.decisions import DecisionStore
 from app.ports.duplicates import DuplicateQueue
@@ -109,7 +109,7 @@ def _resolve_outcome(
 
 @router.get("", response_model=list[DuplicateQuestionDTO])
 def list_open_questions(
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.BROWSE)),
     books: BookStore = Depends(get_book_store),
     duplicates: DuplicateQueue = Depends(get_duplicate_queue),
 ) -> list[DuplicateQuestionDTO]:
@@ -133,7 +133,7 @@ def list_open_questions(
 def answer_question(
     question_id: str,
     body: DuplicateAnswerIn,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.REVIEW)),
     shelves: ShelfStore = Depends(get_shelf_store),
     reads: ReadStore = Depends(get_read_store),
     books: BookStore = Depends(get_book_store),
@@ -174,7 +174,7 @@ def answer_question(
 @router.post("/{question_id}/skip", response_model=BookDTO)
 def skip_question(
     question_id: str,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.REVIEW)),
     shelves: ShelfStore = Depends(get_shelf_store),
     reads: ReadStore = Depends(get_read_store),
     books: BookStore = Depends(get_book_store),

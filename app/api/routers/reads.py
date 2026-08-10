@@ -26,7 +26,6 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.api.deps import (
-    current_library,
     get_blob_store,
     get_book_store,
     get_clock,
@@ -47,7 +46,9 @@ from app.api.dto import (
     ReadDTO,
     ReadSummaryDTO,
 )
+from app.api.policy import require
 from app.domain import (
+    Capability,
     Alternative,
     Capture,
     Claim,
@@ -135,7 +136,7 @@ def _load_read(store: ReadStore, library: LibraryRef, shelf_id: str,
 def start_read(
     shelf_id: str,
     body: ReadCreate,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.CAPTURE)),
     shelves: ShelfStore = Depends(get_shelf_store),
     reads: ReadStore = Depends(get_read_store),
     reader: Reader = Depends(get_reader),
@@ -199,7 +200,7 @@ def list_reads(
         description="Narrow to one row front-to-back — §5.7 #1 scopes a "
                     "read's history to the depth it actually covered.",
     ),
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.BROWSE)),
     shelves: ShelfStore = Depends(get_shelf_store),
     reads: ReadStore = Depends(get_read_store),
 ) -> list[ReadSummaryDTO]:
@@ -213,7 +214,7 @@ def list_reads(
 def get_read(
     shelf_id: str,
     read_id: str,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.BROWSE)),
     reads: ReadStore = Depends(get_read_store),
     jobs: JobRunner = Depends(get_job_runner),
 ) -> ReadDTO:
@@ -232,7 +233,7 @@ def get_read(
 def stop(
     shelf_id: str,
     read_id: str,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.CAPTURE)),
     reads: ReadStore = Depends(get_read_store),
     jobs: JobRunner = Depends(get_job_runner),
 ) -> ReadDTO:
@@ -292,7 +293,7 @@ def diff_for(
 def get_diff(
     shelf_id: str,
     read_id: str,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.BROWSE)),
     shelves: ShelfStore = Depends(get_shelf_store),
     reads: ReadStore = Depends(get_read_store),
     books: BookStore = Depends(get_book_store),
@@ -314,7 +315,7 @@ def apply_read_diff(
     shelf_id: str,
     read_id: str,
     body: ApplyDiffRequest,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.REVIEW)),
     shelves: ShelfStore = Depends(get_shelf_store),
     reads: ReadStore = Depends(get_read_store),
     books: BookStore = Depends(get_book_store),
@@ -397,7 +398,7 @@ def lookup_findings(
     read_id: str,
     q: str = Query("", description="What the owner is typing."),
     limit: int = Query(3, ge=1, le=20),
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.BROWSE)),
     reads: ReadStore = Depends(get_read_store),
 ) -> list[FindingMatchDTO]:
     """*"Did this read already find this book?"* — asked while the owner is
@@ -445,7 +446,7 @@ def add_a_finding_by_hand(
     shelf_id: str,
     read_id: str,
     body: ManualFindingIn,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.EDIT_BOOKS)),
     shelves: ShelfStore = Depends(get_shelf_store),
     reads: ReadStore = Depends(get_read_store),
     books: BookStore = Depends(get_book_store),
@@ -520,7 +521,7 @@ def retract_a_finding(
     shelf_id: str,
     read_id: str,
     claim_id: str,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.REVIEW)),
     shelves: ShelfStore = Depends(get_shelf_store),
     reads: ReadStore = Depends(get_read_store),
     books: BookStore = Depends(get_book_store),
@@ -564,7 +565,7 @@ def restore_a_finding(
     shelf_id: str,
     read_id: str,
     claim_id: str,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.REVIEW)),
     shelves: ShelfStore = Depends(get_shelf_store),
     reads: ReadStore = Depends(get_read_store),
     books: BookStore = Depends(get_book_store),

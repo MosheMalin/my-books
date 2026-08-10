@@ -917,6 +917,126 @@ def test_every_api_route_resolves_its_library_from_the_principal():
     )
 
 
+def test_every_api_route_declares_exactly_one_policy_capability():
+    """P3.2's meta-test, promised by this file's own docstring since P3.1: a
+    route with NO policy declaration FAILS rather than defaulting to open.
+
+    Exactly one, not at least one: two `require(...)` dependencies on a route
+    would enforce the STRICTER intersection today and read as either-or to the
+    next person — a disagreement between what the code does and what it says.
+
+    The account-scoped routes are exempt from the LIBRARY-capability axis
+    (same closed list, same circularity argument) — but not from policy:
+    the rename route consults the same matrix directly, which
+    `test_renaming_a_library_is_admin_only` proves over HTTP.
+    """
+    from app.api.policy import CAPABILITY_ATTR
+
+    routes = _api_routes(_app())
+    assert routes, "no API routes found — this meta-test would pass vacuously"
+    bad = []
+    for path, route in routes:
+        if path in _ACCOUNT_SCOPED:
+            continue
+        declared = [getattr(c, CAPABILITY_ATTR) for c in _dependency_calls(route)
+                    if hasattr(c, CAPABILITY_ATTR)]
+        if len(declared) != 1:
+            bad.append((path, declared))
+    assert not bad, (
+        f"routes without exactly one policy capability: {bad} — declare it "
+        "with Depends(require(Capability.X)) (P3.2)"
+    )
+
+
+def _viewer_of_second_library(role: Role = Role.VIEWER):
+    """A principal whose OWN library is lib-test but who holds `role` in
+    lib-2 — requests carrying the lib-2 header exercise the matrix for real,
+    because the dev-trusted own-library shortcut cannot apply there."""
+    p = StubPrincipal()
+    tenancy = _tenancy(p)
+    tenancy.save_library(Library(id="lib-2", label="ההורים"))
+    tenancy.save_membership(Membership(p.id, "lib-2", role))
+    return p, tenancy
+
+
+def test_a_viewer_browses_but_may_not_edit_capture_or_see_photos():
+    """§4.2 over real HTTP, including §12.2 #1's settled cell: the catalog
+    answers, the photographs and every write refuse with 403 — not 404,
+    because the caller IS a member and the library's existence is not the
+    secret (§4.2 protects OTHER households' libraries; this is their own)."""
+    p, tenancy = _viewer_of_second_library()
+    with TestClient(_app(principal=p, tenancy=tenancy)) as c:
+        h = {deps.LIBRARY_HEADER: "lib-2"}
+        assert c.get(f"{API_PREFIX}/books", headers=h).status_code == 200
+        assert c.get(f"{API_PREFIX}/shelves", headers=h).status_code == 200
+        denied = [
+            ("post", f"{API_PREFIX}/books",
+             dict(json={"title": "ספר", "author": ""})),
+            ("post", f"{API_PREFIX}/images",
+             dict(files={"file": ("a.png", _png(), "image/png")})),
+            ("post", f"{API_PREFIX}/shelves", dict(json={"label": "מדף"})),
+        ]
+        for method, url, kw in denied:
+            r = getattr(c, method)(url, headers=h, **kw)
+            assert r.status_code == 403, (method, url, r.status_code)
+        # §12.2 #1's cell: photo bytes AND metadata are Editor+. The 403
+        # comes from the dependency, BEFORE any store lookup — deliberately,
+        # so a viewer cannot even probe which keys exist.
+        key = "0" * 64 + ".jpg"
+        for tail in ("", "/full", "/thumb"):
+            r = c.get(f"{API_PREFIX}/images/{key}{tail}", headers=h)
+            assert r.status_code == 403, (tail, "a viewer saw a photograph")
+
+
+def test_an_editor_captures_but_only_an_admin_deletes_photos():
+    """The one place §4.2 splits editor from admin on an existing route:
+    "delete photos" sits in the admin column, because deleting a photo
+    destroys the evidence every read of it points at."""
+    p, tenancy = _viewer_of_second_library(role=Role.EDITOR)
+    with _blobs() as blobs:
+        with TestClient(_app(principal=p, tenancy=tenancy, blobs=blobs)) as c:
+            h = {deps.LIBRARY_HEADER: "lib-2"}
+            up = c.post(f"{API_PREFIX}/images", headers=h,
+                        files={"file": ("a.png", _png(), "image/png")})
+            assert up.status_code == 201, "an editor uploads photos (§4.2)"
+            key = up.json()["key"]
+            assert c.get(f"{API_PREFIX}/images/{key}/thumb",
+                         headers=h).status_code == 200
+            r = c.delete(f"{API_PREFIX}/images/{key}", headers=h)
+            assert r.status_code == 403, "an editor deleted a photo (§4.2)"
+            tenancy.save_membership(Membership(p.id, "lib-2", Role.ADMIN))
+            r = c.delete(f"{API_PREFIX}/images/{key}", headers=h)
+            assert r.status_code == 204
+
+
+def test_renaming_a_library_is_admin_only():
+    """The account-scoped routes are exempt from `require()`'s transport, not
+    from the matrix — the rename consults the same POLICY table directly."""
+    p, tenancy = _viewer_of_second_library(role=Role.EDITOR)
+    with TestClient(_app(principal=p, tenancy=tenancy)) as c:
+        r = c.patch(f"{API_PREFIX}/libraries/lib-2", json={"label": "חדש"})
+        assert r.status_code == 403
+        tenancy.save_membership(Membership(p.id, "lib-2", Role.ADMIN))
+        r = c.patch(f"{API_PREFIX}/libraries/lib-2", json={"label": "חדש"})
+        assert r.status_code == 200
+        assert r.json()["label"] == "חדש"
+
+
+def test_a_foreign_library_is_still_404_never_403_now_that_policy_exists():
+    """§4.2's ordering, pinned: existence is decided BEFORE capability. A 403
+    for a library the caller does not belong to would confirm another
+    household's collection exists — the resolver answers 404 first, and the
+    policy check must never run for it."""
+    p = StubPrincipal()
+    tenancy = _tenancy(p)
+    tenancy.save_library(Library(id="lib-other", label="זרים"))  # exists, no membership
+    with TestClient(_app(principal=p, tenancy=tenancy)) as c:
+        for lib in ("lib-other", "lib-fictional"):
+            r = c.post(f"{API_PREFIX}/books", json={"title": "ס", "author": ""},
+                       headers={deps.LIBRARY_HEADER: lib})
+            assert r.status_code == 404, (lib, r.status_code)
+
+
 def test_the_account_scoped_routes_are_still_scoped_by_something():
     """The exemption is from the LIBRARY axis, not from tenancy. A route that
     resolved neither a library nor an account would serve everyone's data —

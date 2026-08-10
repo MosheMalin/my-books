@@ -109,12 +109,19 @@ family collection"); **PhysicalLibrary** is a physical place within it. A user
 having several physical libraries was called out explicitly and must not be
 collapsed into a single implicit root.
 
-### 4.2 Roles **[DECIDED in principle, permissions matrix OPEN]**
+### 4.2 Roles **[DECIDED — matrix settled at P3.2, 2026-08-10]**
+
+The matrix lives as DATA in `app/domain/policy.py:POLICY`, with one
+enforcement point (`app/api/policy.py:require`) and a table-driven test over
+every (role × capability) cell. Changing a cell is a one-line edit made in
+two places (the table and its test) — that is deliberate: a cell change is a
+decision, and the test is where it gets written down twice.
 
 | Capability | Viewer | Editor | Admin |
 |---|:--:|:--:|:--:|
 | Browse/search books, see shelves | ✓ | ✓ | ✓ |
 | See lending state | ✓ | ✓ | ✓ |
+| See the original shelf photos (§12.2 #1) | | ✓ | ✓ |
 | Upload photos, start a run | | ✓ | ✓ |
 | Approve/reject/replace matches | | ✓ | ✓ |
 | Add/remove books manually | | ✓ | ✓ |
@@ -122,11 +129,19 @@ collapsed into a single implicit root.
 | Edit physical map | | ✓ | ✓ |
 | Invite/remove members, change roles | | | ✓ |
 | Attach BYO API key, see usage/quota | | | ✓ |
+| Rename the library | | | ✓ |
 | Delete photos, delete the library | | | ✓ |
 
-Open sub-questions: can a Viewer see the original photos (they show the
-inside of a home)? Is there a role between Viewer and Editor that may mark
-lending but not edit the catalog? Listed in §12.
+⚠ **Admin here is an admin inside one account's library** (owner,
+2026-08-10): the role governs a single household's collection. It is NOT the
+system operator — that is the separate staff console (`app/admin` /
+`app/staff_api`, its own plan), which authorizes on its own axis and never
+through this matrix.
+
+Remaining open sub-question: a role between Viewer and Editor that may mark
+lending but not edit the catalog. Nothing forecloses it — it would be a new
+`Role` plus one column in the table — and it stays open because nobody has
+asked for it yet.
 
 ### 4.3 Onboarding **[OPEN in detail]**
 
@@ -784,12 +799,28 @@ a decision.
 
 ### 12.2 Product/UX questions to settle
 
-1. May a **Viewer** see the original shelf photos? They show the inside of a
-   home, and "viewer" may mean a friend browsing what you own.
+1. **[SETTLED 2026-08-10, P3.2]** May a **Viewer** see the original shelf
+   photos? **No.** The photos show the inside of a home, and "viewer" may
+   mean a friend browsing what you own; the catalog — titles, authors,
+   lending state — is what a Viewer is for. `VIEW_PHOTOS` is its own row in
+   §4.2's matrix, Editor+, so reversing this is a one-cell edit. The
+   privacy-preserving cell is also the cheap-to-reverse one: loosening later
+   shows photos to people who could not see them; tightening later cannot
+   un-show them.
 2. Can one **Account** belong to several Libraries, and how does it switch?
-   (Assumed yes above.)
-3. What happens when two members review the **same run** simultaneously —
-   last-write-wins, locking, or per-spine claim?
+   (Assumed yes above; P3.1 built exactly this.)
+3. **[SETTLED 2026-08-10, P3.2]** What happens when two members review the
+   **same run** simultaneously? **Optimistic concurrency — no locking, no
+   per-spine claim, and no new schema.** The write paths already have the
+   right semantics: every apply recomputes against CURRENT library state and
+   is idempotent by sighting (`Provenance.sighting`, P2.7/P2.9), so two
+   people confirming the same finding produce one book, one copy, one
+   sighting; and an answer to a question someone else just closed gets a 409
+   from the duplicates router's own re-derivation rather than a duplicate
+   write. Locking would trade that for a held-lock UX problem (§5.4's whole
+   design is that these prompts are rare); a per-spine claim is coordination
+   machinery for a household of two reviewers. Revisit only if real
+   simultaneous review produces a measured conflict this does not absorb.
 4. Does a book **removed from a shelf** stay in the library by default?
 5. Is there a **wishlist / "want to read"** concept, or is the library strictly
    what you physically own?
