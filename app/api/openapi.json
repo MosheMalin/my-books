@@ -3162,7 +3162,7 @@
         ]
       },
       "post": {
-        "description": "The creator becomes its admin, in the same domain call and the same\ntwo writes — see the module note.",
+        "description": "The creator becomes its admin, in the same domain call and the same\ntwo writes — see the module note.\n\n⚠ This route is the DELIBERATE escape hatch for §4.1's settled tenancy\nrule (owner, 2026-08-10): a second Library under one account is legal —\nit is the rare genuinely-separate collection (a shop's stock, a\nclassroom set) — and the ONLY discouragement is client-side, on purpose:\nthe app-bar switcher renders no create action until a second library\nalready exists (`LibrarySwitcher.tsx`). A server-side count cap was\nconsidered and REFUSED: it would block the very cases the decision\nblesses, a quota is a different axis from P3.2's (role × capability)\npolicy data, and the structural half of the rule is already enforced\nwhere it matters — a Library cannot carry a room or a place\n(`test_a_library_is_not_a_place`). Do not \"fix\" this route in either\ndirection without re-reading VISION §4.1.",
         "operationId": "create_library_api_v1_libraries_post",
         "requestBody": {
           "content": {

@@ -481,8 +481,9 @@ under one account is the rare separate-collection case, and the normal way
 to see a second Library is membership in someone else's (P4.3). The client
 consequence landed with this decision: the switcher is a plain label until a
 second Library genuinely exists, and the create form says what a Library is
-for. P4.1's sign-up flow should create exactly ONE Library, named, per §4.3
-— never offer a second during onboarding.
+for. Sign-up creates exactly ONE Library — P4.1 mints the first session's
+Library, P4.3's §4.3 onboarding names it — and neither ever offers a second
+during onboarding.
 
 ⚠ **Two "admins", one word — do not conflate them** (owner, 2026-08-10). The
 Admin ROLE this pillar builds (§4.2) is an admin **inside a single account's

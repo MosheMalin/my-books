@@ -100,7 +100,21 @@ def create_library(
     ids: IdGen = Depends(get_id_gen),
 ) -> LibraryDTO:
     """The creator becomes its admin, in the same domain call and the same
-    two writes — see the module note."""
+    two writes — see the module note.
+
+    ⚠ This route is the DELIBERATE escape hatch for §4.1's settled tenancy
+    rule (owner, 2026-08-10): a second Library under one account is legal —
+    it is the rare genuinely-separate collection (a shop's stock, a
+    classroom set) — and the ONLY discouragement is client-side, on purpose:
+    the app-bar switcher renders no create action until a second library
+    already exists (`LibrarySwitcher.tsx`). A server-side count cap was
+    considered and REFUSED: it would block the very cases the decision
+    blesses, a quota is a different axis from P3.2's (role × capability)
+    policy data, and the structural half of the rule is already enforced
+    where it matters — a Library cannot carry a room or a place
+    (`test_a_library_is_not_a_place`). Do not "fix" this route in either
+    direction without re-reading VISION §4.1.
+    """
     account = _account(principal, tenancy)
     try:
         library, membership = new_library(

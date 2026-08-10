@@ -152,7 +152,11 @@ describe('the library switcher', () => {
     await userEvent.click(screen.getByRole('menuitem', { name: '+ ספרייה חדשה' }))
     // The rule is stated where the choice is made: what a separate library
     // IS (another household's collection), and what it is not (a room).
-    expect(screen.getByText(/חדרים ומקומות/)).toBeInTheDocument()
+    // Asserted as the input's ACCESSIBLE DESCRIPTION, not mere presence —
+    // this gates the aria-describedby link too, which presence alone let
+    // silently vanish (quality review, verified both ways).
+    expect(screen.getByLabelText('שם הספרייה'))
+      .toHaveAccessibleDescription(/חדרים ומקומות/)
     await userEvent.type(screen.getByLabelText('שם הספרייה'), 'הורים')
     await userEvent.click(screen.getByRole('button', { name: 'יצירה' }))
 

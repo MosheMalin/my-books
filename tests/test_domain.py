@@ -1844,7 +1844,7 @@ def test_a_role_says_who_you_are_and_never_what_you_may_do():
 def test_a_library_is_not_a_place():
     """§4.1's own warning: Library is the PERMISSION boundary ("the Malin
     family collection"); a place you keep books (home, office, parents') is a
-    PhysicalLibrary — an address inside it, and addresses arrive with the map
+    Place (né PhysicalLibrary) — an address inside it; addresses arrive with the map
     (plan §1.1). Collapsing the two here is what would make the map's own
     hierarchy have to reconcile with this one."""
     fields = set(Library.__dataclass_fields__)

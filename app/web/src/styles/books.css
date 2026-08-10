@@ -92,33 +92,32 @@
   position: relative;
   flex: none;
 }
+/* The button and the one-library label (§4.1's settled tenancy rule) SHARE
+   the seat — one rule block, not a hand-copied twin, because the client
+   ring provably cannot see a drift between them (quality review). The
+   label gets none of the button's affordances: no hover, no caret. */
+.libswitch-btn,
+.libswitch-label {
+  max-width: 34ch;
+  padding: 6px 10px;
+  color: var(--muted);
+  font-size: 14px;
+}
 .libswitch-btn {
   display: flex;
   align-items: center;
   gap: 6px;
-  max-width: 34ch;
-  padding: 6px 10px;
   border-radius: 9px;
-  color: var(--muted);
-  font-size: 14px;
 }
-/* One library = a plain label (§4.1's settled tenancy rule): same seat and
-   type as the button, none of its affordances — no hover, no caret. */
 .libswitch-label {
   display: inline-block;
-  max-width: 34ch;
-  padding: 6px 10px;
-  color: var(--muted);
-  font-size: 14px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .libswitch-btn:hover {
   background: var(--bg);
   color: var(--ink);
 }
-.libswitch-btn > span:first-child {
+.libswitch-btn > span:first-child,
+.libswitch-label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

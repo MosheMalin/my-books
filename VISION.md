@@ -97,7 +97,7 @@ Account (a person, one identity)
 
 Library  (a household's collection — the tenancy boundary)
   ├─ Members: Account × Role
-  ├─ PhysicalLibraries (1..n)   ← a user may have several: home, office, parents'
+  ├─ Places (1..n)   ← a user may have several: home, office, parents'
   │    └─ Bookcases → Shelves
   ├─ Shelves ── (0..n) Captures (photos)  ← one shelf may span several photos
   ├─ Runs (immutable archive, as today)
@@ -105,9 +105,14 @@ Library  (a household's collection — the tenancy boundary)
 ```
 
 Note the distinction: **Library** is the permission/tenancy unit ("the Malin
-family collection"); **PhysicalLibrary** is a physical place within it. A user
-having several physical libraries was called out explicitly and must not be
-collapsed into a single implicit root.
+family collection"); **Place** is a physical location within it — a room, or
+a whole site. A user having several places was called out explicitly and must
+not be collapsed into a single implicit root.
+
+*Naming, settled 2026-08-10 before H5's lint lands at P6.1:* the noun is
+**Place**; *PhysicalLibrary* is its retired synonym and must not appear in
+code — it contains the very word it exists to be distinguished from, which is
+how "the living-room library" gets typed.
 
 **[SETTLED 2026-08-10, owner] What makes something a TENANT.** The
 discriminator is **ownership, never geography**: a different tenant is a
@@ -174,7 +179,7 @@ without the user creating any API account. The free-quota decision exists
 precisely to make this possible. Sketch:
 
 1. sign in (magic link / Google / Apple);
-2. create a Library, name it; optionally name a first PhysicalLibrary;
+2. create a Library, name it; optionally name a first Place;
 3. guided first capture — one shelf, with framing/lighting guidance;
 4. run on our key (free quota), show results;
 5. walk them through approving/correcting one shelf, so the review model is

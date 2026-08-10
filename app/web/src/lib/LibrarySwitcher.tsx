@@ -2,8 +2,9 @@
  * The library switcher in the app bar (UI_PLAN §1, P3.1).
  *
  * §4.1 makes Library the tenancy boundary and an account may belong to
- * several, so the app bar has to say which one you are looking at — that is
- * why this replaces the plain label P1.0 put there.
+ * several, so the app bar has to say which one you are looking at — as a
+ * plain label while there is one library (the P1.0 shape, reinstated by the
+ * ⚠ below), and as this switcher the moment a second one exists.
  *
  * ⚠ A button and a panel, not a `<select>`. The list ends in *"+ new
  * library"*, which is an ACTION, and an `<option>` that performs one is a
@@ -86,6 +87,10 @@ export function LibrarySwitcher() {
   // The name of a library the server has not told us about yet, or could not.
   // Never blank: the app bar with an empty slot reads as a rendering bug.
   const name = current?.label || t.library_unnamed
+  // ONE failure presentation, used by both branches below — the two strings
+  // are identical today, and the day they differ a second copy would let the
+  // label's title disagree with its own visible text (quality review).
+  const shown = failed ? t.library_unknown : name
 
   // See the module note: one library = a label, not an invitation.
   // `title` because the label ellipsizes at 34ch and — unlike the button —
@@ -93,8 +98,8 @@ export function LibrarySwitcher() {
   if (libraries.length <= 1) {
     return (
       <div className="libswitch">
-        <span className="libswitch-label rtl-safe" title={name}>
-          {failed ? t.library_unknown : name}
+        <span className="libswitch-label rtl-safe" title={shown}>
+          {shown}
         </span>
       </div>
     )
@@ -110,7 +115,7 @@ export function LibrarySwitcher() {
         aria-label={t.library_switch}
         onClick={() => (open ? close() : setOpen(true))}
       >
-        <span className="rtl-safe">{failed ? t.library_unknown : name}</span>
+        <span className="rtl-safe">{shown}</span>
         <span className="libswitch-caret" aria-hidden="true" />
       </button>
 

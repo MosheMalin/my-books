@@ -2298,7 +2298,8 @@ since P1.0, deliberately unchanged. The ENTITY has a lifetime, gets renamed
 and is listed in a switcher. `Library.ref` is the one-way door, so nothing
 downstream has to know which it was handed.
 
-⚠ **Library is not PhysicalLibrary** (§4.1's own warning). Library is the
+⚠ **Library is not Place** (§4.1's own warning; *Place* is the settled noun,
+*PhysicalLibrary* its retired synonym). Library is the
 PERMISSION boundary — "the Malin family collection". A place you keep books
 (home, office, parents') is an address inside it, and addresses arrive with
 the map (plan §1.1). `test_a_library_is_not_a_place` asserts the absence
@@ -2808,7 +2809,8 @@ exactly this rule):
   the hint are mutation-checked;
 - P6.1 (plan) now says Places include SITES, and is the recorded exit for
   any room-modelled-as-library: its books move back under a Place and the
-  extra Library retires. P4.1's sign-up must create exactly ONE library.
+  extra Library retires. Sign-up creates exactly ONE library (P4.1 mints
+  it; P4.3's §4.3 onboarding names it — the constraint spans both items).
 
 Verified live against a running two-library server (menu + roles + hint,
 DOM-level; the pane did not composite frames — the recurring limitation —

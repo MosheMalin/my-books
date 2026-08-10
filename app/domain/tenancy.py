@@ -14,9 +14,12 @@ them is this request about.
   | **Account** | a person, one identity | here (no credentials — pillar 4) |
   | **Library** | a household's collection, the tenancy boundary | here |
   | **Membership** | Account × Library × Role | here |
-  | **PhysicalLibrary** | a *place* inside a library (home, office) | pillar 6 |
+  | **Place** | a location inside a library — a room, or a whole site (home, office, the parents') | pillar 6 |
 
-⚠ **Library is not PhysicalLibrary**, and collapsing them is the mistake §4.1
+(*Place* is the settled noun, 2026-08-10; *PhysicalLibrary* is its retired
+synonym and must not appear in code — VISION §4.1.)
+
+⚠ **Library is not Place**, and collapsing them is the mistake §4.1
 calls out by name. A Library is the permission boundary — "the Malin family
 collection". A place you keep books is an ADDRESS inside it, and the whole
 of plan §1.1's argument is that addresses arrive with the map. So there is no
