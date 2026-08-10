@@ -1,0 +1,34 @@
+{
+  "name": "booksnap-admin",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "booksnap admin console. A SECOND client, separate from app/web on purpose: tenant administration is a different job for a different person, and phase 2 puts a login in front of it. Talks only to /api/v1 (H1).",
+  "engines": {
+    "node": ">=24.15.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.0",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.3",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^6.0.0",
+    "jsdom": "^30.0.1",
+    "typescript": "^5.9.0",
+    "vite": "^8.2.0",
+    "vitest": "^4.1.0"
+  }
+}

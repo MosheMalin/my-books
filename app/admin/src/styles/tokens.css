@@ -1,0 +1,87 @@
+/*
+ * Colour and spacing tokens.
+ *
+ * Its own set rather than an import of `app/web/src/styles/tokens.css`: this
+ * is a dense TABLE surface where the product is a reading surface, and one
+ * shared file would immediately have to serve two intents. The IDIOM is
+ * identical on purpose — custom properties, both colour schemes, one source
+ * for every colour — so a reader of one recognises the other.
+ *
+ * Both schemes are defined, and `[data-theme]` overrides the media query in
+ * both directions, so an explicit choice always wins over the OS.
+ */
+:root {
+  color-scheme: light dark;
+
+  --bg: #fbfaf8;
+  --panel: #ffffff;
+  --panel-2: #f4f2ee;
+  --ink: #1b1a17;
+  --muted: #6b675f;
+  --line: #e2ddd4;
+  --line-strong: #cfc7b9;
+
+  --accent: #6b4f2a;
+  --accent-ink: #ffffff;
+  --review: #a8791f;
+  --danger: #a33a2c;
+  --ok: #2f6d4f;
+
+  --radius: 10px;
+  --radius-sm: 6px;
+  --gap: 12px;
+  --pad: 16px;
+
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.06), 0 4px 16px rgb(0 0 0 / 0.05);
+  --focus: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16150f;
+    --panel: #1e1d16;
+    --panel-2: #262419;
+    --ink: #efe9dd;
+    --muted: #a29b8b;
+    --line: #33301f;
+    --line-strong: #4a4530;
+
+    --accent: #d0a86a;
+    --accent-ink: #1b1a17;
+    --review: #d8ad4a;
+    --danger: #e08476;
+    --ok: #7fc39c;
+
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 20px rgb(0 0 0 / 0.35);
+  }
+}
+
+:root[data-theme='light'] {
+  --bg: #fbfaf8;
+  --panel: #ffffff;
+  --panel-2: #f4f2ee;
+  --ink: #1b1a17;
+  --muted: #6b675f;
+  --line: #e2ddd4;
+  --line-strong: #cfc7b9;
+  --accent: #6b4f2a;
+  --accent-ink: #ffffff;
+  --review: #a8791f;
+  --danger: #a33a2c;
+  --ok: #2f6d4f;
+}
+
+:root[data-theme='dark'] {
+  --bg: #16150f;
+  --panel: #1e1d16;
+  --panel-2: #262419;
+  --ink: #efe9dd;
+  --muted: #a29b8b;
+  --line: #33301f;
+  --line-strong: #4a4530;
+  --accent: #d0a86a;
+  --accent-ink: #1b1a17;
+  --review: #d8ad4a;
+  --danger: #e08476;
+  --ok: #7fc39c;
+}
