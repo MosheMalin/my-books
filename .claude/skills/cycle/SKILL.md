@@ -1,14 +1,71 @@
 ---
 name: cycle
-description: Run one booksnap code cycle — plan, implement, review, land. Use for any non-trivial change; the argument is the item to build (a feature, a fix, a plan item like "P4.1").
+description: Run one booksnap code cycle — plan, implement, review, land. The argument is the item to build (a feature, a fix, a plan item like "P4.1") — or an epic ("implement pillar 4", "rework the admin console"), which Phase 0 decomposes and executes item by item.
 ---
 
 # The booksnap code cycle
 
-Run the item through three phases. Do not skip a phase because the change
+Run the item through the phases below. Do not skip a phase because the change
 "looks small" — the recorded bugs here mostly came from small-looking changes.
 Trivial mechanical edits (a typo, a comment) may skip straight to implement,
 but say so.
+
+## Phase 0 — Size it
+
+Decide what you were handed, and say which it is:
+
+- **One item** — a fix, a single feature, one plan item ("P4.1"): go to
+  Phase 1.
+- **An epic** — several landable changes hiding in one sentence (a pillar, a
+  console rework, "focus on X"): do NOT stretch one cycle over it. A
+  week-long branch, a review panel drowning in scope, and no point to
+  correct course is the failure mode this phase exists to prevent.
+
+For an epic, first look for an EXISTING decomposition — do not re-analyze
+what has already been analyzed: `planning/IMPLEMENTATION_PLAN.md` (the
+pillars are already itemized), `planning/ADMIN_CONSOLE_PLAN.md`, `VISION.md`,
+`docs/HISTORY.md`, or a plan a prior session produced that the owner is
+referencing. If one exists, **re-read it against what has actually landed**
+(plans drift — an item may be half-done, obsolete, or already delivered by a
+different route), adjust the item list, state the adjustments, and go to
+Epic execution.
+
+If no plan exists, run a planning pass — its deliverable is a document, not
+code:
+
+1. **Audit first, design second.** Spawn subagents (`Explore`, or a reviewer
+   persona in audit mode) to enumerate everything the requirement touches —
+   including the instances the owner didn't list. The enumeration comes
+   before any design decision.
+2. **Settle open questions with the owner ONCE, batched** — plan-level
+   questions belong here, not sprinkled across items.
+3. **Write/update the plan under `planning/`**: a numbered item list, each
+   item sized for one cycle, with its constraints (which CLAUDE.md rules it
+   brushes against), its reviewer set, and its done-criteria.
+4. **Get the owner's nod on the plan before implementing** — the plan is the
+   cheap place to redirect.
+
+## Epic execution ("do pillar 4")
+
+Run each item through Phases 1–3 and LAND it on `main` before starting the
+next — `main` stays green between items and the owner can stop, reorder or
+redirect after any of them. Rules:
+
+- work autonomously from item to item; after each landing, report one short
+  progress note (item, what landed, anything surprising) and continue —
+  don't wait for permission the plan already gave;
+- PAUSE for the owner only when: an item surfaces a design decision the plan
+  didn't settle; a reviewer critical can't be fixed within the item's scope;
+  the gate is red for a cause outside the item; or reality shows the plan
+  itself is wrong;
+- the plan document is the progress tracker — mark items done as they land,
+  and if a later item invalidates an earlier assumption, amend the plan in
+  the same commit;
+- reviews run per item, never batched across items; the plan may add
+  standing per-epic requirements (e.g. `review-security` on every pillar-4
+  item, `review-migration` before every auth-schema commit);
+- one item = one worktree branch; remove it after landing. Never let two
+  items' changes share a branch "to save time".
 
 ## Phase 1 — Plan (no .md file required)
 
