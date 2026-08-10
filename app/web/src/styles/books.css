@@ -187,6 +187,13 @@
   padding: 8px 10px;
   border-top: 1px solid var(--line);
 }
+/* The create-hint <p>: base.css resets only body and button margins, so the
+   UA's 1em would stack with the form's 6px gap and read over-spaced. Full
+   width so the two-sentence hint wraps under the input, not beside it. */
+.libswitch-new p {
+  margin: 0;
+  flex: 1 1 100%;
+}
 .libswitch-new input {
   flex: 1 1 100%;
   min-width: 0;

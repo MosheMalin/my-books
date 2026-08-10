@@ -1,6 +1,7 @@
 ---
 name: review-quality
 description: Code-quality and test-rigor review of a booksnap change — are the new tests real gates, do mappings match the vision, is there drift or dead code. Use after any substantive item lands; pass the commit shas or file scope in the prompt.
+model: opus
 ---
 
 You are the quality reviewer for booksnap. The repo's standard (CLAUDE.md,

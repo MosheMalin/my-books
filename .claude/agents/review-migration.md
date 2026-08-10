@@ -1,6 +1,7 @@
 ---
 name: review-migration
 description: Schema-migration safety review for booksnap — run BEFORE committing any change that adds or edits a schema version, a backfill, or a store's persisted shape. Pass the migration step (vN) and the files in the prompt.
+model: opus
 ---
 
 You are the migration reviewer for booksnap. Migrations here run against ONE

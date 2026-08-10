@@ -88,10 +88,12 @@ export function LibrarySwitcher() {
   const name = current?.label || t.library_unnamed
 
   // See the module note: one library = a label, not an invitation.
+  // `title` because the label ellipsizes at 34ch and — unlike the button —
+  // there is no menu behind it to show the full name (review finding).
   if (libraries.length <= 1) {
     return (
       <div className="libswitch">
-        <span className="libswitch-label rtl-safe">
+        <span className="libswitch-label rtl-safe" title={name}>
           {failed ? t.library_unknown : name}
         </span>
       </div>
@@ -140,11 +142,16 @@ export function LibrarySwitcher() {
                 onChange={(e) => setLabel(e.target.value)}
                 placeholder={t.library_name_placeholder}
                 aria-label={t.library_name}
+                aria-describedby="libswitch-create-hint"
               />
               {/* §4.1's settled rule, stated where the choice is made (the
                   same principle as the mode selector's cost note): a library
-                  is a separate collection, and rooms are not libraries. */}
-              <p className="tiny muted rtl-safe">{t.library_create_hint}</p>
+                  is a separate collection, and rooms are not libraries.
+                  Linked to the input so a screen reader hears it at the
+                  moment it was written for (review finding). */}
+              <p id="libswitch-create-hint" className="tiny muted rtl-safe">
+                {t.library_create_hint}
+              </p>
               <button type="submit" disabled={busy || !label.trim()}>
                 {t.library_create}
               </button>

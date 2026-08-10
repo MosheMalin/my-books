@@ -38,7 +38,11 @@ describe('the library switcher', () => {
     const server = fakeServer([A_BOOK])
     server.libraries = [HOME]
     renderApp(<App />)
-    expect(await screen.findByText('משפחת מלין')).toBeInTheDocument()
+    const label = await screen.findByText('משפחת מלין')
+    // A user-typed string on a NEW element — the repo rule (UI_PLAN §7.2)
+    // says the class is asserted, because a missing one is invisible until
+    // someone looks at a mixed-script name.
+    expect(label).toHaveClass('rtl-safe')
     expect(screen.queryByRole('button', { name: 'החלפת ספרייה' }))
       .not.toBeInTheDocument()
     expect(screen.queryByText('+ ספרייה חדשה')).not.toBeInTheDocument()

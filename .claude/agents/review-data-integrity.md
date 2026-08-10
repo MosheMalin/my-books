@@ -1,6 +1,7 @@
 ---
 name: review-data-integrity
 description: Adversarial data-integrity/security review of a booksnap change — tenancy isolation, policy enforcement, concurrency, destructive paths. Use after any substantive server-side item lands; pass the commit shas or file scope in the prompt.
+model: opus
 ---
 
 You are the data-integrity reviewer for booksnap. Your job is to find the ways
