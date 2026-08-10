@@ -2669,6 +2669,50 @@ so a leak shows in data, not just timing). Mutation-checked: `tenant=`
 dropped in reads.py, round-robin broken, retry dead — each fails a named
 test.
 
+## Blob lifecycle (P3.5) — the reconciler under-deletes on purpose
+
+The tenant-keyed layout, content addressing and upload idempotency were
+P2.3's; what P3.5 added is the lifecycle: `BlobStore.list_keys` /
+`BlobStore.purge` on the port, `app/blob_lifecycle.py` (the ONE module
+allowed to say "orphan" — a sibling of `reconcile_apply`, ports only), and
+`tools/blob_gc.py` (dry-run by default; the dry run is the same code path as
+`--collect` minus the deletes, so the printout is the plan, not an
+estimate). Retention POLICY is §3's decision verbatim — keep originals +
+crops, user-purgeable — so there is no TTL machinery anywhere.
+
+Photos are the evidence the product runs on, so the collector is built to
+under-delete, and each guard is mutation-checked:
+
+- **references come from BOTH aggregates** — `Capture.image_id` and
+  `Claim.crop_key`. Captures alone would collect every spine crop; reads
+  alone every unread photo;
+- **reads come from `ReadStore.list_all_reads`** (new port method, contract-
+  tested in both adapters), never a walk of current shelves. The reads that
+  need it most are filed under a RETIRED shelf id: captures deleted one by
+  one, then the shelf — legal since P2.1 (`ShelfNotEmpty` counts captures,
+  not reads) — leaves reads whose crops are evidence a DB row still points
+  at. No route serves `list_all_reads`; a screen wanting it is re-inventing
+  the run list §5.5 forbids;
+- **the age floor (24h default) is a safety, not a knob.** Upload and
+  capture-binding are two calls (P2.3, deliberately), so a blob is
+  legitimately unreferenced for the whole afternoon someone spends dropping
+  photos before filing them. `min_age_s=0` is for tests;
+- **the wishlist's photos count** — `list_shelves` defaults to excluding
+  virtual shelves, the one default that is wrong here;
+- **`list_keys` reports originals only** — variants/sidecars are derived and
+  travel with their original, so listing them double-counts what one
+  `delete` removes.
+
+`purge(library)` is §3's "user-purgeable" as a primitive: one library's
+whole tree, idempotent, counted. No bulk route yet — per-photo deletion
+exists (`DELETE /images`, admin), and the whole-library form is half of what
+DELETE-library needs; the other half (a six-aggregate cascade) is still a
+design owed, per `libraries.py`'s updated note.
+
+Verified against the real `work/` data with the tool's dry run: two
+libraries, every stored photo referenced or too young, zero would-collect —
+the honest boring answer.
+
 ## Author sort, and why it needed a schema version
 
 "Sort by author" means the SHELF order — by surname. Sorting the stored string

@@ -1068,6 +1068,19 @@ def a_read_in_another_library_reads_as_absent(store):
 
 
 @read_contract
+def list_all_reads_spans_shelves_and_survives_a_retired_shelf_id(store):
+    """P3.5's method: the blob reconciler must see every read's crops, and
+    the reads that need it most are filed under a shelf id that no longer
+    resolves (captures deleted one by one, then the shelf — legal, P2.1).
+    A store has no shelf table to join through here, so nothing should
+    filter; asserted with a shelf id nothing else references."""
+    store.save_read(LIB, _read(1))
+    store.save_read(LIB, _read(2, shelf_id="sh-retired"))
+    assert {r.id for r in store.list_all_reads(LIB)} == {"rd1", "rd2"}
+    assert store.list_all_reads(OTHER) == (), "another library's reads leaked"
+
+
+@read_contract
 def saving_a_read_into_the_wrong_library_is_refused_loudly(store):
     _raises(WrongLibrary, store.save_read, OTHER, _read(1, library=LIB))
     assert store.get_read(OTHER, "rd1") is None

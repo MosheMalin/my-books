@@ -354,6 +354,20 @@ class ReadStore(Protocol):
         would have to re-derive that scoping every time.
         """
 
+    def list_all_reads(self, library: LibraryRef) -> tuple[Read, ...]:
+        """EVERY read in the library, most recent first — the blob
+        reconciler's method (P3.5), not a screen's.
+
+        Exists because iterating shelves misses exactly the reads that need
+        care: a shelf whose captures were deleted one by one CAN be deleted
+        (``ShelfNotEmpty`` counts captures, not reads — deliberately, see
+        P2.1), and its reads stay filed under the retired shelf id. Their
+        spine crops are still evidence a DB row points at, so the orphan
+        collector must see them or it deletes evidence out from under a
+        record that still exists. No route serves this — a screen that wants
+        "every read" is a screen re-inventing the run list §5.5 forbids.
+        """
+
     def list_reads_for_capture(
         self, library: LibraryRef, capture_id: str,
     ) -> tuple[Read, ...]:

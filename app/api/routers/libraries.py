@@ -23,10 +23,16 @@ live in ``app/domain/tenancy.py``:
 **Deliberately absent, not disabled:** DELETE. §4.2 lists "delete the library"
 as an admin capability, and it means deleting every book, shelf, read and
 photo in it — a cascade across six aggregates that do not know about each
-other, and the single most destructive act in the product. It needs P3.2's
-policy and P3.5's blob purge to be honest, and neither exists yet. Member
-management (invite, change role, remove) is P4.3's, for the same reason: an
-invite with no login to accept it is not a feature.
+other, and the single most destructive act in the product. Its two named
+prerequisites now exist — P3.2's policy (`Capability.DELETE_LIBRARY`, admin,
+already a row in the matrix so the route cannot ship open) and P3.5's blob
+purge (`BlobStore.purge`) — but the cascade itself is still a design owed:
+today no store has a "drop everything in this library" operation, and adding
+six of them for a route nobody has asked to press is speculation. When it is
+built, note the meta-test exemption list is keyed by (method, path), so
+`DELETE /libraries/{id}` will NOT inherit the account-scoped exemption
+silently. Member management (invite, change role, remove) is P4.3's, for the
+same reason: an invite with no login to accept it is not a feature.
 """
 from __future__ import annotations
 
