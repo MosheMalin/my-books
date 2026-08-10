@@ -44,10 +44,27 @@ What to hunt:
    snapshot surfaces (history) and live surfaces (findings) disagree only
    where the design says they should?
 
-jsdom cannot see CSS — flag anything (layout, dark mode, mirroring) that
-only a real browser can verify, as "needs live verification" rather than
-guessing. Run the client ring (`npm --prefix app/web run test`) to check
-behaviour claims; restore any experiment; leave the tree clean.
+**Verify in a REAL browser, not only by reading code.** jsdom cannot see
+CSS, so layout, dark mode and RTL mirroring claims are guesses until a
+browser renders them:
+
+- start the servers with `preview_start` by launch.json name (`product-api`,
+  `product-web`) — never Bash. ⚠ `preview_start` REUSES a running process:
+  if the change touched routes or server code, stop and restart explicitly,
+  or you are verifying pre-change code (a recorded trap that already fired);
+- if a flow MUTATES data, snapshot `work/product.db` (and
+  `work/product_blobs` if photos are involved) BEFORE driving it, restore
+  after — it is the owner's real library;
+- check both languages (the he/en toggle) and both directions; measure
+  mirroring with `getBoundingClientRect` (it works without compositing);
+- ⚠ known pane limits: `getComputedStyle` lies while the pane is
+  backgrounded (static properties too); `get_page_text` reads only `<main>`
+  (the drawer mounts outside it — check `document.querySelector` class
+  state instead); if screenshots time out, fall back to DOM
+  structure/geometry checks and say paint itself is unverified.
+
+Run the client ring (`npm --prefix app/web run test`) to check behaviour
+claims; restore any experiment; leave the tree clean.
 
 Report: per finding — the flow step where it bites, what the owner sees vs
 should see, severity (critical/major/minor), suggested fix. State which
