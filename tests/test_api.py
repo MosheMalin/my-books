@@ -28,13 +28,14 @@ from urllib.parse import quote
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))   # tests/_fastclient
 
 from fastapi.routing import APIRoute
-from fastapi.testclient import TestClient
+from _fastclient import TestClient          # starlette's, on a shared portal
 
 from app import API_PREFIX, __version__
 from app.adapters.disk_blobs import DiskBlobStore
-from app.adapters.inprocess_jobs import InProcessJobRunner
+from app.adapters.queued_jobs import QueuedJobRunner
 from app.adapters.memory_store import (
     MemoryBookStore,
     MemoryDecisionStore,
@@ -44,7 +45,7 @@ from app.adapters.memory_store import (
     MemoryTenancyStore,
 )
 from app.api import deps
-from app.api.app import create_app
+from app.api.app import bind_ports, create_app
 from app.domain import (
     Account,
     Decision,
@@ -112,11 +113,51 @@ def _tenancy(principal: StubPrincipal) -> MemoryTenancyStore:
     return store
 
 
+# --- app recycling ---------------------------------------------------------
+# ⚠ Why apps are pooled rather than built per test. FastAPI resolves a route's
+# dependency graph LAZILY — on that route's first request — and the analysis
+# (pydantic signature introspection, one `get_dependant` per route) costs ~50ms
+# per app. This file builds 153 of them, which measured as 29 of its 39
+# seconds: more time spent re-deriving the same route table than running the
+# assertions.
+#
+# A pooled app is not a shortcut around anything the tests check. The ports are
+# rebound through `app.api.app.bind_ports` — the SAME function `create_app`
+# calls, so `_always`'s pydantic deep-copy trap is still exercised — and the
+# overrides are CLEARED first, so an optional port (blobs, reader) left unbound
+# by this call cannot inherit the previous test's. Everything a test can
+# actually write to lives in the stores, and those are still fresh per test.
+#
+# It is also closer to production than the old shape: a real server builds one
+# app and serves every request through it.
+#
+# ⚠ Apps come back at the END OF THE TEST, not when a client closes. Recycling
+# on `TestClient.__exit__` is the tempting version and it barely worked: a
+# large family of tests here builds `c = TestClient(_app(...))` with no `with`
+# — perfectly legal, the client works — so 135 apps were built for 138 tests
+# and the pool was empty at the end. Returning them from `after_each` also
+# guarantees two apps live at once stay DISTINCT for as long as the test runs,
+# which the tenant-isolation tests need.
+_APP_POOL: list = []
+_IN_USE: list = []
+
+
+def after_each() -> None:
+    """Called by ``tests/run_all.py`` after every test in this module."""
+    _APP_POOL.extend(_IN_USE)
+    _IN_USE.clear()
+
+
 def _app(principal: StubPrincipal | None = None, store=None, shelves=None,
          blobs=None, reads=None, reader=None, jobs=None, decisions=None,
-         duplicates=None, tenancy=None):
+         duplicates=None, tenancy=None, recycle: bool = True):
+    """Build (or recycle) an app with these ports bound.
+
+    :param recycle: pass ``False`` for an app whose per-app state a later test
+        must not inherit. Everything else is recycled at the end of the test.
+    """
     p = principal or StubPrincipal()
-    return create_app(
+    ports = dict(
         principal_provider=lambda: p,
         tenancy_store=tenancy if tenancy is not None else _tenancy(p),
         book_store=store if store is not None else MemoryBookStore(),
@@ -126,10 +167,20 @@ def _app(principal: StubPrincipal | None = None, store=None, shelves=None,
         decision_store=decisions if decisions is not None else MemoryDecisionStore(),
         duplicate_queue=duplicates if duplicates is not None else MemoryDuplicateQueue(),
         reader=reader,
-        job_runner=jobs if jobs is not None else InProcessJobRunner(),
+        job_runner=jobs if jobs is not None else QueuedJobRunner(),
         clock=StubClock(),
         id_gen=SeqIdGen(),
     )
+    if not recycle:
+        return create_app(**ports)
+    if _APP_POOL:
+        app = _APP_POOL.pop()
+        app.dependency_overrides.clear()
+        bind_ports(app, **ports)
+    else:
+        app = create_app(**ports)
+    _IN_USE.append(app)
+    return app
 
 
 @contextmanager
@@ -819,7 +870,10 @@ def test_every_api_route_is_versioned():
 def test_openapi_paths_are_all_under_v1():
     """The same rule read off the published contract rather than the router —
     it is the schema that clients and the TS generator actually see."""
-    schema = _app().openapi()
+    # Not pooled: `.openapi()` memoises the document on the app object, and a
+    # recycled app carrying that cache would hand a later test a schema it did
+    # not build.
+    schema = _app(recycle=False).openapi()
     bad = [p for p in schema["paths"] if not p.startswith(API_PREFIX + "/")]
     assert not bad, f"schema paths outside {API_PREFIX}: {bad} (H3)"
 
@@ -845,17 +899,28 @@ def _dependency_calls(route: APIRoute) -> set:
 #
 # A closed list, deliberately: adding a route here is an edit to a test, which
 # is the point at which someone has to justify it.
+#
+# ⚠ Keyed by (METHOD, path), not path alone — P3.2's review caught the sharper
+# version of the same hole: a future `DELETE /libraries/{library_id}` (the
+# deliberately-absent delete-library route) or P4.3's member routes at these
+# paths would inherit a path-only exemption silently and could ship unpoliced
+# with every meta-test green.
 _ACCOUNT_SCOPED = {
-    f"{API_PREFIX}/libraries",
-    f"{API_PREFIX}/libraries/{{library_id}}",
+    ("GET", f"{API_PREFIX}/libraries"),
+    ("POST", f"{API_PREFIX}/libraries"),
+    ("PATCH", f"{API_PREFIX}/libraries/{{library_id}}"),
 }
+
+
+def _exempt(path: str, route: APIRoute) -> bool:
+    return all((m, path) in _ACCOUNT_SCOPED for m in route.methods)
 
 
 def test_every_api_route_resolves_its_library_from_the_principal():
     routes = _api_routes(_app())
     assert routes, "no API routes found — this meta-test would pass vacuously"
     bad = [p for p, r in routes
-           if p not in _ACCOUNT_SCOPED
+           if not _exempt(p, r)
            and deps.current_library not in _dependency_calls(r)]
     assert not bad, (
         f"routes not library-scoped: {bad} — every route resolves its library "
@@ -863,15 +928,154 @@ def test_every_api_route_resolves_its_library_from_the_principal():
     )
 
 
+def test_every_api_route_declares_exactly_one_policy_capability():
+    """P3.2's meta-test, promised by this file's own docstring since P3.1: a
+    route with NO policy declaration FAILS rather than defaulting to open.
+
+    Exactly one, not at least one: two `require(...)` dependencies on a route
+    would enforce the STRICTER intersection today and read as either-or to the
+    next person — a disagreement between what the code does and what it says.
+
+    The account-scoped routes are exempt from the LIBRARY-capability axis
+    (same closed list, same circularity argument) — but not from policy:
+    the rename route consults the same matrix directly, which
+    `test_renaming_a_library_is_admin_only` proves over HTTP.
+    """
+    from app.api.policy import CAPABILITY_ATTR
+
+    routes = _api_routes(_app())
+    assert routes, "no API routes found — this meta-test would pass vacuously"
+    bad = []
+    for path, route in routes:
+        if _exempt(path, route):
+            continue
+        declared = [getattr(c, CAPABILITY_ATTR) for c in _dependency_calls(route)
+                    if hasattr(c, CAPABILITY_ATTR)]
+        if len(declared) != 1:
+            bad.append((path, declared))
+    assert not bad, (
+        f"routes without exactly one policy capability: {bad} — declare it "
+        "with Depends(require(Capability.X)) (P3.2)"
+    )
+
+
+def _viewer_of_second_library(role: Role = Role.VIEWER):
+    """A principal whose OWN library is lib-test but who holds `role` in
+    lib-2 — requests carrying the lib-2 header exercise the matrix for real,
+    because the dev-trusted own-library shortcut cannot apply there."""
+    p = StubPrincipal()
+    tenancy = _tenancy(p)
+    tenancy.save_library(Library(id="lib-2", label="ההורים"))
+    tenancy.save_membership(Membership(p.id, "lib-2", role))
+    return p, tenancy
+
+
+def test_a_viewer_browses_but_may_not_edit_capture_or_see_photos():
+    """§4.2 over real HTTP, including §12.2 #1's settled cell: the catalog
+    answers, the photographs and every write refuse with 403 — not 404,
+    because the caller IS a member and the library's existence is not the
+    secret (§4.2 protects OTHER households' libraries; this is their own)."""
+    p, tenancy = _viewer_of_second_library()
+    with TestClient(_app(principal=p, tenancy=tenancy)) as c:
+        h = {deps.LIBRARY_HEADER: "lib-2"}
+        assert c.get(f"{API_PREFIX}/books", headers=h).status_code == 200
+        assert c.get(f"{API_PREFIX}/shelves", headers=h).status_code == 200
+        denied = [
+            ("post", f"{API_PREFIX}/books",
+             dict(json={"title": "ספר", "author": ""})),
+            ("post", f"{API_PREFIX}/images",
+             dict(files={"file": ("a.png", _png(), "image/png")})),
+            ("post", f"{API_PREFIX}/shelves", dict(json={"label": "מדף"})),
+        ]
+        for method, url, kw in denied:
+            r = getattr(c, method)(url, headers=h, **kw)
+            assert r.status_code == 403, (method, url, r.status_code)
+        # §12.2 #1's cell: photo bytes AND metadata are Editor+. The 403
+        # comes from the dependency, BEFORE any store lookup — deliberately,
+        # so a viewer cannot even probe which keys exist.
+        key = "0" * 64 + ".jpg"
+        for tail in ("", "/full", "/thumb"):
+            r = c.get(f"{API_PREFIX}/images/{key}{tail}", headers=h)
+            assert r.status_code == 403, (tail, "a viewer saw a photograph")
+
+
+def test_an_editor_captures_but_only_an_admin_deletes_photos():
+    """The one place §4.2 splits editor from admin on an existing route:
+    "delete photos" sits in the admin column, because deleting a photo
+    destroys the evidence every read of it points at."""
+    p, tenancy = _viewer_of_second_library(role=Role.EDITOR)
+    with _blobs() as blobs:
+        with TestClient(_app(principal=p, tenancy=tenancy, blobs=blobs)) as c:
+            h = {deps.LIBRARY_HEADER: "lib-2"}
+            up = c.post(f"{API_PREFIX}/images", headers=h,
+                        files={"file": ("a.png", _png(), "image/png")})
+            assert up.status_code == 201, "an editor uploads photos (§4.2)"
+            key = up.json()["key"]
+            assert c.get(f"{API_PREFIX}/images/{key}/thumb",
+                         headers=h).status_code == 200
+            r = c.delete(f"{API_PREFIX}/images/{key}", headers=h)
+            assert r.status_code == 403, "an editor deleted a photo (§4.2)"
+            tenancy.save_membership(Membership(p.id, "lib-2", Role.ADMIN))
+            r = c.delete(f"{API_PREFIX}/images/{key}", headers=h)
+            assert r.status_code == 204
+
+
+def test_a_membership_row_on_your_own_library_outranks_the_dev_trusted_fallback():
+    """`_role` consults the membership row FIRST and falls back to ADMIN only
+    when no row exists for the principal's own library. Reordering those two
+    branches would silently grant ADMIN to anyone whose own-library row says
+    less — invisible today (the bootstrap writes ADMIN) and a landmine the
+    day P4.3 lets an admin demote someone. Pinned by planting a VIEWER row on
+    the principal's OWN library and watching a write refuse."""
+    p = StubPrincipal()
+    tenancy = _tenancy(p)   # seeds ADMIN…
+    tenancy.save_membership(Membership(p.id, p.library.id, Role.VIEWER))
+    with TestClient(_app(principal=p, tenancy=tenancy)) as c:
+        r = c.post(f"{API_PREFIX}/books", json={"title": "ס", "author": ""})
+        assert r.status_code == 403, (
+            "a stored viewer role on the caller's own library was ignored — "
+            "the dev-trusted ADMIN fallback must lose to a real row"
+        )
+
+
+def test_renaming_a_library_is_admin_only():
+    """The account-scoped routes are exempt from `require()`'s transport, not
+    from the matrix — the rename consults the same POLICY table directly."""
+    p, tenancy = _viewer_of_second_library(role=Role.EDITOR)
+    with TestClient(_app(principal=p, tenancy=tenancy)) as c:
+        r = c.patch(f"{API_PREFIX}/libraries/lib-2", json={"label": "חדש"})
+        assert r.status_code == 403
+        tenancy.save_membership(Membership(p.id, "lib-2", Role.ADMIN))
+        r = c.patch(f"{API_PREFIX}/libraries/lib-2", json={"label": "חדש"})
+        assert r.status_code == 200
+        assert r.json()["label"] == "חדש"
+
+
+def test_a_foreign_library_is_still_404_never_403_now_that_policy_exists():
+    """§4.2's ordering, pinned: existence is decided BEFORE capability. A 403
+    for a library the caller does not belong to would confirm another
+    household's collection exists — the resolver answers 404 first, and the
+    policy check must never run for it."""
+    p = StubPrincipal()
+    tenancy = _tenancy(p)
+    tenancy.save_library(Library(id="lib-other", label="זרים"))  # exists, no membership
+    with TestClient(_app(principal=p, tenancy=tenancy)) as c:
+        for lib in ("lib-other", "lib-fictional"):
+            r = c.post(f"{API_PREFIX}/books", json={"title": "ס", "author": ""},
+                       headers={deps.LIBRARY_HEADER: lib})
+            assert r.status_code == 404, (lib, r.status_code)
+
+
 def test_the_account_scoped_routes_are_still_scoped_by_something():
     """The exemption is from the LIBRARY axis, not from tenancy. A route that
     resolved neither a library nor an account would serve everyone's data —
     and it would pass the test above simply by being on the list."""
-    routes = {p: r for p, r in _api_routes(_app())}
-    for path in _ACCOUNT_SCOPED:
-        assert path in routes, f"{path} is exempted but does not exist"
-        assert deps.get_principal in _dependency_calls(routes[path]), \
-            f"{path} resolves neither a library nor an account"
+    routes = {(m, p): r for p, r in _api_routes(_app()) for m in r.methods}
+    for method, path in _ACCOUNT_SCOPED:
+        assert (method, path) in routes, \
+            f"{method} {path} is exempted but does not exist"
+        assert deps.get_principal in _dependency_calls(routes[(method, path)]), \
+            f"{method} {path} resolves neither a library nor an account"
 
 
 def test_library_resolution_has_exactly_one_implementation():
@@ -1267,7 +1471,7 @@ def test_deleting_a_photo_takes_its_renditions_with_it():
 #
 # StubReader/SlowStubReader implement app.ports.reader.Reader without
 # booksnap, cv2 or tesseract — H4 ring 3's rule: this ring never invokes the
-# real engine. InProcessJobRunner IS real (it is fast and pure-Python); only
+# real engine. QueuedJobRunner IS real (it is fast and pure-Python); only
 # the engine is stubbed.
 
 class StubReader:
@@ -1342,6 +1546,254 @@ def _wait_until_settled(client, shelf_id: str, read_id: str, *, timeout: float =
             return body
         time.sleep(0.01)
     raise AssertionError(f"read did not settle within {timeout}s: {body}")
+
+
+def test_two_concurrent_reads_in_two_libraries_do_not_observe_each_other():
+    """P3.4's named test case, over real HTTP: one account, two libraries,
+    one QueuedJobRunner. Each read reports its own library's progress,
+    stopping one leaves the other running, and the tenant key the router
+    hands the runner is the LIBRARY id — the fairness axis — pinned with a
+    spy, because dropping `tenant=` in reads.py would silently collapse
+    every library into one queue and no adapter-ring test could see it."""
+    import threading
+
+    p = StubPrincipal()
+    tenancy = _tenancy(p)
+    tenancy.save_library(Library(id="lib-2", label="שניה"))
+    tenancy.save_membership(Membership(p.id, "lib-2", Role.ADMIN))
+
+    release = {TEST_LIBRARY.id: threading.Event(), "lib-2": threading.Event()}
+
+    class GatedReader:
+        """Blocks per-library until the test releases it, then produces one
+        claim naming its own library — so a leak would be visible in the
+        claims themselves, not only in timing."""
+
+        def read(self, library, requests, *, mode, progress=None,
+                 should_stop=None):
+            if progress:
+                progress({"lib": library.id})
+            deadline = time.monotonic() + 5
+            while (not release[library.id].is_set()
+                   and not (should_stop and should_stop())):
+                if time.monotonic() > deadline:
+                    raise AssertionError("gate never released")
+                time.sleep(0.01)
+            return [ReadClaim(spine_id="sp1",
+                              capture_id=requests[0].capture_id,
+                              title=f"ספר {library.id}", tier="auto")]
+
+        def unavailable(self, mode):
+            return None
+
+        def code_version(self):
+            return {}
+
+        def config_snapshot(self):
+            return {}
+
+    class SpyRunner(QueuedJobRunner):
+        def __init__(self):
+            super().__init__(workers=2)
+            self.tenants = []
+
+        def submit(self, job_id, fn, *, tenant="", retries=0):
+            self.tenants.append(tenant)
+            super().submit(job_id, fn, tenant=tenant, retries=retries)
+
+    spy = SpyRunner()
+    with _blobs() as blobs:
+        c = TestClient(_app(principal=p, tenancy=tenancy, blobs=blobs,
+                            reader=GatedReader(), jobs=spy))
+        h2 = {deps.LIBRARY_HEADER: "lib-2"}
+
+        def setup(headers):
+            key = c.post(f"{API_PREFIX}/images", headers=headers,
+                         files={"file": ("a.png", _png(), "image/png")}
+                         ).json()["key"]
+            made = c.post(f"{API_PREFIX}/captures", headers=headers,
+                          json={"image_id": key}).json()
+            return made["shelf"]["id"]
+
+        shelf_a, shelf_b = setup({}), setup(h2)
+        read_a = c.post(f"{API_PREFIX}/shelves/{shelf_a}/reads",
+                        json={"depth": 1, "mode": "spines"}).json()["id"]
+        read_b = c.post(f"{API_PREFIX}/shelves/{shelf_b}/reads", headers=h2,
+                        json={"depth": 1, "mode": "spines"}).json()["id"]
+        assert spy.tenants == [TEST_LIBRARY.id, "lib-2"], (
+            "the runner's fairness key must be the library id (P3.4)"
+        )
+
+        def poll(shelf, read, headers):
+            return c.get(f"{API_PREFIX}/shelves/{shelf}/reads/{read}",
+                         headers=headers).json()
+
+        deadline = time.monotonic() + 5
+        while True:
+            a, b = poll(shelf_a, read_a, {}), poll(shelf_b, read_b, h2)
+            if a.get("progress") and b.get("progress"):
+                break
+            assert time.monotonic() < deadline, (a, b)
+            time.sleep(0.01)
+        assert a["progress"] == {"lib": TEST_LIBRARY.id}
+        assert b["progress"] == {"lib": "lib-2"}, \
+            "one library's read reported the other's progress"
+
+        c.post(f"{API_PREFIX}/shelves/{shelf_a}/reads/{read_a}/stop")
+        a = _wait_until_settled(c, shelf_a, read_a)
+        assert a["status"] == "stopped"
+        assert poll(shelf_b, read_b, h2)["status"] == "running", \
+            "stopping one library's read touched the other's"
+
+        release["lib-2"].set()
+        deadline = time.monotonic() + 5
+        while True:
+            b = poll(shelf_b, read_b, h2)
+            if b["status"] != "running":
+                break
+            assert time.monotonic() < deadline, b
+            time.sleep(0.01)
+        assert b["status"] == "done"
+        assert [cl["title"] for cl in b["claims"]] == ["ספר lib-2"]
+
+
+def _seed_reads(store, library: LibraryRef, n: int, started_at: str) -> None:
+    from app.domain import Read
+
+    base = len(store.list_all_reads(library))
+    for i in range(n):
+        store.save_read(library, Read(
+            id=f"seeded-{base + i}", library_id=library.id, shelf_id="sh-old",
+            depth=1, capture_ids=("c",), mode="spines", started_at=started_at,
+        ))
+
+
+def test_the_run_rate_cap_blocks_a_retry_loop_and_only_this_library():
+    """P3.6 (§1.2): one number against a stuck client, never against family.
+    The cap counts a rolling hour PER LIBRARY — a burst in one must not
+    freeze another — and reads older than the window never count, or the cap
+    would turn into a lifetime quota."""
+    from app.api.routers.reads import RUN_RATE_CAP_PER_HOUR
+
+    p = StubPrincipal()
+    tenancy = _tenancy(p)
+    tenancy.save_library(Library(id="lib-2", label="שניה"))
+    tenancy.save_membership(Membership(p.id, "lib-2", Role.ADMIN))
+    reads_store = MemoryReadStore()
+    with _blobs() as blobs:
+        c = TestClient(_app(principal=p, tenancy=tenancy, blobs=blobs,
+                            reads=reads_store, reader=StubReader()))
+        h2 = {deps.LIBRARY_HEADER: "lib-2"}
+
+        def shelf_with_photo(headers):
+            key = c.post(f"{API_PREFIX}/images", headers=headers,
+                         files={"file": ("a.png", _png(), "image/png")}
+                         ).json()["key"]
+            return c.post(f"{API_PREFIX}/captures", headers=headers,
+                          json={"image_id": key}).json()["shelf"]["id"]
+
+        shelf_a, shelf_b = shelf_with_photo({}), shelf_with_photo(h2)
+
+        # StubClock's "now" is 12:00; fill the window 30 minutes back.
+        _seed_reads(reads_store, TEST_LIBRARY, RUN_RATE_CAP_PER_HOUR,
+                    "2026-08-07T11:30:00+00:00")
+        r = c.post(f"{API_PREFIX}/shelves/{shelf_a}/reads",
+                   json={"depth": 1, "mode": "spines"})
+        assert r.status_code == 429, r.text
+        assert str(RUN_RATE_CAP_PER_HOUR) in r.json()["detail"]
+
+        # The OTHER library is untouched by this library's burst.
+        r2 = c.post(f"{API_PREFIX}/shelves/{shelf_b}/reads", headers=h2,
+                    json={"depth": 1, "mode": "spines"})
+        assert r2.status_code == 202, (
+            "one library's retry loop froze another library's read"
+        )
+
+
+def test_reads_older_than_the_window_do_not_count_toward_the_cap():
+    from app.api.routers.reads import RUN_RATE_CAP_PER_HOUR
+
+    reads_store = MemoryReadStore()
+    with _blobs() as blobs:
+        c = TestClient(_app(blobs=blobs, reads=reads_store,
+                            reader=StubReader()))
+        key = c.post(f"{API_PREFIX}/images",
+                     files={"file": ("a.png", _png(), "image/png")}
+                     ).json()["key"]
+        shelf = c.post(f"{API_PREFIX}/captures",
+                       json={"image_id": key}).json()["shelf"]["id"]
+        _seed_reads(reads_store, TEST_LIBRARY, RUN_RATE_CAP_PER_HOUR * 2,
+                    "2026-08-07T09:00:00+00:00")   # three hours before "now"
+        r = c.post(f"{API_PREFIX}/shelves/{shelf}/reads",
+                   json={"depth": 1, "mode": "spines"})
+        assert r.status_code == 202, (
+            "reads outside the rolling hour counted — the cap became a "
+            "lifetime quota"
+        )
+
+
+def test_a_read_stopped_before_it_looked_archives_no_not_seen_summary():
+    """P3.4 makes stop-while-queued routine, and a stopped read with zero
+    claims never looked at anything: a diff summary over it would archive
+    "N not seen" forever for a read that read nothing. Same treatment as
+    `failed` — no snapshot (the books were never at risk either way; §5.6's
+    never-auto-remove holds upstream)."""
+    import threading
+
+    release = threading.Event()
+
+    class GateOrStopReader:
+        def read(self, library, requests, *, mode, progress=None,
+                 should_stop=None):
+            deadline = time.monotonic() + 5
+            while not release.is_set() and not (should_stop and should_stop()):
+                if time.monotonic() > deadline:
+                    raise AssertionError("never released")
+                time.sleep(0.01)
+            if should_stop and should_stop():
+                return []
+            return [ReadClaim(spine_id="sp1",
+                              capture_id=requests[0].capture_id,
+                              title="ספר אמיתי", tier="auto")]
+
+        def unavailable(self, mode):
+            return None
+
+        def code_version(self):
+            return {}
+
+        def config_snapshot(self):
+            return {}
+
+    with _blobs() as blobs:
+        c = TestClient(_app(blobs=blobs, reader=GateOrStopReader(),
+                            jobs=QueuedJobRunner(workers=1)))
+
+        def shelf_with_photo(colour):
+            key = c.post(f"{API_PREFIX}/images",
+                         files={"file": ("a.png", _png(colour=colour),
+                                         "image/png")}).json()["key"]
+            return c.post(f"{API_PREFIX}/captures",
+                          json={"image_id": key}).json()["shelf"]["id"]
+
+        shelf_a = shelf_with_photo((10, 10, 10))
+        shelf_b = shelf_with_photo((20, 20, 20))
+        read_a = c.post(f"{API_PREFIX}/shelves/{shelf_a}/reads",
+                        json={"depth": 1, "mode": "spines"}).json()["id"]
+        read_b = c.post(f"{API_PREFIX}/shelves/{shelf_b}/reads",
+                        json={"depth": 1, "mode": "spines"}).json()["id"]
+        # B waits behind A on the single worker; stop it while queued.
+        c.post(f"{API_PREFIX}/shelves/{shelf_b}/reads/{read_b}/stop")
+        release.set()
+
+        a = _wait_until_settled(c, shelf_a, read_a)
+        b = _wait_until_settled(c, shelf_b, read_b)
+        assert a["status"] == "done" and a["diff_summary"] is not None
+        assert b["status"] == "stopped"
+        assert b["claims"] == []
+        assert b["diff_summary"] is None, (
+            "a read that never looked archived a not-seen summary"
+        )
 
 
 def test_starting_a_read_needs_captures_at_that_depth():

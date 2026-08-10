@@ -98,6 +98,14 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
   const [failed, setFailed] = useState(false)
 
+  // ⚠ Fetched ONCE, on mount, and this provider sits above `LibraryScope`
+  // so it never remounts short of a full page load. A library that appears
+  // out-of-band mid-session (created via the API today; an accepted invite
+  // at P4.3) is invisible until a hard reload — acceptable while the only
+  // out-of-band path is the owner at a terminal, and EXACTLY the thing
+  // P4.3 must revisit: an in-app invite acceptance has to update this state
+  // the way `create()` does, or trigger a refetch, or the newly-joined
+  // member's switcher will not exist (review finding, 2026-08-10).
   useEffect(() => {
     let live = true
     listLibraries()

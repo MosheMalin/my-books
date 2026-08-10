@@ -473,6 +473,27 @@ the port is what makes that a swap.
 | **P3.5** | **Tenant-keyed blob storage** (D1): the disk adapter behind the `BlobStore` port with the `libraries/<library_id>/…` layout, path-from-DB-row rule, orphan reconciler, retention + user purge (§3), hash-based upload idempotency (§12.3 #13). | M |
 | **P3.6** | *Optional, cheap:* **per-library run rate cap** (§1.2) — one number, not a metering system. Guards against a retry loop, not against family. | S |
 
+⚠ **A tenant is an ownership boundary, never a geography** (owner,
+2026-08-10, settling the question P3.1's switcher surfaced — recorded in full
+in VISION §4.1). One Library per account is the default; rooms and sites
+within an account are pillar-6 Places, never Libraries; a second Library
+under one account is the rare separate-collection case, and the normal way
+to see a second Library is membership in someone else's (P4.3). The client
+consequence landed with this decision: the switcher is a plain label until a
+second Library genuinely exists, and the create form says what a Library is
+for. Sign-up creates exactly ONE Library — P4.1 mints the first session's
+Library, P4.3's §4.3 onboarding names it — and neither ever offers a second
+during onboarding.
+
+⚠ **Two "admins", one word — do not conflate them** (owner, 2026-08-10). The
+Admin ROLE this pillar builds (§4.2) is an admin **inside a single account's
+library** — the household's own owner, governing one collection. The **System
+Admin console** (`app/admin/`, `app/staff_api/`, `planning/ADMIN_CONSOLE_PLAN.md`)
+is a separate surface for the operator of the whole service, developed in its
+own track; it authorizes on its own axis and never through §4.2's matrix.
+Nothing in this pillar's policy work grants or checks operator powers, and
+nothing in the console track should reuse `Role`/`POLICY` for staff.
+
 ### Pillar 4 — Login
 
 | # | Item | Size |
@@ -494,7 +515,7 @@ the port is what makes that a swap.
 
 | # | Item | Size |
 |---|---|---|
-| **P6.1** | **Address domain**: Place → Bookcase → `col` / `level`, shelves bound to addresses, `Copy` location rendered as `place · case · col · shelf · row` (§1.1). The naming lint (H5) lands here. Existing shelves keep their labels and gain addresses; nothing migrates twice because the fields were null, not absent. | M |
+| **P6.1** | **Address domain**: Place → Bookcase → `col` / `level`, shelves bound to addresses, `Copy` location rendered as `place · case · col · shelf · row` (§1.1). The naming lint (H5) lands here. Existing shelves keep their labels and gain addresses; nothing migrates twice because the fields were null, not absent. ⚠ Per the settled tenancy rule (§4.1, owner 2026-08-10): a **Place is any location within one tenant — a room AND a whole other site** (office, shelves at the parents') — so the Place level must comfortably hold "אצל ההורים" next to "סלון". P6.1 is also the exit for any room-or-site that was modelled as a second Library before Place existed: its shelves/books move back into the main Library under a Place, and the extra Library is retired. | M |
 | **P6.1b** | **Shelf merge** (§1.1, owner 2026-08-07): several shelf identities → one physical shelf, by hand on the map, never automatically. Repoints `Copy.shelf_id`, leaves an **alias** for the retired identity so append-only provenance and pre-merge reads stay resolvable. This is the exit from pillar 2's placeholder "one image = one shelf". | M |
 | **P6.2** | **POC A** — freehand sketch straightened into a clean orthogonal schematic (§7). The straightening is the whole bet; a wobbly canvas is not the target. | M |
 | **P6.3** | **POC B** — bookcase photo → shelf levels proposed by `segment.py`'s existing band signal, confirmed by hand. Free, deterministic, already tuned. | S |

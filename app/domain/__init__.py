@@ -25,6 +25,8 @@ never be silently reversed (plan H5):
   - a library is created with a name .................. §4.3  tenancy.new_library
   - a library keeps at least one admin ................ §4.2  tenancy.NoAdminLeft
   - a role says who you are, never what you may do .... §4.2  tenancy.Role
+  - what a role MAY do is one table, never an if ...... §4.2  policy.POLICY
+  - an undeclared capability raises, never defaults ... §4.2  policy.allowed
 """
 from __future__ import annotations
 
@@ -68,6 +70,7 @@ from app.domain.copy_resolution import (
 )
 from app.domain.history import DepthStatus, depth_staleness, not_seen_streak
 from app.domain.library import LibraryRef
+from app.domain.policy import POLICY, Capability, PolicyUndeclared, allowed
 from app.domain.reconcile import (
     ClaimOutcome,
     Decision,
@@ -132,6 +135,7 @@ __all__ = [
     "Alternative",
     "AmbiguousCopy",
     "Book",
+    "Capability",
     "Capture",
     "Claim",
     "ClaimOutcome",
@@ -160,6 +164,8 @@ __all__ = [
     "NoAdminLeft",
     "NotSeenEntry",
     "OutcomeKind",
+    "POLICY",
+    "PolicyUndeclared",
     "PromptKind",
     "Provenance",
     "Read",
@@ -178,6 +184,7 @@ __all__ = [
     "add_copy",
     "add_depth",
     "add_manual_claim",
+    "allowed",
     "append_claim",
     "approve",
     "author_sort_key",

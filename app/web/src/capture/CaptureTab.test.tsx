@@ -9,7 +9,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
+import { userEvent } from '../test/user'
 import { I18nProvider } from '../lib/i18n'
 import { CaptureTab } from './CaptureTab'
 import {
@@ -319,10 +319,38 @@ describe('Capture tab — review', () => {
     await waitFor(() => expect(server.calls.some((c) => c.includes('/stop'))).toBe(true))
   })
 
+  it('accepts a NEW shelf while another read is running', async () => {
+    // P3.4 retired the GLOBAL half of the run-disable rule: new shelves
+    // queue fairly server-side now, so refusing them while a batch runs
+    // protected nothing and froze the owner who had just photographed one
+    // more shelf. The same-group half stands — see the next test.
+    const server = fakeCaptureServer()
+    server.nextReadStatus = 'running'
+    const { container } = renderCapture()
+    await dropOnePhoto(container, 'first.jpg')
+    await screen.findByText('first.jpg')
+    const run = screen.getByRole('button', { name: /הרצה על הנבחרים/ })
+    await userEvent.click(run)
+    await waitFor(() => expect(run).toBeDisabled())
+
+    await dropOnePhoto(container, 'second.jpg')   // its own auto-created shelf
+    await screen.findByText('second.jpg')
+    await waitFor(() => expect(run).toBeEnabled())
+    const started = server.calls.filter(
+      (c) => c.includes('/reads') && !c.includes('/reads/')).length
+    await userEvent.click(run)
+    await waitFor(() => expect(server.calls.filter(
+      (c) => c.includes('/reads') && !c.includes('/reads/')).length,
+    ).toBe(started + 1))
+  })
+
   it('refuses to start a second read while one is running', async () => {
     // Owner, live use. Pressing Run again starts another read of the same
     // (shelf, depth) — legal server-side, and a waste of money and minutes
-    // that also replaces the panel you were watching.
+    // that also replaces the panel you were watching. Since P3.4 this is
+    // enforced PER (shelf, depth) — a running group is excluded from what
+    // Run can start — which is exactly the half of the rule the owner's
+    // reason was about.
     const server = fakeCaptureServer()
     server.nextReadStatus = 'running'
     const { container } = renderCapture()
@@ -355,6 +383,22 @@ describe('Capture tab — review', () => {
 
     expect(await screen.findByText('קורא את התמונה… 3/12')).toBeInTheDocument()
     expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '25')
+  })
+
+  it('says a queued read is waiting, not reading', async () => {
+    // P3.4: the job runner reports {stage: 'queued'} while a read waits for
+    // a worker (another read holds the pool). "Reading…" there looks hung —
+    // the exact confusion the progress line exists to prevent.
+    const server = fakeCaptureServer()
+    server.nextReadStatus = 'running'
+    server.nextProgress = { stage: 'queued' }
+    const { container } = renderCapture()
+    await dropOnePhoto(container)
+    await screen.findByText('לא משויך')
+    await userEvent.click(screen.getByRole('button', { name: /הרצה על הנבחרים/ }))
+
+    expect(await screen.findByText('ממתין בתור…')).toBeInTheDocument()
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
   })
 
   it('falls back to the plain line for a stage it has never heard of', async () => {

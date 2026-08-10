@@ -97,7 +97,7 @@ Account (a person, one identity)
 
 Library  (a household's collection — the tenancy boundary)
   ├─ Members: Account × Role
-  ├─ PhysicalLibraries (1..n)   ← a user may have several: home, office, parents'
+  ├─ Places (1..n)   ← a user may have several: home, office, parents'
   │    └─ Bookcases → Shelves
   ├─ Shelves ── (0..n) Captures (photos)  ← one shelf may span several photos
   ├─ Runs (immutable archive, as today)
@@ -105,16 +105,52 @@ Library  (a household's collection — the tenancy boundary)
 ```
 
 Note the distinction: **Library** is the permission/tenancy unit ("the Malin
-family collection"); **PhysicalLibrary** is a physical place within it. A user
-having several physical libraries was called out explicitly and must not be
-collapsed into a single implicit root.
+family collection"); **Place** is a physical location within it — a room, or
+a whole site. A user having several places was called out explicitly and must
+not be collapsed into a single implicit root.
 
-### 4.2 Roles **[DECIDED in principle, permissions matrix OPEN]**
+*Naming, settled 2026-08-10 before H5's lint lands at P6.1:* the noun is
+**Place**; *PhysicalLibrary* is its retired synonym and must not appear in
+code — it contains the very word it exists to be distinguished from, which is
+how "the living-room library" gets typed.
+
+**[SETTLED 2026-08-10, owner] What makes something a TENANT.** The
+discriminator is **ownership, never geography**: a different tenant is a
+different account's/household's collection. Within one account, multiple
+physical libraries — the living room, the child's room, and equally a whole
+other SITE (the office, shelves standing at the parents') — are **locations
+of one Library**, never Libraries of their own. Consequences:
+
+- **one Library per account is the default and the normal case.** A second
+  Library under your own account is a rare, deliberate act (a genuinely
+  separate collection you administer — a shop's stock, a classroom set), not
+  an organizational tool. The way an account normally comes to see a second
+  Library is MEMBERSHIP in someone else's (P4.3 invites);
+- the "home, office, parents'" example above is about MY books stored in
+  three places — all one tenant. My parents' OWN collection is THEIR
+  Library, which I may join as a member. Whose books, not whose roof;
+- splitting one collection across two Libraries has a real, silent cost:
+  search, dedup and §5.4's duplicate question are all tenant-scoped, so a
+  second copy of a book you already own would never be flagged. This is why
+  the boundary must not be used for rooms;
+- the client must not ADVERTISE multi-library to an account that has one —
+  the switcher renders as a plain label until a second Library genuinely
+  exists, and creating one carries guidance saying what a Library is for.
+  Rooms get their proper noun (Place) with the map, pillar 6.
+
+### 4.2 Roles **[DECIDED — matrix settled at P3.2, 2026-08-10]**
+
+The matrix lives as DATA in `app/domain/policy.py:POLICY`, with one
+enforcement point (`app/api/policy.py:require`) and a table-driven test over
+every (role × capability) cell. Changing a cell is a one-line edit made in
+two places (the table and its test) — that is deliberate: a cell change is a
+decision, and the test is where it gets written down twice.
 
 | Capability | Viewer | Editor | Admin |
 |---|:--:|:--:|:--:|
 | Browse/search books, see shelves | ✓ | ✓ | ✓ |
 | See lending state | ✓ | ✓ | ✓ |
+| See the original shelf photos (§12.2 #1) | | ✓ | ✓ |
 | Upload photos, start a run | | ✓ | ✓ |
 | Approve/reject/replace matches | | ✓ | ✓ |
 | Add/remove books manually | | ✓ | ✓ |
@@ -122,11 +158,19 @@ collapsed into a single implicit root.
 | Edit physical map | | ✓ | ✓ |
 | Invite/remove members, change roles | | | ✓ |
 | Attach BYO API key, see usage/quota | | | ✓ |
+| Rename the library | | | ✓ |
 | Delete photos, delete the library | | | ✓ |
 
-Open sub-questions: can a Viewer see the original photos (they show the
-inside of a home)? Is there a role between Viewer and Editor that may mark
-lending but not edit the catalog? Listed in §12.
+⚠ **Admin here is an admin inside one account's library** (owner,
+2026-08-10): the role governs a single household's collection. It is NOT the
+system operator — that is the separate staff console (`app/admin` /
+`app/staff_api`, its own plan), which authorizes on its own axis and never
+through this matrix.
+
+Remaining open sub-question: a role between Viewer and Editor that may mark
+lending but not edit the catalog. Nothing forecloses it — it would be a new
+`Role` plus one column in the table — and it stays open because nobody has
+asked for it yet.
 
 ### 4.3 Onboarding **[OPEN in detail]**
 
@@ -135,7 +179,7 @@ without the user creating any API account. The free-quota decision exists
 precisely to make this possible. Sketch:
 
 1. sign in (magic link / Google / Apple);
-2. create a Library, name it; optionally name a first PhysicalLibrary;
+2. create a Library, name it; optionally name a first Place;
 3. guided first capture — one shelf, with framing/lighting guidance;
 4. run on our key (free quota), show results;
 5. walk them through approving/correcting one shelf, so the review model is
@@ -784,12 +828,28 @@ a decision.
 
 ### 12.2 Product/UX questions to settle
 
-1. May a **Viewer** see the original shelf photos? They show the inside of a
-   home, and "viewer" may mean a friend browsing what you own.
+1. **[SETTLED 2026-08-10, P3.2]** May a **Viewer** see the original shelf
+   photos? **No.** The photos show the inside of a home, and "viewer" may
+   mean a friend browsing what you own; the catalog — titles, authors,
+   lending state — is what a Viewer is for. `VIEW_PHOTOS` is its own row in
+   §4.2's matrix, Editor+, so reversing this is a one-cell edit. The
+   privacy-preserving cell is also the cheap-to-reverse one: loosening later
+   shows photos to people who could not see them; tightening later cannot
+   un-show them.
 2. Can one **Account** belong to several Libraries, and how does it switch?
-   (Assumed yes above.)
-3. What happens when two members review the **same run** simultaneously —
-   last-write-wins, locking, or per-spine claim?
+   (Assumed yes above; P3.1 built exactly this.)
+3. **[SETTLED 2026-08-10, P3.2]** What happens when two members review the
+   **same run** simultaneously? **Optimistic concurrency — no locking, no
+   per-spine claim, and no new schema.** The write paths already have the
+   right semantics: every apply recomputes against CURRENT library state and
+   is idempotent by sighting (`Provenance.sighting`, P2.7/P2.9), so two
+   people confirming the same finding produce one book, one copy, one
+   sighting; and an answer to a question someone else just closed gets a 409
+   from the duplicates router's own re-derivation rather than a duplicate
+   write. Locking would trade that for a held-lock UX problem (§5.4's whole
+   design is that these prompts are rare); a per-spine claim is coordination
+   machinery for a household of two reviewers. Revisit only if real
+   simultaneous review produces a measured conflict this does not absorb.
 4. Does a book **removed from a shelf** stay in the library by default?
 5. Is there a **wishlist / "want to read"** concept, or is the library strictly
    what you physically own?

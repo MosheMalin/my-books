@@ -276,6 +276,11 @@ class MemoryReadStore:
         rows.sort(key=lambda r: (r.started_at or "", r.id), reverse=True)
         return tuple(rows)
 
+    def list_all_reads(self, library: LibraryRef) -> tuple[Read, ...]:
+        rows = list(self._r(library).values())
+        rows.sort(key=lambda r: (r.started_at or "", r.id), reverse=True)
+        return tuple(rows)
+
     def list_reads_for_capture(
         self, library: LibraryRef, capture_id: str,
     ) -> tuple[Read, ...]:

@@ -10,9 +10,10 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 
 from app import API_VERSION, __version__
-from app.api.deps import current_library, get_principal, get_tenancy_store
+from app.api.deps import get_principal, get_tenancy_store
 from app.api.dto import AccountDTO, LibraryRefDTO, MetaResponse
-from app.domain import LibraryRef
+from app.api.policy import require
+from app.domain import Capability, LibraryRef
 from app.ports import Principal
 from app.ports.tenancy import TenancyStore
 
@@ -21,7 +22,7 @@ router = APIRouter(tags=["meta"])
 
 @router.get("/meta", response_model=MetaResponse, summary="Service and library identity")
 def get_meta(
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.BROWSE)),
     principal: Principal = Depends(get_principal),
     tenancy: TenancyStore = Depends(get_tenancy_store),
 ) -> MetaResponse:

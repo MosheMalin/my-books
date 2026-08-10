@@ -526,7 +526,15 @@ now; the floor is the active LTS line. Installed here from the official MSI
 **`python tests/run_all.py`** runs everything and **exits non-zero on
 failure** — the individual `test_*.py` `__main__` blocks print PASS/FAIL and
 then exit 0, which is fine for a human and useless as a gate. Pass module
-names to run a subset (`python tests/run_all.py test_api`).
+names to run a subset (`python tests/run_all.py test_api`); `-j N` /
+`--serial` set the worker count, `-v` prints a line per test with its cost.
+
+**`python tools/check.py`** is the whole gate in one command — the python
+rings, the API contract, the client rings, the client typecheck, the sweep and
+the spotchecks, run CONCURRENTLY against a core budget and all reported
+together. The pre-commit hook is now only the part that decides *which* of
+those apply to the staged files; `--product` / `--web` / `--accuracy` pick the
+same subsets by hand.
 
 | module | count | what it protects |
 |---|---|---|
@@ -552,6 +560,77 @@ which also REPLACED the test that asserted an AUTO claim auto-enters — and
 the sighting-resolution rule found live). The jump before that was the catalog-wiring fix's
 `test_reader_wiring.py`, which exists because the product silently handed the
 engine a 57-entry stand-in catalog and a real shelf matched nothing.
+
+### The suite is fast on purpose (2026-08-10)
+
+The python rings took **80s** and the client rings **38.6s**; they are now
+**19s** and **25s**, with the same 627 + 98 tests and nothing skipped. A gate
+nobody waits for stops being a gate, so this is a correctness property, not a
+comfort. What it cost, in the order the time actually went:
+
+- **one test slept 22.5s.** `test_nli_transport_failure_is_safe` injected a
+  transport that raises, and `_fetch` retried it with a 1.5s backoff, five
+  queries deep — 28% of the whole python suite spent waiting for a network
+  that was never going to answer. The test now zeroes `retry_backoff` and
+  asserts the retry COUNT and `failed_fetches` instead, which is strictly more
+  than the sleep proved;
+- **FastAPI 0.141 resolves a route's dependency graph lazily, on that route's
+  first request** — ~50ms per app, and `test_api.py` built 153 apps. Apps are
+  now pooled and rebound through `app.api.app.bind_ports` (extracted from
+  `create_app`, so `_always`'s pydantic deep-copy trap is still exercised).
+  ⚠ Apps are returned at the END OF THE TEST, via a `after_each()` hook
+  `run_all.py` calls, **not** when a client closes: a large family of tests
+  here writes `c = TestClient(_app(...))` with no `with`, so recycling on
+  `__exit__` returned almost nothing (135 apps for 138 tests; it is 3 now);
+- **`import booksnap.catalog` cost 6.4 seconds.** `booksnap/__init__.py`
+  imported `.pipeline` eagerly, which pulls `segment` → scipy.signal + cv2. The
+  layering rule that lets `app/domain/*` import `booksnap.catalog` *and nothing
+  else* exists precisely to keep the domain free of that, and the package's own
+  `__init__` defeated it — every domain module, every store, and the product
+  server's startup paid it. Now PEP 562 lazy, with the same public surface.
+  `app/adapters/booksnap_reader.py` imports `Pipeline` inside `read()` for the
+  same reason: `unavailable()` and the DTO mapping do not need the CV stack;
+- **`starlette.testclient` starts an event-loop thread per `with` block.**
+  `tests/_fastclient.py` lends one process-wide portal instead. It substitutes
+  only what `anyio.from_thread.start_blocking_portal` returns, for the duration
+  of that one call, so starlette keeps doing its own lifespan and streams;
+- **`test_store_contract` re-derived a byte-identical schema 109 times.** Each
+  sqlite store now starts from a copy of one migrated template (the whole
+  directory, because WAL leaves a `-wal` beside the file). The constructor
+  still runs `migrate()` — which is what a real deployment does on a current
+  file. The MIGRATION tests still build their own old-version databases;
+- **`require('jsdom')` costs 3.5s on this machine** and vitest builds the
+  environment once per test FILE. `isolate: false` + `maxWorkers: 2` in
+  `app/web/vite.config.ts`; `src/test/setup.ts` gained the global reset that
+  pays for the sharing. Measured, so nobody re-derives it: happy-dom is *not*
+  the fix (3120 files, **22s** to require), and 2 workers beat both 1 (31.7s)
+  and 4 (28.4s);
+- **`userEvent`'s direct API pauses between every event.** 66ms per click
+  against 15ms; a 12-character `type`, 235ms against 31ms. `src/test/user.ts`
+  is the same API with `delay: null`, still a fresh session per call.
+
+⚠ **`tests/run_all.py` shards across PROCESSES, and each worker runs its tests
+sequentially.** Not a preference: `test_reader_wiring` swaps
+`BOOKSNAP_CATALOG_BACKEND` and `test_api` pops Google/NLI credentials out of
+`os.environ`, both safe against another process and silently wrong against
+another thread. The shared portal and the app pool assume it too.
+
+⚠ **Discovery happens in the worker, from the module's own `vars()` — never in
+the parent and never from the source text.** Enumerating in the parent costs
+12s of serial imports before the first test runs, and an AST walk finds **10**
+of `test_store_contract.py`'s 202 tests, because 192 of them are generated at
+import time (one spec × every implementation) — the other 192 would vanish with
+no error at all. Each shard reports how many tests it saw; the parent fails the
+run if the shards disagree or if they did not, between them, run all of it.
+Mutation-checked: making a shard drop one test fails every module by name.
+
+⚠ **The two measurements to distrust on this machine.** It is a 4-core i5 with
+no hyperthreading, so parallel gains are modest and wall-clock numbers move
+±20% with whatever else is running. And loading a package of many small files
+costs ~5ms *per file* here — jsdom's 650 files are 3.5s, of which only 0.75s is
+reading them. That smells like real-time AV scanning of `node_modules`; an
+exclusion for the repo would speed up npm, vite and this suite together, but it
+is a machine setting for the owner to make, not something the repo can fix.
 
 **Test the real input, not a fixture you invented.** Added after uploads
 shipped broken with a green suite (see the MPO warning under "Images are
@@ -2219,7 +2298,8 @@ since P1.0, deliberately unchanged. The ENTITY has a lifetime, gets renamed
 and is listed in a switcher. `Library.ref` is the one-way door, so nothing
 downstream has to know which it was handed.
 
-⚠ **Library is not PhysicalLibrary** (§4.1's own warning). Library is the
+⚠ **Library is not Place** (§4.1's own warning; *Place* is the settled noun,
+*PhysicalLibrary* its retired synonym). Library is the
 PERMISSION boundary — "the Malin family collection". A place you keep books
 (home, office, parents') is an address inside it, and addresses arrive with
 the map (plan §1.1). `test_a_library_is_not_a_place` asserts the absence
@@ -2476,6 +2556,331 @@ recorded here, and diagnosed the same way: **grep the served artefact for a
 string only the new code has**, rather than assuming HMR kept up. Restarting
 the dev server fixed it.
 
+## The permissions matrix is data (P3.2), and isolation closed out (P3.3)
+
+§4.2's matrix, settled and shipped: `app/domain/policy.py` holds `Capability`
+(13 members — the vision's rows, plus `VIEW_PHOTOS` for §12.2 #1 and
+`MANAGE_LIBRARY` for rename) and `POLICY`, a dict of capability →
+frozenset[Role]. `allowed(role, capability)` is the whole module API, and it
+**raises `PolicyUndeclared` for a capability with no row** rather than
+answering False — "denied by policy" and "nobody wrote the policy" must stay
+distinguishable, same stance as the fire table's `fires()`.
+
+**The one enforcement point is `app/api/policy.py:require(capability)`.**
+Every library-scoped route swapped `Depends(deps.current_library)` for
+`Depends(require(Capability.X))` — the checker itself depends on
+`current_library`, so H2's meta-test holds unchanged, and the route's own
+signature is otherwise untouched (the checker returns the `LibraryRef`).
+`tests/test_api.py:test_every_api_route_declares_exactly_one_policy_capability`
+is the meta-test the file's docstring promised since P3.1: a route with no
+declaration FAILS rather than defaulting to open. Exactly one, not at least
+one — two `require`s on a route would enforce the stricter intersection while
+reading as either-or.
+
+Decisions settled here (both recorded in VISION §12.2, both cheap to
+reverse because they are cells, not control flow):
+
+- **a Viewer never sees the photographs** (§12.2 #1). The photos show the
+  inside of a home; the catalog is what a Viewer is for. `VIEW_PHOTOS` gates
+  the image routes' GETs — metadata AND bytes, and the 403 comes from the
+  DEPENDENCY, before any store lookup, so a viewer cannot probe which keys
+  exist. Loosening later shows photos to people who could not see them;
+  tightening later cannot un-show them;
+- **two members reviewing one read need no locks** (§12.2 #3). The write
+  paths already have the right semantics: applies recompute against current
+  state and are idempotent by sighting, a second answer to a closed question
+  409s. Settled as "the schema already holds", which is exactly why guessing
+  it earlier would have produced lock tables nobody needs;
+- **`DELETE /images` is admin, not editor** — §4.2's own last row. Deleting
+  a photo destroys the evidence every read of it points at;
+- **renaming a library is admin.** The one direct `allowed()` call outside
+  `require()`, because `/libraries` is on the ACCOUNT axis (the closed
+  exemption list) — same matrix, different transport of "which library".
+  403 there is honest, not a §4.2 violation: the membership lookup already
+  proved the caller may SEE the library; §4.2's 404 protects OTHER
+  households' libraries, and it is answered by `current_library` one
+  dependency earlier. Order pinned by
+  `test_a_foreign_library_is_still_404_never_403_now_that_policy_exists`.
+
+⚠ **Two "admins", one word.** §4.2's Admin is an admin INSIDE one account's
+library — the household's owner. The System Admin console (`app/admin/`,
+`app/staff_api/`, `planning/ADMIN_CONSOLE_PLAN.md`) is the OPERATOR's
+surface, a separate track in a parallel session; it never authorizes through
+this matrix, and this matrix never grants operator powers.
+
+⚠ **Why the enforcement point is NOT in `deps.py`**:
+`test_library_resolution_has_exactly_one_implementation` walks every other
+function in that module and fails on any `.library` attribute read — and the
+role resolver legitimately reads `principal.library` for the dev-trusted
+case (its own library is ADMIN without a row, mirroring the resolver's case
+2; `app/main.py`'s bootstrap writes the real row anyway). A separate module
+keeps H2's structural test meaningful.
+
+Mutation-checked, each against a named test: a flipped `VIEW_PHOTOS` cell, a
+route quietly reverted to bare `current_library`, `allowed()` defaulting
+instead of raising, and the rename check deleted.
+
+**P3.3 arrived mostly by having been paid for earlier**, which was the plan's
+own bet ("P3.3 inherits a suite instead of writing one under pressure"): the
+store contract's isolation cases have run against two library refs since
+P2.1 for every aggregate, blob isolation is pinned at the API ring
+(`test_a_photo_in_another_library_is_404_not_403`), foreign-vs-fictional
+indistinguishability was P3.1's, and the route meta-test is above. Nothing
+new to build; the item's content is that the claims are now enforced from
+three directions (store, resolver, per-route policy declaration).
+
+## The job queue (P3.4) — bounded, fair, and reads still settle themselves
+
+`app/adapters/queued_jobs.py:QueuedJobRunner` replaced the thread-per-job
+`InProcessJobRunner` (deleted, not kept as a second implementation to keep
+honest). Same `JobRunner` port, so the reads router changed one line; what
+changed is capacity discipline, not meaning:
+
+- **a fixed pool of workers drains a queue** (2 in `app/main.py` — a read is
+  engine-CPU or a paid LLM call, and ten at once helps neither on 4 cores);
+- **fairness is round-robin ACROSS tenants, FIFO within one** — one deque per
+  tenant, a ring of tenant keys. `submit()` grew `tenant=` (the reads router
+  passes `library.id`) and the API test pins that wiring with a spy, because
+  dropping `tenant=` would silently collapse every library into one queue
+  and no adapter-ring test could see it;
+- **`retries=` exists and the reads job passes 0 ON PURPOSE.** The job
+  settles its own failure (`fail_read` + save); a runner-level retry would
+  re-run the ENGINE — paying for the same photos twice because the final
+  save hiccuped. Retry is for cheap idempotent callables; the option exists
+  so the queue is complete, not so reads use it;
+- **a queued job reports state `"running"` with progress
+  `{"stage": "queued"}`** rather than a fifth port state — every poller
+  would have to learn the new state and none can act on it; the client's
+  unknown-stage fallback (P3.1's live round) renders it as the plain line;
+- **a stopped-while-queued job still RUNS, with stop already set.** The
+  runner never settles a job from the scheduler: the caller's durable `Read`
+  (saved as `running` before submit) waits for `fn` to write its own ending,
+  so the work must run — it sees `should_stop()` true on its first poll and
+  settles as `stopped` in milliseconds. Settling from the scheduler is the
+  bug where a stopped read shows `running` forever, the same hang the
+  load-bearing try/except in `reads._job` guards against from the other side.
+
+`tests/test_jobs.py` (8) is the runner's own ring — fairness, retry budget,
+stop-while-queued, bounded concurrency, two-runners-share-nothing — all
+event-gated, never sleep-calibrated. The plan's named case ("two concurrent
+reads in two libraries do not observe each other") runs twice: adapter-level
+and over real HTTP (`test_two_concurrent_reads_in_two_libraries_do_not_
+observe_each_other`, whose GatedReader produces claims NAMING their library
+so a leak shows in data, not just timing). Mutation-checked: `tenant=`
+dropped in reads.py, round-robin broken, retry dead — each fails a named
+test.
+
+## Blob lifecycle (P3.5) — the reconciler under-deletes on purpose
+
+The tenant-keyed layout, content addressing and upload idempotency were
+P2.3's; what P3.5 added is the lifecycle: `BlobStore.list_keys` /
+`BlobStore.purge` on the port, `app/blob_lifecycle.py` (the ONE module
+allowed to say "orphan" — a sibling of `reconcile_apply`, ports only), and
+`tools/blob_gc.py` (dry-run by default; the dry run is the same code path as
+`--collect` minus the deletes, so the printout is the plan, not an
+estimate). Retention POLICY is §3's decision verbatim — keep originals +
+crops, user-purgeable — so there is no TTL machinery anywhere.
+
+Photos are the evidence the product runs on, so the collector is built to
+under-delete, and each guard is mutation-checked:
+
+- **references come from BOTH aggregates** — `Capture.image_id` and
+  `Claim.crop_key`. Captures alone would collect every spine crop; reads
+  alone every unread photo;
+- **reads come from `ReadStore.list_all_reads`** (new port method, contract-
+  tested in both adapters), never a walk of current shelves. The reads that
+  need it most are filed under a RETIRED shelf id: captures deleted one by
+  one, then the shelf — legal since P2.1 (`ShelfNotEmpty` counts captures,
+  not reads) — leaves reads whose crops are evidence a DB row still points
+  at. No route serves `list_all_reads`; a screen wanting it is re-inventing
+  the run list §5.5 forbids;
+- **the age floor (24h default) is a safety, not a knob.** Upload and
+  capture-binding are two calls (P2.3, deliberately), so a blob is
+  legitimately unreferenced for the whole afternoon someone spends dropping
+  photos before filing them. `min_age_s=0` is for tests;
+- **the wishlist's photos count** — `list_shelves` defaults to excluding
+  virtual shelves, the one default that is wrong here;
+- **`list_keys` reports originals only** — variants/sidecars are derived and
+  travel with their original, so listing them double-counts what one
+  `delete` removes.
+
+`purge(library)` is §3's "user-purgeable" as a primitive: one library's
+whole tree, idempotent, counted. No bulk route yet — per-photo deletion
+exists (`DELETE /images`, admin), and the whole-library form is half of what
+DELETE-library needs; the other half (a six-aggregate cascade) is still a
+design owed, per `libraries.py`'s updated note.
+
+Verified against the real `work/` data with the tool's dry run: two
+libraries, every stored photo referenced or too young, zero would-collect —
+the honest boring answer.
+
+## The run rate cap (P3.6) — one number, and it is not a quota
+
+`app/api/routers/reads.py:RUN_RATE_CAP_PER_HOUR` (30, env-overridable via
+`BOOKSNAP_RUN_RATE_CAP`): a library that already STARTED that many reads in
+a rolling hour gets **429** from `POST .../reads`, with a message that names
+the cap, says it is a retry-loop guard and not a quota, and says what to do.
+§1.2's own framing, kept: family won't run the bill up on purpose; a stuck
+client re-POSTing, or a 400-photo burst, will. Metering proper is pillar 5.
+
+- counts EVERY status — a retry loop's reads mostly fail, and failures cost
+  the engine work the cap protects;
+- per library, rolling hour — a burst in one library never freezes another
+  (tested), and old reads age out or the cap becomes a lifetime quota
+  (tested; both mutation-checked);
+- the honest O(reads) scan over `list_all_reads`, same trade as the diff
+  endpoints' `_FULL_LIBRARY_SCAN_LIMIT` — measure before optimising a route
+  a human presses a few times an hour.
+
+Client follow-through: the 429's detail surfaces through the existing
+failed-run panel (no new client path), and the queue's `{stage: "queued"}`
+progress (P3.4) got a real line — *"ממתין בתור…"* — instead of falling to
+"קורא…", which is exactly the looks-hung confusion the progress line exists
+to prevent. Client ring is 99 tests as of this.
+
+## What the pillar-3 review round found (2026-08-10)
+
+Three reviewer passes (data-integrity, quality, UX+concurrency) ran against
+P3.2–P3.6 as they landed; every finding below is fixed and has a named test.
+Recorded because each is the kind of thing that would read as intentional
+later:
+
+- **a repeat upload REFRESHES the blob's mtime** (`DiskBlobStore.put`,
+  `os.utime` on the dedup path). Without it the GC's age floor was provably
+  false for re-dropped photos: a 3-day-old unbound blob re-uploaded today
+  still listed as old, and a collect racing the new binding deleted bytes a
+  capture pointed at — reproduced end to end by the reviewer before fixing.
+  The one-line fix restores the documented guard;
+- **stopping a QUEUED read acknowledges immediately**: `stop()` writes
+  `{"stage": "stopped"}` into a not-yet-picked-up job's progress, so the
+  phone shows "עוצר…" instead of "ממתין בתור…" for however long the pool
+  stays busy — which read as the tap not registering. (Money was never at
+  risk: `Pipeline.run` checks stop before the first image.);
+- **a read stopped with ZERO claims archives no diff summary** — it never
+  looked, and "12 not seen" forever in the history row would be a lie.
+  Routine now that stop-while-queued exists; treated like `failed`;
+- **the global Run disable was retired, the per-group half kept.** The
+  owner's rule was about re-reading the SAME (shelf, depth); P3.4's queue
+  makes NEW shelves safe to accept mid-batch (they queue fairly), so
+  `pendingGroups` now excludes running groups and the button disables only
+  when nothing is startable. Both halves have client tests;
+- **a 429 stops `start()`'s loop** — six selected groups hitting the cap
+  rendered six identical failure panels;
+- **a settled job releases its closure** (`job.fn = None` AND the worker's
+  local binding — the weakref test caught that the local alone kept the
+  world alive through the worker's next idle wait). `self._jobs` never
+  evicts, so retained closures were a slow leak the thread-per-job runner
+  never had;
+- `_next_locked`'s defensive branch uses `pop`, never `del` — the KeyError
+  it guarded against would have killed the worker it was defending.
+
+Deliberately NOT changed on review advice: the rate cap's O(reads) scan
+(fine to ~1–2k reads; the fix at that point is a `count_reads_since` store
+method, not a cache), and `library.id` charset validation in the blob layout
+(ids are server-minted and the resolver 404s unknowns; noted as
+defence-in-depth for P4).
+
+## ⚠⚠ A tenant is an ownership boundary, never a geography (owner, 2026-08-10)
+
+Settling the question P3.1's switcher surfaced (and the parallel admin
+session first raised): **a different tenant is a different account's
+collection. Within one account, the living room, the child's room, and a
+whole other site (office, shelves at the parents') are LOCATIONS of one
+Library — pillar 6's Place — never Libraries.** Full statement in VISION
+§4.1; the discriminator is whose books, not whose roof. Splitting one
+collection across Libraries has a silent cost: search, dedup and §5.4's
+duplicate question are tenant-scoped, so a second copy of a book you own
+would never be flagged.
+
+What changed to match (the domain already matched —
+`test_a_library_is_not_a_place` and the whole per-library tenancy stack are
+exactly this rule):
+
+- **the switcher renders as a plain LABEL until a second library genuinely
+  exists** (`LibrarySwitcher.tsx`, `.libswitch-label`). An always-present
+  "+ new library" was the only noun the UI offered for "child room", one tap
+  away — the modelling error it invited is the one the owner hit. Creation
+  now lives in the menu (≥2 libraries); an account's normal path to a second
+  library is MEMBERSHIP (P4.3), and the API remains the escape hatch for the
+  rare genuine second collection;
+- **the create form states the rule where the choice is made**
+  (`t.library_create_hint`, both locales): a library is another person's or
+  household's collection; rooms arrive with the Map. Both the demotion and
+  the hint are mutation-checked;
+- P6.1 (plan) now says Places include SITES, and is the recorded exit for
+  any room-modelled-as-library: its books move back under a Place and the
+  extra Library retires. Sign-up creates exactly ONE library (P4.1 mints
+  it; P4.3's §4.3 onboarding names it — the constraint spans both items).
+
+Verified live against a running two-library server (menu + roles + hint,
+DOM-level; the pane did not composite frames — the recurring limitation —
+so paint is inferred from existing tokens as before). The single-library
+label variant is pinned by the client ring, which is where it can be built.
+
+## The library merge tool — §4.1's cleanup, P6.1's exit arriving early
+
+`tools/merge_library.py` over `app/adapters/merge_library.py`: retire a
+mis-modelled library (a location that got created as a TENANT before Place
+existed) into the collection it belongs to. Built for the owner's ruling that
+**lib2 (`103e0de5…`) is the parents' shelves, not a tenant** — 14 books, one
+scan, 3 works colliding with the main 272.
+
+The rules, each with a named test (11) and the load-bearing ones
+mutation-checked:
+
+- **identity is re-homed, never re-minted** — shelf/capture/read/claim/copy
+  ids survive; provenance is keyed by copy and never touched;
+- **a colliding work becomes another COPY of the book already owned** (the
+  physical truth), with its status, lending and provenance riding along;
+  positions renumber after the target's. A colliding source ROW carrying a
+  rating/note/read-status is REFUSED — which side wins is a human question;
+- **photos copy first, verify by hash (content addressing makes that exact),
+  and the source tree is purged only after the commit** — at every failure
+  point, every key a row names resolves somewhere. Mutation-checked: purging
+  before the commit fails the mid-copy-abort test;
+- **recorded human answers refuse the merge**, checked twice — before the
+  copy (clear message) and inside the transaction (a live server writing a
+  decision during the copy window must not be orphaned); deliberately
+  redundant with the leftover check over EVERY `library_id` table, the P2.1
+  "what else enforces this?" pattern, verified in both directions;
+- the CLI: dry-run by default (UTF-8 stdout — cp1255 rendered the collision
+  list, the dry run's whole job, as mojibake), `--execute` requires
+  `--confirm-retire <src-id>` (naming what you RETIRE catches swapped
+  src/dst), refuses to retire the dev principal's default library (the
+  bootstrap would resurrect an empty ghost), and snapshots via **SQLite's
+  backup API with an integrity check ON the backup** — three `copy2`s of a
+  live WAL database is not a snapshot, a checkpoint between them silently
+  loses committed rows.
+
+All of this is the pre-run data-integrity review (9 findings, each fixed the
+same day) — the reviewer rehearsed the real merge end-to-end on a snapshot:
+283 books after, integrity ok, zero orphans, every blob key resolving.
+
+## Reviewer agents (`.claude/agents/`) — run them after substantive items
+
+Four persisted reviewer personas, born from the pillar-3 round where every
+one of them found real, fix-worthy bugs (see "What the pillar-3 review round
+found"). They are project files, so any session on any machine can spawn
+them via the Agent tool by name; the definition carries the persona, method
+and repo rules — the CALLER's prompt supplies only the scope (commit shas or
+files) and any item-specific questions:
+
+| agent | when |
+|---|---|
+| `review-data-integrity` | any substantive server-side change |
+| `review-quality` | any substantive change (attacks the new tests) |
+| `review-ux` | anything that changes user-visible behaviour |
+| `review-migration` | BEFORE committing a schema-version change |
+
+Ground rules baked into all four, worth knowing when reading their reports:
+they verify by RUNNING (tests, probes, temporary mutations they restore
+byte-exact), they review a clean worktree if the live tree is flapping from
+a parallel session, they never touch the staff-console workstream, and a
+"clean checks" section is part of the deliverable — a clean check is
+information. Run them in the BACKGROUND after committing an item and keep
+working; fold their findings into a follow-up commit. Don't run all four on
+every keystroke — one pass per landed item is the cadence that has paid.
+
 ## Author sort, and why it needed a schema version
 
 "Sort by author" means the SHELF order — by surname. Sorting the stored string
@@ -2667,14 +3072,27 @@ browser. Do not read a green client ring as "the screen is right".
 
 ⚠ jsdom keeps `localStorage` across tests in a file, and the language choice
 persists deliberately — so `afterEach` must clear it, or every test after the
-mirroring one starts in English and looks for the wrong strings.
+mirroring one starts in English and looks for the wrong strings. Since
+`isolate: false` (see "The suite is fast on purpose") it keeps it across FILES
+too, along with `client.ts`'s selected library — `src/test/setup.ts` resets
+both globally, and anything else that becomes module-level state belongs in
+that list rather than in a per-file workaround.
 
-**The pre-commit hook now has two independent halves** (`tools/githooks/pre-commit`):
-accuracy (sweep + spotchecks, unchanged) and product (`tests/run_all.py`,
+**The pre-commit hook decides which checks apply; `tools/check.py` runs them**
+(`tools/githooks/pre-commit`). Still two independent halves — accuracy (sweep +
+spotchecks) and product (`tests/run_all.py`,
 `tools/api_contract.py --check`, and the client tests when `app/web/` is
 staged). Product work must never require touching the accuracy baseline. The
 client half self-skips without `node_modules`, like the spotchecks do without
 run data.
+
+Two properties of `check.py` worth not undoing: **every check runs even after
+one fails** (stopping at the first red hides the other three and turns one
+fix-and-rerun cycle into four), and **checks are admitted against a core
+budget** rather than all launched at once. The free-for-all version made every
+check slower — the python rings went 19s → 52s — because two of them fan out
+internally; the budget is cores + 2, measured (47s at exactly-cores, 44s at
++2, 46s at +4: enough slack to cover startup I/O, not enough to thrash).
 
 ## Known constraints / next steps (roughly prioritised, updated 2026-08-06)
 

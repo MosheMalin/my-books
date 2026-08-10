@@ -23,10 +23,16 @@ live in ``app/domain/tenancy.py``:
 **Deliberately absent, not disabled:** DELETE. §4.2 lists "delete the library"
 as an admin capability, and it means deleting every book, shelf, read and
 photo in it — a cascade across six aggregates that do not know about each
-other, and the single most destructive act in the product. It needs P3.2's
-policy and P3.5's blob purge to be honest, and neither exists yet. Member
-management (invite, change role, remove) is P4.3's, for the same reason: an
-invite with no login to accept it is not a feature.
+other, and the single most destructive act in the product. Its two named
+prerequisites now exist — P3.2's policy (`Capability.DELETE_LIBRARY`, admin,
+already a row in the matrix so the route cannot ship open) and P3.5's blob
+purge (`BlobStore.purge`) — but the cascade itself is still a design owed:
+today no store has a "drop everything in this library" operation, and adding
+six of them for a route nobody has asked to press is speculation. When it is
+built, note the meta-test exemption list is keyed by (method, path), so
+`DELETE /libraries/{id}` will NOT inherit the account-scoped exemption
+silently. Member management (invite, change role, remove) is P4.3's, for the
+same reason: an invite with no login to accept it is not a feature.
 """
 from __future__ import annotations
 
@@ -34,7 +40,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import get_clock, get_id_gen, get_principal, get_tenancy_store
 from app.api.dto import LibraryCreate, LibraryDTO, LibraryPatch
-from app.domain import Account, new_library, rename_library
+from app.domain import Account, Capability, allowed, new_library, rename_library
 from app.domain.tenancy import LibraryNeedsAName
 from app.ports import Clock, IdGen, Principal
 from app.ports.tenancy import TenancyStore
@@ -94,7 +100,21 @@ def create_library(
     ids: IdGen = Depends(get_id_gen),
 ) -> LibraryDTO:
     """The creator becomes its admin, in the same domain call and the same
-    two writes — see the module note."""
+    two writes — see the module note.
+
+    ⚠ This route is the DELIBERATE escape hatch for §4.1's settled tenancy
+    rule (owner, 2026-08-10): a second Library under one account is legal —
+    it is the rare genuinely-separate collection (a shop's stock, a
+    classroom set) — and the ONLY discouragement is client-side, on purpose:
+    the app-bar switcher renders no create action until a second library
+    already exists (`LibrarySwitcher.tsx`). A server-side count cap was
+    considered and REFUSED: it would block the very cases the decision
+    blesses, a quota is a different axis from P3.2's (role × capability)
+    policy data, and the structural half of the rule is already enforced
+    where it matters — a Library cannot carry a room or a place
+    (`test_a_library_is_not_a_place`). Do not "fix" this route in either
+    direction without re-reading VISION §4.1.
+    """
     account = _account(principal, tenancy)
     try:
         library, membership = new_library(
@@ -127,6 +147,18 @@ def patch_library(
     library = tenancy.get_library(library_id) if membership else None
     if membership is None or library is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no such library")
+    # P3.2: the one direct `allowed()` call outside app/api/policy.py, because
+    # this route is on the ACCOUNT axis — `require()` resolves a library
+    # through `current_library`, which these routes are exempt from (the
+    # closed list in tests/test_api.py). Same matrix, same data; only the
+    # transport of "which library" differs. 403 (not 404) is honest here: the
+    # membership above proves the caller may SEE the library — renaming the
+    # household's own name is what §4.2 reserves for its admin.
+    if not allowed(membership.role, Capability.MANAGE_LIBRARY):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "renaming a library is an admin action (§4.2)",
+        )
     try:
         renamed = rename_library(library, body.label)
     except LibraryNeedsAName as exc:

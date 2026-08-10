@@ -147,21 +147,27 @@ export function CaptureTab() {
                 ))}
               </div>
               <div className="runactions">
-                {/* Disabled while ANY read is running (owner, live use).
-                    Pressing it again starts a second read of the same
-                    (shelf, depth) — legal server-side, and a waste of money
-                    and minutes that also replaces the panel you were
-                    watching. The reason is stated rather than left to a
-                    greyed-out button nobody can explain. */}
+                {/* Disabled when there is nothing STARTABLE. The owner's
+                    live-use rule ("Run is disabled while a read is running")
+                    was about re-reading the SAME (shelf, depth) — money,
+                    minutes, and it replaces the panel being watched. That
+                    half still holds: a running group is excluded from
+                    `pendingGroups`, so it cannot be double-started. The
+                    global half was retired with P3.4 — new shelves queue
+                    fairly server-side, so refusing them while a batch runs
+                    protected nothing and froze the owner who had just
+                    photographed one more shelf. The hint appears exactly
+                    when the disable is BECAUSE of a running read. */}
                 <button
                   type="button"
                   className="btn primary"
-                  disabled={cap.pendingGroupCount === 0 || cap.running}
+                  disabled={cap.pendingGroupCount === 0}
                   onClick={() => void cap.start()}
                 >
                   {t.run(cap.selectedReadyCount)}
                 </button>
-                {cap.running && (
+                {cap.running && cap.pendingGroupCount === 0
+                  && cap.selectedReadyCount > 0 && (
                   <span className="tiny muted">{t.run_busy}</span>
                 )}
               </div>

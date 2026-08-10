@@ -20,13 +20,14 @@ a resource's own identity.
 from __future__ import annotations
 
 import logging
+import os
+from datetime import datetime, timedelta
 from typing import Sequence
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.api.deps import (
-    current_library,
     get_blob_store,
     get_book_store,
     get_clock,
@@ -47,8 +48,10 @@ from app.api.dto import (
     ReadDTO,
     ReadSummaryDTO,
 )
+from app.api.policy import require
 from app.domain import (
     Alternative,
+    Capability,
     Capture,
     Claim,
     ClaimTier,
@@ -98,6 +101,50 @@ router = APIRouter(prefix="/shelves/{shelf_id}/reads", tags=["reads"])
 # `EXPORT_MAX` already makes for the export route).
 _FULL_LIBRARY_SCAN_LIMIT = 100_000
 
+# P3.6 (§1.2): the per-library run rate cap — ONE number, not a metering
+# system (that is pillar 5). It guards against a retry loop or a 400-photo
+# burst, never against family: 30 read starts in a rolling hour is more
+# cataloguing than the owner has ever done in a day, and a stuck client
+# re-POSTing hits it in minutes. Env-overridable for the day a real burst is
+# legitimate (a first whole-house scan), read once at startup like every
+# other env knob in this codebase.
+RUN_RATE_CAP_PER_HOUR = int(os.environ.get("BOOKSNAP_RUN_RATE_CAP", "30"))
+_RATE_WINDOW = timedelta(hours=1)
+
+
+def _check_run_rate(reads: ReadStore, library: LibraryRef, clock: Clock) -> None:
+    """429 when this library already started the cap's worth of reads in the
+    rolling window.
+
+    Counts EVERY status, deliberately: a retry loop's reads mostly fail, and
+    failures cost the engine work the cap exists to protect. The honest
+    O(reads-in-library) scan is the same trade the diff endpoints make with
+    `_FULL_LIBRARY_SCAN_LIMIT` — measure before optimising a route a human
+    presses a few times an hour.
+    """
+    try:
+        cutoff = datetime.fromisoformat(clock.now_iso()) - _RATE_WINDOW
+    except ValueError:
+        return
+    recent = 0
+    for read in reads.list_all_reads(library):
+        if not read.started_at:
+            continue
+        try:
+            if datetime.fromisoformat(read.started_at) < cutoff:
+                continue
+        except (ValueError, TypeError):
+            continue
+        recent += 1
+    if recent >= RUN_RATE_CAP_PER_HOUR:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            f"this library already started {recent} reads in the last hour "
+            f"(cap {RUN_RATE_CAP_PER_HOUR} — a guard against a runaway retry "
+            "loop, not a quota). Wait a while, or raise BOOKSNAP_RUN_RATE_CAP "
+            "and restart if this burst is intentional.",
+        )
+
 
 def _check_mode_is_usable(reader: Reader, mode: str) -> None:
     """409 before starting, rather than a read that fails a minute later.
@@ -135,7 +182,7 @@ def _load_read(store: ReadStore, library: LibraryRef, shelf_id: str,
 def start_read(
     shelf_id: str,
     body: ReadCreate,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.CAPTURE)),
     shelves: ShelfStore = Depends(get_shelf_store),
     reads: ReadStore = Depends(get_read_store),
     reader: Reader = Depends(get_reader),
@@ -154,6 +201,7 @@ def start_read(
     settle into ``done``/``stopped``/``failed``.
     """
     shelf = _load_shelf(shelves, library, shelf_id)
+    _check_run_rate(reads, library, clock)
     _check_mode_is_usable(reader, body.mode)
     try:
         shelf.check_depth(body.depth)
@@ -185,9 +233,15 @@ def start_read(
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     reads.save_read(library, read)
 
+    # tenant= is the fairness key (P3.4): pending reads drain round-robin
+    # across libraries. retries stays 0 ON PURPOSE — the job settles its own
+    # failure (`fail_read` + save), and a runner-level retry would re-run the
+    # ENGINE, paying for the same photos twice because the final save
+    # hiccuped. See JobRunner.submit's own ⚠.
     jobs.submit(read.id, _job(read, shelf, library, captures, reads, shelves,
                               reader, blobs, books, decisions, duplicates,
-                              ids, clock))
+                              ids, clock),
+                tenant=library.id)
     return ReadDTO.of(read)
 
 
@@ -199,7 +253,7 @@ def list_reads(
         description="Narrow to one row front-to-back — §5.7 #1 scopes a "
                     "read's history to the depth it actually covered.",
     ),
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.BROWSE)),
     shelves: ShelfStore = Depends(get_shelf_store),
     reads: ReadStore = Depends(get_read_store),
 ) -> list[ReadSummaryDTO]:
@@ -213,7 +267,7 @@ def list_reads(
 def get_read(
     shelf_id: str,
     read_id: str,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.BROWSE)),
     reads: ReadStore = Depends(get_read_store),
     jobs: JobRunner = Depends(get_job_runner),
 ) -> ReadDTO:
@@ -232,7 +286,7 @@ def get_read(
 def stop(
     shelf_id: str,
     read_id: str,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.CAPTURE)),
     reads: ReadStore = Depends(get_read_store),
     jobs: JobRunner = Depends(get_job_runner),
 ) -> ReadDTO:
@@ -292,7 +346,7 @@ def diff_for(
 def get_diff(
     shelf_id: str,
     read_id: str,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.BROWSE)),
     shelves: ShelfStore = Depends(get_shelf_store),
     reads: ReadStore = Depends(get_read_store),
     books: BookStore = Depends(get_book_store),
@@ -314,7 +368,7 @@ def apply_read_diff(
     shelf_id: str,
     read_id: str,
     body: ApplyDiffRequest,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.REVIEW)),
     shelves: ShelfStore = Depends(get_shelf_store),
     reads: ReadStore = Depends(get_read_store),
     books: BookStore = Depends(get_book_store),
@@ -397,7 +451,7 @@ def lookup_findings(
     read_id: str,
     q: str = Query("", description="What the owner is typing."),
     limit: int = Query(3, ge=1, le=20),
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.BROWSE)),
     reads: ReadStore = Depends(get_read_store),
 ) -> list[FindingMatchDTO]:
     """*"Did this read already find this book?"* — asked while the owner is
@@ -445,7 +499,7 @@ def add_a_finding_by_hand(
     shelf_id: str,
     read_id: str,
     body: ManualFindingIn,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.EDIT_BOOKS)),
     shelves: ShelfStore = Depends(get_shelf_store),
     reads: ReadStore = Depends(get_read_store),
     books: BookStore = Depends(get_book_store),
@@ -520,7 +574,7 @@ def retract_a_finding(
     shelf_id: str,
     read_id: str,
     claim_id: str,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.REVIEW)),
     shelves: ShelfStore = Depends(get_shelf_store),
     reads: ReadStore = Depends(get_read_store),
     books: BookStore = Depends(get_book_store),
@@ -564,7 +618,7 @@ def restore_a_finding(
     shelf_id: str,
     read_id: str,
     claim_id: str,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.REVIEW)),
     shelves: ShelfStore = Depends(get_shelf_store),
     reads: ReadStore = Depends(get_read_store),
     books: BookStore = Depends(get_book_store),
@@ -672,7 +726,14 @@ def _job(
             # taken for a `failed` read: `current.claims` may be an arbitrary
             # partial slice from whatever blew up mid-spine, and a summary
             # over that is not evidence worth freezing.
-            if current.status in (ReadStatus.DONE, ReadStatus.STOPPED):
+            # A STOPPED read with NO claims never looked at anything — routine
+            # now that P3.4 lets a queued read be stopped before any worker
+            # takes it. Summarising it would archive "12 not seen" forever
+            # for a read that read nothing (the §5.6 rule keeps the books
+            # either way; the history ROW would still lie). Same treatment as
+            # `failed`: no snapshot, no apply.
+            if (current.status is ReadStatus.DONE
+                    or (current.status is ReadStatus.STOPPED and current.claims)):
                 library_books = {b.key: b for b in
                                  books.list(library, limit=_FULL_LIBRARY_SCAN_LIMIT).items}
                 decision_rows = decisions.list_decisions(library, read.shelf_id,

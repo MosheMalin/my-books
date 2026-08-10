@@ -36,7 +36,7 @@ from pathlib import Path
 from app.adapters.booksnap_reader import BooksnapReader
 from app.adapters.dev_identity import DevPrincipal, SystemClock, UuidIdGen
 from app.adapters.disk_blobs import DiskBlobStore
-from app.adapters.inprocess_jobs import InProcessJobRunner
+from app.adapters.queued_jobs import QueuedJobRunner
 from app.adapters.sqlite_store import (
     SqliteBookStore,
     SqliteDecisionStore,
@@ -186,10 +186,13 @@ def build() -> object:
         # chain: a book confirmed once should match instantly on every later
         # shelf, which is what the tuning server gets from ConfirmedCatalog.
         reader=BooksnapReader(blob_store=blobs, book_store=books),
-        # In-process, single-user (P2.4; P3.4 replaces it with a real queue).
-        # One instance here, on the composition root, is what H2/§1.3 asks
-        # for — every job's state lives on THIS object, never a module global.
-        job_runner=InProcessJobRunner(),
+        # P3.4: a bounded queue with per-tenant round-robin fairness. Two
+        # workers on a 4-core machine that is also serving HTTP — a read is
+        # either engine-CPU (spines) or a paid API call (llmpage), and ten at
+        # once helps neither. One instance here, on the composition root, is
+        # what H2/§1.3 asks for — every job's state lives on THIS object,
+        # never a module global.
+        job_runner=QueuedJobRunner(workers=2),
         clock=SystemClock(),
         id_gen=UuidIdGen(),
         web_dist=WEB_DIST,

@@ -1068,6 +1068,19 @@ def a_read_in_another_library_reads_as_absent(store):
 
 
 @read_contract
+def list_all_reads_spans_shelves_and_survives_a_retired_shelf_id(store):
+    """P3.5's method: the blob reconciler must see every read's crops, and
+    the reads that need it most are filed under a shelf id that no longer
+    resolves (captures deleted one by one, then the shelf — legal, P2.1).
+    A store has no shelf table to join through here, so nothing should
+    filter; asserted with a shelf id nothing else references."""
+    store.save_read(LIB, _read(1))
+    store.save_read(LIB, _read(2, shelf_id="sh-retired"))
+    assert {r.id for r in store.list_all_reads(LIB)} == {"rd1", "rd2"}
+    assert store.list_all_reads(OTHER) == (), "another library's reads leaked"
+
+
+@read_contract
 def saving_a_read_into_the_wrong_library_is_refused_loudly(store):
     _raises(WrongLibrary, store.save_read, OTHER, _read(1, library=LIB))
     assert store.get_read(OTHER, "rd1") is None
@@ -1462,6 +1475,51 @@ def a_library_is_readable_by_id_even_by_a_caller_with_no_membership(store):
 
 # --- registration ---------------------------------------------------------
 
+# ⚠ Every sqlite store here starts from a COPY of an already-migrated file,
+# not from an empty one. `migrate()` walks twelve DDL steps, ~49ms, and this
+# module builds 109 databases — half its runtime was re-deriving a schema that
+# is byte-identical every time.
+#
+# It changes nothing the contract asserts. The store constructor still runs
+# `migrate()`, which is exactly what a real deployment does on a file that is
+# already current: it reads `user_version`, finds 12, and applies nothing. The
+# template itself is built by the real migration, so a broken step still fails
+# — loudly, at the first sqlite test rather than in all of them.
+#
+# The MIGRATION tests (`test_a_v1_database_upgrades_and_backfills_...`) build
+# their own old-version files and are deliberately untouched: replaying the
+# steps is the whole point there.
+_TEMPLATE_DIR: Path | None = None
+
+
+def _template() -> Path:
+    """A directory holding `books.db` at the current schema version."""
+    global _TEMPLATE_DIR
+    if _TEMPLATE_DIR is None:
+        tmp = Path(tempfile.mkdtemp(prefix="booksnap-template-"))
+        SqliteBookStore(tmp / "books.db")      # constructing it runs migrate()
+        _TEMPLATE_DIR = tmp
+    return _TEMPLATE_DIR
+
+
+@contextmanager
+def _fresh_db(prefix: str):
+    """A private copy of the migrated template, removed afterwards.
+
+    The whole directory is copied, not just `books.db`: the adapter opens in
+    WAL mode, so a `-wal`/`-shm` pair may be sitting beside the file, and a
+    copy that took only the `.db` could hand a test a database missing
+    whatever had not been checkpointed yet.
+    """
+    tmp = tempfile.mkdtemp(prefix=prefix)
+    try:
+        dest = Path(tmp) / "db"
+        shutil.copytree(_template(), dest)
+        yield dest / "books.db"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 @contextmanager
 def _memory_store():
     yield MemoryBookStore()
@@ -1469,11 +1527,8 @@ def _memory_store():
 
 @contextmanager
 def _sqlite_store():
-    tmp = tempfile.mkdtemp(prefix="booksnap-store-")
-    try:
-        yield SqliteBookStore(Path(tmp) / "books.db")
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+    with _fresh_db("booksnap-store-") as path:
+        yield SqliteBookStore(path)
 
 
 @contextmanager
@@ -1483,11 +1538,8 @@ def _memory_shelf_store():
 
 @contextmanager
 def _sqlite_shelf_store():
-    tmp = tempfile.mkdtemp(prefix="booksnap-shelf-")
-    try:
-        yield SqliteShelfStore(Path(tmp) / "books.db")
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+    with _fresh_db("booksnap-shelf-") as path:
+        yield SqliteShelfStore(path)
 
 
 @contextmanager
@@ -1497,11 +1549,8 @@ def _memory_read_store():
 
 @contextmanager
 def _sqlite_read_store():
-    tmp = tempfile.mkdtemp(prefix="booksnap-read-")
-    try:
-        yield SqliteReadStore(Path(tmp) / "books.db")
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+    with _fresh_db("booksnap-read-") as path:
+        yield SqliteReadStore(path)
 
 
 @contextmanager
@@ -1511,11 +1560,8 @@ def _memory_decision_store():
 
 @contextmanager
 def _sqlite_decision_store():
-    tmp = tempfile.mkdtemp(prefix="booksnap-decision-")
-    try:
-        yield SqliteDecisionStore(Path(tmp) / "books.db")
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+    with _fresh_db("booksnap-decision-") as path:
+        yield SqliteDecisionStore(path)
 
 
 @contextmanager
@@ -1525,11 +1571,8 @@ def _memory_duplicate_queue():
 
 @contextmanager
 def _sqlite_duplicate_queue():
-    tmp = tempfile.mkdtemp(prefix="booksnap-duplicates-")
-    try:
-        yield SqliteDuplicateQueue(Path(tmp) / "books.db")
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+    with _fresh_db("booksnap-duplicates-") as path:
+        yield SqliteDuplicateQueue(path)
 
 
 @contextmanager
@@ -1539,11 +1582,8 @@ def _memory_tenancy_store():
 
 @contextmanager
 def _sqlite_tenancy_store():
-    tmp = tempfile.mkdtemp(prefix="booksnap-tenancy-")
-    try:
-        yield SqliteTenancyStore(Path(tmp) / "books.db")
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+    with _fresh_db("booksnap-tenancy-") as path:
+        yield SqliteTenancyStore(path)
 
 
 IMPLEMENTATIONS = (("memory", _memory_store), ("sqlite", _sqlite_store))

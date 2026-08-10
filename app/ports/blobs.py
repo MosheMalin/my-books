@@ -24,9 +24,17 @@ expensive later rather than annoying now:
     the caller's business. That is also what keeps the API layer out of the
     image-processing business, which the layering test forbids outright.
 
-Deliberately NOT here: retention policy, user purge and the orphan reconciler
-(P3.5 — they need the tenant model), and any notion of *what* an image depicts,
-which is the ``Capture`` aggregate's business.
+P3.5 added the lifecycle half: :meth:`BlobStore.list_keys` (what is actually
+stored, for the orphan reconciler in :mod:`app.blob_lifecycle`) and
+:meth:`BlobStore.purge` (everything a library ever stored, gone — the §3
+"user-purgeable" primitive, and half of what a future DELETE-library needs).
+Retention POLICY stays out: §3's decision is "keep originals + crops,
+user-purgeable" — keeping is free, so there is no TTL machinery to own here.
+
+Still deliberately NOT here: any notion of *what* an image depicts, which is
+the ``Capture`` aggregate's business — including which keys are REFERENCED.
+The store cannot see the other aggregates, so "orphan" is a word only
+:mod:`app.blob_lifecycle` may use.
 """
 from __future__ import annotations
 
@@ -128,7 +136,40 @@ class BlobStore(Protocol):
         """Remove a blob and every variant of it. ``False`` if it wasn't there.
 
         ⚠ Nothing here checks whether a ``Capture`` still points at it — the
-        store cannot see the other aggregate. Reference counting and orphan
-        collection are P3.5's; until then a deleted blob leaves a capture whose
-        image will not load, and that is a recorded gap rather than a surprise.
+        store cannot see the other aggregate. A deleted blob leaves a capture
+        whose image will not load; that is a recorded, deliberate gap (the
+        admin-gated DELETE route says what it destroys), and the orphan
+        reconciler (P3.5) cleans the OTHER direction — bytes no row names.
         """
+
+    def list_keys(self, library: LibraryRef) -> tuple["StoredBlob", ...]:
+        """Every ORIGINAL stored for this library — never variants or
+        metadata sidecars, which are derived from an original and travel with
+        it (P3.5).
+
+        ``age_seconds`` is measured at call time, because the one thing the
+        reconciler must know besides the key is "was this uploaded a moment
+        ago" — upload and capture-binding are two calls (P2.3), so a blob is
+        legitimately unreferenced in the gap between them, and a collector
+        without an age floor would eat uploads mid-flow.
+        """
+
+    def purge(self, library: LibraryRef) -> int:
+        """Delete EVERYTHING this library ever stored — originals, variants,
+        sidecars. Returns how many originals went.
+
+        §3's "user-purgeable", as a primitive: the API exposes per-photo
+        deletion (admin, `DELETE /images/{key}`); this whole-library form has
+        no route yet — it is half of what DELETE-library needs (the other
+        half is the six-aggregate cascade that item still owes), and a
+        destructive bulk route with no UI asking for it would be speculative.
+        Idempotent: purging an empty or unknown library is 0, not an error.
+        """
+
+
+@dataclass(frozen=True)
+class StoredBlob:
+    """One stored original, as the reconciler sees it (P3.5)."""
+
+    key: str
+    age_seconds: float

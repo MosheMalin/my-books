@@ -48,6 +48,11 @@ export function RunProgress({ progress }: RunProgressProps) {
     line = t.stage_matching(done, total)
   } else if (stage === 'stopped') {
     line = t.stage_stopping
+  } else if (stage === 'queued') {
+    // P3.4: the job runner reports this while a read waits for a worker —
+    // another library's read (or an earlier one of ours) holds the pool.
+    // Saying "waiting" is honest where "reading…" would look hung.
+    line = t.stage_queued
   }
 
   // Only when the engine gave a real denominator. A bar with a made-up

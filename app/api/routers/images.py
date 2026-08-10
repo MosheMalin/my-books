@@ -29,9 +29,10 @@ from fastapi import (
     status,
 )
 
-from app.api.deps import current_library, get_blob_store
+from app.api.deps import get_blob_store
 from app.api.dto import ImageDTO
-from app.domain import LibraryRef
+from app.api.policy import require
+from app.domain import Capability, LibraryRef
 from app.ports.blobs import BlobStore, ImageTooLarge, UnsupportedImage
 
 router = APIRouter(prefix="/images", tags=["images"])
@@ -52,7 +53,7 @@ async def upload_image(
         description="Original name, for the review screen. Falls back to the "
                     "upload's own name; never used to decide the format.",
     ),
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.CAPTURE)),
     store: BlobStore = Depends(get_blob_store),
 ) -> ImageDTO:
     """Store a photo. **Idempotent by content** — the same bytes return the
@@ -78,7 +79,7 @@ async def upload_image(
 @router.get("/{key}", response_model=ImageDTO)
 def get_image(
     key: str,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.VIEW_PHOTOS)),
     store: BlobStore = Depends(get_blob_store),
 ) -> ImageDTO:
     """Metadata without the bytes — size, dimensions, original filename."""
@@ -92,7 +93,7 @@ def get_image(
 @router.get("/{key}/full")
 def get_full(
     key: str,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.VIEW_PHOTOS)),
     store: BlobStore = Depends(get_blob_store),
 ) -> Response:
     """The stored photo, EXIF already applied — the same pixels the engine
@@ -103,7 +104,7 @@ def get_full(
 @router.get("/{key}/thumb")
 def get_thumb(
     key: str,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.VIEW_PHOTOS)),
     store: BlobStore = Depends(get_blob_store),
 ) -> Response:
     """A JPEG thumbnail for the review grid.
@@ -119,7 +120,7 @@ def get_thumb(
 @router.delete("/{key}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_image(
     key: str,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.DELETE_PHOTOS)),
     store: BlobStore = Depends(get_blob_store),
 ) -> None:
     """Remove a photo and its renditions.

@@ -9,7 +9,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
+import { userEvent } from '../test/user'
 import { I18nProvider } from '../lib/i18n'
 import { ShelfPage } from './ShelfPage'
 import { fakeBook, fakeShelf, fakeShelfServer } from './shelfHarness'

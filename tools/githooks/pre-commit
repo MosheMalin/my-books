@@ -2,8 +2,8 @@
 # Commit gate. Two independent halves, both installed via:
 #     git config core.hooksPath tools/githooks
 #
-#   1. ACCURACY  — the sweep + spotchecks, unchanged. Guards the recognition
-#      core against a silent regression.
+#   1. ACCURACY  — the sweep + spotchecks. Guards the recognition core against
+#      a silent regression.
 #   2. PRODUCT   — the app/ rings from IMPLEMENTATION_PLAN H4: layering, the
 #      API meta-tests, the OpenAPI->TypeScript contract, and the client
 #      component tests.
@@ -11,9 +11,14 @@
 # The halves are deliberately independent: product work must never require
 # touching the accuracy baseline, and vice versa.
 #
-# Watchlist = everything the replay sweep actually exercises. If any of these
-# are staged, run `sweep.py --check` (offline, ~2s) against the committed
-# baseline in tools/sweep_baseline.json.
+# This script only decides WHICH checks apply to the staged files.
+# `tools/check.py` runs them — concurrently, against a core budget, reporting
+# every failure rather than stopping at the first. Run it by hand any time:
+#
+#     python tools/check.py            # everything
+#     python tools/check.py --product  # just the python rings + the contract
+#
+# Watchlist = everything the replay sweep actually exercises.
 
 watch="booksnap/match.py booksnap/config.py booksnap/pipeline.py \
 booksnap/catalog.py booksnap/scoring.py booksnap/replay.py booksnap/types.py \
@@ -38,9 +43,6 @@ for s in $staged; do
     fi
 done
 
-# --- half 2: product rings -----------------------------------------------
-# Runs before the accuracy gate because it is the faster of the two to fail
-# and the one a product-only commit will actually trigger.
 app_hit=""
 web_hit=""
 for s in $staged; do
@@ -50,81 +52,28 @@ for s in $staged; do
     esac
 done
 
-if [ -n "$app_hit" ]; then
-    echo "pre-commit: product tests (layering + API rings)"
-    python tests/run_all.py
-    if [ $? -ne 0 ]; then
-        echo ""
-        echo "COMMIT BLOCKED: product tests failed (tests/run_all.py)."
-        exit 1
-    fi
+args=""
+[ -n "$app_hit" ] && args="$args --product"
+[ -n "$web_hit" ] && args="$args --web"
+[ -n "$hit" ] && args="$args --accuracy"
 
-    echo "pre-commit: API contract (DTOs -> OpenAPI -> TypeScript)"
-    python tools/api_contract.py --check
-    if [ $? -ne 0 ]; then
-        echo ""
-        echo "COMMIT BLOCKED: the committed API contract is stale."
-        exit 1
-    fi
+if [ -z "$args" ]; then
+    exit 0
 fi
 
-if [ -n "$web_hit" ]; then
-    # Self-skips on a machine without the client toolchain installed, the same
-    # way the spotchecks skip without run data — a gate that cannot run must
-    # not be a gate that blocks.
-    if [ -d app/web/node_modules ]; then
-        echo "pre-commit: client tests (vitest)"
-        npm --prefix app/web run test --silent
-        if [ $? -ne 0 ]; then
-            echo ""
-            echo "COMMIT BLOCKED: client component tests failed."
-            exit 1
-        fi
-        echo "pre-commit: client typecheck"
-        npm --prefix app/web run typecheck --silent
-        if [ $? -ne 0 ]; then
-            echo ""
-            echo "COMMIT BLOCKED: client does not typecheck."
-            exit 1
-        fi
-    else
-        echo "pre-commit: app/web staged but node_modules missing — client"
-        echo "            checks skipped. Run: npm install --prefix app/web"
-    fi
-fi
-
-# --- half 1: accuracy gate ------------------------------------------------
-[ -z "$hit" ] && exit 0
-
-echo "pre-commit: accuracy-relevant files staged:$hit"
-echo "pre-commit: running regression gate (tools/sweep.py --check)"
-python tools/sweep.py --check
+[ -n "$hit" ] && echo "pre-commit: accuracy-relevant files staged:$hit"
+echo "pre-commit: running$args"
+python tools/check.py $args
 rc=$?
 if [ $rc -ne 0 ]; then
     echo ""
-    echo "COMMIT BLOCKED: this change regresses the measured baseline."
-    echo "Either fix it, or if the trade-off is intended and understood:"
+    echo "COMMIT BLOCKED — see the failures above."
+    echo ""
+    echo "If an accuracy trade-off is intended and understood:"
     echo "    python tools/sweep.py --accept-baseline --note \"why\""
     echo "    git add tools/sweep_baseline.json"
-    echo "and commit again."
+    echo "A failing spotcheck means this change un-fixes owner feedback; the"
+    echo "expectation that broke is in fixtures/spotchecks/<name>.json."
     exit $rc
 fi
-
-# Owner-feedback spotchecks are part of the gate: the GT sweep never sees the
-# shelves the owner reviewed by hand, and a rule change that un-fixes one of
-# those complaints is a regression exactly like a sweep drop. Fixtures whose
-# run data isn't on this machine skip themselves.
-for fx in fixtures/spotchecks/*.json; do
-    [ -e "$fx" ] || continue
-    name=$(basename "$fx" .json)
-    echo "pre-commit: spotcheck $name"
-    python tools/spotcheck.py "$name"
-    rc=$?
-    if [ $rc -ne 0 ]; then
-        echo ""
-        echo "COMMIT BLOCKED: this change un-fixes owner feedback ($name)."
-        echo "See fixtures/spotchecks/$name.json for the expectation that broke."
-        exit $rc
-    fi
-done
 exit 0

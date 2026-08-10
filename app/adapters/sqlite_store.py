@@ -532,6 +532,15 @@ class SqliteReadStore(_SqliteStore):
             ).fetchall()
             return tuple(_load_read(conn, r) for r in rows)
 
+    def list_all_reads(self, library: LibraryRef) -> tuple[Read, ...]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM reads WHERE library_id = ?"
+                " ORDER BY started_at DESC, id DESC",
+                (library.id,),
+            ).fetchall()
+            return tuple(_load_read(conn, r) for r in rows)
+
     def list_reads_for_capture(
         self, library: LibraryRef, capture_id: str,
     ) -> tuple[Read, ...]:

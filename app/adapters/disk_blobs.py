@@ -30,11 +30,13 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import shutil
+import time
 from pathlib import Path
 
 from app.domain import LibraryRef
-from app.ports.blobs import Blob, ImageTooLarge, UnsupportedImage
+from app.ports.blobs import Blob, ImageTooLarge, StoredBlob, UnsupportedImage
 
 # 40MB. A 48MP phone JPEG is ~15MB and a HEIC well under that, so this is
 # "somebody dropped a video in", not a quality ceiling.
@@ -153,6 +155,15 @@ class DiskBlobStore:
                     width=size_px[0], height=size_px[1])
         if not path.exists():
             _write_atomic(path, normalised)
+        else:
+            # A repeat upload REFRESHES the file's mtime. Not cosmetic: mtime
+            # is `list_keys`'s age, and age is the orphan reconciler's whole
+            # safety floor (P3.5). Without this, a photo uploaded days ago
+            # whose binding never happened stays "old" through today's
+            # re-upload — and a GC that listed before the new binding and
+            # deleted after it takes a blob a capture now points at. Found by
+            # the P3.4-P3.6 review, reproduced end to end before fixing.
+            os.utime(path, None)
         # The sidecar is rewritten even on a repeat upload: the bytes are the
         # same photo, but the filename may be the better one this time (a
         # re-upload from the camera roll rather than "download (3).jpg").
@@ -210,6 +221,34 @@ class DiskBlobStore:
         for extra in path.parent.glob(f"{path.stem}~*"):
             extra.unlink()
         return True
+
+    def list_keys(self, library: LibraryRef) -> tuple[StoredBlob, ...]:
+        """Walk the fan-out. Originals only: a variant (``~``), a sidecar
+        (``.json``) and a half-written temp (``.part``) are all derived from
+        an original and are deleted with it, so listing them would make the
+        reconciler double-count what one `delete` removes."""
+        root = self._dir(library)
+        if not root.is_dir():
+            return ()
+        now = time.time()
+        out: list[StoredBlob] = []
+        for path in sorted(root.glob("*/*")):
+            name = path.name
+            if "~" in name or name.endswith((".json", ".part")):
+                continue
+            stem, _, ext = name.partition(".")
+            if len(stem) != 64 or not ext.isalnum():
+                continue
+            out.append(StoredBlob(key=name,
+                                  age_seconds=max(0.0, now - path.stat().st_mtime)))
+        return tuple(out)
+
+    def purge(self, library: LibraryRef) -> int:
+        count = len(self.list_keys(library))
+        target = self.root / "libraries" / library.id
+        if target.is_dir():
+            shutil.rmtree(target, ignore_errors=True)
+        return count
 
     # --- internals -------------------------------------------------------
 

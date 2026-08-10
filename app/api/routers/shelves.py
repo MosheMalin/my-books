@@ -28,7 +28,6 @@ import re
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.api.deps import (
-    current_library,
     get_book_store,
     get_clock,
     get_id_gen,
@@ -48,7 +47,9 @@ from app.api.dto import (
     ShelfOverviewDTO,
     ShelfPatch,
 )
+from app.api.policy import require
 from app.domain import (
+    Capability,
     Book,
     Capture,
     Copy,
@@ -146,7 +147,7 @@ def list_shelves(
                     "the owner does not own, so counting it inflates both the "
                     "shelf list and the apparent size of the library.",
     ),
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.BROWSE)),
     store: ShelfStore = Depends(get_shelf_store),
 ) -> list[ShelfDTO]:
     """Every shelf, named ones first and alphabetically, then unnamed ones
@@ -158,7 +159,7 @@ def list_shelves(
 @router.post("", response_model=ShelfDTO, status_code=status.HTTP_201_CREATED)
 def create_shelf(
     body: ShelfCreate,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.CAPTURE)),
     store: ShelfStore = Depends(get_shelf_store),
     clock: Clock = Depends(get_clock),
     id_gen: IdGen = Depends(get_id_gen),
@@ -183,7 +184,7 @@ def create_shelf(
 @router.get("/{shelf_id}", response_model=ShelfDTO)
 def get_shelf(
     shelf_id: str,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.BROWSE)),
     store: ShelfStore = Depends(get_shelf_store),
 ) -> ShelfDTO:
     return _dto(store, library, _load(store, library, shelf_id))
@@ -193,7 +194,7 @@ def get_shelf(
 def patch_shelf(
     shelf_id: str,
     body: ShelfPatch,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.CAPTURE)),
     store: ShelfStore = Depends(get_shelf_store),
 ) -> ShelfDTO:
     """Name a shelf, or clear the name — ``""`` is a legal value, not a
@@ -209,7 +210,7 @@ def patch_shelf(
 @router.post("/{shelf_id}/depths", response_model=ShelfDTO)
 def add_a_row_behind(
     shelf_id: str,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.CAPTURE)),
     store: ShelfStore = Depends(get_shelf_store),
 ) -> ShelfDTO:
     """*"Add a row behind this one"* (§5.7) — the declaration that cannot be
@@ -232,7 +233,7 @@ def add_a_row_behind(
 @router.delete("/{shelf_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_shelf(
     shelf_id: str,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.CAPTURE)),
     store: ShelfStore = Depends(get_shelf_store),
 ) -> None:
     """Remove a shelf that holds no photos. **409** if it does.
@@ -257,7 +258,7 @@ def list_shelf_captures(
                     "the diff view are per depth, and §5.7 #2 forbids merging "
                     "overlaps across depths.",
     ),
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.BROWSE)),
     store: ShelfStore = Depends(get_shelf_store),
 ) -> list[CaptureDTO]:
     _load(store, library, shelf_id)   # 404 for a foreign or absent shelf
@@ -270,7 +271,7 @@ def list_shelf_captures(
 @router.get("/{shelf_id}/overview", response_model=ShelfOverviewDTO)
 def shelf_overview(
     shelf_id: str,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.BROWSE)),
     store: ShelfStore = Depends(get_shelf_store),
     reads: ReadStore = Depends(get_read_store),
 ) -> ShelfOverviewDTO:
@@ -316,7 +317,7 @@ def shelf_books(
                     "'every depth' view of a shelf's books; a mixed list "
                     "would conflate two different physical locations).",
     ),
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.BROWSE)),
     store: ShelfStore = Depends(get_shelf_store),
     books: BookStore = Depends(get_book_store),
     reads: ReadStore = Depends(get_read_store),
@@ -355,7 +356,7 @@ def shelf_books(
                status_code=status.HTTP_201_CREATED)
 def create_capture(
     body: CaptureCreate,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.CAPTURE)),
     store: ShelfStore = Depends(get_shelf_store),
     clock: Clock = Depends(get_clock),
     id_gen: IdGen = Depends(get_id_gen),
@@ -398,7 +399,7 @@ def create_capture(
 @captures.get("/{capture_id}", response_model=CaptureDTO)
 def get_capture(
     capture_id: str,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.BROWSE)),
     store: ShelfStore = Depends(get_shelf_store),
 ) -> CaptureDTO:
     return CaptureDTO.of(_load_capture(store, library, capture_id))
@@ -407,7 +408,7 @@ def get_capture(
 @captures.get("/{capture_id}/reads", response_model=list[ReadSummaryDTO])
 def list_capture_reads(
     capture_id: str,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.BROWSE)),
     store: ShelfStore = Depends(get_shelf_store),
     reads: ReadStore = Depends(get_read_store),
 ) -> list[ReadSummaryDTO]:
@@ -434,7 +435,7 @@ def list_capture_reads(
 def bind_capture(
     capture_id: str,
     body: CapturePatch,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.CAPTURE)),
     store: ShelfStore = Depends(get_shelf_store),
 ) -> CaptureBinding:
     """Move a photo to another shelf, another row, or another position.
@@ -470,7 +471,7 @@ def bind_capture(
 @captures.delete("/{capture_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_capture(
     capture_id: str,
-    library: LibraryRef = Depends(current_library),
+    library: LibraryRef = Depends(require(Capability.CAPTURE)),
     store: ShelfStore = Depends(get_shelf_store),
 ) -> None:
     if not store.delete_capture(library, capture_id):

@@ -69,6 +69,48 @@ def _always(value):
     return provide
 
 
+def bind_ports(
+    app: FastAPI,
+    *,
+    principal_provider: Callable[[], Principal],
+    book_store: BookStore | None = None,
+    clock: Clock | None = None,
+    id_gen: IdGen | None = None,
+    shelf_store: ShelfStore | None = None,
+    blob_store: BlobStore | None = None,
+    read_store: ReadStore | None = None,
+    decision_store: DecisionStore | None = None,
+    duplicate_queue: DuplicateQueue | None = None,
+    reader: Reader | None = None,
+    job_runner: JobRunner | None = None,
+    tenancy_store: TenancyStore | None = None,
+) -> None:
+    """Point an already-built app's ports at these implementations.
+
+    Extracted from ``create_app`` so that the API ring can rebuild an app's
+    bindings without rebuilding the app. FastAPI resolves a route's dependency
+    graph lazily, on that route's first request, and the analysis is ~50ms per
+    app — paid 153 times by ``tests/test_api.py``, which was 29 of its 39
+    seconds. Reusing one app across tests and rebinding here skips all of it.
+
+    ⚠ Rebinding must go through this one function, never a second copy of the
+    loop in a test helper: ``_always`` is the whole point (see its docstring),
+    and a test harness that bound its stores some other way would stop
+    exercising the trap ``test_a_write_through_the_api_reaches_the_real_store``
+    exists to catch.
+    """
+    app.dependency_overrides[get_principal] = principal_provider
+    for dep, impl in ((get_book_store, book_store), (get_clock, clock),
+                      (get_id_gen, id_gen), (get_shelf_store, shelf_store),
+                      (get_blob_store, blob_store), (get_read_store, read_store),
+                      (get_decision_store, decision_store),
+                      (get_duplicate_queue, duplicate_queue),
+                      (get_reader, reader), (get_job_runner, job_runner),
+                      (get_tenancy_store, tenancy_store)):
+        if impl is not None:
+            app.dependency_overrides[dep] = _always(impl)
+
+
 def create_app(
     principal_provider: Callable[[], Principal],
     book_store: BookStore | None = None,
@@ -119,16 +161,15 @@ def create_app(
     app.include_router(reads.router, prefix=API_PREFIX)
     app.include_router(duplicates.router, prefix=API_PREFIX)
 
-    app.dependency_overrides[get_principal] = principal_provider
-    for dep, impl in ((get_book_store, book_store), (get_clock, clock),
-                      (get_id_gen, id_gen), (get_shelf_store, shelf_store),
-                      (get_blob_store, blob_store), (get_read_store, read_store),
-                      (get_decision_store, decision_store),
-                      (get_duplicate_queue, duplicate_queue),
-                      (get_reader, reader), (get_job_runner, job_runner),
-                      (get_tenancy_store, tenancy_store)):
-        if impl is not None:
-            app.dependency_overrides[dep] = _always(impl)
+    bind_ports(
+        app,
+        principal_provider=principal_provider,
+        book_store=book_store, clock=clock, id_gen=id_gen,
+        shelf_store=shelf_store, blob_store=blob_store,
+        read_store=read_store, decision_store=decision_store,
+        duplicate_queue=duplicate_queue, reader=reader,
+        job_runner=job_runner, tenancy_store=tenancy_store,
+    )
 
     # Static client last: mounting at "/" first would shadow the API routes.
     # Same ordering hazard as booksnap/server.py:1018.

@@ -92,21 +92,32 @@
   position: relative;
   flex: none;
 }
+/* The button and the one-library label (§4.1's settled tenancy rule) SHARE
+   the seat — one rule block, not a hand-copied twin, because the client
+   ring provably cannot see a drift between them (quality review). The
+   label gets none of the button's affordances: no hover, no caret. */
+.libswitch-btn,
+.libswitch-label {
+  max-width: 34ch;
+  padding: 6px 10px;
+  color: var(--muted);
+  font-size: 14px;
+}
 .libswitch-btn {
   display: flex;
   align-items: center;
   gap: 6px;
-  max-width: 34ch;
-  padding: 6px 10px;
   border-radius: 9px;
-  color: var(--muted);
-  font-size: 14px;
+}
+.libswitch-label {
+  display: inline-block;
 }
 .libswitch-btn:hover {
   background: var(--bg);
   color: var(--ink);
 }
-.libswitch-btn > span:first-child {
+.libswitch-btn > span:first-child,
+.libswitch-label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -174,6 +185,13 @@
   gap: 6px;
   padding: 8px 10px;
   border-top: 1px solid var(--line);
+}
+/* The create-hint <p>: base.css resets only body and button margins, so the
+   UA's 1em would stack with the form's 6px gap and read over-spaced. Full
+   width so the two-sentence hint wraps under the input, not beside it. */
+.libswitch-new p {
+  margin: 0;
+  flex: 1 1 100%;
 }
 .libswitch-new input {
   flex: 1 1 100%;
