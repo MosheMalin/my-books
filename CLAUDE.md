@@ -2817,6 +2817,45 @@ DOM-level; the pane did not composite frames — the recurring limitation —
 so paint is inferred from existing tokens as before). The single-library
 label variant is pinned by the client ring, which is where it can be built.
 
+## The library merge tool — §4.1's cleanup, P6.1's exit arriving early
+
+`tools/merge_library.py` over `app/adapters/merge_library.py`: retire a
+mis-modelled library (a location that got created as a TENANT before Place
+existed) into the collection it belongs to. Built for the owner's ruling that
+**lib2 (`103e0de5…`) is the parents' shelves, not a tenant** — 14 books, one
+scan, 3 works colliding with the main 272.
+
+The rules, each with a named test (11) and the load-bearing ones
+mutation-checked:
+
+- **identity is re-homed, never re-minted** — shelf/capture/read/claim/copy
+  ids survive; provenance is keyed by copy and never touched;
+- **a colliding work becomes another COPY of the book already owned** (the
+  physical truth), with its status, lending and provenance riding along;
+  positions renumber after the target's. A colliding source ROW carrying a
+  rating/note/read-status is REFUSED — which side wins is a human question;
+- **photos copy first, verify by hash (content addressing makes that exact),
+  and the source tree is purged only after the commit** — at every failure
+  point, every key a row names resolves somewhere. Mutation-checked: purging
+  before the commit fails the mid-copy-abort test;
+- **recorded human answers refuse the merge**, checked twice — before the
+  copy (clear message) and inside the transaction (a live server writing a
+  decision during the copy window must not be orphaned); deliberately
+  redundant with the leftover check over EVERY `library_id` table, the P2.1
+  "what else enforces this?" pattern, verified in both directions;
+- the CLI: dry-run by default (UTF-8 stdout — cp1255 rendered the collision
+  list, the dry run's whole job, as mojibake), `--execute` requires
+  `--confirm-retire <src-id>` (naming what you RETIRE catches swapped
+  src/dst), refuses to retire the dev principal's default library (the
+  bootstrap would resurrect an empty ghost), and snapshots via **SQLite's
+  backup API with an integrity check ON the backup** — three `copy2`s of a
+  live WAL database is not a snapshot, a checkpoint between them silently
+  loses committed rows.
+
+All of this is the pre-run data-integrity review (9 findings, each fixed the
+same day) — the reviewer rehearsed the real merge end-to-end on a snapshot:
+283 books after, integrity ok, zero orphans, every blob key resolving.
+
 ## Reviewer agents (`.claude/agents/`) — run them after substantive items
 
 Four persisted reviewer personas, born from the pillar-3 round where every
