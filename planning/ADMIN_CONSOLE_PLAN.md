@@ -329,9 +329,12 @@ nothing here is under `app/api` — the staff service wires a read model that
 imports no adapter at all, so the exemption is not needed yet. Add it to the
 list the day it binds a real adapter.
 
-⚠ `tests_staff/` exists because `tests/run_all.py` globs `tests/test_*.py`, and
-adding a file there would change what the concurrent test-suite session runs.
-It is a one-line rename once that lands.
+⚠ `tests_staff/` existed because `tests/run_all.py` globs `tests/test_*.py`, and
+adding a file there would have changed what the concurrent test-suite session
+ran. **Folded back in** once that branch merged: the suite is
+`tests/test_staff_api.py`, and converting it from `unittest.TestCase` classes
+to the runner's own module-level `test_*` convention is what actually made it
+run — a class-based module is collected as *zero tests* and reports `ok`.
 
 ## Verified live (revision 2)
 
@@ -352,7 +355,7 @@ split, then removed with the snapshot — 286 books and schema v12 intact):
 - Users listed both accounts with their roles — a screen `/api/v1` cannot
   produce.
 
-51 client tests and 19 Python tests, typecheck and build green. Mutation-checked
+51 client tests and 20 Python tests, typecheck and build green. Mutation-checked
 in this revision: dropping the staff token from the transport, and ignoring
 `writable` in the book panel, each fail named tests.
 

@@ -123,10 +123,10 @@ npm --prefix app/admin run test
 ```
 
 ```bash
-python tests_staff/run.py
+python tests/run_all.py test_staff_api
 ```
 
-51 client tests and 19 Python ones. They test what encodes a **decision** — the tenant reference on every
+51 client tests and 20 Python ones. They test what encodes a **decision** — the tenant reference on every
 request, the §5.1 ladder behind "awaiting approval", the delete confirmation,
 the absence of an invite control — not layout and not DTO plumbing. Each was
 mutation-checked: reversing the rule fails a named test.

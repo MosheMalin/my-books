@@ -115,11 +115,18 @@ app/
                     ReadHistory.tsx — mounted at #/map/<shelfId> (P2.8)
     src/styles/     tokens / base / books / capture / shelf — palette ported
                     from the mock (shelf.css has no mock reference; see P2.8)
+  staff_api/    the SYSTEM-admin service — cross-tenant, READ-ONLY, its own
+                port (:8758) and its own credential. NOT a role inside the
+                product; see "Two admins, two applications"
+  admin/        the system-admin CLIENT (:5174). A third application, talking
+                to staff_api for everything it SEES and to /api/v1 for the
+                little it may CHANGE
 ```
 
-Two applications coexist through pillars 1–2, by design (plan H1/D2,
-"strangle, don't refactor"): the tuning server on `:8756` `/api/*`, the product
-on `:8757` `/api/v1/*`. Run the product with
+Applications coexist rather than merge, by design (plan H1/D2, "strangle,
+don't refactor"): the tuning server on `:8756` `/api/*`, the product on `:8757`
+`/api/v1/*`, and — since 2026-08-10 — the system-admin service on `:8758`
+`/api/staff/v1/*`. Run the product with
 `uvicorn app.main:app --port 8757`; in dev, `npm --prefix app/web run dev`
 serves the client on `:5173` and proxies `/api` to it.
 
@@ -548,6 +555,14 @@ same subsets by hand.
 | `test_layering.py` | 9 | the one-way import rules (plan H1) |
 | `test_api.py` | 138 | `/api/v1` shapes + the versioning/tenancy meta-tests |
 | `test_reader_wiring.py` | 8 | WHICH catalog the product hands the engine |
+| `test_staff_api.py` | 20 | the cross-tenant read model + its credential |
+
+⚠ **A `unittest.TestCase` module is collected as ZERO tests and still reports
+`ok`.** `run_all.py`'s discovery rule is module-level callables named `test_*`
+(`_test_names`), so a class-based suite passes the runner while asserting
+nothing. `test_staff_api.py` arrived that way from the staff-console branch
+and was converted; if a module ever shows `0/0 passed`, that is the reason,
+not an empty file.
 
 627 python tests as of P3.1 (+51: the tenancy rules, ONE store spec run
 against a sixth aggregate, the v12 backfill, the resolver's three cases and
@@ -2880,6 +2895,121 @@ a parallel session, they never touch the staff-console workstream, and a
 information. Run them in the BACKGROUND after committing an item and keep
 working; fold their findings into a follow-up commit. Don't run all four on
 every keystroke — one pass per landed item is the cadence that has paid.
+
+## ⚠⚠ Two admins, two applications (`app/staff_api/` + `app/admin/`)
+
+Settled by the owner 2026-08-10, after P3.1 put *create a library* in the
+household client's app bar. There are **two admin jobs** and only one of them
+lives in the product:
+
+| | sees | is a member of | invites people |
+|---|---|---|---|
+| **system admin** — the console | every tenant | nothing | no (P4.3) |
+| **account admin** — `Role.ADMIN` | one library | that library | no route yet (P4.3) |
+
+**A system admin is NOT a `Role`, and must never become one.**
+`app.domain.tenancy.Role` says who you are *within one library*; an operator
+who oversees tenants is a member of none of them. A `SYSTEM_ADMIN` value would
+make every membership row a place someone could grant themselves the world —
+and now that P3.2 ships the matrix, the same rule reads: **never give it a
+`POLICY` column either.** It is a property of the operator, carried today by a
+shared token on a separate service.
+
+**Why a second application rather than a wider view.** Every `/api/v1` route
+resolves its library through `app/api/deps.py:current_library`, which answers
+from the caller's MEMBERSHIPS. That is not an obstacle to route around — it is
+§4.2 ("a foreign record reads as ABSENT") and the tenant-isolation suite exists
+to keep it true. Loosening it to serve a console would weaken isolation for
+everyone. So the console gets its own service, the same "strangle, don't
+refactor" shape (D2) that lets the tuning server and the product coexist.
+
+```
+app/staff_api/   FastAPI on :8758, /api/staff/v1. Cross-tenant, READ-ONLY.
+  queries.py       the read model: overview / libraries / accounts / books /
+                   shelves / recent reads, one SELECT per question
+  app.py           DTOs + routes + the credential
+  main.py          composition root (a SECOND one — see below)
+app/admin/       Vite + React client on :5174, `host: true` (phone). Talks to
+                 BOTH services; see its README.
+```
+
+**Read-only by construction, not by intention.** Every statement is a
+`SELECT`, the connection sets `PRAGMA query_only`, and there is **no
+`migrate()` call anywhere in the package**. That last one matters more than it
+looks: this file already records that merely importing `app.main` advances the
+real database's schema, so a console that opened `work/product.db` the usual
+way would upgrade the owner's data as a side effect of being *looked at*.
+`test_reading_never_migrates_the_owners_database` pins `user_version` across
+every query.
+
+**It carries its own read model instead of using `app.ports.store`.** Every
+port method leads with a `LibraryRef` by design, so "every library at once"
+through them would mean either loosening the ports or N queries per figure.
+The price is that `queries.py` knows the SCHEMA — paid up front by a
+`self_check()` that refuses to serve a database whose shape has moved, rather
+than letting a renamed column surface as a plausible wrong number on a
+dashboard nobody double-checks. ⚠ **A migration that touches `books`,
+`copies`, `shelves`, `captures`, `reads`, `accounts`, `libraries`,
+`memberships` or `duplicate_questions` must update `REQUIRED_COLUMNS` and the
+queries together.**
+
+**No RULE is duplicated, only schema.** The §5.1 ladder is one SQL expression
+derived the way the entity derives it (`STATUS_RANK_SQL`), and search imports
+`app.domain.search` — so the console ranks Hebrew by P1.5's measured rules
+rather than a second approximation. Verified live: staff and product search
+returned identical totals on four terms.
+
+**The credential is `BOOKSNAP_STAFF_TOKEN`**, compared with
+`secrets.compare_digest`, accepted as `X-Booksnap-Staff` or
+`Authorization: Bearer`. ⚠ `/api/v1`'s "no login until pillar 4" trade does
+**not** carry over — a route returning every account and every household's
+books is a different exposure from one returning your own. **Unset means the
+service still serves and SAYS so** (`authenticated: false`, which the client
+turns into a banner): refusing to start would leave the owner with a console
+that cannot be opened and no obvious reason, and silence would leave a
+cross-tenant surface open on the LAN with nothing on screen to suggest it.
+
+**Reading is cross-tenant; writing is not.** The staff service never writes.
+The console's approve/edit/delete go through the ordinary product API, which
+resolves the operator's own membership — so a book or a library outside those
+memberships is shown with its numbers and marked read-only, rather than
+offering a button that 404s. A deliberate limit: a system administrator
+silently rewriting a household's book titles is a power this product has no
+reason to grant before it has a login and an audit trail.
+
+**Users are reported, not profiled.** `GET /api/staff/v1/accounts` returns
+identity and membership and deliberately no per-person reading or capture
+activity — aggregate figures live on the library rows, where they describe a
+collection rather than a person. A client test pins the absence.
+
+⚠ **`app/staff_api/main.py` is a SECOND composition root**, and it is
+deliberately NOT in `tests/test_layering.py`'s `COMPOSITION_ROOTS`. That
+exemption exists for the `app/api -X-> app/adapters` rule, and nothing here is
+under `app/api`: the service wires a read model that imports no adapter at all
+(`app.domain.search` is its only cross-package import). Add it to that list the
+day it binds a real adapter — and argue the diff then, which is what the
+one-element set is for.
+
+⚠ It also does **not** import `app.main`. Same reason the product keeps its own
+copy of `_load_dotenv`: importing the product's composition root opens the
+database and migrates it at import time.
+
+Run both, plus the client:
+
+```bash
+python -c "import uvicorn; uvicorn.run('app.main:app', host='0.0.0.0', port=8757)"
+python -c "import uvicorn; uvicorn.run('app.staff_api.main:app', host='0.0.0.0', port=8758)"
+npm --prefix app/admin run dev     # :5174, proxies /api/staff -> 8758, /api -> 8757
+```
+
+⚠ The admin client's Vite proxy keys are order-sensitive: `/api/staff` must
+precede `/api`, or every staff request lands on the product API.
+
+⚠ Its product-API types come from `app/web/src/api/schema.d.ts` by a
+**type-only** import — one generated artefact, so a renamed DTO breaks both
+clients on the same commit. The staff DTOs in `src/api/staff.ts` are
+hand-written and mirror `app/staff_api/app.py`; that service is not part of the
+committed `app/api/openapi.json` contract.
 
 ## Author sort, and why it needed a schema version
 
