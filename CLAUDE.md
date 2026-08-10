@@ -2779,6 +2779,31 @@ method, not a cache), and `library.id` charset validation in the blob layout
 (ids are server-minted and the resolver 404s unknowns; noted as
 defence-in-depth for P4).
 
+## Reviewer agents (`.claude/agents/`) — run them after substantive items
+
+Four persisted reviewer personas, born from the pillar-3 round where every
+one of them found real, fix-worthy bugs (see "What the pillar-3 review round
+found"). They are project files, so any session on any machine can spawn
+them via the Agent tool by name; the definition carries the persona, method
+and repo rules — the CALLER's prompt supplies only the scope (commit shas or
+files) and any item-specific questions:
+
+| agent | when |
+|---|---|
+| `review-data-integrity` | any substantive server-side change |
+| `review-quality` | any substantive change (attacks the new tests) |
+| `review-ux` | anything that changes user-visible behaviour |
+| `review-migration` | BEFORE committing a schema-version change |
+
+Ground rules baked into all four, worth knowing when reading their reports:
+they verify by RUNNING (tests, probes, temporary mutations they restore
+byte-exact), they review a clean worktree if the live tree is flapping from
+a parallel session, they never touch the staff-console workstream, and a
+"clean checks" section is part of the deliverable — a clean check is
+information. Run them in the BACKGROUND after committing an item and keep
+working; fold their findings into a follow-up commit. Don't run all four on
+every keystroke — one pass per landed item is the cadence that has paid.
+
 ## Author sort, and why it needed a schema version
 
 "Sort by author" means the SHELF order — by surname. Sorting the stored string
