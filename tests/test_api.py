@@ -899,17 +899,28 @@ def _dependency_calls(route: APIRoute) -> set:
 #
 # A closed list, deliberately: adding a route here is an edit to a test, which
 # is the point at which someone has to justify it.
+#
+# ⚠ Keyed by (METHOD, path), not path alone — P3.2's review caught the sharper
+# version of the same hole: a future `DELETE /libraries/{library_id}` (the
+# deliberately-absent delete-library route) or P4.3's member routes at these
+# paths would inherit a path-only exemption silently and could ship unpoliced
+# with every meta-test green.
 _ACCOUNT_SCOPED = {
-    f"{API_PREFIX}/libraries",
-    f"{API_PREFIX}/libraries/{{library_id}}",
+    ("GET", f"{API_PREFIX}/libraries"),
+    ("POST", f"{API_PREFIX}/libraries"),
+    ("PATCH", f"{API_PREFIX}/libraries/{{library_id}}"),
 }
+
+
+def _exempt(path: str, route: APIRoute) -> bool:
+    return all((m, path) in _ACCOUNT_SCOPED for m in route.methods)
 
 
 def test_every_api_route_resolves_its_library_from_the_principal():
     routes = _api_routes(_app())
     assert routes, "no API routes found — this meta-test would pass vacuously"
     bad = [p for p, r in routes
-           if p not in _ACCOUNT_SCOPED
+           if not _exempt(p, r)
            and deps.current_library not in _dependency_calls(r)]
     assert not bad, (
         f"routes not library-scoped: {bad} — every route resolves its library "
@@ -936,7 +947,7 @@ def test_every_api_route_declares_exactly_one_policy_capability():
     assert routes, "no API routes found — this meta-test would pass vacuously"
     bad = []
     for path, route in routes:
-        if path in _ACCOUNT_SCOPED:
+        if _exempt(path, route):
             continue
         declared = [getattr(c, CAPABILITY_ATTR) for c in _dependency_calls(route)
                     if hasattr(c, CAPABILITY_ATTR)]
@@ -1059,11 +1070,12 @@ def test_the_account_scoped_routes_are_still_scoped_by_something():
     """The exemption is from the LIBRARY axis, not from tenancy. A route that
     resolved neither a library nor an account would serve everyone's data —
     and it would pass the test above simply by being on the list."""
-    routes = {p: r for p, r in _api_routes(_app())}
-    for path in _ACCOUNT_SCOPED:
-        assert path in routes, f"{path} is exempted but does not exist"
-        assert deps.get_principal in _dependency_calls(routes[path]), \
-            f"{path} resolves neither a library nor an account"
+    routes = {(m, p): r for p, r in _api_routes(_app()) for m in r.methods}
+    for method, path in _ACCOUNT_SCOPED:
+        assert (method, path) in routes, \
+            f"{method} {path} is exempted but does not exist"
+        assert deps.get_principal in _dependency_calls(routes[(method, path)]), \
+            f"{method} {path} resolves neither a library nor an account"
 
 
 def test_library_resolution_has_exactly_one_implementation():

@@ -47,12 +47,22 @@ def _role(
 ) -> Role:
     """The caller's role in an already-resolved library.
 
-    The membership row is the answer. The one fallback mirrors
-    ``current_library``'s own dev-trusted case, for the same reason it has
-    one: a ``Principal`` is built by the server, never by a request, so the
-    principal's OWN library is legitimately theirs even before any row exists
-    (``app/main.py``'s bootstrap writes the ADMIN row; a test that skipped it
-    is exercising the same trust). P4.1 replaces the adapter, not this line.
+    The membership row is the answer, and it is consulted FIRST — a stored
+    VIEWER role on the caller's own library outranks the fallback below
+    (pinned by ``test_a_membership_row_on_your_own_library_outranks_the_
+    dev_trusted_fallback``). The one fallback mirrors ``current_library``'s
+    own dev-trusted case, for the same reason it has one: a ``Principal`` is
+    built by the server, never by a request, so the principal's OWN library
+    is legitimately theirs even before any row exists (``app/main.py``'s
+    bootstrap writes the ADMIN row; a test that skipped it is exercising the
+    same trust).
+
+    ⚠ P4-era landmine, named now so it is removed on time (P3.2's review):
+    this fallback means REMOVING someone's membership from their own default
+    library is ineffective — the resolver still serves it and this line
+    upgrades them to ADMIN. Dormant while the principal is the dev adapter
+    (there is no removal), and it MUST be deleted when P4.1 makes principals
+    real — a logged-in user's role comes from rows, full stop.
 
     ``None`` for any OTHER library is unreachable past ``current_library`` —
     it just resolved a membership for exactly this pair — but unreachable is

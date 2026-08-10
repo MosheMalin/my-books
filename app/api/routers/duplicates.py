@@ -127,9 +127,12 @@ def list_open_questions(
         book = books.get(library, q.existing_book_id)
         if book is None:
             # The book this question was about no longer exists — nothing
-            # left to ask about it. Cleaned up here rather than left to
-            # rot: a listing is the natural place this is discovered.
-            duplicates.delete_question(library, q.shelf_id, q.depth, q.book_key)
+            # left to ask about it. SKIPPED here, not deleted: this is a GET
+            # on a BROWSE capability, and a Viewer's listing must never write
+            # (P3.2's data-integrity review caught the earlier inline
+            # cleanup). The stale row costs nothing to skip and is deleted by
+            # the REVIEW-gated paths that already do it — `_resolve_outcome`
+            # removes it the moment anyone tries to answer or skip it.
             continue
         out.append(DuplicateQuestionDTO.of(q, book=book, prompt=build_prompt(book)))
     return out
