@@ -1,0 +1,334 @@
+/*
+ * Layout, chrome and the table surface.
+ *
+ * ⚠ Mixed-script alignment (UI_PLAN §7.2) is a CORRECTNESS rule, not a theme,
+ * so it is carried over verbatim from the product: `unicode-bidi: plaintext`
+ * decides glyph order PER STRING, and `text-align` is keyed on the
+ * CONTAINER's direction so `Sapiens` and `משחקי הכס` share one clean edge
+ * instead of two ragged ones. Every user-generated string in this app carries
+ * `.rtl-safe`.
+ *
+ * ⚠ `.rtl-safe` must sit on a BLOCK box. `text-align` is a no-op on an inline
+ * one, which is how the product's feed shipped with §7.2 silently off for an
+ * entire screen. Table cells are block-ish containers, so the class goes on
+ * the cell, not on a `<span>` inside it.
+ */
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.5 system-ui, -apple-system, 'Segoe UI', Arial, sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* --- mixed-script strings (§7.2) ------------------------------------------ */
+
+.rtl-safe {
+  unicode-bidi: plaintext;
+}
+[dir='rtl'] .rtl-safe { text-align: right; }
+[dir='ltr'] .rtl-safe { text-align: left; }
+
+/* An opaque id is Latin and monospaced whichever way the page reads. */
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82em;
+  color: var(--muted);
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+/* --- chrome --------------------------------------------------------------- */
+
+.app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.appbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: var(--gap);
+  flex-wrap: wrap;
+  padding: 10px var(--pad);
+  background: var(--panel);
+  border-block-end: 1px solid var(--line);
+}
+
+.brand {
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.brand .tag {
+  font-weight: 500;
+  font-size: 0.8em;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+nav.tabs {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+nav.tabs a {
+  display: inline-block;
+  padding: 6px 12px;
+  border-radius: 999px;
+  color: var(--muted);
+  text-decoration: none;
+  border: 1px solid transparent;
+}
+nav.tabs a:hover { color: var(--ink); background: var(--panel-2); }
+nav.tabs a.on {
+  color: var(--ink);
+  background: var(--panel-2);
+  border-color: var(--line-strong);
+  font-weight: 600;
+}
+
+main {
+  flex: 1;
+  padding: var(--pad);
+  max-width: 1200px;
+  width: 100%;
+  margin-inline: auto;
+}
+
+h1 { font-size: 1.35rem; margin: 0 0 4px; }
+h2 { font-size: 1.05rem; margin: 24px 0 8px; }
+.sub { color: var(--muted); margin: 0 0 16px; font-size: 0.9rem; }
+
+/* --- controls ------------------------------------------------------------- */
+
+.btn {
+  font: inherit;
+  padding: 7px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line-strong);
+  background: var(--panel);
+  color: var(--ink);
+  cursor: pointer;
+}
+.btn:hover:not(:disabled) { background: var(--panel-2); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn.primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+.btn.danger {
+  background: var(--danger);
+  color: #fff;
+  border-color: var(--danger);
+}
+.btn.small { padding: 4px 10px; font-size: 0.85rem; }
+.btn.link {
+  border-color: transparent;
+  background: none;
+  color: var(--accent);
+  text-decoration: underline;
+  padding-inline: 4px;
+}
+
+:where(a, button, input, select):focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+  border-radius: var(--radius-sm);
+}
+
+input[type='text'], input[type='search'], select {
+  font: inherit;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  min-width: 0;
+}
+
+label.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.row {
+  display: flex;
+  gap: var(--gap);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* --- cards and tables ------------------------------------------------------ */
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--pad);
+  box-shadow: var(--shadow);
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: var(--gap);
+}
+
+.stat .n {
+  font-size: 1.7rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+.stat .k { color: var(--muted); font-size: 0.85rem; }
+.stat.warn .n { color: var(--review); }
+
+/* ⚠ A wide table must scroll inside its OWN box; the page body must never
+   scroll sideways, or the app bar drifts off screen on a phone. */
+.tablewrap {
+  overflow-x: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+th, td {
+  padding: 9px 12px;
+  border-block-end: 1px solid var(--line);
+  vertical-align: top;
+}
+th {
+  text-align: start;
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.82rem;
+  white-space: nowrap;
+  background: var(--panel-2);
+  position: sticky;
+  top: 0;
+}
+tbody tr:last-child td { border-block-end: none; }
+tbody tr:hover { background: var(--panel-2); }
+td.num, th.num {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+td.actions { white-space: nowrap; }
+
+/* --- small pieces ----------------------------------------------------------- */
+
+.badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  border: 1px solid var(--line-strong);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.badge.auto { color: var(--review); border-color: var(--review); }
+.badge.approved { color: var(--ok); border-color: var(--ok); }
+.badge.manual { color: var(--accent); border-color: var(--accent); }
+.badge.role { background: var(--panel-2); }
+
+.note {
+  border-inline-start: 3px solid var(--line-strong);
+  background: var(--panel-2);
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+.note.warn { border-inline-start-color: var(--review); }
+
+.err {
+  color: var(--danger);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+
+.empty {
+  color: var(--muted);
+  padding: 28px;
+  text-align: center;
+}
+
+.t { font-weight: 600; }
+.a { color: var(--muted); font-size: 0.9em; }
+
+/* --- the book detail panel --------------------------------------------------- */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 0.35);
+  z-index: 20;
+}
+.panel {
+  position: fixed;
+  inset-block: 0;
+  inset-inline-end: 0;
+  width: min(460px, 100%);
+  background: var(--panel);
+  border-inline-start: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  z-index: 21;
+  overflow-y: auto;
+  padding: var(--pad);
+}
+.panel .kv {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  padding: 5px 0;
+  border-block-end: 1px solid var(--line);
+  font-size: 0.9rem;
+}
+.panel .kv .k { color: var(--muted); }
+
+.dangerzone {
+  margin-top: 20px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+/* ⚠ A later rule at equal specificity wins — the product shipped a filled
+   delete button with red text on red because of exactly this. `:not(.danger)`
+   is what keeps the filled variant readable. */
+.dangerzone .btn:not(.danger) { color: var(--danger); }
+
+@media (max-width: 640px) {
+  main { padding: 12px; }
+  .appbar { padding: 8px 12px; }
+}

@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "types": ["vitest/globals", "@testing-library/jest-dom"],
+
+    /* Same strictness as app/web, and for the same reason: a DTO rename must
+       be a BUILD failure here too, which is the only thing keeping a second
+       client honest against a contract it does not own. */
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  /* ⚠ `../web/src/api/schema.d.ts` is deliberately in scope: the generated
+     contract types are shared by a TYPE-ONLY import (see src/api/schema.ts),
+     so the compiler crosses the line and nothing else does. Copying that file
+     instead would create a second generated artefact `tools/api_contract.py
+     --check` does not police, and it would go stale in silence. */
+  "include": ["src", "vite.config.ts", "../web/src/api/schema.d.ts"]
+}
