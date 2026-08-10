@@ -51,3 +51,7 @@ notes/
 models/
 *.pt
 *.pth
+
+# Per-test timings, written by tests/run_all.py to balance its shards.
+# A cache: a missing or stale file costs a little balance, never correctness.
+tests/.durations.json

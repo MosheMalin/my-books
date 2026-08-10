@@ -526,7 +526,15 @@ now; the floor is the active LTS line. Installed here from the official MSI
 **`python tests/run_all.py`** runs everything and **exits non-zero on
 failure** — the individual `test_*.py` `__main__` blocks print PASS/FAIL and
 then exit 0, which is fine for a human and useless as a gate. Pass module
-names to run a subset (`python tests/run_all.py test_api`).
+names to run a subset (`python tests/run_all.py test_api`); `-j N` /
+`--serial` set the worker count, `-v` prints a line per test with its cost.
+
+**`python tools/check.py`** is the whole gate in one command — the python
+rings, the API contract, the client rings, the client typecheck, the sweep and
+the spotchecks, run CONCURRENTLY against a core budget and all reported
+together. The pre-commit hook is now only the part that decides *which* of
+those apply to the staged files; `--product` / `--web` / `--accuracy` pick the
+same subsets by hand.
 
 | module | count | what it protects |
 |---|---|---|
@@ -552,6 +560,77 @@ which also REPLACED the test that asserted an AUTO claim auto-enters — and
 the sighting-resolution rule found live). The jump before that was the catalog-wiring fix's
 `test_reader_wiring.py`, which exists because the product silently handed the
 engine a 57-entry stand-in catalog and a real shelf matched nothing.
+
+### The suite is fast on purpose (2026-08-10)
+
+The python rings took **80s** and the client rings **38.6s**; they are now
+**19s** and **25s**, with the same 627 + 98 tests and nothing skipped. A gate
+nobody waits for stops being a gate, so this is a correctness property, not a
+comfort. What it cost, in the order the time actually went:
+
+- **one test slept 22.5s.** `test_nli_transport_failure_is_safe` injected a
+  transport that raises, and `_fetch` retried it with a 1.5s backoff, five
+  queries deep — 28% of the whole python suite spent waiting for a network
+  that was never going to answer. The test now zeroes `retry_backoff` and
+  asserts the retry COUNT and `failed_fetches` instead, which is strictly more
+  than the sleep proved;
+- **FastAPI 0.141 resolves a route's dependency graph lazily, on that route's
+  first request** — ~50ms per app, and `test_api.py` built 153 apps. Apps are
+  now pooled and rebound through `app.api.app.bind_ports` (extracted from
+  `create_app`, so `_always`'s pydantic deep-copy trap is still exercised).
+  ⚠ Apps are returned at the END OF THE TEST, via a `after_each()` hook
+  `run_all.py` calls, **not** when a client closes: a large family of tests
+  here writes `c = TestClient(_app(...))` with no `with`, so recycling on
+  `__exit__` returned almost nothing (135 apps for 138 tests; it is 3 now);
+- **`import booksnap.catalog` cost 6.4 seconds.** `booksnap/__init__.py`
+  imported `.pipeline` eagerly, which pulls `segment` → scipy.signal + cv2. The
+  layering rule that lets `app/domain/*` import `booksnap.catalog` *and nothing
+  else* exists precisely to keep the domain free of that, and the package's own
+  `__init__` defeated it — every domain module, every store, and the product
+  server's startup paid it. Now PEP 562 lazy, with the same public surface.
+  `app/adapters/booksnap_reader.py` imports `Pipeline` inside `read()` for the
+  same reason: `unavailable()` and the DTO mapping do not need the CV stack;
+- **`starlette.testclient` starts an event-loop thread per `with` block.**
+  `tests/_fastclient.py` lends one process-wide portal instead. It substitutes
+  only what `anyio.from_thread.start_blocking_portal` returns, for the duration
+  of that one call, so starlette keeps doing its own lifespan and streams;
+- **`test_store_contract` re-derived a byte-identical schema 109 times.** Each
+  sqlite store now starts from a copy of one migrated template (the whole
+  directory, because WAL leaves a `-wal` beside the file). The constructor
+  still runs `migrate()` — which is what a real deployment does on a current
+  file. The MIGRATION tests still build their own old-version databases;
+- **`require('jsdom')` costs 3.5s on this machine** and vitest builds the
+  environment once per test FILE. `isolate: false` + `maxWorkers: 2` in
+  `app/web/vite.config.ts`; `src/test/setup.ts` gained the global reset that
+  pays for the sharing. Measured, so nobody re-derives it: happy-dom is *not*
+  the fix (3120 files, **22s** to require), and 2 workers beat both 1 (31.7s)
+  and 4 (28.4s);
+- **`userEvent`'s direct API pauses between every event.** 66ms per click
+  against 15ms; a 12-character `type`, 235ms against 31ms. `src/test/user.ts`
+  is the same API with `delay: null`, still a fresh session per call.
+
+⚠ **`tests/run_all.py` shards across PROCESSES, and each worker runs its tests
+sequentially.** Not a preference: `test_reader_wiring` swaps
+`BOOKSNAP_CATALOG_BACKEND` and `test_api` pops Google/NLI credentials out of
+`os.environ`, both safe against another process and silently wrong against
+another thread. The shared portal and the app pool assume it too.
+
+⚠ **Discovery happens in the worker, from the module's own `vars()` — never in
+the parent and never from the source text.** Enumerating in the parent costs
+12s of serial imports before the first test runs, and an AST walk finds **10**
+of `test_store_contract.py`'s 202 tests, because 192 of them are generated at
+import time (one spec × every implementation) — the other 192 would vanish with
+no error at all. Each shard reports how many tests it saw; the parent fails the
+run if the shards disagree or if they did not, between them, run all of it.
+Mutation-checked: making a shard drop one test fails every module by name.
+
+⚠ **The two measurements to distrust on this machine.** It is a 4-core i5 with
+no hyperthreading, so parallel gains are modest and wall-clock numbers move
+±20% with whatever else is running. And loading a package of many small files
+costs ~5ms *per file* here — jsdom's 650 files are 3.5s, of which only 0.75s is
+reading them. That smells like real-time AV scanning of `node_modules`; an
+exclusion for the repo would speed up npm, vite and this suite together, but it
+is a machine setting for the owner to make, not something the repo can fix.
 
 **Test the real input, not a fixture you invented.** Added after uploads
 shipped broken with a green suite (see the MPO warning under "Images are
@@ -2667,14 +2746,27 @@ browser. Do not read a green client ring as "the screen is right".
 
 ⚠ jsdom keeps `localStorage` across tests in a file, and the language choice
 persists deliberately — so `afterEach` must clear it, or every test after the
-mirroring one starts in English and looks for the wrong strings.
+mirroring one starts in English and looks for the wrong strings. Since
+`isolate: false` (see "The suite is fast on purpose") it keeps it across FILES
+too, along with `client.ts`'s selected library — `src/test/setup.ts` resets
+both globally, and anything else that becomes module-level state belongs in
+that list rather than in a per-file workaround.
 
-**The pre-commit hook now has two independent halves** (`tools/githooks/pre-commit`):
-accuracy (sweep + spotchecks, unchanged) and product (`tests/run_all.py`,
+**The pre-commit hook decides which checks apply; `tools/check.py` runs them**
+(`tools/githooks/pre-commit`). Still two independent halves — accuracy (sweep +
+spotchecks) and product (`tests/run_all.py`,
 `tools/api_contract.py --check`, and the client tests when `app/web/` is
 staged). Product work must never require touching the accuracy baseline. The
 client half self-skips without `node_modules`, like the spotchecks do without
 run data.
+
+Two properties of `check.py` worth not undoing: **every check runs even after
+one fails** (stopping at the first red hides the other three and turns one
+fix-and-rerun cycle into four), and **checks are admitted against a core
+budget** rather than all launched at once. The free-for-all version made every
+check slower — the python rings went 19s → 52s — because two of them fan out
+internally; the budget is cores + 2, measured (47s at exactly-cores, 44s at
++2, 46s at +4: enough slack to cover startup I/O, not enough to thrash).
 
 ## Known constraints / next steps (roughly prioritised, updated 2026-08-06)
 

@@ -28,9 +28,10 @@ from urllib.parse import quote
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))   # tests/_fastclient
 
 from fastapi.routing import APIRoute
-from fastapi.testclient import TestClient
+from _fastclient import TestClient          # starlette's, on a shared portal
 
 from app import API_PREFIX, __version__
 from app.adapters.disk_blobs import DiskBlobStore
@@ -44,7 +45,7 @@ from app.adapters.memory_store import (
     MemoryTenancyStore,
 )
 from app.api import deps
-from app.api.app import create_app
+from app.api.app import bind_ports, create_app
 from app.domain import (
     Account,
     Decision,
@@ -112,11 +113,51 @@ def _tenancy(principal: StubPrincipal) -> MemoryTenancyStore:
     return store
 
 
+# --- app recycling ---------------------------------------------------------
+# ⚠ Why apps are pooled rather than built per test. FastAPI resolves a route's
+# dependency graph LAZILY — on that route's first request — and the analysis
+# (pydantic signature introspection, one `get_dependant` per route) costs ~50ms
+# per app. This file builds 153 of them, which measured as 29 of its 39
+# seconds: more time spent re-deriving the same route table than running the
+# assertions.
+#
+# A pooled app is not a shortcut around anything the tests check. The ports are
+# rebound through `app.api.app.bind_ports` — the SAME function `create_app`
+# calls, so `_always`'s pydantic deep-copy trap is still exercised — and the
+# overrides are CLEARED first, so an optional port (blobs, reader) left unbound
+# by this call cannot inherit the previous test's. Everything a test can
+# actually write to lives in the stores, and those are still fresh per test.
+#
+# It is also closer to production than the old shape: a real server builds one
+# app and serves every request through it.
+#
+# ⚠ Apps come back at the END OF THE TEST, not when a client closes. Recycling
+# on `TestClient.__exit__` is the tempting version and it barely worked: a
+# large family of tests here builds `c = TestClient(_app(...))` with no `with`
+# — perfectly legal, the client works — so 135 apps were built for 138 tests
+# and the pool was empty at the end. Returning them from `after_each` also
+# guarantees two apps live at once stay DISTINCT for as long as the test runs,
+# which the tenant-isolation tests need.
+_APP_POOL: list = []
+_IN_USE: list = []
+
+
+def after_each() -> None:
+    """Called by ``tests/run_all.py`` after every test in this module."""
+    _APP_POOL.extend(_IN_USE)
+    _IN_USE.clear()
+
+
 def _app(principal: StubPrincipal | None = None, store=None, shelves=None,
          blobs=None, reads=None, reader=None, jobs=None, decisions=None,
-         duplicates=None, tenancy=None):
+         duplicates=None, tenancy=None, recycle: bool = True):
+    """Build (or recycle) an app with these ports bound.
+
+    :param recycle: pass ``False`` for an app whose per-app state a later test
+        must not inherit. Everything else is recycled at the end of the test.
+    """
     p = principal or StubPrincipal()
-    return create_app(
+    ports = dict(
         principal_provider=lambda: p,
         tenancy_store=tenancy if tenancy is not None else _tenancy(p),
         book_store=store if store is not None else MemoryBookStore(),
@@ -130,6 +171,16 @@ def _app(principal: StubPrincipal | None = None, store=None, shelves=None,
         clock=StubClock(),
         id_gen=SeqIdGen(),
     )
+    if not recycle:
+        return create_app(**ports)
+    if _APP_POOL:
+        app = _APP_POOL.pop()
+        app.dependency_overrides.clear()
+        bind_ports(app, **ports)
+    else:
+        app = create_app(**ports)
+    _IN_USE.append(app)
+    return app
 
 
 @contextmanager
@@ -819,7 +870,10 @@ def test_every_api_route_is_versioned():
 def test_openapi_paths_are_all_under_v1():
     """The same rule read off the published contract rather than the router —
     it is the schema that clients and the TS generator actually see."""
-    schema = _app().openapi()
+    # Not pooled: `.openapi()` memoises the document on the app object, and a
+    # recycled app carrying that cache would hand a later test a schema it did
+    # not build.
+    schema = _app(recycle=False).openapi()
     bad = [p for p in schema["paths"] if not p.startswith(API_PREFIX + "/")]
     assert not bad, f"schema paths outside {API_PREFIX}: {bad} (H3)"
 

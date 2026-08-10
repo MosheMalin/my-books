@@ -25,7 +25,12 @@ from typing import Any, Callable, Sequence
 from booksnap.catalog import LocalCatalog
 from booksnap.config import CONFIG, REPO_ROOT
 from booksnap.match import explain
-from booksnap.pipeline import Pipeline
+# ⚠ `booksnap.pipeline` is imported inside `read()`, not here. It pulls in
+# `segment` -> scipy.signal + cv2, which is **5.4 seconds** — and this module
+# is imported by the composition root, so every product server startup, every
+# `--check` of the API contract, and the whole API test ring paid it to reach
+# code that mostly answers `unavailable()` and maps DTOs. The CV stack is
+# needed only when a read actually runs, and a read already costs seconds.
 
 from app.domain import LibraryRef
 from app.ports.blobs import BlobStore
@@ -90,6 +95,8 @@ class BooksnapReader:
                 p.write_bytes(data)
                 paths.append(p)
                 by_stem[p.stem] = req.capture_id
+
+            from booksnap.pipeline import Pipeline    # see the note on imports
 
             crops_dir = tmp_dir / "crops"
             pipe = Pipeline(catalog=catalog, fallback=fallback,

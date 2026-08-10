@@ -155,10 +155,26 @@ def test_nli_empty_ocr_returns_no_candidates():
 
 
 def test_nli_transport_failure_is_safe():
+    calls = []
+
     def boom(url):
+        calls.append(url)
         raise ConnectionError("network down")
+
     cat = NLICatalog(api_key="guest", transport=boom)
+    # ⚠ The backoff is zeroed, not the retry COUNT. `_fetch` sleeps
+    # `retry_backoff * (attempt + 1)` between attempts, so at the shipped 1.5s
+    # this one test slept 22.5s — 28% of the whole python suite — waiting for
+    # a network that was never going to answer. Sleeping proves nothing here;
+    # what the test is about is that a dead transport degrades to "no
+    # candidates" instead of raising. Asserting the retries and the failure
+    # COUNT below covers strictly more than the sleep did.
+    cat.retry_backoff = 0
     assert cat.candidates("פול קארני הכופרם") == []   # degrades to no match
+    assert cat.failed_fetches > 0                     # and says it failed
+    assert cat.last_error == "network down"
+    # every query really was retried `retries` times before being given up on
+    assert len(calls) == cat.retries * cat.failed_fetches
 
 
 # --- fake Google Vision client ----------------------------------------------
