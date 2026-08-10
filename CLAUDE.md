@@ -40,6 +40,12 @@ into a follow-up commit:
 One review pass per landed item is the cadence that has paid — not every
 keystroke, not never.
 
+**Epics** (a pillar, a console rework, "focus on X") don't get one stretched
+cycle: `/cycle`'s Phase 0 fetches the existing decomposition (the planning/
+docs, re-read against what actually landed) or runs a planning pass to
+produce one, then executes item by item — each landed on `main` before the
+next, pausing for the owner only on unsettled decisions.
+
 ## Rules of engagement
 
 1. **Worktrees for parallel work.** Multiple sessions share this tree; never
