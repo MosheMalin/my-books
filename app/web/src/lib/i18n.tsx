@@ -237,6 +237,9 @@ const HE = {
     stage_queued: 'ממתין בתור…',
     library_switch: 'החלפת ספרייה',
     library_new: '+ ספרייה חדשה',
+    library_create_hint:
+      'ספרייה נפרדת היא אוסף נפרד — של אדם או משק בית אחר. חדרים ומקומות ' +
+      'בבית אינם ספריות; הם יגיעו עם המפה.',
     library_name: 'שם הספרייה',
     library_name_placeholder: 'למשל משפחת מלין',
     library_create: 'יצירה',
@@ -464,6 +467,10 @@ const EN: Strings = {
     stage_queued: 'Waiting in the queue…',
     library_switch: 'Switch library',
     library_new: '+ New library',
+    library_create_hint:
+      "A separate library is a separate collection — another person's or "
+      + "household's. Rooms and places in the house are not libraries; those "
+      + 'arrive with the Map.',
     library_name: 'Library name',
     library_name_placeholder: 'e.g. The Malin family',
     library_create: 'Create',

@@ -109,6 +109,30 @@ family collection"); **PhysicalLibrary** is a physical place within it. A user
 having several physical libraries was called out explicitly and must not be
 collapsed into a single implicit root.
 
+**[SETTLED 2026-08-10, owner] What makes something a TENANT.** The
+discriminator is **ownership, never geography**: a different tenant is a
+different account's/household's collection. Within one account, multiple
+physical libraries — the living room, the child's room, and equally a whole
+other SITE (the office, shelves standing at the parents') — are **locations
+of one Library**, never Libraries of their own. Consequences:
+
+- **one Library per account is the default and the normal case.** A second
+  Library under your own account is a rare, deliberate act (a genuinely
+  separate collection you administer — a shop's stock, a classroom set), not
+  an organizational tool. The way an account normally comes to see a second
+  Library is MEMBERSHIP in someone else's (P4.3 invites);
+- the "home, office, parents'" example above is about MY books stored in
+  three places — all one tenant. My parents' OWN collection is THEIR
+  Library, which I may join as a member. Whose books, not whose roof;
+- splitting one collection across two Libraries has a real, silent cost:
+  search, dedup and §5.4's duplicate question are all tenant-scoped, so a
+  second copy of a book you already own would never be flagged. This is why
+  the boundary must not be used for rooms;
+- the client must not ADVERTISE multi-library to an account that has one —
+  the switcher renders as a plain label until a second Library genuinely
+  exists, and creating one carries guidance saying what a Library is for.
+  Rooms get their proper noun (Place) with the map, pillar 6.
+
 ### 4.2 Roles **[DECIDED — matrix settled at P3.2, 2026-08-10]**
 
 The matrix lives as DATA in `app/domain/policy.py:POLICY`, with one

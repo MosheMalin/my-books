@@ -2779,6 +2779,42 @@ method, not a cache), and `library.id` charset validation in the blob layout
 (ids are server-minted and the resolver 404s unknowns; noted as
 defence-in-depth for P4).
 
+## ⚠⚠ A tenant is an ownership boundary, never a geography (owner, 2026-08-10)
+
+Settling the question P3.1's switcher surfaced (and the parallel admin
+session first raised): **a different tenant is a different account's
+collection. Within one account, the living room, the child's room, and a
+whole other site (office, shelves at the parents') are LOCATIONS of one
+Library — pillar 6's Place — never Libraries.** Full statement in VISION
+§4.1; the discriminator is whose books, not whose roof. Splitting one
+collection across Libraries has a silent cost: search, dedup and §5.4's
+duplicate question are tenant-scoped, so a second copy of a book you own
+would never be flagged.
+
+What changed to match (the domain already matched —
+`test_a_library_is_not_a_place` and the whole per-library tenancy stack are
+exactly this rule):
+
+- **the switcher renders as a plain LABEL until a second library genuinely
+  exists** (`LibrarySwitcher.tsx`, `.libswitch-label`). An always-present
+  "+ new library" was the only noun the UI offered for "child room", one tap
+  away — the modelling error it invited is the one the owner hit. Creation
+  now lives in the menu (≥2 libraries); an account's normal path to a second
+  library is MEMBERSHIP (P4.3), and the API remains the escape hatch for the
+  rare genuine second collection;
+- **the create form states the rule where the choice is made**
+  (`t.library_create_hint`, both locales): a library is another person's or
+  household's collection; rooms arrive with the Map. Both the demotion and
+  the hint are mutation-checked;
+- P6.1 (plan) now says Places include SITES, and is the recorded exit for
+  any room-modelled-as-library: its books move back under a Place and the
+  extra Library retires. P4.1's sign-up must create exactly ONE library.
+
+Verified live against a running two-library server (menu + roles + hint,
+DOM-level; the pane did not composite frames — the recurring limitation —
+so paint is inferred from existing tokens as before). The single-library
+label variant is pinned by the client ring, which is where it can be built.
+
 ## Reviewer agents (`.claude/agents/`) — run them after substantive items
 
 Four persisted reviewer personas, born from the pillar-3 round where every

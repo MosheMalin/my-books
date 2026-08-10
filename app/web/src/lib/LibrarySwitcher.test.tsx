@@ -28,15 +28,20 @@ const OFFICE = { id: 'lib-2', label: 'המשרד', role: 'editor',
 const A_BOOK = book({ id: 'b1', title: 'היער השיכור', author: "ג'ראלד דארל" })
 
 describe('the library switcher', () => {
-  it('names the library in the app bar', async () => {
+  it('names the library in the app bar as a LABEL when there is only one', async () => {
+    // §4.1's settled tenancy rule (owner, 2026-08-10): a tenant is an
+    // ownership boundary, never a geography. Until Place exists (pillar 6),
+    // a Library is the only noun this UI offers for "child room" — so an
+    // always-present switcher + "+ new library" was an invitation to model
+    // a ROOM as a TENANT. One library renders as a plain label: no menu,
+    // no create, nothing to advertise.
     const server = fakeServer([A_BOOK])
     server.libraries = [HOME]
     renderApp(<App />)
-    // Waited for, not read off the first render: the button exists before
-    // `GET /libraries` answers, and at that point it honestly has no name yet.
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'החלפת ספרייה' }))
-        .toHaveTextContent('משפחת מלין'))
+    expect(await screen.findByText('משפחת מלין')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'החלפת ספרייה' }))
+      .not.toBeInTheDocument()
+    expect(screen.queryByText('+ ספרייה חדשה')).not.toBeInTheDocument()
   })
 
   it('lists this account\'s libraries with their roles', async () => {
@@ -129,18 +134,25 @@ describe('the library switcher', () => {
 
   it('creates a library and switches to it, because that is why you made it',
      async () => {
+    // Seeded with TWO libraries: creation lives in the menu, and the menu
+    // only exists once a second library genuinely does (§4.1). An account
+    // with one library reaches a second through membership (P4.3) or the
+    // API — never through an app-bar invitation.
     const server = fakeServer([A_BOOK])
-    server.libraries = [HOME]
+    server.libraries = [HOME, OFFICE]
     renderApp(<App />)
     await screen.findByText('היער השיכור')
 
     server.books = []
     await userEvent.click(screen.getByRole('button', { name: 'החלפת ספרייה' }))
     await userEvent.click(screen.getByRole('menuitem', { name: '+ ספרייה חדשה' }))
+    // The rule is stated where the choice is made: what a separate library
+    // IS (another household's collection), and what it is not (a room).
+    expect(screen.getByText(/חדרים ומקומות/)).toBeInTheDocument()
     await userEvent.type(screen.getByLabelText('שם הספרייה'), 'הורים')
     await userEvent.click(screen.getByRole('button', { name: 'יצירה' }))
 
-    await waitFor(() => expect(server.libraryHeaders.at(-1)).toBe('lib-2'))
+    await waitFor(() => expect(server.libraryHeaders.at(-1)).toBe('lib-3'))
     expect(await screen.findByRole('button', { name: 'החלפת ספרייה' }))
       .toHaveTextContent('הורים')
   })

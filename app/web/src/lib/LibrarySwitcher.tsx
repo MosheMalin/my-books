@@ -12,10 +12,18 @@
  * options stop being values). It also lets the current row carry a check
  * mark, which a select cannot.
  *
- * ⚠ **Absent, not disabled, while there is only one library**: the switcher
- * still renders — it is the app bar's name for where you are — but a single
- * library means the panel is a list of one plus *new*, which is exactly what
- * it should say. Nothing is greyed out.
+ * ⚠ **One library renders as a plain LABEL, not a switcher** (owner,
+ * 2026-08-10, settling §4.1's tenancy rule). A tenant is an ownership
+ * boundary, never a geography: rooms and sites are pillar-6 Places, and
+ * until Place exists a Library is the only noun this UI offers — so an
+ * always-present "+ new library" was actively inviting "child room" to be
+ * modelled as a TENANT, with the silent cost §4.1 records (a second copy of
+ * a book you own would never be flagged across the boundary). The menu, and
+ * with it creation, appears once a second library GENUINELY exists (another
+ * household's, via membership — or made through the API for the rare
+ * separate-collection case). Same "absent, not disabled" reasoning as every
+ * other control that waits for its pillar; P4.3's invites are the real
+ * multi-library path.
  */
 import { useEffect, useRef, useState } from 'react'
 import { useI18n } from './i18n'
@@ -79,6 +87,17 @@ export function LibrarySwitcher() {
   // Never blank: the app bar with an empty slot reads as a rendering bug.
   const name = current?.label || t.library_unnamed
 
+  // See the module note: one library = a label, not an invitation.
+  if (libraries.length <= 1) {
+    return (
+      <div className="libswitch">
+        <span className="libswitch-label rtl-safe">
+          {failed ? t.library_unknown : name}
+        </span>
+      </div>
+    )
+  }
+
   return (
     <div className="libswitch" ref={box}>
       <button
@@ -122,6 +141,10 @@ export function LibrarySwitcher() {
                 placeholder={t.library_name_placeholder}
                 aria-label={t.library_name}
               />
+              {/* §4.1's settled rule, stated where the choice is made (the
+                  same principle as the mode selector's cost note): a library
+                  is a separate collection, and rooms are not libraries. */}
+              <p className="tiny muted rtl-safe">{t.library_create_hint}</p>
               <button type="submit" disabled={busy || !label.trim()}>
                 {t.library_create}
               </button>

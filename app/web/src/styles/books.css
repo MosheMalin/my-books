@@ -102,6 +102,18 @@
   color: var(--muted);
   font-size: 14px;
 }
+/* One library = a plain label (§4.1's settled tenancy rule): same seat and
+   type as the button, none of its affordances — no hover, no caret. */
+.libswitch-label {
+  display: inline-block;
+  max-width: 34ch;
+  padding: 6px 10px;
+  color: var(--muted);
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .libswitch-btn:hover {
   background: var(--bg);
   color: var(--ink);
