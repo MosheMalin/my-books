@@ -21,8 +21,7 @@ import { useI18n, type Strings } from '../lib/i18n'
 import { navigate } from '../lib/route'
 import { useSystem } from '../lib/system'
 import {
-  Empty, ErrorBox, Loading, SortControl, StatusBadge, formatDate, formatNumber, libraryName, useAsync
-} from '@booksnap/ui'
+  Empty, ErrorBox, Loading, SortControl, StatusBadge, formatDate, formatNumber, libraryName, useAsync, Select } from '@booksnap/ui'
 import { BookPanel } from './BookPanel'
 
 /** Rows per screen. */
@@ -120,7 +119,7 @@ export function BooksPage({ initialLibraryId }: { initialLibraryId: string | und
       <p className="sub">{t.sys_scope}</p>
 
       <div className="row" style={{ marginBottom: 12 }}>
-        <select value={libraryId ?? ''} aria-label={t.bp_library}
+        <Select value={libraryId ?? ''} aria-label={t.bp_library}
                 onChange={(e) => {
                   const next = e.target.value || undefined
                   setLibraryId(next)
@@ -134,14 +133,14 @@ export function BooksPage({ initialLibraryId }: { initialLibraryId: string | und
               {libraryName(lib.label, t.lib_unnamed)}
             </option>
           ))}
-        </select>
+        </Select>
 
         <input type="search" value={typed} placeholder={t.books_search}
                aria-label={t.books_search} className="rtl-safe"
                style={{ flex: '1 1 220px' }}
                onChange={(e) => setTyped(e.target.value)} />
 
-        <select value={status ?? ''} aria-label={t.th_status}
+        <Select value={status ?? ''} aria-label={t.th_status}
                 onChange={(e) => setStatus(e.target.value || undefined)}>
           <option value="">{t.books_status_any}</option>
           {/* The same three words the badge in the table uses — from the
@@ -150,7 +149,7 @@ export function BooksPage({ initialLibraryId }: { initialLibraryId: string | und
           <option value="auto">{ui.st_auto}</option>
           <option value="approved">{ui.st_approved}</option>
           <option value="manual">{ui.st_manual}</option>
-        </select>
+        </Select>
 
         {/* The product's control, shared (`@booksnap/ui`) rather than the
             bare select + ↑/↓ button this screen used to draw. That version

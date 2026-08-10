@@ -38,7 +38,7 @@
 import { useState } from 'react'
 import { imageUrl, type ClaimOutcomeDTO } from '../api/client'
 import { useI18n } from '../lib/i18n'
-import { vouchedFor } from '@booksnap/ui'
+import { vouchedFor, Select } from '@booksnap/ui'
 import {
   DEFAULT_VOLUMES,
   MAX_VOLUMES,
@@ -356,22 +356,22 @@ function SplitIntoVolumes({ title, busy, onSplit, onCancel }: {
       <div className="chiprow">
         <label className="tiny muted">
           {t.split_count}
-          <select value={count} aria-label={t.split_count}
+          <Select value={count} aria-label={t.split_count}
                   onChange={(e) => setCount(Number(e.target.value))}>
             {Array.from({ length: MAX_VOLUMES - 1 }, (_, i) => i + 2).map((n) => (
               <option key={n} value={n}>{n}</option>
             ))}
-          </select>
+          </Select>
         </label>
         <label className="tiny muted">
           {t.split_style}
-          <select value={style} aria-label={t.split_style}
+          <Select value={style} aria-label={t.split_style}
                   onChange={(e) => setStyle(e.target.value as VolumeStyle)}>
             <option value="hebrew">{t.split_hebrew}</option>
             <option value="numbers">{t.split_numbers}</option>
             <option value="roman">{t.split_roman}</option>
             <option value="signal">{t.split_signal}</option>
-          </select>
+          </Select>
         </label>
         <button type="button" className="btn sm act-approve" disabled={busy}
                 onClick={() => onSplit(titles)}>
@@ -402,7 +402,7 @@ function DupPrompt({ outcome, answering, onAnswer }: ClaimRowProps) {
       </div>
       <div className="chiprow">
         {copies.length > 1 && (
-          <select
+          <Select
             aria-label={t.dup_same}
             value={copyId}
             onChange={(e) => setCopyId(e.target.value)}
@@ -412,7 +412,7 @@ function DupPrompt({ outcome, answering, onAnswer }: ClaimRowProps) {
                 {c.label || t.copy_n(i + 1)}
               </option>
             ))}
-          </select>
+          </Select>
         )}
         <button
           type="button"

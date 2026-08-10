@@ -133,7 +133,14 @@
 }
 .caprow-assign select {
   font-size: 12px;
-  padding: 3px 7px;
+  /* ⚠ Start side only. The `padding` SHORTHAND would also set the inline-END,
+     clobbering the room `@booksnap/ui`'s `.uisel select` reserves for the
+     drawn chevron — measured, and the symptom is the option text running
+     under the arrow. The shared sheet is imported BEFORE this one on purpose
+     (so an app can override what it owns), which is exactly why an app rule
+     has to be deliberate about what it takes back. */
+  padding-block: 3px;
+  padding-inline-start: 7px;
   width: auto;
   max-width: 100%;
 }

@@ -11,6 +11,7 @@
 import type { Shelf } from '../api/client'
 import { useI18n } from '../lib/i18n'
 import type { IntakeItem } from './useCapture'
+import { Select } from '@booksnap/ui'
 
 export interface CaptureRowProps {
   item: IntakeItem
@@ -78,7 +79,7 @@ export function CaptureRow({
 
         {item.status === 'ready' && (
           <div className="caprow-assign">
-            <select
+            <Select
               aria-label={t.assign_shelf_label}
               value={item.shelfId ?? ''}
               onChange={(e) => onShelf(e.target.value)}
@@ -88,9 +89,9 @@ export function CaptureRow({
                   {s.label || t.unassigned}
                 </option>
               ))}
-            </select>
+            </Select>
             {shelf && shelf.depth_count > 1 && (
-              <select
+              <Select
                 aria-label={t.depth_n(item.depth)}
                 value={item.depth}
                 onChange={(e) => onDepth(Number(e.target.value))}
@@ -98,7 +99,7 @@ export function CaptureRow({
                 {Array.from({ length: shelf.depth_count }, (_, i) => i + 1).map((d) => (
                   <option key={d} value={d}>{t.depth_n(d)}</option>
                 ))}
-              </select>
+              </Select>
             )}
             {/* No "add a row behind" (owner, 2026-08-09). P2.7 surfaced it
                 here on §5.7's reasoning that nobody discovers depth unless it

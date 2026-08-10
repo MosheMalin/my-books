@@ -66,26 +66,42 @@
    One box holding two halves: the key (a native select) and the direction (a
    button overlaid at the box's inline-START edge — the right in Hebrew, the
    left in English, and always the edge the dropdown chevron is not on). */
-.sortwrap {
+/* ---------------- every dropdown ----------------
+   `.uisel` is the box; the sort control is `.uisel` plus a direction toggle.
+   Owner's call, 2026-08-11: one dropdown treatment across BOTH applications —
+   the sort control's — rather than that one being special and every other
+   `<select>` wearing whatever the browser draws.
+
+   ⚠ What is NOT unified is the box itself. Each app keeps its own `select`
+   rule (radius, border, padding, the surface it sits on), because the two
+   palettes are deliberately different — a reading surface and a dense table
+   surface. This sheet replaces only the CHEVRON, which is the part the
+   browser refuses to let either app style. */
+.uisel {
   position: relative;
   display: inline-flex;
   align-items: center;
-  flex: none;
 }
-.sortwrap select {
+.uisel select {
   /* The UA chevron ignores padding-inline-end — Chrome pins it a fixed
      distance from the border — so it is replaced by the ::after below, which
      can be positioned and, unlike a background-image data URI, can read
-     var(--ui-muted) and so follows dark mode. */
+     var(--ui-muted) and so follows dark mode.
+
+     ⚠ An app rule that sets the `padding` SHORTHAND on a select inside
+     `.uisel` takes this space back, and the symptom is option text running
+     under the arrow. This sheet loads BEFORE the app's own, deliberately, so
+     that an app can override what it owns — the cost is that it must be
+     deliberate. `.caprow-assign select` was written that way and had to be
+     changed to `padding-block` + `padding-inline-start`; the measurement is
+     in its comment. */
   appearance: none;
-  padding-inline-start: 32px;
   padding-inline-end: 30px;
-  width: auto;
 }
 /* A chevron drawn from two borders. The SHAPE is direction-independent (a
    downward v), so the borders are physical on purpose; only its POSITION is
    logical, which is what mirrors it with the language. */
-.sortwrap::after {
+.uisel::after {
   content: '';
   position: absolute;
   inset-inline-end: 12px;
@@ -95,6 +111,29 @@
   border-bottom: 2px solid var(--ui-muted);
   transform: translateY(-2px) rotate(45deg);
   pointer-events: none;
+}
+/* A disabled control's chevron must fade with it, or the box reads as live. */
+.uisel:has(select:disabled)::after {
+  opacity: .45;
+}
+/* Fills its container rather than shrinking to its content — for a select
+   that sits in a column or a form row, where the app's own `select` rule
+   already says `width: 100%`. */
+.uisel.wide {
+  display: flex;
+  width: 100%;
+}
+.uisel.wide select {
+  width: 100%;
+}
+
+.sortwrap {
+  flex: none;
+}
+.sortwrap select {
+  /* Room for the direction toggle overlaid at the inline-start edge. */
+  padding-inline-start: 32px;
+  width: auto;
 }
 .sortdir {
   /* ⚠⚠ The UA reset is part of the COMPONENT, not the host page, and that was

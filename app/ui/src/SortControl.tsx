@@ -84,7 +84,7 @@ export function SortControl({
   const shown = disabled && inertOption ? inertOption.value : value
 
   return (
-    <div className="sortwrap">
+    <div className="uisel sortwrap">
       <button
         type="button"
         className={`sortdir${ascending ? '' : ' desc'}`}
