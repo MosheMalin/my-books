@@ -1657,6 +1657,81 @@ def test_two_concurrent_reads_in_two_libraries_do_not_observe_each_other():
         assert [cl["title"] for cl in b["claims"]] == ["ספר lib-2"]
 
 
+def _seed_reads(store, library: LibraryRef, n: int, started_at: str) -> None:
+    from app.domain import Read
+
+    base = len(store.list_all_reads(library))
+    for i in range(n):
+        store.save_read(library, Read(
+            id=f"seeded-{base + i}", library_id=library.id, shelf_id="sh-old",
+            depth=1, capture_ids=("c",), mode="spines", started_at=started_at,
+        ))
+
+
+def test_the_run_rate_cap_blocks_a_retry_loop_and_only_this_library():
+    """P3.6 (§1.2): one number against a stuck client, never against family.
+    The cap counts a rolling hour PER LIBRARY — a burst in one must not
+    freeze another — and reads older than the window never count, or the cap
+    would turn into a lifetime quota."""
+    from app.api.routers.reads import RUN_RATE_CAP_PER_HOUR
+
+    p = StubPrincipal()
+    tenancy = _tenancy(p)
+    tenancy.save_library(Library(id="lib-2", label="שניה"))
+    tenancy.save_membership(Membership(p.id, "lib-2", Role.ADMIN))
+    reads_store = MemoryReadStore()
+    with _blobs() as blobs:
+        c = TestClient(_app(principal=p, tenancy=tenancy, blobs=blobs,
+                            reads=reads_store, reader=StubReader()))
+        h2 = {deps.LIBRARY_HEADER: "lib-2"}
+
+        def shelf_with_photo(headers):
+            key = c.post(f"{API_PREFIX}/images", headers=headers,
+                         files={"file": ("a.png", _png(), "image/png")}
+                         ).json()["key"]
+            return c.post(f"{API_PREFIX}/captures", headers=headers,
+                          json={"image_id": key}).json()["shelf"]["id"]
+
+        shelf_a, shelf_b = shelf_with_photo({}), shelf_with_photo(h2)
+
+        # StubClock's "now" is 12:00; fill the window 30 minutes back.
+        _seed_reads(reads_store, TEST_LIBRARY, RUN_RATE_CAP_PER_HOUR,
+                    "2026-08-07T11:30:00+00:00")
+        r = c.post(f"{API_PREFIX}/shelves/{shelf_a}/reads",
+                   json={"depth": 1, "mode": "spines"})
+        assert r.status_code == 429, r.text
+        assert str(RUN_RATE_CAP_PER_HOUR) in r.json()["detail"]
+
+        # The OTHER library is untouched by this library's burst.
+        r2 = c.post(f"{API_PREFIX}/shelves/{shelf_b}/reads", headers=h2,
+                    json={"depth": 1, "mode": "spines"})
+        assert r2.status_code == 202, (
+            "one library's retry loop froze another library's read"
+        )
+
+
+def test_reads_older_than_the_window_do_not_count_toward_the_cap():
+    from app.api.routers.reads import RUN_RATE_CAP_PER_HOUR
+
+    reads_store = MemoryReadStore()
+    with _blobs() as blobs:
+        c = TestClient(_app(blobs=blobs, reads=reads_store,
+                            reader=StubReader()))
+        key = c.post(f"{API_PREFIX}/images",
+                     files={"file": ("a.png", _png(), "image/png")}
+                     ).json()["key"]
+        shelf = c.post(f"{API_PREFIX}/captures",
+                       json={"image_id": key}).json()["shelf"]["id"]
+        _seed_reads(reads_store, TEST_LIBRARY, RUN_RATE_CAP_PER_HOUR * 2,
+                    "2026-08-07T09:00:00+00:00")   # three hours before "now"
+        r = c.post(f"{API_PREFIX}/shelves/{shelf}/reads",
+                   json={"depth": 1, "mode": "spines"})
+        assert r.status_code == 202, (
+            "reads outside the rolling hour counted — the cap became a "
+            "lifetime quota"
+        )
+
+
 def test_starting_a_read_needs_captures_at_that_depth():
     with _blobs() as blobs:
         c = TestClient(_app(blobs=blobs, reader=StubReader()))

@@ -20,6 +20,8 @@ a resource's own identity.
 from __future__ import annotations
 
 import logging
+import os
+from datetime import datetime, timedelta
 from typing import Sequence
 from uuid import uuid4
 
@@ -99,6 +101,50 @@ router = APIRouter(prefix="/shelves/{shelf_id}/reads", tags=["reads"])
 # `EXPORT_MAX` already makes for the export route).
 _FULL_LIBRARY_SCAN_LIMIT = 100_000
 
+# P3.6 (§1.2): the per-library run rate cap — ONE number, not a metering
+# system (that is pillar 5). It guards against a retry loop or a 400-photo
+# burst, never against family: 30 read starts in a rolling hour is more
+# cataloguing than the owner has ever done in a day, and a stuck client
+# re-POSTing hits it in minutes. Env-overridable for the day a real burst is
+# legitimate (a first whole-house scan), read once at startup like every
+# other env knob in this codebase.
+RUN_RATE_CAP_PER_HOUR = int(os.environ.get("BOOKSNAP_RUN_RATE_CAP", "30"))
+_RATE_WINDOW = timedelta(hours=1)
+
+
+def _check_run_rate(reads: ReadStore, library: LibraryRef, clock: Clock) -> None:
+    """429 when this library already started the cap's worth of reads in the
+    rolling window.
+
+    Counts EVERY status, deliberately: a retry loop's reads mostly fail, and
+    failures cost the engine work the cap exists to protect. The honest
+    O(reads-in-library) scan is the same trade the diff endpoints make with
+    `_FULL_LIBRARY_SCAN_LIMIT` — measure before optimising a route a human
+    presses a few times an hour.
+    """
+    try:
+        cutoff = datetime.fromisoformat(clock.now_iso()) - _RATE_WINDOW
+    except ValueError:
+        return
+    recent = 0
+    for read in reads.list_all_reads(library):
+        if not read.started_at:
+            continue
+        try:
+            if datetime.fromisoformat(read.started_at) < cutoff:
+                continue
+        except (ValueError, TypeError):
+            continue
+        recent += 1
+    if recent >= RUN_RATE_CAP_PER_HOUR:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            f"this library already started {recent} reads in the last hour "
+            f"(cap {RUN_RATE_CAP_PER_HOUR}, §1.2 — a guard against a retry "
+            "loop, not a quota). Wait a while, or raise BOOKSNAP_RUN_RATE_CAP "
+            "and restart if this burst is intentional.",
+        )
+
 
 def _check_mode_is_usable(reader: Reader, mode: str) -> None:
     """409 before starting, rather than a read that fails a minute later.
@@ -155,6 +201,7 @@ def start_read(
     settle into ``done``/``stopped``/``failed``.
     """
     shelf = _load_shelf(shelves, library, shelf_id)
+    _check_run_rate(reads, library, clock)
     _check_mode_is_usable(reader, body.mode)
     try:
         shelf.check_depth(body.depth)

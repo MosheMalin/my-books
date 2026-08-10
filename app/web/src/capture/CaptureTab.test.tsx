@@ -357,6 +357,22 @@ describe('Capture tab — review', () => {
     expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '25')
   })
 
+  it('says a queued read is waiting, not reading', async () => {
+    // P3.4: the job runner reports {stage: 'queued'} while a read waits for
+    // a worker (another read holds the pool). "Reading…" there looks hung —
+    // the exact confusion the progress line exists to prevent.
+    const server = fakeCaptureServer()
+    server.nextReadStatus = 'running'
+    server.nextProgress = { stage: 'queued' }
+    const { container } = renderCapture()
+    await dropOnePhoto(container)
+    await screen.findByText('לא משויך')
+    await userEvent.click(screen.getByRole('button', { name: /הרצה על הנבחרים/ }))
+
+    expect(await screen.findByText('ממתין בתור…')).toBeInTheDocument()
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
+  })
+
   it('falls back to the plain line for a stage it has never heard of', async () => {
     // The engine may grow a stage this client does not know. A new event must
     // read as LESS detail, never as a broken screen or a raw key.

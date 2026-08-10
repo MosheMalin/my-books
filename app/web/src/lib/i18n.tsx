@@ -234,6 +234,7 @@ const HE = {
     stage_matching: (done: number, total: number) =>
       `מזהה ספרים בקטלוג… ${done}/${total}`,
     stage_stopping: 'עוצר…',
+    stage_queued: 'ממתין בתור…',
     library_switch: 'החלפת ספרייה',
     library_new: '+ ספרייה חדשה',
     library_name: 'שם הספרייה',
@@ -460,6 +461,7 @@ const EN: Strings = {
     stage_matching: (done: number, total: number) =>
       `Matching against the catalogue… ${done}/${total}`,
     stage_stopping: 'Stopping…',
+    stage_queued: 'Waiting in the queue…',
     library_switch: 'Switch library',
     library_new: '+ New library',
     library_name: 'Library name',

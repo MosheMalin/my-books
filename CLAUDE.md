@@ -2713,6 +2713,30 @@ Verified against the real `work/` data with the tool's dry run: two
 libraries, every stored photo referenced or too young, zero would-collect —
 the honest boring answer.
 
+## The run rate cap (P3.6) — one number, and it is not a quota
+
+`app/api/routers/reads.py:RUN_RATE_CAP_PER_HOUR` (30, env-overridable via
+`BOOKSNAP_RUN_RATE_CAP`): a library that already STARTED that many reads in
+a rolling hour gets **429** from `POST .../reads`, with a message that names
+the cap, says it is a retry-loop guard and not a quota, and says what to do.
+§1.2's own framing, kept: family won't run the bill up on purpose; a stuck
+client re-POSTing, or a 400-photo burst, will. Metering proper is pillar 5.
+
+- counts EVERY status — a retry loop's reads mostly fail, and failures cost
+  the engine work the cap protects;
+- per library, rolling hour — a burst in one library never freezes another
+  (tested), and old reads age out or the cap becomes a lifetime quota
+  (tested; both mutation-checked);
+- the honest O(reads) scan over `list_all_reads`, same trade as the diff
+  endpoints' `_FULL_LIBRARY_SCAN_LIMIT` — measure before optimising a route
+  a human presses a few times an hour.
+
+Client follow-through: the 429's detail surfaces through the existing
+failed-run panel (no new client path), and the queue's `{stage: "queued"}`
+progress (P3.4) got a real line — *"ממתין בתור…"* — instead of falling to
+"קורא…", which is exactly the looks-hung confusion the progress line exists
+to prevent. Client ring is 99 tests as of this.
+
 ## Author sort, and why it needed a schema version
 
 "Sort by author" means the SHELF order — by surname. Sorting the stored string
