@@ -44,6 +44,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
+  ApiError,
   applyDiff,
   createCapture,
   getRead,
@@ -406,16 +407,27 @@ export function useCapture() {
   }, [])
 
   /** The distinct (shelf, depth) pairs the current selection touches —
-   *  see the module docstring for why this is the real unit of a run. */
+   *  see the module docstring for why this is the real unit of a run.
+   *
+   *  Groups with a read already RUNNING are excluded. This is the same-group
+   *  half of the owner's "Run is disabled while a read is running" rule —
+   *  a second read of the same (shelf, depth) costs money, costs time and
+   *  replaces the panel being watched. The OTHER half (a global disable)
+   *  was retired with P3.4: new shelves now queue fairly server-side, so
+   *  refusing to accept them while a batch runs protected nothing and
+   *  froze the owner who just photographed one more shelf. */
   const pendingGroups = useCallback(() => {
+    const runningKeys = new Set(
+      runs.filter((r) => r.status === 'running').map((r) => r.key))
     const byKey = new Map<string, { shelfId: string; depth: number }>()
     for (const it of items) {
       if (!selected.has(it.localId) || it.status !== 'ready' || !it.shelfId) continue
       const key = `${it.shelfId}:${it.depth}`
+      if (runningKeys.has(key)) continue
       if (!byKey.has(key)) byKey.set(key, { shelfId: it.shelfId, depth: it.depth })
     }
     return [...byKey.entries()]
-  }, [items, selected])
+  }, [items, selected, runs])
 
   const start = useCallback(async () => {
     // Starting a read is the one moment the LIVE panels matter more than any
@@ -455,6 +467,10 @@ export function useCapture() {
             answerError: null,
           },
         ])
+        // A 429 is the per-library rate cap (P3.6): every remaining group
+        // would get the identical refusal, and six panels repeating one
+        // paragraph read as six different failures. One panel says it once.
+        if (err instanceof ApiError && err.status === 429) break
       }
     }
   }, [pendingGroups, mode, commitDiff])

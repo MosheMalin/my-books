@@ -50,7 +50,12 @@ _QUEUED_PROGRESS = {"stage": "queued"}
 
 @dataclass
 class _Job:
-    fn: Callable[[JobHandle], None]
+    # ``fn`` is cleared when the job settles: the closure holds the caller's
+    # captured world (for a read: the Read, its captures, port references),
+    # and ``self._jobs`` never evicts — without this a long-lived process
+    # accretes every job it ever ran (review finding; the thread-per-job
+    # runner released it implicitly when its thread died).
+    fn: Callable[[JobHandle], None] | None
     tenant: str
     retries_left: int
     stop_event: threading.Event = field(default_factory=threading.Event)
@@ -124,7 +129,16 @@ class QueuedJobRunner:
         with job.lock:
             if job.state != "running":
                 return False
-        job.stop_event.set()
+            job.stop_event.set()
+            # A queued job cannot acknowledge the stop itself — no worker has
+            # it, so nothing will report progress until one does, and the
+            # person who pressed stop watches "queued" for however long the
+            # pool stays busy, indistinguishable from the tap not registering
+            # (review finding). Say "stopped" on its behalf; the pickup path
+            # only clears the plain queued marker, so this survives until the
+            # job's own (immediate) settle.
+            if not job.picked_up:
+                job.progress = {"stage": "stopped"}
         return True
 
     # --- scheduling -------------------------------------------------------
@@ -156,7 +170,11 @@ class QueuedJobRunner:
             tenant = self._ring.popleft()
             queue = self._queues.get(tenant)
             if not queue:
-                del self._queues[tenant]
+                # Unreachable while the ring invariant holds (tenant in ring
+                # ⟺ non-empty queue, every transition under _wake) — and a
+                # defence that raised KeyError here would kill the WORKER it
+                # defends (review finding), so: pop, never del.
+                self._queues.pop(tenant, None)
                 continue
             job_id = queue.popleft()
             if queue:
@@ -176,12 +194,17 @@ class QueuedJobRunner:
                 job = self._jobs[job_id]
             with job.lock:
                 job.picked_up = True
+                fn = job.fn
                 # Leave a stale "queued" behind the moment a worker has it;
-                # fn's own first report overwrites this again.
+                # fn's own first report overwrites this again. (A stop's
+                # "stopped" marker is NOT cleared — it is the acknowledgment
+                # the poller is watching for.)
                 if job.progress == _QUEUED_PROGRESS:
                     job.progress = None
+            if fn is None:      # unreachable; a job is enqueued with its fn
+                continue
             try:
-                job.fn(_Handle(job))
+                fn(_Handle(job))
             except Exception as exc:
                 with self._wake:
                     with job.lock:
@@ -193,8 +216,15 @@ class QueuedJobRunner:
                             continue
                         job.state = "failed"
                         job.error = str(exc)
+                        job.fn = None
                 continue
+            finally:
+                # The LOCAL binding lives on through this worker's next idle
+                # wait — clearing job.fn alone still leaks the closure until
+                # the worker's next pickup (the weakref test caught it).
+                fn = None
             with job.lock:
                 if job.state == "running":
                     job.state = ("stopped" if job.stop_event.is_set()
                                  else "done")
+                job.fn = None

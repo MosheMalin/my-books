@@ -2737,6 +2737,48 @@ progress (P3.4) got a real line — *"ממתין בתור…"* — instead of fa
 "קורא…", which is exactly the looks-hung confusion the progress line exists
 to prevent. Client ring is 99 tests as of this.
 
+## What the pillar-3 review round found (2026-08-10)
+
+Three reviewer passes (data-integrity, quality, UX+concurrency) ran against
+P3.2–P3.6 as they landed; every finding below is fixed and has a named test.
+Recorded because each is the kind of thing that would read as intentional
+later:
+
+- **a repeat upload REFRESHES the blob's mtime** (`DiskBlobStore.put`,
+  `os.utime` on the dedup path). Without it the GC's age floor was provably
+  false for re-dropped photos: a 3-day-old unbound blob re-uploaded today
+  still listed as old, and a collect racing the new binding deleted bytes a
+  capture pointed at — reproduced end to end by the reviewer before fixing.
+  The one-line fix restores the documented guard;
+- **stopping a QUEUED read acknowledges immediately**: `stop()` writes
+  `{"stage": "stopped"}` into a not-yet-picked-up job's progress, so the
+  phone shows "עוצר…" instead of "ממתין בתור…" for however long the pool
+  stays busy — which read as the tap not registering. (Money was never at
+  risk: `Pipeline.run` checks stop before the first image.);
+- **a read stopped with ZERO claims archives no diff summary** — it never
+  looked, and "12 not seen" forever in the history row would be a lie.
+  Routine now that stop-while-queued exists; treated like `failed`;
+- **the global Run disable was retired, the per-group half kept.** The
+  owner's rule was about re-reading the SAME (shelf, depth); P3.4's queue
+  makes NEW shelves safe to accept mid-batch (they queue fairly), so
+  `pendingGroups` now excludes running groups and the button disables only
+  when nothing is startable. Both halves have client tests;
+- **a 429 stops `start()`'s loop** — six selected groups hitting the cap
+  rendered six identical failure panels;
+- **a settled job releases its closure** (`job.fn = None` AND the worker's
+  local binding — the weakref test caught that the local alone kept the
+  world alive through the worker's next idle wait). `self._jobs` never
+  evicts, so retained closures were a slow leak the thread-per-job runner
+  never had;
+- `_next_locked`'s defensive branch uses `pop`, never `del` — the KeyError
+  it guarded against would have killed the worker it was defending.
+
+Deliberately NOT changed on review advice: the rate cap's O(reads) scan
+(fine to ~1–2k reads; the fix at that point is a `count_reads_since` store
+method, not a cache), and `library.id` charset validation in the blob layout
+(ids are server-minted and the resolver 404s unknowns; noted as
+defence-in-depth for P4).
+
 ## Author sort, and why it needed a schema version
 
 "Sort by author" means the SHELF order — by surname. Sorting the stored string

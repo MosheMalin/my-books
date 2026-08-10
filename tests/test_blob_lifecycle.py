@@ -144,6 +144,33 @@ def test_a_fresh_upload_is_never_collected():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_a_repeat_upload_makes_an_old_blob_young_again():
+    """The dedup path (`put` of bytes already stored) must refresh mtime —
+    age is the reconciler's whole safety floor, and a re-dropped photo is
+    ABOUT to be bound to a capture. Without the refresh, a GC that listed
+    before the new binding and deleted after it takes a blob a capture now
+    points at (found by review, reproduced end to end)."""
+    import os as _os
+    import time as _time
+
+    w, tmp = _world()
+    try:
+        data = _png((60, 60, 60))
+        key = w.blobs.put(LIB, data).key
+        path = next(p for p in (tmp / "libraries" / LIB.id / "blobs").rglob("*")
+                    if p.name == key)
+        old = _time.time() - 3 * 24 * 3600
+        _os.utime(path, (old, old))
+        assert w.blobs.list_keys(LIB)[0].age_seconds > 24 * 3600
+        assert w.blobs.put(LIB, data).key == key   # the dedup path
+        assert w.blobs.list_keys(LIB)[0].age_seconds < 3600, (
+            "a repeat upload left the blob 'old' — the age floor no longer "
+            "protects the upload-then-bind gap it exists for"
+        )
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_a_deleted_shelfs_reads_still_protect_their_crops():
     """The reason `ReadStore.list_all_reads` exists: a shelf whose captures
     were removed can itself be deleted while its reads remain, and their

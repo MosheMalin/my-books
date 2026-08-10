@@ -140,7 +140,7 @@ def _check_run_rate(reads: ReadStore, library: LibraryRef, clock: Clock) -> None
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
             f"this library already started {recent} reads in the last hour "
-            f"(cap {RUN_RATE_CAP_PER_HOUR}, §1.2 — a guard against a retry "
+            f"(cap {RUN_RATE_CAP_PER_HOUR} — a guard against a runaway retry "
             "loop, not a quota). Wait a while, or raise BOOKSNAP_RUN_RATE_CAP "
             "and restart if this burst is intentional.",
         )
@@ -726,7 +726,14 @@ def _job(
             # taken for a `failed` read: `current.claims` may be an arbitrary
             # partial slice from whatever blew up mid-spine, and a summary
             # over that is not evidence worth freezing.
-            if current.status in (ReadStatus.DONE, ReadStatus.STOPPED):
+            # A STOPPED read with NO claims never looked at anything — routine
+            # now that P3.4 lets a queued read be stopped before any worker
+            # takes it. Summarising it would archive "12 not seen" forever
+            # for a read that read nothing (the §5.6 rule keeps the books
+            # either way; the history ROW would still lie). Same treatment as
+            # `failed`: no snapshot, no apply.
+            if (current.status is ReadStatus.DONE
+                    or (current.status is ReadStatus.STOPPED and current.claims)):
                 library_books = {b.key: b for b in
                                  books.list(library, limit=_FULL_LIBRARY_SCAN_LIMIT).items}
                 decision_rows = decisions.list_decisions(library, read.shelf_id,

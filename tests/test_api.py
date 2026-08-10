@@ -1732,6 +1732,70 @@ def test_reads_older_than_the_window_do_not_count_toward_the_cap():
         )
 
 
+def test_a_read_stopped_before_it_looked_archives_no_not_seen_summary():
+    """P3.4 makes stop-while-queued routine, and a stopped read with zero
+    claims never looked at anything: a diff summary over it would archive
+    "N not seen" forever for a read that read nothing. Same treatment as
+    `failed` — no snapshot (the books were never at risk either way; §5.6's
+    never-auto-remove holds upstream)."""
+    import threading
+
+    release = threading.Event()
+
+    class GateOrStopReader:
+        def read(self, library, requests, *, mode, progress=None,
+                 should_stop=None):
+            deadline = time.monotonic() + 5
+            while not release.is_set() and not (should_stop and should_stop()):
+                if time.monotonic() > deadline:
+                    raise AssertionError("never released")
+                time.sleep(0.01)
+            if should_stop and should_stop():
+                return []
+            return [ReadClaim(spine_id="sp1",
+                              capture_id=requests[0].capture_id,
+                              title="ספר אמיתי", tier="auto")]
+
+        def unavailable(self, mode):
+            return None
+
+        def code_version(self):
+            return {}
+
+        def config_snapshot(self):
+            return {}
+
+    with _blobs() as blobs:
+        c = TestClient(_app(blobs=blobs, reader=GateOrStopReader(),
+                            jobs=QueuedJobRunner(workers=1)))
+
+        def shelf_with_photo(colour):
+            key = c.post(f"{API_PREFIX}/images",
+                         files={"file": ("a.png", _png(colour=colour),
+                                         "image/png")}).json()["key"]
+            return c.post(f"{API_PREFIX}/captures",
+                          json={"image_id": key}).json()["shelf"]["id"]
+
+        shelf_a = shelf_with_photo((10, 10, 10))
+        shelf_b = shelf_with_photo((20, 20, 20))
+        read_a = c.post(f"{API_PREFIX}/shelves/{shelf_a}/reads",
+                        json={"depth": 1, "mode": "spines"}).json()["id"]
+        read_b = c.post(f"{API_PREFIX}/shelves/{shelf_b}/reads",
+                        json={"depth": 1, "mode": "spines"}).json()["id"]
+        # B waits behind A on the single worker; stop it while queued.
+        c.post(f"{API_PREFIX}/shelves/{shelf_b}/reads/{read_b}/stop")
+        release.set()
+
+        a = _wait_until_settled(c, shelf_a, read_a)
+        b = _wait_until_settled(c, shelf_b, read_b)
+        assert a["status"] == "done" and a["diff_summary"] is not None
+        assert b["status"] == "stopped"
+        assert b["claims"] == []
+        assert b["diff_summary"] is None, (
+            "a read that never looked archived a not-seen summary"
+        )
+
+
 def test_starting_a_read_needs_captures_at_that_depth():
     with _blobs() as blobs:
         c = TestClient(_app(blobs=blobs, reader=StubReader()))

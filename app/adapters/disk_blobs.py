@@ -30,6 +30,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import shutil
 import time
 from pathlib import Path
@@ -154,6 +155,15 @@ class DiskBlobStore:
                     width=size_px[0], height=size_px[1])
         if not path.exists():
             _write_atomic(path, normalised)
+        else:
+            # A repeat upload REFRESHES the file's mtime. Not cosmetic: mtime
+            # is `list_keys`'s age, and age is the orphan reconciler's whole
+            # safety floor (P3.5). Without this, a photo uploaded days ago
+            # whose binding never happened stays "old" through today's
+            # re-upload — and a GC that listed before the new binding and
+            # deleted after it takes a blob a capture now points at. Found by
+            # the P3.4-P3.6 review, reproduced end to end before fixing.
+            os.utime(path, None)
         # The sidecar is rewritten even on a repeat upload: the bytes are the
         # same photo, but the filename may be the better one this time (a
         # re-upload from the camera roll rather than "download (3).jpg").

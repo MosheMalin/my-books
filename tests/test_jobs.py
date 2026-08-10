@@ -159,6 +159,47 @@ def test_stopping_a_queued_job_still_runs_it_with_stop_already_set():
     assert runner.status("victim").state == "stopped"
 
 
+def test_stopping_a_queued_job_acknowledges_immediately_in_progress():
+    """The person who pressed stop on a QUEUED job would otherwise watch
+    "queued" until a worker frees up — indistinguishable from the tap not
+    registering (review finding). The runner says "stopped" on the job's
+    behalf the moment stop() is accepted, without waiting for any worker."""
+    runner = QueuedJobRunner(workers=1)
+    gate = threading.Event()
+    runner.submit("gate", lambda h: _wait_for(gate.is_set, "the gate"),
+                  tenant="t")
+    runner.submit("victim", lambda h: None, tenant="t")
+    assert runner.stop("victim") is True
+    status = runner.status("victim")     # no worker has touched it yet
+    assert status.state == "running"
+    assert status.progress == {"stage": "stopped"}, (
+        "a stopped-while-queued job kept claiming to be queued"
+    )
+    gate.set()
+    _wait_for(lambda: _settled(runner, "victim"), "victim to settle")
+
+
+def test_a_settled_job_releases_its_callable():
+    """`self._jobs` never evicts, so a retained closure is a leak that grows
+    for the process lifetime — each read's closure holds the Read, its
+    captures and port references (review finding; the thread-per-job runner
+    released it implicitly when the thread died)."""
+    import weakref
+
+    class Payload:
+        pass
+
+    runner = QueuedJobRunner(workers=1)
+    payload = Payload()
+    ref = weakref.ref(payload)
+    runner.submit("job", lambda h, _p=payload: None, tenant="t")
+    _wait_for(lambda: _settled(runner, "job"), "the job")
+    del payload
+    import gc
+    gc.collect()
+    assert ref() is None, "a settled job still holds its closure's world"
+
+
 def test_a_waiting_job_reports_the_queued_stage_not_silence():
     """Progress `{"stage": "queued"}` while no worker has the job — the
     distinction a poller can actually show ("waiting" vs "running, nothing
