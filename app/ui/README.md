@@ -110,9 +110,15 @@ anything in.
 ## Running it
 
 ```bash
-npm install --prefix app/ui
 npm --prefix app/ui run test
 ```
+
+You rarely install this package by hand: `app/web` and `app/admin` each carry
+a `postinstall` that installs it, because a client compiles its sources and
+TypeScript resolves their React types from HERE. Installing a client alone
+used to leave a tree whose tests passed and whose BUILD failed inside the
+app's own components — see `src/install.test.ts` for the measurement, and
+`check-installed.mjs` for what happens when lifecycle scripts are skipped.
 
 The gate runs it through `python tools/check.py --ui`, and staging anything
 under `app/ui/` also runs BOTH clients' rings — a change here is a change to

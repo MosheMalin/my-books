@@ -8,12 +8,15 @@
     "node": ">=24.15.0"
   },
   "scripts": {
+    "postinstall": "npm --prefix ../ui install --no-audit --no-fund --silent",
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "prebuild": "node ../ui/check-installed.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
+    "pretypecheck": "node ../ui/check-installed.mjs",
     "gen:api": "openapi-typescript ../api/openapi.json -o ../ui/src/api/schema.d.ts"
   },
   "dependencies": {

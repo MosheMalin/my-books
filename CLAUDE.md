@@ -527,20 +527,35 @@ the environment. `.gitignore` excludes .env, *-key.json, credentials.json, etc.
 BOOKSNAP_TESSDATA_FAST, BOOKSNAP_WORK.
 
 The clients are separate, optional installs — nothing in the recognition core
-or the tuning server needs them. There are THREE npm packages, each with its
-own `node_modules`, and each half of the gate self-skips without one:
+or the tuning server needs them. **One install per client is enough**; each
+pulls in the shared library through its own `postinstall`:
 
 ```bash
-npm install --prefix app/ui      # the shared client library
-npm install --prefix app/web     # the household's client
-npm install --prefix app/admin   # the operator's console
+npm install --prefix app/web     # the household's client (+ app/ui)
+npm install --prefix app/admin   # the operator's console (+ app/ui)
 ```
 
-⚠ `app/ui` is consumed as SOURCE through a path alias (`@booksnap/ui`), not
-built or published — so it needs installing even though nothing imports it at
-runtime from its own directory: its `node_modules` is what its OWN ring runs
-against. See `app/ui/README.md`, and the `resolve.dedupe` ⚠ in both clients'
-vite configs before touching either.
+⚠⚠ **The `postinstall` is load-bearing, and the reason is not obvious.**
+`app/ui` is consumed as SOURCE through a path alias, so a client COMPILES
+files that live over there — and TypeScript resolves `@types/react` for them
+from `app/ui/` upward, not from the app. A fresh clone that ran only
+`npm install --prefix app/web` therefore got a client whose ring passed
+**103/103** and whose `npm run build` failed with `Property 'value' does not
+exist on type 'SelectProps'`, because `SelectHTMLAttributes` had silently
+resolved to nothing. Measured, not assumed: `dev` and the tests survive it
+(vite resolves React through `resolve.dedupe`) and only the typecheck breaks
+— which is the worse of the two, arriving later and pointing at a component
+instead of at a missing install.
+
+`app/ui/check-installed.mjs` runs before `build` and `typecheck` in both
+clients and refuses with the one command that fixes it — for the paths that
+skip lifecycle scripts (`npm ci --ignore-scripts`), where the postinstall
+never runs. `app/ui/src/install.test.ts` pins the postinstall itself, so it
+cannot be removed as noise by someone who has all three installed and
+therefore cannot reproduce the problem.
+
+Read the `resolve.dedupe` ⚠ in both clients' vite configs before touching
+either.
 
 **Node 24 LTS (>=24.15.0)** — declared in `app/web/package.json` `engines`, so
 npm says so rather than it being tribal knowledge. Node 22 is maintenance-only

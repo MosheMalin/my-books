@@ -46,21 +46,19 @@ the environment) and the service refuses every request without it; the console
 asks for it once and keeps it in that browser. With no token set the service
 still serves, and says so in a banner you cannot miss.
 
-Then, once per clone — **two** installs, because this console draws its
-controls from the shared client library:
-
-```bash
-npm install --prefix app/ui
-```
+Then, once per clone:
 
 ```bash
 npm install --prefix app/admin
 ```
 
-⚠ `app/ui` is consumed as SOURCE through the `@booksnap/ui` alias, not built —
-so it has no artefact to install, but it does need its own `node_modules` for
-its own test ring, and `vite` resolves React through this app's copy
-(`resolve.dedupe`, and read the ⚠ beside it before changing anything there).
+That is the whole install: a `postinstall` pulls in `@booksnap/ui`, the shared
+client library this console draws its controls from. ⚠ It is consumed as
+SOURCE through an alias, so this app COMPILES its files and TypeScript
+resolves their React types from `app/ui/` — installing this console alone,
+without that step, produces a tree whose tests pass and whose `npm run build`
+fails inside `BooksPage`. Read the `resolve.dedupe` ⚠ in `vite.config.ts`
+before changing anything about how it resolves.
 
 and to serve it:
 

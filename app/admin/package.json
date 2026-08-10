@@ -8,12 +8,15 @@
     "node": ">=24.15.0"
   },
   "scripts": {
+    "postinstall": "npm --prefix ../ui install --no-audit --no-fund --silent",
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "prebuild": "node ../ui/check-installed.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "pretypecheck": "node ../ui/check-installed.mjs"
   },
   "dependencies": {
     "react": "^19.2.0",
