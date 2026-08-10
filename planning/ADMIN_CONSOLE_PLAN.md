@@ -363,3 +363,58 @@ in this revision: dropping the staff token from the transport, and ignoring
 DOM- and API-level checks, not paint. (A coordinate click on the token form
 also failed to register for the same reason and had to be driven through the
 DOM — worth knowing before reading that as an app bug.)
+
+---
+
+# Revision 3 (2026-08-10): the constraint is lifted
+
+Everything above was built under *"nothing existing may be modified"*. The
+owner ended it before pillar 4 — *"I want to put some order in the current
+state"* — and four of this document's own recorded compromises went with it.
+The full account is in CLAUDE.md, "Two applications, four packages"; what
+matters HERE is which of this plan's notes are now obsolete:
+
+- **the console no longer re-implements the product client.**
+  `app/ui/` is the shared library, extracted mainly from `app/web` because
+  that is the app the owner has actually used. The sort control was the
+  owner's own example: this console had it as a bare `<select>` with a `↑/↓`
+  button beside it, which read as two questions and dropped the reset-on-key-
+  change rule. It now draws the product's, and the rule is declared per
+  option so it cannot be forgotten;
+- **"Its own CSS tokens" still holds — the argument was right.** A dense
+  table surface is not a reading surface. What changed is that shared
+  components draw from `--ui-*` and each app maps its palette onto them, so
+  the console keeps its own colours without keeping its own copy of the
+  controls. `.rtl-safe` moved to the shared sheet: §7.2 is a correctness rule
+  about Hebrew, and the two copies had already drifted (`[dir=…]` here,
+  `:root[dir=…]` there);
+- **"Types come from `app/web/src/api/schema.d.ts`" is obsolete.** The
+  generated contract lives in the shared package now, so neither client
+  reaches into the other's source at all — and a test in each ring says so;
+- **"the staff DTOs are hand-written, keep them in step" is obsolete.**
+  `tools/api_contract.py` generates `app/staff_api/openapi.json` →
+  `app/admin/src/api/staff-schema.d.ts` on the same committed-artefact rule
+  as the product's. A renamed staff field is a compile error here rather than
+  an `undefined` in a table;
+- **`tests_staff/` is gone, and its tests run with the PRODUCT.** Two
+  sessions answered this from opposite ends: one folded the suite into
+  `tests/test_staff_api.py` (⚠ a `unittest.TestCase` module is collected as
+  ZERO tests by `run_all.py` and still reports `ok` — the class-based suite
+  was passing nothing), the other kept it separate with its own `--admin`
+  gate. The fold wins, and a data-integrity review supplied the argument:
+  this read model duplicates the product's SCHEMA, so what breaks it is a
+  MIGRATION — made on the product side, where a console-keyed gate never
+  runs. Reproduced by renaming `books.sort_author`. What was genuinely
+  missing is that neither the staff suite nor this console's client tests
+  were in any gate; `tools/check.py --admin` covers the client half now;
+- **the second composition root is argued, not merely noted.**
+  `tests/test_layering.py` holds the argument as a test: the staff service
+  imports no adapter (so it needs no exemption *yet*), no product route, no
+  migration, and never `app.main` — that last one because importing the
+  product's composition root MIGRATES the owner's real database, which a
+  read-only console must never do by being looked at. The day it binds an
+  adapter, the test fails and someone adds it to `COMPOSITION_ROOTS`, which
+  is the discussion that list exists to force.
+
+Phase 2's list is unchanged: member management still needs P4.1's login,
+deleting a library still needs the six-aggregate cascade and P3.5's purge.

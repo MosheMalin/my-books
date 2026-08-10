@@ -59,7 +59,7 @@ function Screen({ route }: { route: Route }) {
 }
 
 export function App() {
-  const { t, toggle } = useI18n()
+  const { t, toggleLang } = useI18n()
   const route = useRoute()
   const { needsToken, reload } = useSystem()
 
@@ -88,7 +88,7 @@ export function App() {
           <span className="tag">{t.console}</span>
         </div>
         <Tabs route={route} />
-        <button type="button" className="btn small" onClick={toggle}>
+        <button type="button" className="btn small" onClick={toggleLang}>
           {t.lang_toggle}
         </button>
       </header>

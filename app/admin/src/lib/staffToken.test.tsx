@@ -9,7 +9,7 @@
  * unconfigured one is said out loud rather than enjoyed in silence.
  */
 import { screen } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
+import { userEvent } from '@booksnap/ui/testing/user'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { App } from '../App'

@@ -46,11 +46,21 @@ the environment) and the service refuses every request without it; the console
 asks for it once and keeps it in that browser. With no token set the service
 still serves, and says so in a banner you cannot miss.
 
-Then, once per clone:
+Then, once per clone — **two** installs, because this console draws its
+controls from the shared client library:
+
+```bash
+npm install --prefix app/ui
+```
 
 ```bash
 npm install --prefix app/admin
 ```
+
+⚠ `app/ui` is consumed as SOURCE through the `@booksnap/ui` alias, not built —
+so it has no artefact to install, but it does need its own `node_modules` for
+its own test ring, and `vite` resolves React through this app's copy
+(`resolve.dedupe`, and read the ⚠ beside it before changing anything there).
 
 and to serve it:
 
@@ -136,12 +146,17 @@ green suite is not "the screen is right"; the product's own notes list several
 layout bugs that were invisible to exactly this kind of test and had to be
 caught in a browser.
 
-Product-API types come from `app/web/src/api/schema.d.ts` by a **type-only**
-import, so a renamed DTO breaks both clients' builds on the same commit.
-Regenerate with `python tools/api_contract.py --write` as usual.
+**Both services' types are generated, and neither client reaches into the
+other's source.** `python tools/api_contract.py --write` produces all four
+artefacts:
 
-Staff-API types in `src/api/staff.ts` are hand-written and mirror
-`app/staff_api/app.py`: that service is not part of the committed
-`app/api/openapi.json` contract, and adding it there would mean editing that
-artefact and the tool that checks it. Keep the two in step; a mismatch shows up
-immediately as `undefined` in a table.
+| from | schema | types |
+|---|---|---|
+| `app/api/dto.py` | `app/api/openapi.json` | `app/ui/src/api/schema.d.ts` (shared — both clients call `/api/v1`) |
+| `app/staff_api/app.py` | `app/staff_api/openapi.json` | `app/admin/src/api/staff-schema.d.ts` (here — nothing else speaks it) |
+
+`src/api/schema.ts` and `src/api/staff.ts` are thin alias modules over those,
+keeping the names the screens already read. ⚠ Until 2026-08-10 the staff types
+were HAND-WRITTEN here and a comment asked you to keep them in step with
+`app/staff_api/app.py`; they are not, and it does not. Rename a staff DTO and
+this app fails to COMPILE until you regenerate — which is the point.

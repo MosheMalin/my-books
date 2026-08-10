@@ -939,60 +939,11 @@
    `.searchwrap .mag`), and the select is padded on both sides to make room —
    inline-start for the toggle, inline-end so the native dropdown chevron
    isn't jammed against the border. */
-.sortwrap {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  flex: none;
-}
-.sortwrap select {
-  /* The UA chevron ignores padding-inline-end — Chrome pins it a fixed
-     distance from the border — so it is replaced by the ::after below, which
-     can be positioned (and, unlike a background-image data URI, can read
-     var(--muted) and so follows dark mode). */
-  appearance: none;
-  padding-inline-start: 32px;
-  padding-inline-end: 30px;
-  width: auto;
-}
-/* A chevron drawn from two borders. The SHAPE is direction-independent (a
-   downward v), so the borders are physical on purpose; only its POSITION is
-   logical, which is what mirrors it with the language. */
-.sortwrap::after {
-  content: '';
-  position: absolute;
-  inset-inline-end: 12px;
-  width: 7px;
-  height: 7px;
-  border-right: 2px solid var(--muted);
-  border-bottom: 2px solid var(--muted);
-  transform: translateY(-2px) rotate(45deg);
-  pointer-events: none;
-}
-.sortdir {
-  position: absolute;
-  inset-inline-start: 5px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  color: var(--accent);
-  z-index: 1;
-}
-.sortdir:hover:not(:disabled) {
-  background: var(--accent-soft);
-}
-.sortdir:disabled {
-  color: var(--muted);
-  opacity: .5;
-}
-/* One glyph, flipped — so ascending and descending can never drift into two
-   differently-weighted icons. */
-.sortdir.desc svg {
-  transform: rotate(180deg);
-}
+/* The sort control's own rules live in `@booksnap/ui`'s sheet
+   (app/ui/src/styles/ui.css) — the console draws the same control, and two
+   copies of "which edge does the direction toggle sit on" is two chances for
+   one of them to mirror wrongly. The tokens it reads are bridged in
+   tokens.css under "@booksnap/ui bridge". */
 
 /* An author is a LINK, not a label: clicking one filters the list to that
    author (UI_PLAN §5). It has to read as clickable without becoming a button

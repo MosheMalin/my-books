@@ -43,11 +43,44 @@ for s in $staged; do
     fi
 done
 
+# Which APPLICATION did this commit touch? Four independent answers, because
+# there are four things that can be broken independently:
+#
+#   product  the household's server            app/api, app/domain, app/ports,
+#                                              app/adapters, app/main.py, tests/
+#   web      the household's client            app/web/
+#   admin    the operator's console            app/admin/
+#   ui       the shared client library         app/ui/
+#
+# ⚠ Two routings here are not obvious and are the point of the file:
+#
+#   - **app/ui/ asks for BOTH clients.** A change to the shared library is a
+#     change to two apps, and its own ring can only prove the shared RULES.
+#     Only the clients' rings can prove a screen still renders;
+#   - **app/staff_api/ asks for --admin as well as --product.** Its own tests
+#     (`tests/test_staff_api.py`) and the rules that keep the two services
+#     apart (`tests/test_layering.py`) both live in the product's ring — but
+#     the console is its only client, and a DTO rename there is a compile
+#     error over here through the generated `staff-schema.d.ts`.
 app_hit=""
 web_hit=""
+admin_hit=""
+ui_hit=""
 for s in $staged; do
     case "$s" in
-        app/web/*)          web_hit=1; app_hit=1 ;;
+        app/web/*)          web_hit=1 ;;
+        app/admin/*)        admin_hit=1 ;;
+        app/staff_api/*)    admin_hit=1 ;;
+        app/ui/*)           ui_hit=1; web_hit=1; admin_hit=1 ;;
+    esac
+    # ⚠ Anything under app/ ALSO runs the product half, unchanged from before
+    # the split. It is where the layering rules and both generated API
+    # contracts are checked from — `app/ui/src/api/schema.d.ts` and
+    # `app/admin/src/api/staff-schema.d.ts` are committed artefacts of the two
+    # SERVERS, whichever directory they are filed in. Narrowing this to "only
+    # server files" is how a stale contract gets committed from a client
+    # change.
+    case "$s" in
         app/*|tests/*|tools/api_contract.py) app_hit=1 ;;
     esac
 done
@@ -55,6 +88,8 @@ done
 args=""
 [ -n "$app_hit" ] && args="$args --product"
 [ -n "$web_hit" ] && args="$args --web"
+[ -n "$admin_hit" ] && args="$args --admin"
+[ -n "$ui_hit" ] && args="$args --ui"
 [ -n "$hit" ] && args="$args --accuracy"
 
 if [ -z "$args" ]; then

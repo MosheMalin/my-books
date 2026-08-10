@@ -14,7 +14,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "gen:api": "openapi-typescript ../api/openapi.json -o src/api/schema.d.ts"
+    "gen:api": "openapi-typescript ../api/openapi.json -o ../ui/src/api/schema.d.ts"
   },
   "dependencies": {
     "react": "^19.2.0",
@@ -24,6 +24,7 @@
     "@testing-library/jest-dom": "^6.9.0",
     "@testing-library/react": "^16.3.0",
     "@testing-library/user-event": "^14.6.3",
+    "@types/node": "^26.2.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^6.0.0",

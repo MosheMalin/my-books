@@ -33,6 +33,37 @@
       "autoPort": true
     },
     {
+      "_comment": [
+        "The operator's console — a SECOND client, and its own read-only",
+        "service. Absent from this file until 2026-08-10 only because the",
+        "build that created it could not touch an existing file.",
+        "",
+        "It needs BOTH: staff-api answers what the operator can SEE (every",
+        "tenant, read-only), product-api everything they can CHANGE (only",
+        "inside libraries they are a member of). Start staff-api first, or",
+        "the console's first screen is its 'service unreachable' banner.",
+        "",
+        "Set BOOKSNAP_STAFF_TOKEN in .env before exposing 8758 on a network:",
+        "unset means the service serves every tenant to anyone who can reach",
+        "the port. It says so on screen rather than pretending otherwise."
+      ],
+      "name": "staff-api",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "-c",
+        "import os, uvicorn; uvicorn.run('app.staff_api.main:app', host='0.0.0.0', port=int(os.environ.get('PORT', '8758')), reload=False)"
+      ],
+      "port": 8758,
+      "autoPort": false
+    },
+    {
+      "name": "admin-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "app/admin", "run", "dev"],
+      "port": 5174,
+      "autoPort": false
+    },
+    {
       "name": "ui-mock",
       "runtimeExecutable": "python",
       "runtimeArgs": ["-m", "http.server", "8790", "--directory", "planning/mockup"],

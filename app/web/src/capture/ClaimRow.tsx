@@ -38,6 +38,7 @@
 import { useState } from 'react'
 import { imageUrl, type ClaimOutcomeDTO } from '../api/client'
 import { useI18n } from '../lib/i18n'
+import { vouchedFor } from '@booksnap/ui'
 import {
   DEFAULT_VOLUMES,
   MAX_VOLUMES,
@@ -169,7 +170,7 @@ export function ClaimRow({
                 thing nobody had confirmed (owner, 2026-08-09). The status
                 itself is left alone: downgrading manual to approved would
                 throw away which of the two actually happened. */}
-            {book && book.status !== 'auto' && (
+            {book && vouchedFor(book.status) && (
               <span className="badge b-approved">{t.finding_approved_note}</span>
             )}
             <button type="button" className="linkish"
@@ -200,7 +201,7 @@ export function ClaimRow({
                 the SAME thing to the person clicking it: "yes, this book".
                 Pending -> confirm the finding (creates it, approved);
                 settled -> raise a record still on the `auto` rung. */}
-            {(pending || book?.status === 'auto') && (
+            {(pending || (book && !vouchedFor(book.status))) && (
               <button
                 type="button"
                 className="btn sm act-approve"

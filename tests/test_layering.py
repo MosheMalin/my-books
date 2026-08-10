@@ -189,6 +189,120 @@ def test_api_does_not_import_the_tuning_server():
     assert not bad, "\n".join(bad)
 
 
+def test_the_staff_service_never_imports_the_product_api():
+    """Two applications, and the separation is the whole point of the split.
+
+    ``/api/v1`` resolves a library through the CALLER'S MEMBERSHIPS
+    (``app/api/deps.py:current_library``, §4.2), which is exactly the question
+    an operator's console cannot ask — it must see tenants nobody invited it
+    to. That is why `app/staff_api/` exists at all rather than a loosened
+    product route.
+
+    Reusing the product's routers or dependencies here would drag that
+    membership resolution back in, and the tempting way to make it fit is to
+    loosen it — which weakens tenant isolation for every household at once.
+    So the console reads through the staff service and WRITES through
+    ``/api/v1`` as an ordinary member: two surfaces, one authorization model
+    each. See planning/ADMIN_CONSOLE_PLAN.md, "Reading is cross-tenant;
+    writing is not".
+    """
+    bad = _violations(
+        "app/staff_api", {"app.api"},
+        "the staff service must not reuse the product's routes or deps",
+    )
+    assert not bad, "\n".join(bad)
+
+
+def test_the_staff_service_never_imports_the_product_composition_root():
+    """⚠ Importing ``app.main`` MIGRATES the owner's real database.
+
+    The composition root opens ``work/product.db`` at import time and
+    ``SqliteBookStore.__init__`` runs ``migrate()`` — CLAUDE.md records this
+    being discovered the hard way. A console that is READ-ONLY BY CONSTRUCTION
+    would then upgrade the owner's schema as a side effect of being looked at.
+    ``app/staff_api/main.py`` resolves the database path from the same
+    environment variables instead, and says so.
+    """
+    bad = _violations(
+        "app/staff_api", {"app.main"},
+        "importing the product's composition root migrates the real database",
+    )
+    assert not bad, "\n".join(bad)
+
+
+def test_the_staff_service_binds_no_adapter_and_so_needs_no_exemption():
+    """The recorded reason ``app/staff_api/main.py`` is NOT in COMPOSITION_ROOTS.
+
+    A second composition root exists, which the exemption list is deliberately
+    shaped to make a visible, argued-about diff. The argument, from that file's
+    own docstring: the rule the exemption protects is
+    ``app/api -X-> app/adapters``, and nothing here is under ``app/api`` — this
+    service wires a read model that imports no adapter at all, so the exemption
+    is not needed yet.
+
+    This test is what keeps that argument TRUE rather than merely written down.
+    The day the staff service binds a real adapter, this test fails and the
+    person who made it bind one adds it to the list — which is the discussion
+    the list exists to force.
+    """
+    bad = _violations(
+        "app/staff_api", {"app.adapters"},
+        "add app/staff_api/main.py to COMPOSITION_ROOTS and argue for it",
+    )
+    assert not bad, "\n".join(bad)
+
+
+def test_the_staff_service_never_runs_a_migration():
+    """Read-only by construction, checked structurally and not only by review.
+
+    ``tests/test_staff_api.py`` pins ``user_version`` across every query, which
+    catches a
+    migration that RUNS. This catches the import that would let one.
+
+    ⚠ It is REDUNDANT rather than primary, and a review measured exactly how:
+    ``from app.adapters import migrations`` evades it (``_imports`` yields the
+    module name ``app.adapters``, and ``"migrations" in name`` is False) and is
+    caught by ``test_the_staff_service_binds_no_adapter…`` instead. Verified in
+    both directions. So this rule earns its keep only the day ``migrations``
+    moves out of ``app/adapters`` — do not delete the adapter rule believing
+    this one covers it. Recorded rather than "fixed": both spellings are caught
+    today, which is the property that matters.
+    """
+    bad = []
+    for f in _py_files("app/staff_api"):
+        for name, lineno in _imports(f):
+            if "migrations" in name:
+                bad.append(
+                    f"{_module_path(f)}:{lineno} imports {name} — the staff "
+                    f"service must never advance the owner's schema"
+                )
+    assert not bad, "\n".join(bad)
+
+
+def test_the_product_never_imports_the_staff_service():
+    """The other direction, which matters more.
+
+    ``app/staff_api`` answers cross-tenant questions with its own credential.
+    A product module reaching into it would put a surface that reads EVERY
+    household's data one import away from a route that authenticates as one
+    member — the exact shape of an isolation bug §4.2 exists to prevent.
+
+    ⚠ ``app/main.py`` is NOT exempted here, unlike everywhere else in this
+    file: it is a composition root for the PRODUCT, and the staff service has
+    its own.
+    """
+    bad = []
+    for rel in ("app/api", "app/domain", "app/ports", "app/adapters", "app/main.py"):
+        for f in _py_files(rel):
+            for name, lineno in _imports(f):
+                if name == "app.staff_api" or name.startswith("app.staff_api."):
+                    bad.append(
+                        f"{_module_path(f)}:{lineno} imports {name} — the "
+                        f"product must not depend on the operator's service"
+                    )
+    assert not bad, "\n".join(bad)
+
+
 def test_composition_root_exists_and_is_the_only_exemption():
     """Guards the exemption list itself: a stale entry would silently disable
     the api->adapters rule for a file that no longer needs it."""

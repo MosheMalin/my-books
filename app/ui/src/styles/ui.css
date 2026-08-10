@@ -1,0 +1,150 @@
+/* @booksnap/ui — the styles that belong to shared behaviour.
+   Import it AFTER the app's own tokens and base, and before the app's
+   component sheets, so an app can still override a rule it owns.
+
+   ── The token contract ──────────────────────────────────────────────────
+   Everything here draws from `--ui-*` custom properties, and NOTHING else.
+   The two apps have genuinely different palettes on purpose (the product is a
+   reading surface, the console a dense table surface), so a shared sheet that
+   reached for `--accent` directly would either force one palette on both or
+   silently render unstyled in whichever app spelled it differently.
+
+   Each app maps its own palette onto this contract in one block — see
+   `app/web/src/styles/tokens.css` and `app/admin/src/styles/tokens.css`,
+   under "@booksnap/ui bridge". The mapping is not optional and not a
+   convention: `src/tokens.test.ts` reads this file, collects every `--ui-*`
+   it references, and fails if an app does not define it. A control that
+   renders invisibly is exactly the bug jsdom cannot see.
+
+   Required today:
+     --ui-muted         secondary ink (icons, chevrons, disabled text)
+     --ui-accent        the interactive colour
+     --ui-accent-soft   its low-alpha wash, for hover fills
+
+   ⚠ What this sheet does NOT assume: that the host page resets UA form
+   chrome. One app does and one does not, and a control written against the
+   one that does renders as a raised grey box with an outset border in the
+   one that does not. Every control here resets its own. See `.sortdir`.
+   ──────────────────────────────────────────────────────────────────────── */
+
+/* ---------------- mixed-script text (UI_PLAN §7.2) ----------------
+   The single most load-bearing rule in this repo's CSS, and the reason it is
+   HERE rather than copied into both apps — it is a correctness rule about
+   Hebrew, not a theme, and the two copies had already drifted in their
+   selectors.
+
+   `unicode-bidi: plaintext` picks each STRING's own base direction, so a
+   Hebrew title ("משחקי הכס") and a Latin one ("Sapiens") both render with
+   correct internal glyph and word order in the very same column. Left alone,
+   plaintext ALSO resolves `text-align: start` per string — which flushes
+   Hebrew right and Latin left within one list, producing two ragged edges
+   instead of one clean column.
+
+   So the two concerns are split on purpose:
+     - DIRECTION per STRING     (unicode-bidi: plaintext)
+     - ALIGNMENT per CONTAINER  (the [dir=…] rules below)
+
+   ⚠ `.rtl-safe` must sit on a BLOCK box. `text-align` is a no-op on an inline
+   one, which is how the product's feed shipped with §7.2 silently off for a
+   whole screen. Put it on the cell or the div, never on a `<span>` inside a
+   button.
+
+   An app may still carve out a container that is itself end-aligned (the
+   product's `.side` column does). Those selectors are more specific, so they
+   win wherever they are declared. */
+.rtl-safe {
+  unicode-bidi: plaintext;
+}
+:root[dir=ltr] .rtl-safe {
+  text-align: left;
+}
+:root[dir=rtl] .rtl-safe {
+  text-align: right;
+}
+
+/* ---------------- the sort control ----------------
+   One box holding two halves: the key (a native select) and the direction (a
+   button overlaid at the box's inline-START edge — the right in Hebrew, the
+   left in English, and always the edge the dropdown chevron is not on). */
+.sortwrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+}
+.sortwrap select {
+  /* The UA chevron ignores padding-inline-end — Chrome pins it a fixed
+     distance from the border — so it is replaced by the ::after below, which
+     can be positioned and, unlike a background-image data URI, can read
+     var(--ui-muted) and so follows dark mode. */
+  appearance: none;
+  padding-inline-start: 32px;
+  padding-inline-end: 30px;
+  width: auto;
+}
+/* A chevron drawn from two borders. The SHAPE is direction-independent (a
+   downward v), so the borders are physical on purpose; only its POSITION is
+   logical, which is what mirrors it with the language. */
+.sortwrap::after {
+  content: '';
+  position: absolute;
+  inset-inline-end: 12px;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid var(--ui-muted);
+  border-bottom: 2px solid var(--ui-muted);
+  transform: translateY(-2px) rotate(45deg);
+  pointer-events: none;
+}
+.sortdir {
+  /* ⚠⚠ The UA reset is part of the COMPONENT, not the host page, and that was
+     learned the expensive way. This rule was ported from an app whose base
+     stylesheet strips every button (`app/web/src/styles/base.css`), so it only
+     ever set position, size and colour — and the first app to adopt it has no
+     such reset. In the console the toggle rendered with full UA chrome: a grey
+     raised box with a 2px outset border inside the sort field in light mode,
+     and a mid-grey box with a WHITE outline against a near-black field in dark
+     mode. Two boxes, one control's worth of meaning — the exact failure this
+     component exists to prevent, and worse than the plain ↑/↓ button it
+     replaced, which at least looked deliberate.
+
+     Nothing in either client ring could see it (jsdom computes no cascade) and
+     the token contract test only checks NAMES. So the sheet assumes nothing
+     about the host's form-control chrome. Any control added here must do the
+     same. */
+  appearance: none;
+  background: none;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+
+  position: absolute;
+  inset-inline-start: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: var(--ui-accent);
+  z-index: 1;
+}
+/* Only reads as a wash because the resting state above is transparent:
+   `background` is a shorthand, so over UA `ButtonFace` this REPLACED a filled
+   grey instead of washing over it — barely visible in light mode, and a jump
+   the wrong way (light box → dark wash) in dark. */
+.sortdir:hover:not(:disabled) {
+  background: var(--ui-accent-soft);
+}
+.sortdir:disabled {
+  color: var(--ui-muted);
+  opacity: .5;
+  cursor: not-allowed;
+}
+/* One glyph, flipped — so ascending and descending can never drift into two
+   shapes that disagree about which way is which. */
+.sortdir.desc svg {
+  transform: rotate(180deg);
+}

@@ -7,17 +7,9 @@
  * layout mirrors and that mixed-script alignment holds in both directions
  * (UI_PLAN §7.1/§7.2). Deleting it would make the bidi rules untestable.
  */
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-  type ReactNode,
-} from 'react'
+import { createI18n, type Lang } from '@booksnap/ui'
 
-export type Lang = 'he' | 'en'
+export type { Lang }
 
 const HE = {
     app: 'booksnap',
@@ -29,15 +21,10 @@ const HE = {
     sort_recent: 'נוספו לאחרונה',
     sort_relevance: 'רלוונטיות',
     sort_ignored: 'בחיפוש התוצאות מסודרות לפי רלוונטיות',
-    sort_asc: 'סדר עולה',
-    sort_desc: 'סדר יורד',
     view_list: 'רשימה',
     view_grid: 'רשת',
     add_book: 'הוספת ספר',
     status: 'סטטוס',
-    st_auto: 'זוהה אוטומטית',
-    st_approved: 'אושר',
-    st_manual: 'ידני',
     clear: 'ניקוי סינון',
     by_author: 'מאת',
     count: (shown: number, total: number) =>
@@ -268,15 +255,10 @@ const EN: Strings = {
     sort_recent: 'Recently added',
     sort_relevance: 'Relevance',
     sort_ignored: 'Search results are ordered by relevance',
-    sort_asc: 'Ascending',
-    sort_desc: 'Descending',
     view_list: 'List',
     view_grid: 'Grid',
     add_book: 'Add a book',
     status: 'Status',
-    st_auto: 'Auto',
-    st_approved: 'Approved',
-    st_manual: 'Manual',
     clear: 'Clear filters',
     by_author: 'by',
     count: (shown: number, total: number) =>
@@ -484,66 +466,18 @@ const EN: Strings = {
   lang: 'עב',
 }
 
-const STRINGS: Record<Lang, Strings> = { he: HE, en: EN }
-
-interface I18nApi {
-  lang: Lang
-  dir: 'rtl' | 'ltr'
-  t: Strings
-  setLang: (lang: Lang) => void
-  toggleLang: () => void
-}
-
-const Ctx = createContext<I18nApi | null>(null)
-const STORAGE_KEY = 'booksnap.lang'
-
-function initialLang(): Lang {
-  try {
-    const saved = globalThis.localStorage?.getItem(STORAGE_KEY)
-    if (saved === 'he' || saved === 'en') return saved
-  } catch {
-    /* private mode; the default is fine */
-  }
-  return 'he'
-}
-
-export function I18nProvider({ children }: { children: ReactNode }) {
-  const [lang, setLangState] = useState<Lang>(initialLang)
-  const dir = lang === 'he' ? 'rtl' : 'ltr'
-
-  // The whole layout mirrors off this one attribute, because every rule uses
-  // logical properties (UI_PLAN §7.1) — and the two explicit `[dir=…]`
-  // selectors that make mixed-script alignment work read it too (§7.2).
-  useEffect(() => {
-    document.documentElement.lang = lang
-    document.documentElement.dir = dir
-  }, [lang, dir])
-
-  const setLang = useCallback((next: Lang) => {
-    setLangState(next)
-    try {
-      globalThis.localStorage?.setItem(STORAGE_KEY, next)
-    } catch {
-      /* nothing to do; the choice just won't persist */
-    }
-  }, [])
-
-  const value = useMemo<I18nApi>(
-    () => ({
-      lang,
-      dir,
-      t: STRINGS[lang],
-      setLang,
-      toggleLang: () => setLang(lang === 'he' ? 'en' : 'he'),
-    }),
-    [lang, dir, setLang],
-  )
-
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>
-}
-
-export function useI18n(): I18nApi {
-  const ctx = useContext(Ctx)
-  if (!ctx) throw new Error('useI18n outside <I18nProvider>')
-  return ctx
-}
+/**
+ * The provider and the hook come from `@booksnap/ui` now — the mechanism
+ * (the toggle, the `dir`/`lang` mirroring, the persistence) was identical in
+ * both clients down to the comments. What stays here is the TABLE, which is
+ * this app's vocabulary and deliberately not shared: the console speaks about
+ * accounts and totals, and one merged table would serve two intents.
+ *
+ * ⚠ `'booksnap.lang'` is this app's own key, and the console has another. The
+ * day both are served from one origin, one key would mean switching language
+ * in the console silently switched the household's app too.
+ */
+export const { I18nProvider, useI18n } = createI18n<Strings>(
+  { he: HE, en: EN },
+  { storageKey: 'booksnap.lang' },
+)

@@ -24,7 +24,12 @@
  * every open. ⤢ promotes the drawer to the route; that transition is the
  * deep-linkable one.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback } from 'react'
+
+// The `hashchange` subscription itself is shared (`@booksnap/ui`); the ROUTE
+// TABLE below is not, and deliberately: a union of both apps' routes would let
+// one link to a screen it does not have.
+import { backOr, navigateHash, useHash } from '@booksnap/ui'
 
 export type Route =
   | { name: 'library' }
@@ -57,27 +62,13 @@ export function useRoute(): {
   navigate: (hash: string) => void
   back: () => void
 } {
-  const [hash, setHash] = useState(() => globalThis.location?.hash || LIBRARY_HASH)
-
-  useEffect(() => {
-    const onChange = () => setHash(globalThis.location.hash || LIBRARY_HASH)
-    globalThis.addEventListener('hashchange', onChange)
-    return () => globalThis.removeEventListener('hashchange', onChange)
-  }, [])
-
-  const navigate = useCallback((next: string) => {
-    if (globalThis.location.hash === next) return
-    globalThis.location.hash = next
-  }, [])
-
+  const hash = useHash()
+  const navigate = useCallback((next: string) => navigateHash(next), [])
   // history.back() rather than navigating to #/library, so returning from a
   // book restores the list's scroll position instead of jumping to the top.
   // Falls back for a deep link opened directly, where there is nothing to go
   // back to.
-  const back = useCallback(() => {
-    if (globalThis.history.length > 1) globalThis.history.back()
-    else globalThis.location.hash = LIBRARY_HASH
-  }, [])
+  const back = useCallback(() => backOr(LIBRARY_HASH), [])
 
-  return { route: parseHash(hash), navigate, back }
+  return { route: parseHash(hash || LIBRARY_HASH), navigate, back }
 }

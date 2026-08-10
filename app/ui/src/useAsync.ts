@@ -1,17 +1,20 @@
 /**
- * The one data-fetching primitive in this app.
+ * The one data-fetching primitive.
  *
- * ⚠ **The request-id guard is the load-bearing part**, and it is here for the
- * reason `app/web/src/lib/books.tsx` records: a response whose query has been
- * superseded must be DROPPED. Without it, a slow first page lands after the
- * user has typed a filter and repaints rows they already filtered away — and
- * in THIS app the same race across a library switch would show one library's
- * books under another's name, which is the worst bug a tenant-aware screen
- * can have.
+ * ⚠ **The request-id guard is the load-bearing part.** A response whose query
+ * has been superseded must be DROPPED — without it a slow first page lands
+ * after the user has typed a filter and repaints rows they already filtered
+ * away. In a tenant-aware screen the same race across a library switch shows
+ * one library's books under another's name, which is the worst bug either of
+ * these apps can have. `app/web/src/lib/books.tsx` carries its own copy of
+ * this guard inside the books store (it also owns a record map and paging, so
+ * it is more than this hook can be); the console had this one; the rule is now
+ * written down once even though it is enforced in two places.
  *
- * Deliberately not a query library: this console has a handful of independent
- * reads and no cache to invalidate. Revisit when two screens need to share
- * one record map, the same threshold `app/web` set for itself.
+ * Deliberately not a query library. Between them these apps have a handful of
+ * independent reads and one cache; a library would mostly be API surface.
+ * Revisit when a second screen needs to share one record map — the threshold
+ * `app/web` already set for itself.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 

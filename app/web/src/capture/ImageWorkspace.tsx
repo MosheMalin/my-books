@@ -15,7 +15,7 @@
  * nowhere else.
  */
 import type { ReadSummaryDTO, Shelf } from '../api/client'
-import { formatDate } from '../lib/format'
+import { formatDate } from '@booksnap/ui'
 import { useI18n, type Strings } from '../lib/i18n'
 import { FindingList } from './FindingList'
 import type { ImageWorkspaceApi } from './useImageWorkspace'

@@ -21,12 +21,13 @@
     "verbatimModuleSyntax": true,
     "resolveJsonModule": true,
     "skipLibCheck": true,
-    "noEmit": true
+    "noEmit": true,
+
+    /* The shared library, consumed as source and compiled by THIS tsconfig. */
+    "paths": {
+      "@booksnap/ui": ["../ui/src/index.ts"],
+      "@booksnap/ui/*": ["../ui/src/*"]
+    }
   },
-  /* ⚠ `../web/src/api/schema.d.ts` is deliberately in scope: the generated
-     contract types are shared by a TYPE-ONLY import (see src/api/schema.ts),
-     so the compiler crosses the line and nothing else does. Copying that file
-     instead would create a second generated artefact `tools/api_contract.py
-     --check` does not police, and it would go stale in silence. */
-  "include": ["src", "vite.config.ts", "../web/src/api/schema.d.ts"]
+  "include": ["src", "vite.config.ts"]
 }

@@ -6,6 +6,9 @@ import { I18nProvider } from './lib/i18n'
 import { SystemProvider } from './lib/system'
 
 import './styles/tokens.css'
+// After the tokens (it reads them through the --ui-* bridge), before this
+// app's own sheet (so a rule this app owns can still win).
+import '@booksnap/ui/styles/ui.css'
 import './styles/base.css'
 
 /**

@@ -28,6 +28,8 @@ app/web/vite.config.ts.timestamp-*
 app/admin/dist/
 app/admin/.vite/
 app/admin/vite.config.ts.timestamp-*
+app/ui/.vite/
+app/ui/vite.config.ts.timestamp-*
 
 # --- Python ---
 __pycache__/

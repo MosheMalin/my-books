@@ -12,12 +12,14 @@
  * product client, by someone who is a member.
  */
 import { listLibraryShelves, listRecentReads } from '../api/staff'
-import { formatDate, formatDateTime, formatNumber, libraryName } from '../lib/format'
+import {
+  formatDate, formatDateTime, formatNumber, libraryName, useAsync
+} from '@booksnap/ui'
 import { useI18n } from '../lib/i18n'
 import { href } from '../lib/route'
 import { useSystem } from '../lib/system'
-import { useAsync } from '../lib/useAsync'
-import { Empty, ErrorBox, Loading, StatCard } from '../lib/ui'
+import { Empty, ErrorBox, Loading } from '@booksnap/ui'
+import { StatCard } from '../lib/ui'
 
 /** A shelf photographed weekly for a year is 50+ reads; this table answers
  *  "what has been happening lately", not "everything that ever happened". */

@@ -12,12 +12,9 @@
  * intents. The IDIOM is deliberately identical, so a reader of one recognises
  * the other.
  */
-import {
-  createContext, useCallback, useContext, useEffect, useMemo, useState,
-  type ReactNode,
-} from 'react'
+import { createI18n, type Lang } from '@booksnap/ui'
 
-export type Lang = 'he' | 'en'
+export type { Lang }
 
 const HE = {
   app: 'booksnap',
@@ -29,9 +26,6 @@ const HE = {
   nav_access: 'גישה',
   lang_toggle: 'English',
 
-  loading: 'טוען…',
-  load_error: 'אין חיבור לשרת',
-  retry: 'נסו שוב',
   none: 'אין',
   cancel: 'ביטול',
   save: 'שמירה',
@@ -146,9 +140,10 @@ const HE = {
   sort_title: 'כותרת',
   sort_author: 'מחבר',
   sort_recent: 'נוספו לאחרונה',
-  sort_asc: 'סדר עולה',
-  sort_desc: 'סדר יורד',
   books_sort_ignored: 'בחיפוש התוצאות מסודרות לפי רלוונטיות',
+  // What the box READS while the server is ignoring the key — the
+  // ordering actually in force, not a stale choice nobody applies.
+  books_sort_relevance: 'רלוונטיות',
   books_lent: 'מושאלים בלבד',
   books_dupes: 'כפילויות בלבד',
   books_empty: 'לא נמצאו ספרים',
@@ -162,9 +157,6 @@ const HE = {
     'במצב "כל הספריות" הרשימה נטענת מכל ספרייה בנפרד וממוינת בדפדפן, ולכן הסדר עשוי להיות מעט שונה ממיון של ספרייה אחת.',
   books_capped: (loaded: number, total: number) =>
     `נטענו ${loaded} מתוך ${total} ספרים. צמצמו את החיפוש או בחרו ספרייה אחת כדי לראות את השאר.`,
-  st_auto: 'אוטומטי',
-  st_approved: 'מאושר',
-  st_manual: 'ידני',
 
   // book panel
   bp_title: 'פרטי הספר',
@@ -224,7 +216,7 @@ const HE = {
 // table — typed as `typeof HE` so a missing translation is a build error —
 // would then have to equal the Hebrew strings themselves.
 
-type Strings = typeof HE
+export type Strings = typeof HE
 
 const EN: Strings = {
   app: 'booksnap',
@@ -236,9 +228,6 @@ const EN: Strings = {
   nav_access: 'Access',
   lang_toggle: 'עברית',
 
-  loading: 'Loading…',
-  load_error: 'No connection to the server',
-  retry: 'Try again',
   none: 'None',
   cancel: 'Cancel',
   save: 'Save',
@@ -347,9 +336,8 @@ const EN: Strings = {
   sort_title: 'Title',
   sort_author: 'Author',
   sort_recent: 'Recently added',
-  sort_asc: 'Ascending',
-  sort_desc: 'Descending',
   books_sort_ignored: 'While searching, results are ordered by relevance',
+  books_sort_relevance: 'Relevance',
   books_lent: 'Lent out only',
   books_dupes: 'Duplicates only',
   books_empty: 'No books found',
@@ -363,9 +351,6 @@ const EN: Strings = {
     'In "all libraries" mode the list is fetched per library and sorted in the browser, so the order can differ slightly from a single library\'s.',
   books_capped: (loaded: number, total: number) =>
     `Loaded ${loaded} of ${total} books. Narrow the search, or pick one library, to see the rest.`,
-  st_auto: 'auto',
-  st_approved: 'approved',
-  st_manual: 'manual',
 
   bp_title: 'Book details',
   bp_library: 'Library',
@@ -425,62 +410,18 @@ const EN: Strings = {
     'There is no login here. The tool is open to anyone on the local network, exactly like the rest of the system until pillar 4.',
 }
 
-const TABLES: Record<Lang, Strings> = { he: HE, en: EN }
-
-const STORAGE_KEY = 'booksnap.admin.lang'
-
-interface I18n {
-  lang: Lang
-  dir: 'rtl' | 'ltr'
-  t: Strings
-  setLang: (l: Lang) => void
-  toggle: () => void
-}
-
-const Ctx = createContext<I18n | null>(null)
-
-function stored(): Lang {
-  try {
-    const v = localStorage.getItem(STORAGE_KEY)
-    return v === 'en' || v === 'he' ? v : 'he'
-  } catch {
-    return 'he'
-  }
-}
-
-export function I18nProvider({ children }: { children: ReactNode }) {
-  const [lang, setLangState] = useState<Lang>(stored)
-  const dir = lang === 'he' ? 'rtl' : 'ltr'
-
-  useEffect(() => {
-    // The document element carries both, so `dir`-keyed CSS (§7.2's
-    // container-level `text-align`) and the browser's own bidi agree.
-    document.documentElement.lang = lang
-    document.documentElement.dir = dir
-  }, [lang, dir])
-
-  const setLang = useCallback((l: Lang) => {
-    setLangState(l)
-    try {
-      localStorage.setItem(STORAGE_KEY, l)
-    } catch {
-      /* private mode — the choice simply does not persist */
-    }
-  }, [])
-
-  const value = useMemo<I18n>(() => {
-    const table = TABLES[lang]
-    return {
-      lang, dir, t: table, setLang,
-      toggle: () => setLang(lang === 'he' ? 'en' : 'he'),
-    }
-  }, [lang, dir, setLang])
-
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>
-}
-
-export function useI18n(): I18n {
-  const ctx = useContext(Ctx)
-  if (!ctx) throw new Error('useI18n outside I18nProvider')
-  return ctx
-}
+/**
+ * The provider and the hook come from `@booksnap/ui` — the mechanism was
+ * identical in both clients down to the comments, so it is written once now.
+ * What stays here is the TABLE: an administrator's vocabulary (accounts,
+ * roles, totals), which is exactly what this file's own note said should not
+ * be shared. It was right about that and wrong about the provider under it.
+ *
+ * ⚠ Its own storage key, distinct from the product's. The day both are served
+ * from one origin, a shared key would mean switching language in the console
+ * silently switched the household's app too.
+ */
+export const { I18nProvider, useI18n } = createI18n<Strings>(
+  { he: HE, en: EN },
+  { storageKey: 'booksnap.admin.lang' },
+)

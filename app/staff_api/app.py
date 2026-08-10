@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import os
 import secrets
+import sqlite3
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
@@ -43,11 +44,19 @@ STAFF_TOKEN_ENV = "BOOKSNAP_STAFF_TOKEN"
 
 # --- DTOs -------------------------------------------------------------------
 #
-# Hand-written rather than generated: this service is not part of the committed
-# `app/api/openapi.json` contract (`tools/api_contract.py` builds that from
-# `app.main`), and adding it there would mean editing a committed artefact and
-# the tool that checks it. The console consumes these through its own typed
-# module, and the shapes are small enough to keep honest by reading.
+# ⚠ These are now the SOURCE of a committed contract, not a shape kept honest
+# by reading. `tools/api_contract.py` publishes them as
+# `app/staff_api/openapi.json` and generates the console's types from it
+# (`app/admin/src/api/staff-schema.d.ts`) — the same pipeline and the same
+# committed-artefact rule the product API has followed since D3.
+#
+# Until 2026-08-10 the console MIRRORED them by hand, because the build that
+# created this service could not touch the contract tool. Renaming a field
+# here is a compile error in the console now; before, it was an `undefined`
+# appearing in a table.
+#
+# So: after any change below, run `python tools/api_contract.py --write` and
+# commit both artefacts. `--check` fails the commit on drift.
 
 class OverviewDTO(BaseModel):
     """System-wide totals. Every figure spans every tenant."""
@@ -291,7 +300,32 @@ def create_app(queries: StaffQueries) -> FastAPI:
                 for row in queries.recent_reads(limit, library_id)]
 
     @app.exception_handler(SchemaMismatch)
-    def _schema_moved(_request: object, exc: SchemaMismatch):  # pragma: no cover
+    def _schema_moved(_request: object, exc: SchemaMismatch):
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc))
+
+    @app.exception_handler(sqlite3.OperationalError)
+    def _schema_moved_under_us(_request: object, exc: sqlite3.OperationalError):
+        """⚠ This is what makes the handler above REACHABLE, and it was dead
+        code until a review said so.
+
+        `self_check()` runs once, in `StaffQueries.__init__` — so a schema that
+        moves while this service is RUNNING (the product server migrating
+        `work/product.db` under it, which is the normal way to deploy) could
+        only ever surface as a raw `OperationalError`, i.e. a 500 with a SQL
+        fragment in the log and nothing on screen. The 503 this service
+        documents could not happen.
+
+        So an operational error re-runs the shape check: if the database really
+        has moved, the operator gets the named-columns message and a 503 that
+        says *come back after a restart*; if it has not, the original error is
+        re-raised untouched rather than dressed up as a schema problem it is
+        not.
+        """
+        try:
+            queries.self_check()
+        except SchemaMismatch as moved:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE, str(moved)) from exc
+        raise exc
 
     return app

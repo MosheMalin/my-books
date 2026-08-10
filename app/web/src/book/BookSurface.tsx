@@ -26,7 +26,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Book, Copy } from '../api/client'
 import { isConflict, useBooks } from '../lib/books'
-import { formatDate } from '../lib/format'
+import { formatDate } from '@booksnap/ui'
 import { useI18n } from '../lib/i18n'
 import { CopyBadges, StatusBadge } from '../books/Feed'
 

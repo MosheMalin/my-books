@@ -7,7 +7,7 @@ Two jobs, and they pull in opposite directions if you let them:
     Serialising ``Book`` directly would make every domain refactor a breaking
     API change and every DTO convenience a domain field;
   - a DTO is also the source of the generated TypeScript
-    (``app/web/src/api/schema.d.ts``), so a field renamed here becomes a client
+    (``app/ui/src/api/schema.d.ts``), so a field renamed here becomes a client
     BUILD failure. ``tools/api_contract.py`` enforces that the committed schema
     stays in step.
 

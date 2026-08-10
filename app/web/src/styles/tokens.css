@@ -95,3 +95,22 @@
     --shadow: 0 10px 34px rgba(0, 0, 0, .5);
   }
 }
+
+/* ---- @booksnap/ui bridge ----
+   The shared client library (`app/ui/`) draws ONLY from `--ui-*`, so that a
+   sheet used by two apps with two deliberately different palettes cannot
+   force one of them on the other. This block is where this app's palette
+   answers that contract.
+
+   ⚠ Aliases, not copied values. `var(--muted)` is re-resolved wherever it is
+   used, so the dark-scheme override above reaches the shared controls for
+   free; a literal colour here would leave them light in dark mode.
+
+   ⚠ It is checked mechanically — `app/ui/src/tokens.test.ts` reads the shared
+   sheet and this file and fails on a missing name. jsdom computes no cascade,
+   so neither client ring can see a control that renders invisibly. */
+:root {
+  --ui-muted: var(--muted);
+  --ui-accent: var(--accent);
+  --ui-accent-soft: var(--accent-soft);
+}

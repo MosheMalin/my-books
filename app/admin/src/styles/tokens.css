@@ -85,3 +85,24 @@
   --danger: #e08476;
   --ok: #7fc39c;
 }
+
+/* ---- @booksnap/ui bridge ----
+   The shared client library (`app/ui/`) draws ONLY from `--ui-*`. This console
+   keeps its own palette on purpose — a dense table surface, where the product
+   is a reading surface — and this block is how it answers the shared sheet's
+   contract without either app inheriting the other's colours.
+
+   ⚠ Aliases, not copied values, so both colour schemes above reach the shared
+   controls for free.
+
+   ⚠ `--accent-soft` has no counterpart here (the product invented it for hover
+   washes), so it is DERIVED rather than hard-coded — a literal would need
+   maintaining twice, once per scheme, the day the accent changes.
+
+   Checked by `app/ui/src/tokens.test.ts`; see the product's copy of this note
+   for why a test rather than a convention. */
+:root {
+  --ui-muted: var(--muted);
+  --ui-accent: var(--accent);
+  --ui-accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+}

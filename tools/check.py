@@ -1,11 +1,27 @@
 # -*- coding: utf-8 -*-
 """Run the commit gate's checks CONCURRENTLY, and report all of them.
 
-The gate is four independent things — the python rings, the API contract, the
-client rings, the client typecheck — plus the accuracy half. Run one after
-another they add up to a minute even after each was made fast; run together
-they cost about as long as the slowest. Nothing here shares state, so there
-was never a reason to queue them behind each other.
+The gate is a set of independent things — per APPLICATION, which is the shape
+that matters now that there are two clients and two services:
+
+    --product   the household's server: the python rings + both API contracts
+    --web       the household's client: its ring + its typecheck
+    --admin     the operator's console: its ring + its typecheck. Its SERVICE
+                (`app/staff_api/`) is tested by `tests/test_staff_api.py`,
+                which rides in the python rings — see the note in `_checks`
+    --ui        the shared client library: its own ring + typecheck
+    --accuracy  the recognition core: the sweep + the spotchecks
+
+⚠ ``--ui`` is not self-sufficient and is not meant to be. A change to the
+shared library is a change to BOTH clients, and only their rings can prove it
+— so the pre-commit hook, seeing anything staged under ``app/ui/``, asks for
+``--web`` and ``--admin`` too. The shared ring proves the SHARED rules (the
+sort control's reset, the status ladder, the token contract); it cannot prove
+that a screen still renders.
+
+Run one after another they add up to minutes even after each was made fast;
+run together they cost about as long as the slowest. Nothing here shares
+state, so there was never a reason to queue them behind each other.
 
 Two properties that matter more than the speed:
 
@@ -18,8 +34,10 @@ Two properties that matter more than the speed:
 Usage::
 
     python tools/check.py                # everything that applies to the repo
-    python tools/check.py --product      # the python rings + the API contract
-    python tools/check.py --web          # the client rings + typecheck
+    python tools/check.py --product      # the python rings + the API contracts
+    python tools/check.py --web          # the product client's ring + typecheck
+    python tools/check.py --admin        # the console's ring + typecheck
+    python tools/check.py --ui           # the shared client library
     python tools/check.py --accuracy     # the sweep + the spotchecks
     python tools/check.py --serial       # one at a time (for a clean log)
 
@@ -39,6 +57,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WEB = REPO_ROOT / "app" / "web"
+ADMIN = REPO_ROOT / "app" / "admin"
+UI = REPO_ROOT / "app" / "ui"
 
 
 @dataclass
@@ -66,22 +86,62 @@ def _npm() -> str | None:
     return shutil.which("npm") or shutil.which("npm.cmd")
 
 
-def _checks(product: bool, web: bool, accuracy: bool) -> list[Check]:
+def _client(name: str, where: Path, npm: str) -> list[Check]:
+    """One client package's two checks — the ring and the typecheck.
+
+    Both self-skip without `node_modules`, the rule the whole gate follows: a
+    check that cannot run on this machine is SKIPPED, never failed, or it
+    becomes a gate people disable.
+    """
+    return [
+        Check(f"{name} ring", [npm, "run", "test", "--silent"],
+              where, cores=2, needs=where / "node_modules"),
+        Check(f"{name} typecheck", [npm, "run", "typecheck", "--silent"],
+              where, needs=where / "node_modules"),
+    ]
+
+
+def _checks(product: bool, web: bool, admin: bool, ui: bool,
+            accuracy: bool) -> list[Check]:
     # Declared slowest-first: the scheduler admits in this order, and a long
     # check drawn last is exactly how a pool ends with idle cores.
     out: list[Check] = []
-    if web and _npm():
-        out.append(Check("client rings", [_npm(), "run", "test", "--silent"],
-                         WEB, cores=2, needs=WEB / "node_modules"))
+    npm = _npm()
+    rings, typechecks = [], []
+    if npm:
+        for wanted, name, where in ((web, "web", WEB),
+                                    (admin, "admin", ADMIN),
+                                    (ui, "ui", UI)):
+            if wanted:
+                ring, typecheck = _client(name, where, npm)
+                rings.append(ring)
+                typechecks.append(typecheck)
+    out += rings
     if product:
         out.append(Check("python rings", [_python(), "tests/run_all.py", "-j2"],
                          REPO_ROOT, cores=2))
-    if web and _npm():
-        out.append(Check("client typecheck",
-                         [_npm(), "run", "typecheck", "--silent"],
-                         WEB, needs=WEB / "node_modules"))
+    # ⚠ There is no separate staff-service check, and that is a SETTLED answer
+    # rather than an omission. `tests/test_staff_api.py` rides in the python
+    # rings above, so it runs on `--product`.
+    #
+    # Two sessions reached that from opposite directions and it is worth
+    # recording. One folded the suite into `tests/` for the runner's sake (a
+    # `unittest.TestCase` module is collected as ZERO tests by `run_all.py` and
+    # still reports `ok`). The other kept it separate — the operator's tests
+    # apart from the household's — and a data-integrity review then found the
+    # hole that created: the staff read model duplicates the product's SCHEMA
+    # on purpose, so the change that breaks it is a MIGRATION, made on the
+    # product side, which never ran the console's gate. It was reproduced by
+    # renaming `books.sort_author`: product ring green, console dead at startup
+    # with `SchemaMismatch`.
+    #
+    # Ownership and dependency point in opposite directions. The suite belongs
+    # to the console; what it DEPENDS on is the product's schema and domain.
+    # Running it with the product is what makes the dependency the thing that
+    # decides.
+    out += typechecks
     if product:
-        out.append(Check("api contract",
+        out.append(Check("api contracts",
                          [_python(), "tools/api_contract.py", "--check"],
                          REPO_ROOT))
     if accuracy:
@@ -151,11 +211,20 @@ def _run_within_budget(checks: list[Check]) -> list[tuple[Check, int, str, float
 
 def main(argv: list[str]) -> int:
     serial = "--serial" in argv
-    picked = {a for a in argv if a in ("--product", "--web", "--accuracy")}
+    ALL = ("--product", "--web", "--admin", "--ui", "--accuracy")
+    unknown = [a for a in argv if a.startswith("--") and a not in ALL + ("--serial",)]
+    if unknown:
+        # ⚠ An unrecognised flag used to be IGNORED, which meant a typo
+        # (`--acuracy`) silently ran the whole gate and read as a pass of the
+        # thing you asked for. Refuse instead.
+        print(f"unknown option(s): {' '.join(unknown)}\nknown: {' '.join(ALL)}")
+        return 2
+    picked = {a for a in argv if a in ALL}
     if not picked:
-        picked = {"--product", "--web", "--accuracy"}
+        picked = set(ALL)
 
     checks = _checks("--product" in picked, "--web" in picked,
+                     "--admin" in picked, "--ui" in picked,
                      "--accuracy" in picked)
     if not checks:
         print("nothing to check")

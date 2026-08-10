@@ -12,4 +12,8 @@ afterEach(() => {
   // The hash is global too: a test that navigated leaves the next one on
   // whatever screen it ended on.
   window.location.hash = ''
+  // The i18n provider writes both, and the bidi rules read them — a file that
+  // ended in English would hand the next one an LTR document.
+  document.documentElement.dir = 'rtl'
+  document.documentElement.lang = 'he'
 })

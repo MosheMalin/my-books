@@ -13,7 +13,10 @@
  *   #/users                 every account in the system, and what it may reach
  *   #/access                the staff credential, the two admin jobs, the gaps
  */
-import { useEffect, useState } from 'react'
+// The `hashchange` subscription is shared (`@booksnap/ui`); the ROUTE TABLE
+// below is deliberately not — a union of both apps' routes would let one link
+// to a screen it does not have.
+import { navigateHash, useHash } from '@booksnap/ui'
 
 export type Route =
   | { name: 'dashboard' }
@@ -59,15 +62,9 @@ export const href = (route: Route): string => {
 }
 
 export function navigate(route: Route): void {
-  window.location.hash = href(route)
+  navigateHash(href(route))
 }
 
 export function useRoute(): Route {
-  const [route, setRoute] = useState<Route>(() => parseHash(window.location.hash))
-  useEffect(() => {
-    const onChange = () => setRoute(parseHash(window.location.hash))
-    window.addEventListener('hashchange', onChange)
-    return () => window.removeEventListener('hashchange', onChange)
-  }, [])
-  return route
+  return parseHash(useHash())
 }

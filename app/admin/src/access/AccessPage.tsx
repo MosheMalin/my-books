@@ -20,12 +20,12 @@
  * the truth.
  */
 import { getStaffToken } from '../api/staff'
-import { formatDate, libraryName } from '../lib/format'
+import { formatDate, libraryName } from '@booksnap/ui'
 import { useI18n } from '../lib/i18n'
 import { href } from '../lib/route'
 import { StaffTokenForm } from '../lib/StaffToken'
 import { useSystem } from '../lib/system'
-import { Empty, ErrorBox, Loading } from '../lib/ui'
+import { Empty, ErrorBox, Loading } from '@booksnap/ui'
 
 export function AccessPage() {
   const { t, lang } = useI18n()

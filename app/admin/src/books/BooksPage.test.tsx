@@ -3,7 +3,7 @@
  * screen can catch.
  */
 import { screen, waitFor, within } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
+import { userEvent } from '@booksnap/ui/testing/user'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { BooksPage } from './BooksPage'
@@ -89,8 +89,15 @@ describe('BooksPage', () => {
       expect(s.calls.some((c) => c.url.includes('/api/staff/v1/books')
                               && c.url.includes(encodeURIComponent('מנהרה')))).toBe(true)
     })
-    expect(screen.getByLabelText(/מיון|Sort/)).toBeDisabled()
-    expect(screen.getByText(/רלוונטיות|relevance/)).toBeInTheDocument()
+    // ⚠ The box must READ "relevance", not merely be greyed with the reason
+    // beside it. The first version of this test asserted
+    // `getByText(/רלוונטיות|relevance/)` — which matched the SENTENCE below
+    // the row (`books_sort_ignored` contains the word) and was green while the
+    // box still said "כותרת", a key the server was ignoring. Found by a UX
+    // review in a real browser, not by this ring.
+    const sort = screen.getByLabelText(/מיון|Sort/)
+    expect(sort).toBeDisabled()
+    expect(sort).toHaveValue('relevance')
   })
 
   /**

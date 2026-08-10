@@ -1,6 +1,11 @@
 /// <reference types="vitest/config" />
+import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+
+/** `@booksnap/ui` is consumed as SOURCE, from the sibling directory — see
+ *  `app/ui/README.md` for why there is no build step in between. */
+const UI = fileURLToPath(new URL('../ui/src', import.meta.url))
 
 /**
  * Dev: Vite serves the client and proxies /api to the product server.
@@ -14,8 +19,35 @@ import react from '@vitejs/plugin-react'
  */
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    alias: [{ find: /^@booksnap\/ui(\/.*)?$/, replacement: `${UI}$1` }],
+    // ⚠ NOT optional, and the list is longer than it looks like it should be.
+    //
+    // Without it Vite resolves a bare import from app/ui's own node_modules
+    // for shared files and from this app's for app files. For `react` that is
+    // the familiar two-copies bug: hooks break, with an error pointing nowhere
+    // near the cause.
+    //
+    // ⚠⚠ The TESTING libraries need it for a subtler reason, found by watching
+    // one test fail after `test/user.ts` moved into the shared package.
+    // `@testing-library/dom` keeps its config in MODULE state, and
+    // `@testing-library/react` writes React's `act` into it on import. A
+    // second copy has its own, unconfigured config — so `userEvent` built from
+    // that copy fires events OUTSIDE `act`, React never flushes the resulting
+    // effects, and the symptom is a component that simply has not rendered
+    // its data yet. It reads as a timing flake, not as a resolution problem.
+    dedupe: [
+      'react',
+      'react-dom',
+      '@testing-library/dom',
+      '@testing-library/react',
+      '@testing-library/user-event',
+    ],
+  },
   server: {
     port: 5173,
+    // The dev server must be allowed to read the sibling package it aliases.
+    fs: { allow: ['..'] },
     // Listen on the LAN, not just loopback. Capture is a PHONE flow — the
     // owner photographs a shelf and uploads from the camera roll — so a dev
     // server only its own machine can reach cannot be used for the one thing

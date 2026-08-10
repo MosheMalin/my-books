@@ -9,7 +9,7 @@
  * `tools/api_contract.py --check` fails the commit if the generated types are
  * stale relative to the server.
  */
-import type { components, paths } from './schema'
+import type { components, paths } from '@booksnap/ui/api/schema'
 
 /** All paths are versioned server-side (H3); the client never builds a URL
  *  by hand, so it cannot accidentally call an unversioned endpoint. */

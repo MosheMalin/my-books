@@ -1,5 +1,10 @@
 /**
- * The API contract, as types — the ONE place this app crosses into `app/web`.
+ * The API contract, as types.
+ *
+ * ⚠ This used to reach into `app/web/src/api/schema.d.ts` — the one place this
+ * app crossed into the other one. The generated file now lives in the shared
+ * client package (`app/ui/src/api/schema.d.ts`), which is where a contract two
+ * clients both call belongs; neither app depends on the other for it.
  *
  * ⚠ This is a **type-only** re-export of the client contract generated from
  * `app/api/openapi.json` (`python tools/api_contract.py --write`). Every type
@@ -17,7 +22,7 @@
  * one line: run `openapi-typescript ../api/openapi.json -o src/api/schema.d.ts`
  * and re-point the import below.
  */
-import type { components, paths } from '../../../web/src/api/schema'
+import type { components, paths } from '@booksnap/ui/api/schema'
 
 export type { components, paths }
 

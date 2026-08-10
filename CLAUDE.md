@@ -171,11 +171,19 @@ Rules that are enforced mechanically, not by intention
 - no module-level mutable state in `app/` (the tuning server's global job dict
   is exactly what a second tenant breaks).
 
-**The API contract is committed and generated, both halves.**
-`app/api/dto.py` → `app/api/openapi.json` → `app/web/src/api/schema.d.ts`.
-After any DTO or route change run `python tools/api_contract.py --write` and
-commit both artefacts; `--check` fails the commit on drift. This is why a
-renamed field is a client *compile* error instead of a runtime surprise.
+**Both services' contracts are committed and generated — four artefacts.**
+
+    app/api/dto.py       → app/api/openapi.json       → app/ui/src/api/schema.d.ts
+    app/staff_api/app.py → app/staff_api/openapi.json → app/admin/src/api/staff-schema.d.ts
+
+The product's types live in the SHARED client package because both clients
+call `/api/v1`; the staff service's live in the console because nothing else
+speaks that protocol. After any DTO or route change on EITHER service run
+`python tools/api_contract.py --write` and commit all four; `--check` fails
+the commit on drift, reporting every stale artefact rather than the first.
+This is why a renamed field is a client *compile* error instead of a runtime
+surprise — including on the staff side, which was hand-mirrored until
+2026-08-10.
 
 ## How the pipeline works (the parts that took iteration)
 
@@ -518,10 +526,21 @@ the environment. `.gitignore` excludes .env, *-key.json, credentials.json, etc.
 (fetched, not source). Env overrides: BOOKSNAP_TESSDATA_BEST,
 BOOKSNAP_TESSDATA_FAST, BOOKSNAP_WORK.
 
-The product client is a separate, optional install — nothing in the
-recognition core or the tuning server needs it:
-`npm install --prefix app/web`. Skipping it only means the client half of the
-commit gate self-skips.
+The clients are separate, optional installs — nothing in the recognition core
+or the tuning server needs them. There are THREE npm packages, each with its
+own `node_modules`, and each half of the gate self-skips without one:
+
+```bash
+npm install --prefix app/ui      # the shared client library
+npm install --prefix app/web     # the household's client
+npm install --prefix app/admin   # the operator's console
+```
+
+⚠ `app/ui` is consumed as SOURCE through a path alias (`@booksnap/ui`), not
+built or published — so it needs installing even though nothing imports it at
+runtime from its own directory: its `node_modules` is what its OWN ring runs
+against. See `app/ui/README.md`, and the `resolve.dedupe` ⚠ in both clients'
+vite configs before touching either.
 
 **Node 24 LTS (>=24.15.0)** — declared in `app/web/package.json` `engines`, so
 npm says so rather than it being tribal knowledge. Node 22 is maintenance-only
@@ -547,15 +566,18 @@ same subsets by hand.
 |---|---|---|
 | `test_core.py` | 52 | matcher / normalize / evidence gates |
 | `test_integrations.py` | 24 | catalog + fallback adapters, fully mocked/offline |
-| `test_domain.py` | 131 | the VISION rules that can be silently reversed |
-| `test_store_contract.py` | 202 | one store spec × every implementation + isolation |
+| `test_domain.py` | 136 | the VISION rules that can be silently reversed |
+| `test_store_contract.py` | 204 | one store spec × every implementation + isolation |
 | `test_reconcile_apply.py` | 27 | `app.reconcile_apply` writing a `Diff` through real stores |
 | `test_legacy_import.py` | 21 | `work/*.json` → entities, against a committed fixture |
 | `test_search.py` | 15 | Hebrew search, against 24 real queries on the real 251 books |
-| `test_layering.py` | 9 | the one-way import rules (plan H1) |
-| `test_api.py` | 138 | `/api/v1` shapes + the versioning/tenancy meta-tests |
+| `test_layering.py` | 14 | the one-way import rules (plan H1), including the two services' boundary |
+| `test_api.py` | 148 | `/api/v1` shapes + the versioning/tenancy meta-tests |
 | `test_reader_wiring.py` | 8 | WHICH catalog the product hands the engine |
-| `test_staff_api.py` | 20 | the cross-tenant read model + its credential |
+| `test_jobs.py` | 10 | the bounded, per-tenant-fair job queue (P3.4) |
+| `test_blob_lifecycle.py` | 9 | the orphan collector's under-delete guards (P3.5) |
+| `test_merge_library.py` | 11 | retiring a mis-modelled library into its collection |
+| `test_staff_api.py` | 24 | the cross-tenant read model + its credential |
 
 ⚠ **A `unittest.TestCase` module is collected as ZERO tests and still reports
 `ok`.** `run_all.py`'s discovery rule is module-level callables named `test_*`
@@ -564,7 +586,26 @@ nothing. `test_staff_api.py` arrived that way from the staff-console branch
 and was converted; if a module ever shows `0/0 passed`, that is the reason,
 not an empty file.
 
-627 python tests as of P3.1 (+51: the tenancy rules, ONE store spec run
+⚠⚠ **That trap fired a second time, and the second time is the instructive
+one.** A parallel session — working from a base that predated the conversion —
+rebuilt the staff suite as `tests_staff/`, class-based, with its own runner and
+its own gate flag, and added four tests to it. All 23 passed under
+`unittest`, and every one of them would have been collected as **zero** by
+`run_all.py`. Two sessions, one file, two shapes: the tests were ported into
+the module-level form here, and the separate runner deleted. If you are adding
+to this module, write a plain `def test_…()` — a class is silently invisible.
+
+**703 python tests** as of the two-application tidy-up, which folded that work
+back onto this base: +5 layering rules (the staff service imports no product
+route, no adapter, no migration and not `app.main`; the product imports
+nothing from the operator's service — each planted and watched to fail) and +4
+staff-service rules (a route meta-test over `app.routes` after the
+hand-written list was found to be missing one of six; the 503 a schema that
+moves under a RUNNING service now answers; and the two structural guards on
+opening a connection). They run alongside **187 client tests** in three
+packages — `app/web` 103, `app/admin` 54, `app/ui` 30.
+
+Before that, 627 as of P3.1 (+51: the tenancy rules, ONE store spec run
 against a sixth aggregate, the v12 backfill, the resolver's three cases and
 its 404-not-403, the two meta-tests that keep the account-scoped
 exemption honest, the query-parameter escape hatch an `<img>` needs, and the
@@ -2871,6 +2912,148 @@ All of this is the pre-run data-integrity review (9 findings, each fixed the
 same day) — the reviewer rehearsed the real merge end-to-end on a snapshot:
 283 books after, integrity ok, zero orphans, every blob key resolving.
 
+## Two applications, four packages (the tidy-up before pillar 4, 2026-08-10)
+
+The admin console arrived under a hard "touch no existing file" constraint
+(`planning/ADMIN_CONSOLE_PLAN.md`), so it necessarily re-implemented what the
+product client already had. The constraint is lifted; this is the settlement.
+
+```
+app/
+  web/        the household's client        :5173 dev, built into :8757
+  admin/      the operator's console        :5174 dev, `vite preview` only
+  ui/         what the two clients share    no build step; consumed as source
+  api/        the product server            /api/v1     :8757
+  staff_api/  the operator's server         /api/staff/v1  :8758
+```
+
+**`app/ui/` is the shared client library**, extracted mainly FROM `app/web`
+because that is the app the owner has actually used. Its README argues the
+membership rule (*a mechanism both apps need, or a rule both apps must not
+disagree about*); the entries worth knowing here are the sort control (the
+console's re-invention had lost both of its rules), `.rtl-safe` (UI_PLAN §7.2
+is a CORRECTNESS rule about Hebrew and the two copies had drifted in their
+selectors), `vouchedFor` (§5.1's ladder — the two apps had already disagreed
+about whether `manual` counts as vouched-for), `formatDate` (one returned the
+raw ISO string on an unparseable date, the other `''`), and `useAsync`'s
+request-id guard.
+
+⚠⚠ **`resolve.dedupe` must list the TESTING libraries, not just React.** Found
+by watching one product test fail the moment `test/user.ts` moved into the
+shared package. `@testing-library/dom` keeps its config in MODULE state and
+`@testing-library/react` writes React's `act` into it on import; a second copy
+resolved from `app/ui/node_modules` has its own, unconfigured config, so
+`userEvent` built from it fires events OUTSIDE `act`, React never flushes the
+effects, and the symptom is *a component that has not rendered its data yet*.
+It reads as a timing flake. The React half of the same trap is the familiar
+one (two copies break hooks). Both clients' vite configs carry the list and
+the reason.
+
+⚠ **Shared CSS draws only from `--ui-*`, and the bridge is a tested contract.**
+The two palettes differ on purpose (a reading surface vs a dense table
+surface), so each app maps its own colours onto the shared names in one block.
+`app/ui/src/tokens.test.ts` reads the shared sheet and both apps' styles and
+fails on a missing name — it has to, because **jsdom computes no cascade**, so
+a control whose colour resolves to nothing renders invisibly through a
+completely green client ring.
+
+**The API split was already right; it is now enforced.** The console READS
+cross-tenant through the staff service and WRITES through `/api/v1` as an
+ordinary member — two surfaces, one authorization model each, because
+`/api/v1` resolves a library from the caller's memberships (§4.2) and
+loosening that to serve a console would weaken isolation for every household.
+`tests/test_layering.py` now holds that as five mutation-checked rules: the
+staff service imports no product route, no adapter, no migration and never
+`app.main` (importing the product's composition root MIGRATES the owner's real
+database), and the product imports nothing from `app/staff_api`. The two
+clients' own rings each assert they do not reach into the other's source.
+
+**Both services' contracts are generated and committed** —
+`tools/api_contract.py` now produces four artefacts, two per service:
+`app/api/openapi.json` → `app/ui/src/api/schema.d.ts` (in the SHARED package,
+because both clients call `/api/v1`), and `app/staff_api/openapi.json` →
+`app/admin/src/api/staff-schema.d.ts` (in the console, because nothing else
+speaks it). That retired the console's hand-mirrored copy of the staff DTOs —
+a renamed staff field is a compile error now, not an `undefined` in a table —
+and the console's one crossing into `app/web` went with it.
+
+**The gate is per application.** `tools/check.py` grew `--admin` (the console's
+ring and typecheck) and `--ui`; the pre-commit hook routes to them. Two routings are the point of the file: `app/ui/*` asks for
+BOTH clients' rings (a change to shared code is a change to two apps, and only
+they can prove a screen still renders), and `app/staff_api/*` asks for
+`--product` as well, because the rules keeping the two services apart live in
+the product's ring. An unknown flag is now refused rather than ignored — a
+typo used to run the whole gate and read as a pass of the thing you asked for.
+
+⚠ **The staff service's tests ride with the PRODUCT, not with the console**
+(`tests/test_staff_api.py`, inside `tests/run_all.py`). Ownership says
+otherwise — they are the operator's — and ownership is the wrong axis here:
+the read model duplicates the product's schema on purpose, so the change that
+breaks it is a migration made on the product side. A gate keyed on ownership
+never runs on the change that breaks it, which a review demonstrated by
+renaming `books.sort_author` and watching the console die at startup while the
+product ring stayed green. What was actually missing was never a merge; it was
+that neither the staff suite nor the console's client tests were in any gate
+at all.
+
+### What the three reviewers found on this round (2026-08-10)
+
+All fixed, each with a named test. Recorded because most of them are the same
+lesson in different costumes — **a shared thing is only shared where something
+checks it.**
+
+- ⚠⚠ **the console had no `button` reset, so the shared sort control rendered
+  with full UA chrome.** `.sortdir` was written against an app whose base sheet
+  strips every button; the console has no such rule, so the toggle appeared as
+  a grey raised box with an outset border wedged inside the sort field — and in
+  dark mode a mid-grey box with a WHITE outline. Worse than the plain ↑/↓ it
+  replaced. **A shared control now resets its own UA chrome**, because the
+  sheet cannot assume anything about the page it lands in;
+- ⚠⚠ **`tokens.test.ts` checked the tokens and not the sheet.** Deleting
+  `import '@booksnap/ui/styles/ui.css'` from the product's `main.tsx` turned
+  `.rtl-safe` off across the whole app and dropped the sort toggle out of its
+  box — with **every ring green, 9/9**. It now asserts each app imports the
+  sheet, and imports it after its tokens;
+- **three of the new tests were not gates**, proved by mutation: the abort test
+  asserted through a post-`unmount()` snapshot no `setState` could reach; the
+  hash test set the hash *before* render, which the lazy initializer already
+  catches; and both boundary regexes missed double quotes and bare side-effect
+  imports. All three rewritten and re-mutated. The abort one took three goes,
+  and the second failure taught something real: when the hook aborts a request
+  ITSELF the request-id guard has already returned, so the `AbortError` branch
+  only ever fires for an abort the hook did not cause;
+- **a routing hole in the gate**: the staff service's suite ran on `--admin`
+  only, but the change that breaks it is a migration or a store rename made on
+  the PRODUCT side. A reviewer executed it — renamed `books.sort_author`,
+  product ring green, console dead at startup with `SchemaMismatch`. Ownership
+  and dependency point in opposite directions here; the suite runs for both
+  now;
+- **the staff service had no meta-test that a route carries its credential.**
+  The hand-written list had five paths for six routes, so removing
+  `dependencies=guard` from `/libraries/{id}/shelves` served every tenant's
+  shelves to anyone on port 8758 with the suite green. It walks `app.routes`
+  now, like the product's policy meta-test;
+- **the documented 503 could not happen.** `self_check()` runs once, at
+  construction, so a schema that moved while the service was RUNNING surfaced
+  as a raw `OperationalError`. An `OperationalError` now re-runs the shape
+  check and answers 503 with the named columns — or re-raises untouched, so an
+  ordinary lock is never dressed up as a migration problem;
+- **two stated reasons were wrong**, which matters more than it sounds: a
+  comment in `Toolbar.tsx` justified its guard with "it would fire a second
+  query" (it would not — `setQuery` short-circuits), and the migration-import
+  rule reads as primary when it is redundant. A wrong reason is what makes the
+  next reader delete the guard.
+
+**Entities: one tenancy layer.** Account → Library → Place → Bookcase →
+Shelf(column, level, depth) → Capture → Read/Claim → Book/Copy, settled in
+VISION §4.1/§4.1a with the honest "what exists today" column (Place and
+Bookcase are pillar 6; `Shelf` is identity-only by P2.1's design). The
+question answered there: **Account is not a second tenant.** Library is the
+isolation boundary (every row carries `library_id`); Account is the identity
+axis that answers *which libraries may I name* — which is why `TenancyStore`
+is the one port scoped by account. A cap on libraries per account is a policy
+number at create time, never a second scope on the data.
+
 ## Reviewer agents (`.claude/agents/`) — run them after substantive items
 
 Four persisted reviewer personas, born from the pillar-3 round where every
@@ -3141,9 +3324,12 @@ be re-added by a later run; a rejection is scoped to a *shelf*, and shelves
 arrive in P2.1. The importer reports them loudly rather than dropping them —
 until P2.3 lands, a re-read could re-add those books.
 
-Client ring (needs `npm install --prefix app/web` once):
-`npm --prefix app/web run test` (vitest + React Testing Library, **98 tests**
-as of P3.1 and the owner's first live round) and `npm --prefix app/web run typecheck`. Test what encodes a
+Client rings (need the three `npm install`s above):
+`npm --prefix app/web run test` (vitest + React Testing Library, **102 tests**
+as of the two-application tidy-up — 98 at P3.1, plus the boundary test), with
+`npm --prefix app/ui run test` (**25**, the shared rules) and
+`npm --prefix app/admin run test` (**53**) beside it, and
+`npm --prefix <pkg> run typecheck` for each. Test what encodes a
 *decision*, not layout and not DTO plumbing — same standard as the Python
 rings. The suite mocks `fetch`, never `useBooks`/`useCapture`/`useShelfDetail`:
 the store, the request-id race guard and the paging arithmetic are exactly

@@ -138,6 +138,66 @@ of one Library**, never Libraries of their own. Consequences:
   exists, and creating one carries guidance saying what a Library is for.
   Rooms get their proper noun (Place) with the map, pillar 6.
 
+**[SETTLED 2026-08-10, owner] There is ONE tenancy layer, not two.** Asked
+directly — *"should we have 2 layers of tenants, account and libraries?"* —
+and the answer is no, because the two words are doing different jobs already:
+
+- **Library is the isolation boundary.** Every store method leads with a
+  `LibraryRef`, every persisted row carries a `library_id`, and the contract
+  suite proves a foreign record reads as ABSENT (§4.2). A second *enforced*
+  scope would mean every query narrowing twice, and each of the six aggregates
+  gaining a second way to leak;
+- **Account is the identity axis.** It owns memberships and answers *which
+  libraries may I name* — which is why `TenancyStore` is deliberately the one
+  port scoped by account rather than by library. It is not a container the
+  data sits inside; it is who is asking.
+
+So "account, then library" is not tenancy nested in tenancy. It is one
+boundary plus an identity that indexes it, which is what is already built.
+
+**A cap on libraries per account is the right shape for "how many"** — a
+policy number checked at create time on the ACCOUNT (never a second scope on
+the data), the same way §1.2's run-rate cap is one number with a stated reason
+rather than a quota system. `[OPEN]` what the number is; it belongs with P4.1
+sign-up, since today a library is only created by an authenticated call the
+owner makes for themselves.
+
+### 4.1a The whole chain, and what of it exists today
+
+The owner's own summary, 2026-08-10, reconciled with the nouns above — this
+is the picture to hold, and the right-hand column is the honest state:
+
+| level | what it is | today |
+|---|---|---|
+| **Account** | a person, one identity | `app/domain/tenancy.py` (P3.1). No login yet — P4.1 |
+| **Library** | that account's collection; the tenancy boundary | built and enforced everywhere (P3.1–P3.3) |
+| **Place** | where books are kept: home, the child's room, the office, the parents' shelves | **not built** — pillar 6 |
+| **Bookcase** | one piece of furniture, with columns across and levels down | **not built** — pillar 6 |
+| **Shelf** | one shelf, with `depth` rows front-to-back | built as IDENTITY only (P2.1): an id, an optional label, a declared depth — deliberately **no address** |
+| **Capture** | one photograph filed at (shelf, depth) | built (P2.2/P2.3) |
+| **Read → Claim → Book/Copy** | what a photo said, and what the owner confirmed | built (P2.4–P2.10) |
+
+Two things follow, and both are already recorded elsewhere as rules rather
+than intentions:
+
+- **a photo reaches a bookcase THROUGH its shelf, never around it.**
+  `Capture → Shelf` exists; `Shelf → Bookcase → Place` is the join pillar 6
+  adds. Nothing should grow a second path from an image to a location — the
+  address belongs to the shelf, and P2.1 kept `Shelf` free of one precisely so
+  that when the map arrives there is one place to put it;
+- **"one image = one shelf" is a PLACEHOLDER with a recorded exit** (P2.1).
+  Until the map can show that two photos are the same piece of wood, intake
+  gives each image its own shelf identity, and P6.1b merges them by hand. So
+  nothing may treat a shelf id as a permanent one-to-one handle on a physical
+  shelf.
+
+*Naming note, same date:* the owner asked whether the middle level should be
+called **bookcase**. It should, and it already is — UI_PLAN §3 records
+`Place → Bookcase → Shelf` as owner-confirmed, with *column* and *level* as
+attributes of a shelf's POSITION in a case rather than entities of their own.
+"Physical library" is the phrase in conversation; **Bookcase** and **Place**
+are the words in code, for the reason `PhysicalLibrary` was retired above.
+
 ### 4.2 Roles **[DECIDED — matrix settled at P3.2, 2026-08-10]**
 
 The matrix lives as DATA in `app/domain/policy.py:POLICY`, with one

@@ -1,6 +1,11 @@
 /// <reference types="vitest/config" />
+import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+
+/** `@booksnap/ui` is consumed as SOURCE from the sibling directory — the
+ *  controls this console shares with the product client. See app/ui/README.md. */
+const UI = fileURLToPath(new URL('../ui/src', import.meta.url))
 
 /**
  * The admin console's dev/preview server.
@@ -43,11 +48,27 @@ const PROXY = {
 
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    alias: [{ find: /^@booksnap\/ui(\/.*)?$/, replacement: `${UI}$1` }],
+    // ⚠ Load-bearing, and the testing entries are not padding — see the same
+    // block in `app/web/vite.config.ts` for the two failures this prevents
+    // (two React copies breaking hooks; a second `@testing-library/dom`
+    // config leaving userEvent firing outside `act`).
+    dedupe: [
+      'react',
+      'react-dom',
+      '@testing-library/dom',
+      '@testing-library/react',
+      '@testing-library/user-event',
+    ],
+  },
   server: {
     port: 5174,
     strictPort: true,
     host: true,
     proxy: PROXY,
+    // The dev server must be allowed to read the sibling package it aliases.
+    fs: { allow: ['..'] },
   },
   preview: {
     port: 5174,

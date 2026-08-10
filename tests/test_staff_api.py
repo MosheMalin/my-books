@@ -18,6 +18,7 @@ credential.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import sqlite3
 import sys
@@ -320,11 +321,32 @@ def test_without_a_token_configured_it_serves_and_says_so():
 
 
 def test_with_a_token_configured_every_route_refuses_without_it():
+    """⚠ A META-test over `app.routes`, not a hand-written list.
+
+    The list came first, and it had already fallen behind: five paths for six
+    routes, with `/libraries/{id}/shelves` missing. Removing that route's
+    `dependencies=guard` therefore kept the whole suite green while serving
+    every tenant's shelf contents to anyone who could reach port 8758 — found
+    by a data-integrity review that executed exactly that mutation.
+
+    The guard is opt-in per route and this service's own docstring says the
+    credential IS its whole security model, so the enforcement has to be the
+    kind that catches a route nobody remembered to add here. The product API
+    closed the same gap the same way
+    (`test_every_api_route_declares_exactly_one_policy_capability`): a route
+    with no declaration FAILS rather than defaulting to open.
+    """
     with _client("s3cret") as client:
-        for path in ("/api/staff/v1/overview", "/api/staff/v1/libraries",
-                     "/api/staff/v1/accounts", "/api/staff/v1/books",
-                     "/api/staff/v1/reads"):
-            assert client.get(path).status_code == 401, path
+        paths = [str(r.path) for r in client.app.routes  # type: ignore[attr-defined]
+                 if str(r.path).startswith("/api/staff/v1/")]
+        assert len(paths) >= 6, paths
+        for path in paths:
+            # A path parameter needs something to stand in for it. The refusal
+            # must happen in the DEPENDENCY, before any lookup, so a value that
+            # matches nothing is exactly right — a 404 here would mean the
+            # credential was checked too late to protect the answer.
+            concrete = re.sub(r"\{[^}]+\}", "no-such-id", path)
+            assert client.get(concrete).status_code == 401, concrete
 
 
 def test_the_token_is_accepted_in_either_transport():
@@ -377,6 +399,105 @@ def test_every_route_is_under_the_staff_prefix():
         assert paths
         for p in paths:
             assert p.startswith("/api/staff/v1/"), p
+
+
+def test_a_schema_that_moves_UNDER_a_running_service_answers_503():
+    """⚠ `self_check()` runs once, at construction — so on its own it can only
+    refuse a database that was already wrong when the service STARTED.
+
+    The way this actually happens is the other one: the product server
+    migrates `work/product.db` while the console is up. Until a review pointed
+    it out, that surfaced as a raw `OperationalError` — a 500 with a SQL
+    fragment in a log nobody is watching — and the 503 this service documents
+    was unreachable code.
+    """
+    # Built from `_db` rather than `_client` because this case needs the PATH
+    # as well as the client — it has to move the schema out from under a
+    # service that is already up.
+    with _db() as path:
+        client = TestClient(create_app(StaffQueries(path)))
+
+        # ⚠ `with sqlite3.connect(...)` commits but does NOT close, and on
+        # Windows the open handle makes the temp directory undeletable — see
+        # `_user_version`'s note, which this test would otherwise repeat as a
+        # teardown error several tests away.
+        conn = sqlite3.connect(path)
+        try:
+            conn.execute("ALTER TABLE books RENAME COLUMN title TO name")
+            conn.commit()
+        finally:
+            conn.close()
+
+        res = client.get("/api/staff/v1/books")
+        assert res.status_code == 503, res.status_code
+        # It must NAME what moved. "Service unavailable" alone leaves the
+        # operator guessing between a crash, a lock and a stale console.
+        assert "title" in res.json()["detail"]
+
+
+def test_an_ordinary_sql_error_is_NOT_dressed_up_as_a_schema_problem():
+    """The other half of the rule above, and what keeps it honest: the handler
+    re-runs the shape check and re-raises untouched when the shape is fine.
+    Reporting every `OperationalError` as "the schema moved" would send the
+    next person looking for a migration that never happened."""
+    original = StaffQueries.books
+
+    def boom(self, *a, **kw):  # noqa: ANN001, ANN002, ANN003
+        raise sqlite3.OperationalError("database is locked")
+
+    StaffQueries.books = boom  # type: ignore[assignment]
+    try:
+        with _client(None) as client:
+            try:
+                client.get("/api/staff/v1/books")
+            except sqlite3.OperationalError as exc:
+                assert "locked" in str(exc)
+            else:
+                raise AssertionError("a genuine SQL error must not become a 503")
+    finally:
+        StaffQueries.books = original  # type: ignore[assignment]
+
+
+# --- the shape of the service ----------------------------------------------
+
+def test_exactly_one_place_in_the_service_opens_a_connection():
+    """Read-only is enforced in three independent places — the layering ring
+    forbids importing a migration, `_open` sets `PRAGMA query_only`, and a
+    write is refused at the connection. This is the fourth: that every
+    connection actually goes THROUGH `_open`. Without it a new query function
+    calling `sqlite3.connect` directly would quietly opt out of the pragma,
+    and nothing else would notice."""
+    package = REPO_ROOT / "app" / "staff_api"
+    opens = [
+        f"{p.relative_to(REPO_ROOT).as_posix()}:{i}"
+        for p in sorted(package.rglob("*.py")) if "__pycache__" not in p.parts
+        for i, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+        if "sqlite3.connect(" in line
+    ]
+    assert len(opens) == 1, (
+        "every connection must go through queries._open, which is what sets "
+        f"PRAGMA query_only; found: {opens}"
+    )
+    assert opens[0].startswith("app/staff_api/queries.py"), opens
+
+
+def test_a_missing_database_is_refused_rather_than_created():
+    """⚠ `sqlite3.connect` CREATES an empty file for a path that does not
+    exist. Without this guard a mistyped `BOOKSNAP_DB` would leave a phantom
+    `product.db` beside the real one and a console reporting a system with
+    nothing in it — which reads as data loss, not as a typo."""
+    tmp = tempfile.mkdtemp(prefix="booksnap-staff-missing-")
+    try:
+        missing = Path(tmp) / "not-here.db"
+        try:
+            StaffQueries(missing)
+        except FileNotFoundError:
+            pass
+        else:
+            raise AssertionError("a missing database must be refused")
+        assert not missing.exists(), "it must not be created on the way past"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 if __name__ == "__main__":

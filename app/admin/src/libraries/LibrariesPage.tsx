@@ -18,12 +18,12 @@ import { useState } from 'react'
 
 import { createLibrary, exportUrl, renameLibrary } from '../api/client'
 import type { LibraryDTO } from '../api/schema'
-import { formatDate, formatNumber, libraryName } from '../lib/format'
+import { formatDate, formatNumber, libraryName } from '@booksnap/ui'
 import { useI18n } from '../lib/i18n'
 import { href } from '../lib/route'
 import { OpenServiceWarning } from '../lib/StaffToken'
 import { useSystem } from '../lib/system'
-import { Empty, ErrorBox, Loading } from '../lib/ui'
+import { Empty, ErrorBox, Loading } from '@booksnap/ui'
 
 function CreateForm({ onCreated }: { onCreated: () => void }) {
   const { t } = useI18n()

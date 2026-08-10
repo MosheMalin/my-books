@@ -18,12 +18,22 @@ import { useI18n, type Strings } from '../lib/i18n'
 
 export type View = 'list' | 'grid'
 
+/**
+ * §5.1's ladder as this app draws it.
+ *
+ * ⚠ The WORDS come from `@booksnap/ui`; the MARKUP does not. `books.css` keys
+ * on `.b-auto/.b-approved/.b-manual` and the shared component emits
+ * `badge auto|approved|manual`, so swapping wholesale would render every badge
+ * here unstyled — and jsdom would not see it. Sharing the vocabulary is what
+ * actually mattered: the console said "auto" in English where this said
+ * "Auto", which is one state with two names across two screens.
+ */
 export function StatusBadge({ status }: { status: string }) {
-  const { t } = useI18n()
+  const { ui } = useI18n()
   const label: Record<string, string> = {
-    auto: t.st_auto,
-    approved: t.st_approved,
-    manual: t.st_manual,
+    auto: ui.st_auto,
+    approved: ui.st_approved,
+    manual: ui.st_manual,
   }
   return (
     <span className={`badge b-${status}`}>{label[status] ?? status}</span>

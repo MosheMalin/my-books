@@ -12,7 +12,7 @@
  * run list anywhere else (§5.5).
  */
 import { useI18n } from '../lib/i18n'
-import { formatDate } from '../lib/format'
+import { formatDate, type Lang } from '@booksnap/ui'
 import { CopyBadges, StatusBadge } from '../books/Feed'
 import { ReadHistory } from './ReadHistory'
 import { useShelfDetail } from './useShelfDetail'
@@ -27,7 +27,9 @@ export interface ShelfPageProps {
 function stalenessLine(
   depths: DepthStatusDTO[],
   t: ReturnType<typeof useI18n>['t'],
-  lang: string,
+  // `Lang`, not `string`: the shared formatter takes the union, so a locale
+  // this app has no strings for cannot reach the date formatting either.
+  lang: Lang,
 ): string | null {
   const stale = depths.filter((d) => d.is_stale)
   if (stale.length === 0) return null

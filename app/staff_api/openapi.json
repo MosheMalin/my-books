@@ -1,0 +1,1062 @@
+{
+  "components": {
+    "schemas": {
+      "AccountDTO": {
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "memberships": {
+            "items": {
+              "$ref": "#/components/schemas/MembershipDTO"
+            },
+            "title": "Memberships",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "display_name",
+          "memberships"
+        ],
+        "title": "AccountDTO",
+        "type": "object"
+      },
+      "BookDTO": {
+        "properties": {
+          "added_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Added At"
+          },
+          "author": {
+            "title": "Author",
+            "type": "string"
+          },
+          "copy_count": {
+            "title": "Copy Count",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "library_id": {
+            "title": "Library Id",
+            "type": "string"
+          },
+          "shelf_count": {
+            "title": "Shelf Count",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "library_id",
+          "title",
+          "author",
+          "status",
+          "copy_count",
+          "shelf_count"
+        ],
+        "title": "BookDTO",
+        "type": "object"
+      },
+      "BookPageDTO": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/BookDTO"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "truncated": {
+            "description": "A ranked search stopped at the scan cap, so `total` is honest but pages past the cap are not reachable. Narrow the query.",
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "offset",
+          "limit",
+          "truncated"
+        ],
+        "title": "BookPageDTO",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "LibraryDTO": {
+        "properties": {
+          "admins": {
+            "title": "Admins",
+            "type": "integer"
+          },
+          "approved": {
+            "title": "Approved",
+            "type": "integer"
+          },
+          "auto": {
+            "title": "Auto",
+            "type": "integer"
+          },
+          "books": {
+            "title": "Books",
+            "type": "integer"
+          },
+          "captures": {
+            "title": "Captures",
+            "type": "integer"
+          },
+          "copies": {
+            "title": "Copies",
+            "type": "integer"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "duplicates": {
+            "title": "Duplicates",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "last_activity": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Activity"
+          },
+          "lent_out": {
+            "title": "Lent Out",
+            "type": "integer"
+          },
+          "manual": {
+            "title": "Manual",
+            "type": "integer"
+          },
+          "members": {
+            "title": "Members",
+            "type": "integer"
+          },
+          "reads": {
+            "title": "Reads",
+            "type": "integer"
+          },
+          "shelves": {
+            "title": "Shelves",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "members",
+          "admins",
+          "books",
+          "copies",
+          "auto",
+          "approved",
+          "manual",
+          "shelves",
+          "captures",
+          "reads",
+          "duplicates",
+          "lent_out"
+        ],
+        "title": "LibraryDTO",
+        "type": "object"
+      },
+      "MembershipDTO": {
+        "properties": {
+          "joined_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Joined At"
+          },
+          "library_id": {
+            "title": "Library Id",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "library_id",
+          "role"
+        ],
+        "title": "MembershipDTO",
+        "type": "object"
+      },
+      "OverviewDTO": {
+        "description": "System-wide totals. Every figure spans every tenant.",
+        "properties": {
+          "accounts": {
+            "title": "Accounts",
+            "type": "integer"
+          },
+          "approved": {
+            "title": "Approved",
+            "type": "integer"
+          },
+          "authenticated": {
+            "description": "False when no BOOKSNAP_STAFF_TOKEN is configured, i.e. anyone who can reach this port can read every tenant.",
+            "title": "Authenticated",
+            "type": "boolean"
+          },
+          "auto": {
+            "description": "Books nobody has approved (§5.1's lowest rung). `manual` outranks `approved`, so this — and only this — is 'awaiting'.",
+            "title": "Auto",
+            "type": "integer"
+          },
+          "books": {
+            "title": "Books",
+            "type": "integer"
+          },
+          "captures": {
+            "title": "Captures",
+            "type": "integer"
+          },
+          "copies": {
+            "title": "Copies",
+            "type": "integer"
+          },
+          "duplicates": {
+            "title": "Duplicates",
+            "type": "integer"
+          },
+          "lent_out": {
+            "title": "Lent Out",
+            "type": "integer"
+          },
+          "libraries": {
+            "title": "Libraries",
+            "type": "integer"
+          },
+          "manual": {
+            "title": "Manual",
+            "type": "integer"
+          },
+          "memberships": {
+            "title": "Memberships",
+            "type": "integer"
+          },
+          "orphan_libraries": {
+            "description": "Libraries with no membership at all — nobody can see or administer them. Should always be empty; `new_library` mints an admin membership in the same call to keep it so.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Orphan Libraries",
+            "type": "array"
+          },
+          "reads": {
+            "title": "Reads",
+            "type": "integer"
+          },
+          "shelves": {
+            "title": "Shelves",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "accounts",
+          "libraries",
+          "memberships",
+          "books",
+          "copies",
+          "shelves",
+          "captures",
+          "reads",
+          "duplicates",
+          "lent_out",
+          "auto",
+          "approved",
+          "manual",
+          "authenticated",
+          "orphan_libraries"
+        ],
+        "title": "OverviewDTO",
+        "type": "object"
+      },
+      "ReadDTO": {
+        "properties": {
+          "claims": {
+            "title": "Claims",
+            "type": "integer"
+          },
+          "depth": {
+            "title": "Depth",
+            "type": "integer"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "library_id": {
+            "title": "Library Id",
+            "type": "string"
+          },
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          },
+          "shelf_id": {
+            "title": "Shelf Id",
+            "type": "string"
+          },
+          "shelf_label": {
+            "title": "Shelf Label",
+            "type": "string"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "library_id",
+          "shelf_id",
+          "shelf_label",
+          "depth",
+          "mode",
+          "status",
+          "claims"
+        ],
+        "title": "ReadDTO",
+        "type": "object"
+      },
+      "ShelfDTO": {
+        "properties": {
+          "books": {
+            "description": "DISTINCT books with a copy standing here, not copies — two copies of one book is one book on the shelf.",
+            "title": "Books",
+            "type": "integer"
+          },
+          "captures": {
+            "title": "Captures",
+            "type": "integer"
+          },
+          "depth_count": {
+            "title": "Depth Count",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "last_read": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Read"
+          },
+          "library_id": {
+            "title": "Library Id",
+            "type": "string"
+          },
+          "virtual": {
+            "title": "Virtual",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "library_id",
+          "label",
+          "depth_count",
+          "virtual",
+          "captures",
+          "books"
+        ],
+        "title": "ShelfDTO",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "System administration, across every tenant. Read-only.",
+    "title": "booksnap staff API",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/staff/v1/accounts": {
+      "get": {
+        "description": "⚠ This is the route that has no equivalent in `/api/v1`, and could\nnot have one: the product API answers *\"which libraries may I name\"*,\nnever *\"who is in the system\"*.\n\nIt reports identity and membership — who exists, and what they may\nreach. It deliberately does not report what any individual has been\nREADING or photographing: \"statistics about the users\" is a fair thing\nfor an operator to want, and a per-person activity feed of someone's\nown household is a different and much larger power. Aggregate figures\nlive on the library rows instead.",
+        "operationId": "accounts_api_staff_v1_accounts_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-booksnap-staff",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Booksnap-Staff"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AccountDTO"
+                  },
+                  "title": "Response Accounts Api Staff V1 Accounts Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Every account, with its memberships"
+      }
+    },
+    "/api/staff/v1/books": {
+      "get": {
+        "operationId": "books_api_staff_v1_books_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "library_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Library Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "default": "title",
+              "title": "Sort",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "ascending",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Ascending",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-booksnap-staff",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Booksnap-Staff"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookPageDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Books across every tenant"
+      }
+    },
+    "/api/staff/v1/libraries": {
+      "get": {
+        "operationId": "libraries_api_staff_v1_libraries_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-booksnap-staff",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Booksnap-Staff"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/LibraryDTO"
+                  },
+                  "title": "Response Libraries Api Staff V1 Libraries Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Every library in the system"
+      }
+    },
+    "/api/staff/v1/libraries/{library_id}/shelves": {
+      "get": {
+        "description": "⚠ Cross-tenant, so it cannot be `/api/v1/shelves`: that resolves the\ncaller's membership, and a system administrator is a member of\nnothing. Note the consequence for the console — an EMPTY list and a\nlibrary that does not exist look the same here, deliberately: this\nservice has no reason to distinguish them, and the library list it\ncame from is the authority on which ids are real.",
+        "operationId": "shelves_api_staff_v1_libraries__library_id__shelves_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "library_id",
+            "required": true,
+            "schema": {
+              "title": "Library Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-booksnap-staff",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Booksnap-Staff"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ShelfDTO"
+                  },
+                  "title": "Response Shelves Api Staff V1 Libraries  Library Id  Shelves Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "One library's shelves"
+      }
+    },
+    "/api/staff/v1/overview": {
+      "get": {
+        "operationId": "overview_api_staff_v1_overview_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-booksnap-staff",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Booksnap-Staff"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OverviewDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "System-wide totals"
+      }
+    },
+    "/api/staff/v1/reads": {
+      "get": {
+        "operationId": "reads_api_staff_v1_reads_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "library_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Library Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-booksnap-staff",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Booksnap-Staff"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ReadDTO"
+                  },
+                  "title": "Response Reads Api Staff V1 Reads Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Recent reads, across every tenant"
+      }
+    }
+  }
+}

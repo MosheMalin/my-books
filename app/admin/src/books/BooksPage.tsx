@@ -17,12 +17,12 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import { listAllBooks, type StaffBook } from '../api/staff'
-import { formatDate, formatNumber, libraryName } from '../lib/format'
-import { useI18n } from '../lib/i18n'
+import { useI18n, type Strings } from '../lib/i18n'
 import { navigate } from '../lib/route'
 import { useSystem } from '../lib/system'
-import { useAsync } from '../lib/useAsync'
-import { Empty, ErrorBox, Loading, StatusBadge } from '../lib/ui'
+import {
+  Empty, ErrorBox, Loading, SortControl, StatusBadge, formatDate, formatNumber, libraryName, useAsync
+} from '@booksnap/ui'
 import { BookPanel } from './BookPanel'
 
 /** Rows per screen. */
@@ -34,14 +34,24 @@ const DEBOUNCE_MS = 250
 type Sort = 'title' | 'author' | 'recently_added'
 
 /**
- * ⚠ Changing the sort KEY resets the direction to this, rather than carrying
- * the old one over: A–Z's "ascending" applied to a date key silently answers a
- * question nobody asked ("recently added, oldest first").
+ * What this screen can sort by, and — the load-bearing half — the direction
+ * each key MEANS. A–Z for text, newest first for a date: carrying A–Z's
+ * "ascending" onto a date key silently answers a question nobody asked
+ * ("recently added, oldest first").
+ *
+ * ⚠ It is declared here, per option, rather than as a rule inside the shared
+ * control: which keys exist is this screen's business, and a control that
+ * guessed a direction from a key's NAME would be wrong the first time a screen
+ * added `least_recently_seen`.
  */
-const naturalAscending = (sort: Sort): boolean => sort !== 'recently_added'
+const SORT_OPTIONS = [
+  { value: 'title', label: 'sort_title' },
+  { value: 'author', label: 'sort_author' },
+  { value: 'recently_added', label: 'sort_recent', naturalAscending: false },
+] as const satisfies readonly { value: Sort; label: keyof Strings; naturalAscending?: boolean }[]
 
 export function BooksPage({ initialLibraryId }: { initialLibraryId: string | undefined }) {
-  const { t, lang } = useI18n()
+  const { t, ui, lang } = useI18n()
   const { libraries, loading: sysLoading, labelOf, canWrite } = useSystem()
 
   const [libraryId, setLibraryId] = useState<string | undefined>(initialLibraryId)
@@ -134,29 +144,39 @@ export function BooksPage({ initialLibraryId }: { initialLibraryId: string | und
         <select value={status ?? ''} aria-label={t.th_status}
                 onChange={(e) => setStatus(e.target.value || undefined)}>
           <option value="">{t.books_status_any}</option>
-          <option value="auto">{t.st_auto}</option>
-          <option value="approved">{t.st_approved}</option>
-          <option value="manual">{t.st_manual}</option>
+          {/* The same three words the badge in the table uses — from the
+              shared table, so a filter and the rows it produces cannot come
+              to name one state two ways. */}
+          <option value="auto">{ui.st_auto}</option>
+          <option value="approved">{ui.st_approved}</option>
+          <option value="manual">{ui.st_manual}</option>
         </select>
 
-        {/* ⚠ Inert while searching: the server ranks by RELEVANCE (P1.5's
+        {/* The product's control, shared (`@booksnap/ui`) rather than the
+            bare select + ↑/↓ button this screen used to draw. That version
+            read as two questions and, worse, carried A–Z's "ascending" onto
+            the date key on a key change — the bug the reset below prevents,
+            declared per option so it cannot be forgotten.
+
+            ⚠ Inert while searching: the server ranks by RELEVANCE (P1.5's
             measured Hebrew search) and ignores `sort`, so a live control
             would promise an ordering nobody applies. */}
-        <select value={sort} aria-label={t.books_sort} disabled={searching}
-                onChange={(e) => {
-                  const next = e.target.value as Sort
-                  setSort(next)
-                  setAscending(naturalAscending(next))
-                }}>
-          <option value="title">{t.sort_title}</option>
-          <option value="author">{t.sort_author}</option>
-          <option value="recently_added">{t.sort_recent}</option>
-        </select>
-        <button type="button" className="btn small" disabled={searching}
-                aria-label={ascending ? t.sort_asc : t.sort_desc}
-                onClick={() => setAscending((a) => !a)}>
-          {ascending ? '↑' : '↓'}
-        </button>
+        <SortControl
+          value={sort}
+          ascending={ascending}
+          options={SORT_OPTIONS.map((o) => ({ ...o, label: t[o.label] }))}
+          label={t.books_sort}
+          disabled={searching}
+          disabledReason={t.books_sort_ignored}
+          // The box says what the ordering IS while searching, rather than a
+          // key the server is ignoring — the product's own behaviour, and the
+          // reason the shared control has this prop at all.
+          inertOption={{ value: 'relevance', label: t.books_sort_relevance }}
+          onChange={(next, asc) => {
+            setSort(next as Sort)
+            setAscending(asc)
+          }}
+        />
       </div>
 
       {searching && <p className="sub">{t.books_sort_ignored}</p>}

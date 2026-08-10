@@ -41,9 +41,8 @@ import { useEffect, useRef, useState } from 'react'
 
 import { approveBook, deleteBook, patchBook } from '../api/client'
 import type { StaffBook } from '../api/staff'
-import { formatDate } from '../lib/format'
 import { useI18n } from '../lib/i18n'
-import { ErrorBox, StatusBadge } from '../lib/ui'
+import { ErrorBox, formatDate, StatusBadge, vouchedFor } from '@booksnap/ui'
 
 export function BookPanel({ book, libraryLabel, writable, onClose, onChanged }: {
   book: StaffBook
@@ -190,7 +189,7 @@ export function BookPanel({ book, libraryLabel, writable, onClose, onChanged }: 
         ) : (
           <>
             <div className="row" style={{ marginTop: 14 }}>
-              {book.status === 'auto' && (
+              {!vouchedFor(book.status) && (
                 <button type="button" className="btn primary" disabled={busy}
                         onClick={approve}>
                   {t.bp_approve}

@@ -30,11 +30,10 @@ body {
 
 /* --- mixed-script strings (§7.2) ------------------------------------------ */
 
-.rtl-safe {
-  unicode-bidi: plaintext;
-}
-[dir='rtl'] .rtl-safe { text-align: right; }
-[dir='ltr'] .rtl-safe { text-align: left; }
+/* `.rtl-safe` itself lives in `@booksnap/ui`'s sheet (app/ui/src/styles/ui.css),
+   imported before this file. It is a CORRECTNESS rule about Hebrew that both
+   clients need (UI_PLAN §7.2), and the two copies had already drifted in their
+   selectors — this one matched a bare `[dir=…]`, the product's `:root[dir=…]`. */
 
 /* An opaque id is Latin and monospaced whichever way the page reads. */
 .mono {

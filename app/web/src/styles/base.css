@@ -27,32 +27,12 @@ body {
 }
 
 /* ---------------- mixed-script text (UI_PLAN §7.2) ----------------
-   The single most load-bearing rule in this stylesheet — do not "simplify"
-   it back into one rule.
+   `.rtl-safe` itself lives in `@booksnap/ui`'s sheet (app/ui/src/styles/ui.css)
+   and is imported before this file: it is a CORRECTNESS rule about Hebrew that
+   both clients need, and the two copies had already drifted in their selectors
+   (`:root[dir=…]` here, a bare `[dir=…]` in the console).
 
-   `unicode-bidi: plaintext` picks each STRING's own base direction, so a
-   Hebrew title ("משחקי הכס") and an English one ("Sapiens") both render with
-   correct internal glyph/word order in the very same column. Left alone,
-   plaintext ALSO resolves `text-align: start` per string — which flushes
-   Hebrew titles to the right and Latin titles to the left even within one
-   list, producing two ragged edges instead of one clean column.
-
-   So the two concerns are split on purpose:
-     - DIRECTION is resolved per STRING (unicode-bidi: plaintext) — correct
-       glyph order for mixed-script text.
-     - ALIGNMENT is resolved per CONTAINER (the [dir=...] rules below) — one
-       clean edge down the column, matching the active UI language.
-   `.side` (e.g. the location column in a book row) is itself an end-aligned
-   container, so it gets the opposite mapping from the rest of the page. */
-.rtl-safe {
-  unicode-bidi: plaintext;
-}
-:root[dir=ltr] .rtl-safe {
-  text-align: left;
-}
-:root[dir=rtl] .rtl-safe {
-  text-align: right;
-}
+   What stays is this app's own exception to it. */
 /* …except where the container itself is end-aligned (e.g. the location
    column of a book row). */
 :root[dir=ltr] .side .rtl-safe,

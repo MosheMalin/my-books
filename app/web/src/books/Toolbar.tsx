@@ -8,10 +8,11 @@
  * (fixtures/search/README.md). Re-implementing any of that here would mean two
  * normalizers, and two normalizers drift.
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { SortControl, type SortOption } from '@booksnap/ui'
 import { exportUrl } from '../api/client'
 import { useI18n } from '../lib/i18n'
-import type { SortKey } from '../lib/books'
+import { naturalAscending, type SortKey } from '../lib/books'
 import type { View } from './Feed'
 
 /** Long enough that a Hebrew word is finished, short enough to feel live. */
@@ -47,6 +48,23 @@ export function Toolbar({
   // for a round trip. `draft` is the keystrokes, `q` is what the server knows.
   const [draft, setDraft] = useState(q)
 
+  // Each option carries the direction its key MEANS — A–Z for text, newest
+  // first for a date — from the store's own rule, so there is one definition
+  // of it rather than a second list of exceptions here.
+  const options = useMemo<readonly SortOption[]>(
+    () =>
+      ([
+        ['title', t.sort_title],
+        ['author', t.sort_author],
+        ['recently_added', t.sort_recent],
+      ] as const).map(([value, label]) => ({
+        value,
+        label,
+        naturalAscending: naturalAscending(value),
+      })),
+    [t],
+  )
+
   useEffect(() => setDraft(q), [q])
 
   useEffect(() => {
@@ -69,47 +87,42 @@ export function Toolbar({
         />
       </div>
 
-      {/* Not a <label>: the direction toggle sits INSIDE the box, and a click
-          on a button inside a label would also be forwarded to the select. */}
-      <div className="sortwrap">
-        {/* Direction lives on the sort control, not beside it — one control,
-            one question. It sits at the box's inline-START edge (the right in
-            Hebrew, the left in English), which is also the edge the native
-            dropdown chevron is NOT on. */}
-        <button
-          type="button"
-          className={`sortdir${ascending ? '' : ' desc'}`}
-          disabled={!sortApplies}
-          aria-label={ascending ? t.sort_asc : t.sort_desc}
-          title={sortApplies ? (ascending ? t.sort_asc : t.sort_desc) : t.sort_ignored}
-          onClick={() => onAscending(!ascending)}
-        >
-          <svg viewBox="0 0 12 14" width="12" height="14" aria-hidden="true">
-            <path
-              d="M6 12.5V2.2M1.8 6.4 6 2.2l4.2 4.2"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </button>
-        <select
-          aria-label={t.sort}
-          value={sortApplies ? sort : 'relevance'}
-          disabled={!sortApplies}
-          // Ignored by the server while searching — relevance IS the order —
-          // so the control says so rather than pretending it still applies.
-          title={sortApplies ? t.sort : t.sort_ignored}
-          onChange={(e) => onSort(e.target.value as SortKey)}
-        >
-          {!sortApplies && <option value="relevance">{t.sort_relevance}</option>}
-          <option value="title">{t.sort_title}</option>
-          <option value="author">{t.sort_author}</option>
-          <option value="recently_added">{t.sort_recent}</option>
-        </select>
-      </div>
+      {/* The control itself is `@booksnap/ui`'s now — the console had
+          re-invented it as a bare select with a ↑/↓ button beside it, and lost
+          both of the rules that make this one work (the direction INSIDE the
+          box, and the reset on a key change). What stays here is what only
+          this app knows: which keys it can sort by, and why the control goes
+          inert while a search is running. */}
+      <SortControl
+        value={sort}
+        ascending={ascending}
+        options={options}
+        label={t.sort}
+        disabled={!sortApplies}
+        // Ignored by the server while searching — relevance IS the order — so
+        // the control says so rather than pretending it still applies.
+        disabledReason={t.sort_ignored}
+        inertOption={{ value: 'relevance', label: t.sort_relevance }}
+        // ⚠ `else`, not a second call — and the reason is NOT "it would fire a
+        // second query". It would not: `setQuery` short-circuits when the
+        // values match, and React batches both updates in one handler. (The
+        // first version of this comment said that, and a review corrected it;
+        // the correction matters because a wrong reason is what makes the next
+        // reader delete the guard.)
+        //
+        // The real reason is the INERT case. While a search is running the
+        // control is disabled and shows `relevance`, so `value` here is still
+        // the last real key: calling `onAscending` unconditionally would push
+        // a direction for an ordering the server is ignoring. The books store
+        // already resets direction on a key change (`setQuery`'s own
+        // `naturalAscending`, which other paths change sort through too), so
+        // letting it be the one that applies the reset is redundant
+        // enforcement on purpose — "what else enforces this?", answered.
+        onChange={(value, asc) => {
+          if (value !== sort) onSort(value as SortKey)
+          else onAscending(asc)
+        }}
+      />
 
       <div className="seg" role="group" aria-label={`${t.view_list} / ${t.view_grid}`}>
         <button

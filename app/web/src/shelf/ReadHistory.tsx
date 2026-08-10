@@ -12,7 +12,7 @@
  * still running/failed, renders without the diff line rather than a guess.
  */
 import type { ReadSummaryDTO } from '../api/client'
-import { formatDate } from '../lib/format'
+import { formatDate } from '@booksnap/ui'
 import { useI18n, type Strings } from '../lib/i18n'
 
 function modeLabel(mode: string, t: Strings): string {

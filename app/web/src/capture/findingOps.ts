@@ -15,6 +15,7 @@
  *     diff — so this refetches. Deliberately a plain `GET .../diff` and not
  *     an apply: opening or editing a finding must never write provenance.
  */
+import { vouchedFor } from '@booksnap/ui'
 import {
   applyDiff,
   approveBook,
@@ -112,7 +113,7 @@ export function approvableFindings(
   const bookIds = [...diff.added, ...diff.corrected, ...diff.unchanged]
     .filter(mine)
     .map((o) => o.existing_book)
-    .filter((b): b is NonNullable<typeof b> => !!b && b.status === 'auto')
+    .filter((b): b is NonNullable<typeof b> => !!b && !vouchedFor(b.status))
     .map((b) => b.id)
 
   // One book can back two findings (two spines of one title); approving it

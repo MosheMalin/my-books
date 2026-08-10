@@ -20,7 +20,16 @@
     "verbatimModuleSyntax": true,
     "resolveJsonModule": true,
     "skipLibCheck": true,
-    "noEmit": true
+    "noEmit": true,
+
+    /* The shared library, consumed as source. It is compiled by THIS
+       tsconfig, which is why app/ui carries the identical strictness — a
+       shared component that only typechecks under looser settings would fail
+       here, in the app, where it is hardest to read. */
+    "paths": {
+      "@booksnap/ui": ["../ui/src/index.ts"],
+      "@booksnap/ui/*": ["../ui/src/*"]
+    }
   },
   "include": ["src", "vite.config.ts"]
 }

@@ -1,18 +1,21 @@
 # -*- coding: utf-8 -*-
 """Composition root for the staff service.
 
-⚠ A SECOND composition root. `tests/test_layering.py` keeps
-``COMPOSITION_ROOTS`` as a one-element set precisely so that a second one is
-"a visible, argued-about diff rather than an accident" — and this is that
-second one, added without the diff because the build it arrived in could not
-touch a test file. The argument, for whoever gets to make it properly:
+⚠ A SECOND composition root, and deliberately NOT in ``COMPOSITION_ROOTS``.
+That set is kept one element long precisely so a second entry is "a visible,
+argued-about diff rather than an accident". The argument, made and now
+enforced:
 
-  the layering rule this exemption protects is ``app/api -X-> app/adapters``,
+  the layering rule the exemption protects is ``app/api -X-> app/adapters``,
   and it is not weakened here, because nothing in this service is under
   ``app/api``. This file wires ``app.staff_api.queries`` — a read model that
-  imports no adapter at all — so today the exemption is not even needed. Add
-  ``app/staff_api/main.py`` to ``COMPOSITION_ROOTS`` when it first binds a real
-  adapter, and not before.
+  imports no adapter at all — so the exemption is not needed.
+
+``tests/test_layering.py:test_the_staff_service_binds_no_adapter_and_so_needs_
+no_exemption`` is what keeps that argument TRUE rather than merely written
+down: the day this service binds a real adapter, that test fails and whoever
+made it bind one adds this file to the list. Which is the discussion the list
+exists to force.
 
 ⚠ It also does NOT import ``app.main``. That is not tidiness: importing the
 product's composition root opens ``work/product.db`` and runs ``migrate()`` at

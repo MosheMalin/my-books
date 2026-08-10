@@ -8,12 +8,13 @@
  * up its own memberships and called the result "the system", which was true
  * for exactly one account and quietly wrong for any other.
  */
-import { formatDate, formatNumber, libraryName } from '../lib/format'
+import { formatDate, formatNumber, libraryName } from '@booksnap/ui'
 import { useI18n } from '../lib/i18n'
 import { href } from '../lib/route'
 import { OpenServiceWarning } from '../lib/StaffToken'
 import { useSystem } from '../lib/system'
-import { Empty, ErrorBox, Loading, StatCard } from '../lib/ui'
+import { Empty, ErrorBox, Loading } from '@booksnap/ui'
+import { StatCard } from '../lib/ui'
 
 export function Dashboard() {
   const { t, lang } = useI18n()

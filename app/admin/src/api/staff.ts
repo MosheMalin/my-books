@@ -17,11 +17,13 @@
  *     ever inside libraries they are themselves a member of, through the
  *     ordinary product API and the ordinary rules.
  *
- * Types are hand-written here, unlike `./schema.ts`. The staff service is not
- * part of the committed `app/api/openapi.json` contract — generating it would
- * mean editing that artefact and the tool that checks it — so these shapes
- * mirror `app/staff_api/app.py`'s DTOs by hand. Keep them in step; they are
- * small, and a mismatch surfaces immediately as `undefined` in a table.
+ * ⚠ The DTOs below were HAND-MIRRORED from `app/staff_api/app.py` until
+ * 2026-08-10, under the constraint that forbade touching
+ * `tools/api_contract.py`. They are generated now — `app/staff_api/openapi.json`
+ * → `./staff-schema.d.ts`, the same pipeline and the same committed-artefact
+ * rule as the product contract — so a renamed staff DTO is a COMPILE error
+ * here rather than an `undefined` appearing in a table. The names below are
+ * aliases kept for the screens that already read them.
  */
 
 export class StaffError extends Error {
@@ -61,109 +63,26 @@ export function setStaffToken(next: string | undefined): void {
 
 export const getStaffToken = (): string | undefined => token
 
-// --- DTOs (mirror app/staff_api/app.py) -------------------------------------
+// --- DTOs (GENERATED — see the header) --------------------------------------
 
-export interface StaffOverview {
-  accounts: number
-  libraries: number
-  memberships: number
-  books: number
-  copies: number
-  shelves: number
-  captures: number
-  reads: number
-  duplicates: number
-  lent_out: number
-  /** §5.1's lowest rung — `manual` outranks `approved`, so this alone is
-   *  "awaiting approval". */
-  auto: number
-  approved: number
-  manual: number
-  /** False when the service has no token configured: anyone who can reach the
-   *  port can read every tenant. Shown on screen, never swallowed. */
-  authenticated: boolean
-  /** Libraries with no membership at all — nobody can see or administer them. */
-  orphan_libraries: string[]
-}
+import type { components } from './staff-schema'
 
-export interface StaffLibrary {
-  id: string
-  label: string
-  created_at: string | null
-  members: number
-  admins: number
-  books: number
-  copies: number
-  auto: number
-  approved: number
-  manual: number
-  shelves: number
-  captures: number
-  reads: number
-  duplicates: number
-  lent_out: number
-  last_activity: string | null
-}
+type Schemas = components['schemas']
 
-export interface StaffMembership {
-  library_id: string
-  role: string
-  joined_at: string | null
-}
-
-export interface StaffAccount {
-  id: string
-  display_name: string
-  email: string | null
-  created_at: string | null
-  memberships: StaffMembership[]
-}
-
-export interface StaffBook {
-  id: string
-  library_id: string
-  title: string
-  author: string
-  status: string
-  copy_count: number
-  shelf_count: number
-  added_at: string | null
-}
-
-export interface StaffBookPage {
-  items: StaffBook[]
-  total: number
-  offset: number
-  limit: number
-  /** A ranked search hit the server's scan cap: `total` is honest, but pages
-   *  past the cap are unreachable. Told to the operator, not hidden. */
-  truncated: boolean
-}
-
-export interface StaffShelf {
-  id: string
-  library_id: string
-  label: string
-  depth_count: number
-  virtual: boolean
-  captures: number
-  /** DISTINCT books standing here, not copies. */
-  books: number
-  last_read: string | null
-}
-
-export interface StaffRead {
-  id: string
-  library_id: string
-  shelf_id: string
-  shelf_label: string
-  depth: number
-  mode: string
-  status: string
-  started_at: string | null
-  finished_at: string | null
-  claims: number
-}
+/** System totals. `authenticated: false` means the service has no token
+ *  configured and anyone who can reach the port reads every tenant — shown on
+ *  screen, never swallowed. `orphan_libraries` are libraries with no
+ *  membership at all: nobody can see or administer them. */
+export type StaffOverview = Schemas['OverviewDTO']
+export type StaffLibrary = Schemas['LibraryDTO']
+export type StaffMembership = Schemas['MembershipDTO']
+export type StaffAccount = Schemas['AccountDTO']
+export type StaffBook = Schemas['BookDTO']
+/** `truncated` means a ranked search hit the server's scan cap: `total` is
+ *  honest, but pages past the cap are unreachable. Told, not hidden. */
+export type StaffBookPage = Schemas['BookPageDTO']
+export type StaffShelf = Schemas['ShelfDTO']
+export type StaffRead = Schemas['ReadDTO']
 
 // --- transport --------------------------------------------------------------
 

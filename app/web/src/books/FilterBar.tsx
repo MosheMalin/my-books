@@ -45,8 +45,10 @@ export function FilterBar({
   onDuplicates,
   onClearAll,
 }: FilterBarProps) {
-  const { t } = useI18n()
-  const label = { auto: t.st_auto, approved: t.st_approved, manual: t.st_manual }
+  const { t, ui } = useI18n()
+  // The same three words the badges use, from the shared table — a filter
+  // and the rows it produces must not name one state two ways.
+  const label = { auto: ui.st_auto, approved: ui.st_approved, manual: ui.st_manual }
 
   return (
     <div className="filterbar">

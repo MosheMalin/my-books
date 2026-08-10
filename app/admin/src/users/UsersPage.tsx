@@ -18,12 +18,12 @@
  * (P4.1's login, P4.3's invite flow), and it is stated on the Access screen
  * rather than mocked up here as a control that would do nothing.
  */
-import { formatDate, libraryName } from '../lib/format'
+import { formatDate, libraryName } from '@booksnap/ui'
 import { useI18n } from '../lib/i18n'
 import { href } from '../lib/route'
 import { OpenServiceWarning } from '../lib/StaffToken'
 import { useSystem } from '../lib/system'
-import { Empty, ErrorBox, Loading } from '../lib/ui'
+import { Empty, ErrorBox, Loading } from '@booksnap/ui'
 
 export function UsersPage() {
   const { t, lang } = useI18n()
