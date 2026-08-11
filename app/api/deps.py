@@ -107,7 +107,7 @@ def current_library(
        a request, so its own library needs no membership row to be legitimate.
        P4.1 replaces the adapter, not this line;
     3. **it names anything else** — resolved through the
-       :class:`TenancyStore`: the account's membership decides, and the
+       :class:`TenancyStore`: the user's membership decides, and the
        library's own row supplies the label.
 
     A library that does not exist and a library the caller is not a member of

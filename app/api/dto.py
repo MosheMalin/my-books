@@ -50,16 +50,20 @@ class LibraryRefDTO(BaseModel):
     label: str = Field(description="Human-readable library name.")
 
 
-class AccountDTO(BaseModel):
+class UserDTO(BaseModel):
     """Who the server thinks is asking (§4.1).
 
     Dev-trusted until pillar 4: there is no login, so this is whichever
     principal the composition root built. It is on the wire now because the
-    switcher's list is *this account's* libraries, and a client that cannot
-    name the account cannot explain an empty list.
+    switcher's list is *this user's* libraries, and a client that cannot
+    name the user cannot explain an empty list.
+
+    ⚠ Called ``AccountDTO`` until P3.7a. The word "account" now belongs to the
+    CUSTOMER (VISION §4.1, 2026-08-11) and arrives on the wire at P3.7b —
+    reading this field as a tenant is the mistake the rename exists to stop.
     """
 
-    id: str = Field(description="Opaque account identifier.")
+    id: str = Field(description="Opaque user identifier.")
     display_name: str = Field(default="", description="Shown in the UI, if set.")
 
 
@@ -110,7 +114,7 @@ class MetaResponse(BaseModel):
     version: str = Field(description="Server package version.")
     api_version: str = Field(description="API major version, e.g. 'v1'.")
     library: LibraryRefDTO = Field(description="Library resolved for this caller.")
-    account: AccountDTO = Field(description="The caller (dev-trusted until P4.1).")
+    user: UserDTO = Field(description="The caller (dev-trusted until P4.1).")
 
 
 # --- books ---------------------------------------------------------------

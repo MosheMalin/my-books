@@ -39,12 +39,12 @@ export function Dashboard() {
       )}
 
       <div className="stats">
-        {/* ⚠ `accounts` is the PEOPLE count and `libraries` is the account
+        {/* ⚠ `users` is the PEOPLE count and `libraries` is the account
             count, because the console renamed the tenant and the wire did
             not — see `AccountsPage`. Labelled so the two cannot be read as
             one number reported twice. */}
         <StatCard label={t.stat_accounts_tenants} value={num(overview.libraries)} />
-        <StatCard label={t.stat_people} value={num(overview.accounts)} />
+        <StatCard label={t.stat_people} value={num(overview.users)} />
         <StatCard label={t.stat_memberships} value={num(overview.memberships)} />
         <StatCard label={t.stat_books} value={num(overview.books)} />
         <StatCard label={t.stat_copies} value={num(overview.copies)} />

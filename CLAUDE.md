@@ -107,7 +107,7 @@ app/
   domain/    entities + rules; pure, no I/O. Imports booksnap.catalog and
              NOTHING else from the core (normalize() must not fork).
   ports/     Protocols: stores, blobs, reader, jobs, decisions, duplicates,
-             tenancy (the ONE account-scoped store — it answers which
+             tenancy (the ONE user-scoped store — it answers which
              libraries exist)
   adapters/  sqlite_store (WAL, conn per op), disk_blobs, memory_store,
              migrations (PRAGMA user_version), legacy_import,
@@ -225,6 +225,14 @@ different world — the product never reads it.
   Rooms/sites are Places (pillar 6), never Libraries — splitting one
   collection breaks search/dedup/§5.4 silently. Switcher renders as a label
   until a second library exists.
+- ⚠ **The boundary is MOVING: the tenant becomes the ACCOUNT** (owner,
+  2026-08-11, VISION §4.1's revision) — a Library becomes a logical partition
+  inside one, `library_id` stays the one enforced physical scope, and the
+  account is checked at the door in `deps.current_library`. Landing item by
+  item as P3.7a–f (`planning/TENANCY_BOUNDARY_PLAN.md`). **P3.7a landed the
+  rename only**: the person is now a `User` (`Account` is being freed for the
+  customer, which P3.7b introduces), and until then a Library IS still the
+  tenant everywhere in the code.
 - **Images**: content-addressed (SHA-256), EXIF applied at STORE time,
   untouched bytes when no correction needed; variants carry their own
   extension; blob keys validated, never joined. Real phone JPEGs are MPO.

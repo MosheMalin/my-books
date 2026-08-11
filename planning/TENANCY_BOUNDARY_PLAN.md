@@ -212,6 +212,34 @@ P3.7 row + the ⚠ blocks at `476-495`), `planning/ADMIN_CONSOLE_PLAN.md`
 
 Per-item one-liners land WITH their items; this is the long-form write-up.
 
+## Found on the way, deliberately NOT fixed here
+
+P3.7a's migration review turned up two pre-existing holes in the migration
+RUNNER. Both are older than this epic, neither is a v13 regression, and both
+change how all thirteen steps behave — which is not a rider on a rename. They
+are written down so the next reader adds the guard instead of re-deriving the
+problem:
+
+- **a string step is not atomic.** `conn.executescript` commits as it goes, so
+  the runner's `with conn:` wraps nothing. A crash between two statements of
+  one step leaves the file half-upgraded with the OLD `user_version`, and the
+  next open re-enters the step and raises on what already succeeded — a
+  database openable only by hand. `migrations.py`'s module docstring now says
+  so (it previously claimed the opposite); the fix is to wrap each script in
+  its own `BEGIN`/`COMMIT` so a mid-script failure leaves something to roll
+  back;
+- **no guard against a database NEWER than the code.** `migrate()` skips
+  quietly when `user_version > SCHEMA_VERSION`, so checking out an older build
+  against an upgraded file dies later with a raw `no such table` instead of
+  naming both numbers. This epic makes that likely rather than theoretical,
+  because rolling back between items is a real action.
+
+⚠ **Landing any item of this epic advances the owner's real
+`work/product.db`** the first time the gate or the pre-commit hook runs in the
+primary tree — `tools/api_contract.py` imports `app.main`, which migrates —
+and there is no down step. **Snapshot `work/product.db` through SQLite's
+backup API before each merge to `main`.**
+
 ## Scope fence
 
 Pillar 4 is not started and nothing here starts it: **no login, no auth, no

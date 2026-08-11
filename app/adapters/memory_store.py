@@ -13,7 +13,6 @@ frozen, so there is nothing to defensively copy.
 from __future__ import annotations
 
 from app.domain import (
-    Account,
     Book,
     Capture,
     Decision,
@@ -28,7 +27,6 @@ from app.domain import (
 )
 from app.domain.search import parse
 from app.domain.search import search as domain_search
-from app.ports.tenancy import UnknownAccount, UnknownLibrary
 from app.ports.store import (
     BookPage,
     BookSort,
@@ -38,6 +36,7 @@ from app.ports.store import (
     UnknownShelf,
     WrongLibrary,
 )
+from app.ports.tenancy import UnknownLibrary, UnknownUser
 
 
 class MemoryBookStore:
@@ -381,21 +380,21 @@ class MemoryTenancyStore:
 
     ⚠ The one memory store with no ``_by_library`` dict — see the port's own
     ⚠⚠: this is the store that ANSWERS which libraries exist, so scoping it by
-    a library would be circular. Its narrowing key is the account.
+    a library would be circular. Its narrowing key is the user.
     """
 
     def __init__(self) -> None:
-        self._accounts: dict[str, Account] = {}
+        self._users: dict[str, User] = {}
         self._libraries: dict[str, Library] = {}
         self._members: dict[tuple[str, str], Membership] = {}
 
-    # --- accounts --------------------------------------------------------
+    # --- users -----------------------------------------------------------
 
-    def save_account(self, account: Account) -> None:
-        self._accounts[account.id] = account
+    def save_user(self, user: User) -> None:
+        self._users[user.id] = user
 
-    def get_account(self, account_id: str) -> Account | None:
-        return self._accounts.get(account_id)
+    def get_user(self, user_id: str) -> User | None:
+        return self._users.get(user_id)
 
     # --- libraries -------------------------------------------------------
 
@@ -408,29 +407,29 @@ class MemoryTenancyStore:
     # --- memberships -----------------------------------------------------
 
     def save_membership(self, membership: Membership) -> None:
-        if membership.account_id not in self._accounts:
-            raise UnknownAccount(f"no account {membership.account_id!r}")
+        if membership.user_id not in self._users:
+            raise UnknownUser(f"no user {membership.user_id!r}")
         if membership.library_id not in self._libraries:
             raise UnknownLibrary(f"no library {membership.library_id!r}")
-        self._members[(membership.account_id, membership.library_id)] = membership
+        self._members[(membership.user_id, membership.library_id)] = membership
 
-    def membership(self, account_id: str, library_id: str) -> Membership | None:
-        return self._members.get((account_id, library_id))
+    def membership(self, user_id: str, library_id: str) -> Membership | None:
+        return self._members.get((user_id, library_id))
 
-    def delete_membership(self, account_id: str, library_id: str) -> bool:
-        return self._members.pop((account_id, library_id), None) is not None
+    def delete_membership(self, user_id: str, library_id: str) -> bool:
+        return self._members.pop((user_id, library_id), None) is not None
 
     def list_libraries(
-        self, account_id: str,
+        self, user_id: str,
     ) -> tuple[tuple[Library, Membership], ...]:
         rows = [(self._libraries[m.library_id], m)
-                for (acc, _lib), m in self._members.items() if acc == account_id]
+                for (usr, _lib), m in self._members.items() if usr == user_id]
         rows.sort(key=lambda pair: pair[0].sort_key)
         return tuple(rows)
 
     def list_members(self, library_id: str) -> tuple[Membership, ...]:
         rows = [m for m in self._members.values() if m.library_id == library_id]
-        rows.sort(key=lambda m: (m.role is not Role.ADMIN, m.account_id))
+        rows.sort(key=lambda m: (m.role is not Role.ADMIN, m.user_id))
         return tuple(rows)
 
 

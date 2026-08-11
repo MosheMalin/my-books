@@ -29,7 +29,6 @@ from typing import Iterator
 
 from app.adapters.migrations import migrate
 from app.domain import (
-    Account,
     Alternative,
     Book,
     Capture,
@@ -51,11 +50,11 @@ from app.domain import (
     Role,
     Shelf,
     Status,
+    User,
     WorkFields,
 )
 from app.domain.search import compile_sql_like, haystack, parse
 from app.domain.search import search as domain_search
-from app.ports.tenancy import UnknownAccount, UnknownLibrary
 from app.ports.store import (
     BookPage,
     BookSort,
@@ -65,6 +64,7 @@ from app.ports.store import (
     UnknownShelf,
     WrongLibrary,
 )
+from app.ports.tenancy import UnknownLibrary, UnknownUser
 
 _ORDER_BY = {
     BookSort.TITLE: "norm_title {dir}, id {dir}",
@@ -755,25 +755,24 @@ class SqliteTenancyStore(_SqliteStore):
     def __init__(self, path: str | Path) -> None:
         super().__init__(path, kind="SqliteTenancyStore")
 
-    # --- accounts --------------------------------------------------------
+    # --- users -----------------------------------------------------------
 
-    def save_account(self, account: Account) -> None:
+    def save_user(self, user: User) -> None:
         with self._connect() as conn:
             with conn:
                 conn.execute(
-                    "INSERT INTO accounts (id, display_name, email, created_at)"
+                    "INSERT INTO users (id, display_name, email, created_at)"
                     " VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET"
                     " display_name=excluded.display_name, email=excluded.email,"
                     " created_at=excluded.created_at",
-                    (account.id, account.display_name, account.email,
-                     account.created_at),
+                    (user.id, user.display_name, user.email, user.created_at),
                 )
 
-    def get_account(self, account_id: str) -> Account | None:
+    def get_user(self, user_id: str) -> User | None:
         with self._connect() as conn:
-            row = conn.execute("SELECT * FROM accounts WHERE id = ?",
-                               (account_id,)).fetchone()
-        return _load_account(row) if row else None
+            row = conn.execute("SELECT * FROM users WHERE id = ?",
+                               (user_id,)).fetchone()
+        return _load_user(row) if row else None
 
     # --- libraries -------------------------------------------------------
 
@@ -802,41 +801,41 @@ class SqliteTenancyStore(_SqliteStore):
             # not leak — and the memory store has no FKs at all, so without
             # this the two adapters would answer differently for the same
             # call, which is exactly what the contract suite exists to catch.
-            if conn.execute("SELECT 1 FROM accounts WHERE id = ?",
-                            (membership.account_id,)).fetchone() is None:
-                raise UnknownAccount(f"no account {membership.account_id!r}")
+            if conn.execute("SELECT 1 FROM users WHERE id = ?",
+                            (membership.user_id,)).fetchone() is None:
+                raise UnknownUser(f"no user {membership.user_id!r}")
             if conn.execute("SELECT 1 FROM libraries WHERE id = ?",
                             (membership.library_id,)).fetchone() is None:
                 raise UnknownLibrary(f"no library {membership.library_id!r}")
             with conn:
                 conn.execute(
-                    "INSERT INTO memberships (account_id, library_id, role,"
+                    "INSERT INTO memberships (user_id, library_id, role,"
                     " joined_at) VALUES (?,?,?,?)"
-                    " ON CONFLICT(account_id, library_id) DO UPDATE SET"
+                    " ON CONFLICT(user_id, library_id) DO UPDATE SET"
                     " role=excluded.role, joined_at=excluded.joined_at",
-                    (membership.account_id, membership.library_id,
+                    (membership.user_id, membership.library_id,
                      membership.role.value, membership.joined_at),
                 )
 
-    def membership(self, account_id: str, library_id: str) -> Membership | None:
+    def membership(self, user_id: str, library_id: str) -> Membership | None:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM memberships WHERE account_id = ? AND library_id = ?",
-                (account_id, library_id),
+                "SELECT * FROM memberships WHERE user_id = ? AND library_id = ?",
+                (user_id, library_id),
             ).fetchone()
         return _load_membership(row) if row else None
 
-    def delete_membership(self, account_id: str, library_id: str) -> bool:
+    def delete_membership(self, user_id: str, library_id: str) -> bool:
         with self._connect() as conn:
             with conn:
                 cur = conn.execute(
-                    "DELETE FROM memberships WHERE account_id = ? AND library_id = ?",
-                    (account_id, library_id),
+                    "DELETE FROM memberships WHERE user_id = ? AND library_id = ?",
+                    (user_id, library_id),
                 )
             return cur.rowcount > 0
 
     def list_libraries(
-        self, account_id: str,
+        self, user_id: str,
     ) -> tuple[tuple[Library, Membership], ...]:
         # ORDER BY mirrors `Library.sort_key`: named alphabetically, then the
         # v12-backfilled nameless ones oldest-first, id last so it is total.
@@ -846,13 +845,13 @@ class SqliteTenancyStore(_SqliteStore):
             rows = conn.execute(
                 "SELECT l.*, m.role AS m_role, m.joined_at AS m_joined_at"
                 " FROM memberships m JOIN libraries l ON l.id = m.library_id"
-                " WHERE m.account_id = ?"
+                " WHERE m.user_id = ?"
                 " ORDER BY TRIM(l.label), COALESCE(l.created_at, ''), l.id",
-                (account_id,),
+                (user_id,),
             ).fetchall()
         return tuple(
             (_load_library(r),
-             Membership(account_id=account_id, library_id=r["id"],
+             Membership(user_id=user_id, library_id=r["id"],
                         role=Role(r["m_role"]), joined_at=r["m_joined_at"]))
             for r in rows
         )
@@ -861,15 +860,15 @@ class SqliteTenancyStore(_SqliteStore):
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT * FROM memberships WHERE library_id = ?"
-                " ORDER BY role <> 'admin', account_id",
+                " ORDER BY role <> 'admin', user_id",
                 (library_id,),
             ).fetchall()
         return tuple(_load_membership(r) for r in rows)
 
 
-def _load_account(row: sqlite3.Row) -> Account:
-    return Account(id=row["id"], display_name=row["display_name"],
-                   email=row["email"], created_at=row["created_at"])
+def _load_user(row: sqlite3.Row) -> User:
+    return User(id=row["id"], display_name=row["display_name"],
+                email=row["email"], created_at=row["created_at"])
 
 
 def _load_library(row: sqlite3.Row) -> Library:
@@ -878,7 +877,7 @@ def _load_library(row: sqlite3.Row) -> Library:
 
 
 def _load_membership(row: sqlite3.Row) -> Membership:
-    return Membership(account_id=row["account_id"], library_id=row["library_id"],
+    return Membership(user_id=row["user_id"], library_id=row["library_id"],
                       role=Role(row["role"]), joined_at=row["joined_at"])
 
 

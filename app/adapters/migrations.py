@@ -7,7 +7,23 @@ that database is the one holding the owner's 251 real books.
 
 Mechanism is SQLite's own ``PRAGMA user_version``: an integer in the file
 header, so there is no bookkeeping table and no chance of the bookkeeping and
-the schema disagreeing. Each step runs once, in order, inside a transaction.
+the schema disagreeing. Each step runs once, in order.
+
+⚠ **A string step is NOT atomic, despite the ``with conn:`` in the runner.**
+``executescript`` issues an implicit COMMIT before it starts and then runs its
+statements in autocommit, so the context manager wraps nothing: a crash
+between two statements of one step leaves the file half-upgraded with
+``user_version`` still at the OLD number, and the next open re-enters the step
+from the top and raises on whatever already succeeded. The database is then
+openable only by hand. Callable steps do not have this problem.
+
+This is true of every string step in this file and always has been; it is
+written down here because the comment that used to sit on the runner claimed
+the opposite, and a wrong stated reason is what stops the next reader adding
+the guard. The fix — wrapping the script in its own ``BEGIN``/``COMMIT`` so a
+mid-script failure leaves a transaction for ``with conn:`` to roll back —
+changes how all thirteen steps execute and is its own item, not a rider on a
+rename (P3.7a's migration review; see planning/TENANCY_BOUNDARY_PLAN.md).
 
 Rules for adding a step:
   - APPEND, never edit a shipped one. An edited step has already run on the
@@ -484,6 +500,33 @@ INSERT INTO libraries (id)
     UNION SELECT library_id FROM duplicate_questions;
 """
 
+# --- v13: the person is a user, not an account (P3.7a, §4.1) ---------------
+#
+# A RENAME and nothing else. VISION §4.1's 2026-08-11 revision makes the
+# ACCOUNT the tenant — the customer — and the word was already taken by the
+# person, which is why the admin console had to document the mismatch instead
+# of using its own vocabulary. This step frees the noun; P3.7b's v14 spends it.
+#
+# ⚠ Nothing about the tenancy boundary moves here. `memberships` still names a
+# library, and the resolver still asks about that pair. A reviewer looking for
+# the security change is looking at the wrong version.
+#
+# `ALTER TABLE ... RENAME TO` rewrites the REFERENCES clauses in other tables
+# (SQLite ≥ 3.25 with legacy_alter_table off, which is the default), so
+# `memberships.user_id` keeps pointing at the renamed table without the
+# 12-step table rebuild the SQLite docs describe for other alterations. The
+# index is dropped and recreated rather than left behind under its old name:
+# an index called `accounts_by_email` on a table called `users` is exactly the
+# kind of residue that makes the next reader doubt which one is authoritative.
+_V13 = """
+DROP INDEX accounts_by_email;
+
+ALTER TABLE accounts RENAME TO users;
+ALTER TABLE memberships RENAME COLUMN account_id TO user_id;
+
+CREATE UNIQUE INDEX users_by_email ON users (email) WHERE email IS NOT NULL;
+"""
+
 # A step is either SQL to execute or a callable to run — both inside the same
 # once-only transaction. Callables exist because a derived column whose rule
 # lives in the domain must be backfilled BY that rule, not by a re-statement
@@ -501,6 +544,7 @@ MIGRATIONS: tuple[tuple[int, str | Step], ...] = (
     (10, _V10),
     (11, _V11),
     (12, _V12),
+    (13, _V13),
 )
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]
@@ -516,12 +560,24 @@ def migrate(conn: sqlite3.Connection) -> int:
     Safe to call on every connect: already-applied steps are skipped, so this
     is how the store guarantees a usable file without a separate setup command
     someone can forget to run.
+
+    ⚠ ``with conn:`` below is a transaction for CALLABLE steps only — see the
+    module note for why a string step commits as it goes.
     """
+    # v13 uses ALTER TABLE ... RENAME COLUMN, which is 3.25+. Stated once,
+    # here, rather than discovered as a half-applied step on an old build:
+    # the versions where this matters are exactly the ones where a failure
+    # cannot be rolled back.
+    if sqlite3.sqlite_version_info < (3, 25):
+        raise RuntimeError(
+            f"booksnap needs SQLite 3.25+ (this build has "
+            f"{sqlite3.sqlite_version}); schema v13 renames a column"
+        )
     version = current_version(conn)
     for target, step in MIGRATIONS:
         if target <= version:
             continue
-        with conn:  # one transaction per step
+        with conn:
             if isinstance(step, str):
                 conn.executescript(step)
             else:

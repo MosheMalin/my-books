@@ -20,7 +20,7 @@ import { I18nProvider } from '../lib/i18n'
 import { SystemProvider } from '../lib/system'
 import type { BookDTO, LibraryDTO } from '../api/schema'
 import type {
-  StaffAccount, StaffBook, StaffImage, StaffLibrary, StaffOverview, StaffWork,
+  StaffBook, StaffImage, StaffLibrary, StaffOverview, StaffUser, StaffWork,
 } from '../api/staff'
 
 export interface Recorded {
@@ -118,7 +118,7 @@ export function makeStaffImage(over: Partial<StaffImage> = {}): StaffImage {
 
 export function makeOverview(over: Partial<StaffOverview> = {}): StaffOverview {
   return {
-    accounts: 1, libraries: 1, memberships: 1, books: 0, copies: 0,
+    users: 1, libraries: 1, memberships: 1, books: 0, copies: 0,
     shelves: 0, captures: 0, reads: 0, duplicates: 0, lent_out: 0,
     auto: 0, approved: 0, manual: 0, image_files: 0, image_bytes: 0,
     blobs_visible: true,
@@ -127,7 +127,7 @@ export function makeOverview(over: Partial<StaffOverview> = {}): StaffOverview {
   }
 }
 
-export function makeAccount(over: Partial<StaffAccount> = {}): StaffAccount {
+export function makeUser(over: Partial<StaffUser> = {}): StaffUser {
   return {
     id: 'acc-1', display_name: 'משה', email: null,
     created_at: '2026-01-01T00:00:00Z', memberships: [],

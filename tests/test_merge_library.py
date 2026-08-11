@@ -28,7 +28,6 @@ from app.adapters.sqlite_store import (
     SqliteTenancyStore,
 )
 from app.domain import (
-    Account,
     Claim,
     ClaimTier,
     LibraryRef,
@@ -36,6 +35,7 @@ from app.domain import (
     Provenance,
     Role,
     Status,
+    User,
     add_copy,
     append_claim,
     finish_read,
@@ -69,8 +69,8 @@ class _World:
         self.shelves = SqliteShelfStore(self.db)
         self.reads = SqliteReadStore(self.db)
         self.tenancy = SqliteTenancyStore(self.db)
-        owner = Account(id="acc-owner")
-        self.tenancy.save_account(owner)
+        owner = User(id="usr-owner")
+        self.tenancy.save_user(owner)
         for ref, label in ((DST, "משפחת מלין"), (SRC, "lib2")):
             library, membership = new_library(
                 id=ref.id, label=label, owner=owner)
@@ -232,10 +232,10 @@ def test_the_source_tenant_is_retired_and_the_target_untouched():
     try:
         _merge(w)
         assert w.tenancy.get_library(SRC.id) is None
-        assert w.tenancy.membership("acc-owner", SRC.id) is None
+        assert w.tenancy.membership("usr-owner", SRC.id) is None
         assert w.tenancy.get_library(DST.id) is not None
-        assert w.tenancy.membership("acc-owner", DST.id) is not None
-        listed = [lib.id for lib, _ in w.tenancy.list_libraries("acc-owner")]
+        assert w.tenancy.membership("usr-owner", DST.id) is not None
+        listed = [lib.id for lib, _ in w.tenancy.list_libraries("usr-owner")]
         assert listed == [DST.id], "the switcher would still offer the ghost"
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

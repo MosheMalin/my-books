@@ -7,7 +7,7 @@ import { userEvent } from '@booksnap/ui/testing/user'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { AccountsPage } from './AccountsPage'
-import { makeAccount, makeLibrary, makeStaffLibrary, renderApp } from '../test/harness'
+import { makeUser, makeLibrary, makeStaffLibrary, renderApp } from '../test/harness'
 import { bothServices, DEFAULT_WORLD } from '../test/servers'
 
 beforeEach(() => {
@@ -27,7 +27,7 @@ describe('AccountsPage', () => {
 
     const table = await screen.findByRole('table')
     const row = within(table).getByText('הבית').closest('tr')!
-    // acc-1 admins lib-1; acc-2 is a viewer there.
+    // usr-1 admins lib-1; usr-2 is a viewer there.
     expect(within(row).getByText('משה')).toBeInTheDocument()
     expect(within(row).queryByText('שכן')).not.toBeInTheDocument()
     // users, books, images, storage — in that order, by column rather than by
@@ -72,8 +72,8 @@ describe('AccountsPage', () => {
    */
   it('names the people who belong to no account at all', async () => {
     bothServices({
-      accounts: [...DEFAULT_WORLD.accounts,
-                 makeAccount({ id: 'acc-3', display_name: 'נשכח',
+      users: [...DEFAULT_WORLD.users,
+                 makeUser({ id: 'usr-3', display_name: 'נשכח',
                                memberships: [] })],
     })
     renderApp(<AccountsPage openId={undefined} />)
@@ -95,7 +95,7 @@ describe('AccountsPage', () => {
   it('flags an account with no administrator', async () => {
     bothServices({
       libraries: [makeStaffLibrary({ id: 'lib-9', label: 'יתומה', members: 0 })],
-      accounts: [],
+      users: [],
     })
     renderApp(<AccountsPage openId={undefined} />)
 
@@ -176,7 +176,7 @@ describe('AccountsPage', () => {
     renderApp(<AccountsPage openId="lib-1" />)
     const panel = await screen.findByRole('dialog')
 
-    expect(within(panel).getByText('acc-2')).toBeInTheDocument()
+    expect(within(panel).getByText('usr-2')).toBeInTheDocument()
     expect(within(panel).getByText('viewer')).toBeInTheDocument()
     for (const name of [/הזמנה|Invite/, /הסרה|Remove/, /שינוי תפקיד|Change role/]) {
       expect(within(panel).queryByRole('button', { name })).not.toBeInTheDocument()

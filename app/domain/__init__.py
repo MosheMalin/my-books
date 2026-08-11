@@ -116,13 +116,13 @@ from app.domain.shelf import (
     rename_shelf,
 )
 from app.domain.tenancy import (
-    Account,
     Library,
     LibraryNeedsAName,
     Membership,
     NoAdminLeft,
     Role,
     UnknownMember,
+    User,
     new_library,
     remove_member,
     rename_library,
@@ -131,7 +131,6 @@ from app.domain.tenancy import (
 from app.domain.text import author_sort_key, book_key, normalize
 
 __all__ = [
-    "Account",
     "Alternative",
     "AmbiguousCopy",
     "Book",
@@ -179,6 +178,7 @@ __all__ = [
     "UnknownCopy",
     "UnknownDepth",
     "UnknownMember",
+    "User",
     "VirtualShelfHasNoDepth",
     "WorkFields",
     "add_copy",

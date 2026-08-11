@@ -25,7 +25,7 @@ importing ``app.main`` advances the real database's schema, so a staff console
 that opened the file the usual way would migrate the owner's data as a side
 effect of being *looked at*.
 
-Writes stay where they already are: an account-scoped act goes through
-``/api/v1`` as the account, and member management does not exist yet in either
+Writes stay where they already are: a household-scoped act goes through
+``/api/v1`` as the user, and member management does not exist yet in either
 place (P4.1/P4.3).
 """

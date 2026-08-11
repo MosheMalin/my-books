@@ -49,7 +49,6 @@ from app.adapters.sqlite_store import (
     SqliteTenancyStore,
 )
 from app.domain import (
-    Account,
     Alternative,
     Capture,
     Claim,
@@ -64,6 +63,7 @@ from app.domain import (
     Provenance,
     Role,
     Status,
+    User,
     add_copy,
     append_claim,
     approve,
@@ -91,7 +91,7 @@ from app.ports.store import (
     UnknownShelf,
     WrongLibrary,
 )
-from app.ports.tenancy import UnknownAccount, UnknownLibrary
+from app.ports.tenancy import UnknownLibrary, UnknownUser
 
 LIB = LibraryRef("lib-a", "Library A")
 OTHER = LibraryRef("lib-b", "Library B")
@@ -103,9 +103,9 @@ DECISION_CONTRACT: list = []
 DUPLICATE_CONTRACT: list = []
 TENANCY_CONTRACT: list = []
 
-# The tenancy suite's own axis: accounts, not libraries (P3.1).
-ACC = Account(id="acc-a", display_name="משה")
-ACC2 = Account(id="acc-b", display_name="Dana")
+# The tenancy suite's own axis: users, not libraries (P3.1).
+USR = User(id="usr-a", display_name="משה")
+USR2 = User(id="usr-b", display_name="Dana")
 
 
 def contract(fn):
@@ -152,7 +152,7 @@ def tenancy_contract(fn):
     ⚠ A sixth list, and the only one whose cases take no ``LibraryRef`` — this
     is the store that ANSWERS which libraries exist, so it is scoped by the
     ACCOUNT instead (see the port's own ⚠⚠). Everything above narrows by
-    ``LIB``/``OTHER``; everything here narrows by ``ACC``/``ACC2``.
+    ``LIB``/``OTHER``; everything here narrows by ``USR``/``USR2``.
     """
     TENANCY_CONTRACT.append(fn)
     return fn
@@ -1326,34 +1326,34 @@ def every_duplicate_queue_method_takes_a_library(store):
 # `tenancy_contract`'s own note.
 
 def _seed_two_libraries(store):
-    """One account in two libraries, another account in one of them."""
-    store.save_account(ACC)
-    store.save_account(ACC2)
-    a, mine_a = new_library(id="lib-1", label="משפחת מלין", owner=ACC,
+    """One user in two libraries, another user in one of them."""
+    store.save_user(USR)
+    store.save_user(USR2)
+    a, mine_a = new_library(id="lib-1", label="משפחת מלין", owner=USR,
                             created_at="2026-01-01T00:00:00+00:00")
-    b, mine_b = new_library(id="lib-2", label="Office", owner=ACC,
+    b, mine_b = new_library(id="lib-2", label="Office", owner=USR,
                             created_at="2026-02-01T00:00:00+00:00")
     for lib, m in ((a, mine_a), (b, mine_b)):
         store.save_library(lib)
         store.save_membership(m)
-    store.save_membership(Membership(ACC2.id, "lib-2", Role.EDITOR))
+    store.save_membership(Membership(USR2.id, "lib-2", Role.EDITOR))
     return a, b
 
 
 @tenancy_contract
-def an_account_round_trips(store):
-    store.save_account(ACC)
-    got = store.get_account(ACC.id)
+def a_user_round_trips(store):
+    store.save_user(USR)
+    got = store.get_user(USR.id)
     assert got is not None and got.display_name == "משה"
-    assert store.get_account("nobody") is None
+    assert store.get_user("nobody") is None
 
 
 @tenancy_contract
 def a_library_round_trips_and_yields_the_tenant_key(store):
     """`Library.ref` is the one-way door to `LibraryRef`, so nothing
     downstream has to know which of the two it was handed."""
-    store.save_account(ACC)
-    lib, membership = new_library(id="lib-1", label="משפחת מלין", owner=ACC)
+    store.save_user(USR)
+    lib, membership = new_library(id="lib-1", label="משפחת מלין", owner=USR)
     store.save_library(lib)
     store.save_membership(membership)
     got = store.get_library("lib-1")
@@ -1361,15 +1361,15 @@ def a_library_round_trips_and_yields_the_tenant_key(store):
 
 
 @tenancy_contract
-def an_account_only_ever_sees_the_libraries_it_belongs_to(store):
+def a_user_only_ever_sees_the_libraries_it_belongs_to(store):
     """The isolation property of THIS store. Every other aggregate leaks one
     record when its scope is dropped; this one leaks a whole library."""
     _seed_two_libraries(store)
     # A set: the ORDER is a separate rule with its own case below, and a
     # Latin label sorts before a Hebrew one, which says nothing about scope.
-    assert {lib.id for lib, _ in store.list_libraries(ACC.id)} == {"lib-1", "lib-2"}
-    assert [lib.id for lib, _ in store.list_libraries(ACC2.id)] == ["lib-2"]
-    assert store.list_libraries("acc-nobody") == ()
+    assert {lib.id for lib, _ in store.list_libraries(USR.id)} == {"lib-1", "lib-2"}
+    assert [lib.id for lib, _ in store.list_libraries(USR2.id)] == ["lib-2"]
+    assert store.list_libraries("usr-nobody") == ()
 
 
 @tenancy_contract
@@ -1378,9 +1378,9 @@ def a_listed_library_carries_the_role_that_was_granted(store):
     role off it — a listing that dropped it would send every caller back for
     a second lookup per row."""
     _seed_two_libraries(store)
-    roles = {lib.id: m.role for lib, m in store.list_libraries(ACC2.id)}
+    roles = {lib.id: m.role for lib, m in store.list_libraries(USR2.id)}
     assert roles == {"lib-2": Role.EDITOR}
-    mine = {lib.id: m.role for lib, m in store.list_libraries(ACC.id)}
+    mine = {lib.id: m.role for lib, m in store.list_libraries(USR.id)}
     assert mine == {"lib-1": Role.ADMIN, "lib-2": Role.ADMIN}
 
 
@@ -1389,7 +1389,7 @@ def libraries_are_listed_in_the_domains_order_not_the_adapters(store):
     """`Library.sort_key`: named alphabetically, then the nameless v12
     backfill oldest-first, id last. An order that varies between adapters is
     an order the user experiences as the switcher reshuffling itself."""
-    store.save_account(ACC)
+    store.save_user(USR)
     rows = [
         Library(id="l-z", label="Zebra", created_at="2026-01-01"),
         Library(id="l-a", label="Aleph", created_at="2026-03-01"),
@@ -1399,33 +1399,33 @@ def libraries_are_listed_in_the_domains_order_not_the_adapters(store):
     ]
     for lib in rows:
         store.save_library(lib)
-        store.save_membership(Membership(ACC.id, lib.id, Role.ADMIN))
-    assert [lib.id for lib, _ in store.list_libraries(ACC.id)] == \
+        store.save_membership(Membership(USR.id, lib.id, Role.ADMIN))
+    assert [lib.id for lib, _ in store.list_libraries(USR.id)] == \
         ["l-old", "l-mid", "l-a", "l-z"]
 
 
 @tenancy_contract
 def a_role_change_replaces_the_membership_rather_than_adding_one(store):
-    """One membership per (account, library) — the store declares it as a
+    """One membership per (user, library) — the store declares it as a
     composite key, so `save_membership` is a plain upsert."""
     _seed_two_libraries(store)
-    store.save_membership(Membership(ACC2.id, "lib-2", Role.ADMIN))
-    rows = store.list_libraries(ACC2.id)
+    store.save_membership(Membership(USR2.id, "lib-2", Role.ADMIN))
+    rows = store.list_libraries(USR2.id)
     assert len(rows) == 1
     assert rows[0][1].role is Role.ADMIN
 
 
 @tenancy_contract
-def a_membership_naming_a_missing_account_or_library_is_refused(store):
+def a_membership_naming_a_missing_user_or_library_is_refused(store):
     """The row it would create is a permission granted to nobody, or to
     nothing. SQLite declares it as a foreign key; the memory store has none,
     so both check explicitly or the two adapters disagree."""
-    store.save_account(ACC)
+    store.save_user(USR)
     store.save_library(Library(id="lib-1", label="משפחת מלין"))
-    _raises(UnknownAccount, store.save_membership,
-            Membership("acc-ghost", "lib-1", Role.EDITOR))
+    _raises(UnknownUser, store.save_membership,
+            Membership("usr-ghost", "lib-1", Role.EDITOR))
     _raises(UnknownLibrary, store.save_membership,
-            Membership(ACC.id, "lib-ghost", Role.EDITOR))
+            Membership(USR.id, "lib-ghost", Role.EDITOR))
 
 
 @tenancy_contract
@@ -1433,9 +1433,9 @@ def membership_answers_the_resolvers_question_and_nothing_else(store):
     """The hot path: `deps.current_library` calls it on every request that
     names a library."""
     _seed_two_libraries(store)
-    assert store.membership(ACC.id, "lib-1").role is Role.ADMIN
-    assert store.membership(ACC2.id, "lib-1") is None
-    assert store.membership("acc-nobody", "lib-1") is None
+    assert store.membership(USR.id, "lib-1").role is Role.ADMIN
+    assert store.membership(USR2.id, "lib-1") is None
+    assert store.membership("usr-nobody", "lib-1") is None
 
 
 @tenancy_contract
@@ -1443,10 +1443,10 @@ def removing_a_member_removes_nobody_elses_membership_and_no_library(store):
     """UI_PLAN §5's separation, one level up: the person leaves, the
     collection stays."""
     _seed_two_libraries(store)
-    assert store.delete_membership(ACC2.id, "lib-2") is True
-    assert store.delete_membership(ACC2.id, "lib-2") is False
+    assert store.delete_membership(USR2.id, "lib-2") is True
+    assert store.delete_membership(USR2.id, "lib-2") is False
     assert store.get_library("lib-2") is not None
-    assert {lib.id for lib, _ in store.list_libraries(ACC.id)} == {"lib-1", "lib-2"}
+    assert {lib.id for lib, _ in store.list_libraries(USR.id)} == {"lib-1", "lib-2"}
 
 
 @tenancy_contract
@@ -1456,7 +1456,7 @@ def list_members_returns_the_whole_list_the_domain_rules_need(store):
     members screen does not have to re-sort what the store already knows."""
     _seed_two_libraries(store)
     members = store.list_members("lib-2")
-    assert [m.account_id for m in members] == [ACC.id, ACC2.id]
+    assert [m.user_id for m in members] == [USR.id, USR2.id]
     assert [m.role for m in members] == [Role.ADMIN, Role.EDITOR]
     assert store.list_members("lib-nobody") == ()
 
@@ -1469,14 +1469,14 @@ def a_library_is_readable_by_id_even_by_a_caller_with_no_membership(store):
     two indistinguishable everywhere, including in a log."""
     _seed_two_libraries(store)
     assert store.get_library("lib-1") is not None
-    assert store.membership(ACC2.id, "lib-1") is None
+    assert store.membership(USR2.id, "lib-1") is None
     assert store.get_library("lib-nothing") is None
 
 
 # --- registration ---------------------------------------------------------
 
 # ⚠ Every sqlite store here starts from a COPY of an already-migrated file,
-# not from an empty one. `migrate()` walks twelve DDL steps, ~49ms, and this
+# not from an empty one. `migrate()` walks thirteen DDL steps, ~49ms, and this
 # module builds 109 databases — half its runtime was re-deriving a schema that
 # is byte-identical every time.
 #
@@ -1959,9 +1959,102 @@ def test_a_v11_database_backfills_a_library_row_for_the_data_it_already_holds():
             assert found is not None, f"{library_id} lost its books to a 404"
             assert found.label == "", "the migration invented a name"
 
-        # Nobody is a member yet — accounts arrive at composition time, not
+        # Nobody is a member yet — users arrive at composition time, not
         # from a migration, because before this item nothing recorded a person.
-        assert store.list_libraries("acc-anyone") == ()
+        assert store.list_libraries("usr-anyone") == ()
+
+
+def test_a_v12_database_renames_its_accounts_to_users_and_keeps_every_grant():
+    """v13 (P3.7a): the person stops being called an account.
+
+    A rename with a real failure mode. `memberships.account_id` is half of the
+    PRIMARY KEY and carries a foreign key into `accounts`; if the rename left
+    either behind, the first request after the upgrade would find no
+    membership and answer 404 for a library the owner has always had — the
+    same "everything looks deleted" shape v12's backfill exists to prevent,
+    one version later.
+
+    So this asserts the GRANT survives, not merely that a column exists: the
+    membership is read back through the store, by the same call
+    ``deps.current_library`` makes on every request.
+    """
+    import sqlite3
+
+    from app.adapters.migrations import MIGRATIONS
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "v12.db"
+        conn = sqlite3.connect(str(path))
+        try:
+            for version, step in MIGRATIONS:
+                if version > 12:
+                    break
+                if isinstance(step, str):
+                    conn.executescript(step)
+                else:
+                    step(conn)
+            conn.execute("PRAGMA user_version = 12")
+            conn.execute(
+                "INSERT INTO accounts (id, display_name, email) VALUES"
+                " ('dev-owner', 'משה', 'owner@example.com')"
+            )
+            conn.execute(
+                "INSERT INTO libraries (id, label) VALUES ('dev-library', 'הבית')"
+            )
+            conn.execute(
+                "INSERT INTO memberships (account_id, library_id, role,"
+                " joined_at) VALUES ('dev-owner', 'dev-library', 'admin', NULL)"
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        store = SqliteTenancyStore(path)        # migrates on construction
+
+        user = store.get_user("dev-owner")
+        assert user is not None and user.display_name == "משה"
+        assert user.email == "owner@example.com"
+
+        held = store.membership("dev-owner", "dev-library")
+        assert held is not None, "the upgrade dropped an existing grant"
+        assert held.user_id == "dev-owner" and held.role is Role.ADMIN
+        assert [lib.id for lib, _m in store.list_libraries("dev-owner")] == [
+            "dev-library"
+        ]
+
+        # ⚠ WRITE through the store, not just read. Reading proves the ROWS
+        # survived; only a write proves the CONSTRAINT under them did.
+        # `save_membership` upserts `ON CONFLICT(user_id, library_id)`, which
+        # SQLite refuses unless that pair is still a real PRIMARY KEY — so a
+        # migration that carried every row across while rebuilding the table
+        # without its composite key passes every assertion above and breaks the
+        # first time somebody changes a role. (Found by P3.7a's migration
+        # review, which mutated exactly that and watched this test stay green.)
+        store.save_membership(Membership("dev-owner", "dev-library", Role.VIEWER))
+        again = store.membership("dev-owner", "dev-library")
+        assert again is not None and again.role is Role.VIEWER
+        assert len(store.list_members("dev-library")) == 1, "upsert appended"
+
+        conn = sqlite3.connect(str(path))
+        try:
+            assert current_version(conn) == SCHEMA_VERSION
+            names = {r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type IN ('table','index')"
+            ).fetchall()}
+            # The old spellings are GONE, not shadowed: an `accounts` table or
+            # an `accounts_by_email` index surviving beside the new ones is the
+            # residue that makes the next reader guess which is authoritative.
+            assert "users" in names and "accounts" not in names
+            assert "users_by_email" in names and "accounts_by_email" not in names
+            # The foreign key followed the rename, or `PRAGMA foreign_keys`
+            # would be enforcing nothing at all on this table.
+            assert ("users", "user_id") in {
+                (r[2], r[3])
+                for r in conn.execute("PRAGMA foreign_key_list(memberships)")
+            }
+            assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        finally:
+            conn.close()
 
 
 def test_deleting_a_shelf_never_touches_the_books_that_stood_on_it():
