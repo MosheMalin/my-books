@@ -356,6 +356,227 @@ def test_an_unknown_work_key_is_an_empty_list_not_an_error():
         assert q.work_instances("no|such") == ()
 
 
+# --- images: the photograph is the entity ----------------------------------
+#
+# Revision 4 again: a shelf today is an identity minted per photograph
+# (VISION §4.1a's recorded placeholder), so a console shelf list was a
+# photograph list under the wrong noun. These pin what the image row actually
+# reports — and the one thing this service must NEVER do, which is serve the
+# bytes.
+
+def _photograph(path: Path, *, capture_id: str = "cap-1",
+                shelf_id: str = "sh-1", library_id: str = "lib-a",
+                depth: int = 1, order: int = 0,
+                image_key: str | None = None) -> None:
+    """A shelf, and a capture filed on it — through the real stores."""
+    from app.adapters.sqlite_store import SqliteShelfStore
+    from app.domain.shelf import Capture, Shelf
+
+    ref = LibraryRef(id=library_id)
+    shelves = SqliteShelfStore(path)
+    if shelves.get_shelf(ref, shelf_id) is None:
+        shelves.save_shelf(ref, Shelf(id=shelf_id, library_id=library_id,
+                                      label="מדף", created_at="2026-03-01"))
+    shelves.save_capture(ref, Capture(
+        id=capture_id, library_id=library_id, shelf_id=shelf_id, depth=depth,
+        order=order, image_id=image_key, captured_at="2026-03-02T10:00:00Z"))
+
+
+def _a_read_over(path: Path, *, capture_ids: list[str],
+                 claims: list[tuple[str, str]], library_id: str = "lib-a",
+                 shelf_id: str = "sh-1", read_id: str = "read-1") -> None:
+    """One engine pass over those captures, with those (tier, capture) claims."""
+    from app.adapters.sqlite_store import SqliteReadStore
+    from app.domain.read import Claim, ClaimTier, Read, ReadStatus
+
+    SqliteReadStore(path).save_read(LibraryRef(id=library_id), Read(
+        id=read_id, library_id=library_id, shelf_id=shelf_id, depth=1,
+        capture_ids=tuple(capture_ids), mode="llmpage",
+        status=ReadStatus.DONE, started_at="2026-03-03T09:00:00Z",
+        finished_at="2026-03-03T09:01:00Z",
+        claims=tuple(
+            Claim(id=f"{read_id}-{i}", spine_id=f"sp-{i}", capture_id=cap,
+                  title="כותרת", tier=ClaimTier(tier))
+            for i, (tier, cap) in enumerate(claims)
+        ),
+    ))
+
+
+def _a_real_jpeg(size: tuple[int, int] = (40, 30)) -> bytes:
+    """⚠ Synthetic, and it is enough HERE — this test is about the LAYOUT the
+    store writes to, not about decoding a phone's MPO (the lesson `test_api.py`
+    records). The store's own suite owns the real-input case."""
+    import io as _io
+
+    from PIL import Image
+
+    out = _io.BytesIO()
+    Image.new("RGB", size, (30, 90, 200)).save(out, format="JPEG")
+    return out.getvalue()
+
+
+def test_an_image_reports_its_binding_rather_than_being_named_by_it():
+    """The row leads with the photograph; the shelf and depth are the SLOT it
+    is filed at — the pair pillar 6 replaces with a real address."""
+    with _queries() as (q, path):
+        _photograph(path)
+        rows, total = q.images()
+        assert total == 1
+        image = rows[0]
+        assert (image.id, image.shelf_id, image.depth) == ("cap-1", "sh-1", 1)
+        assert image.shelf_label == "מדף"
+
+
+def test_an_image_with_no_bytes_on_disk_says_so_rather_than_showing_blank():
+    """⚠ A capture whose blob is gone is a photograph the household can no
+    longer see. It is a finding, not a rounding error, and the console is the
+    only place anyone would notice — so `present` is false and the row still
+    renders."""
+    with _queries() as (q, path):
+        _photograph(path, image_key="0" * 64 + ".jpg")
+        rows, _ = q.images()
+        assert rows[0].present is False and rows[0].bytes == 0
+
+
+def test_a_run_that_found_nothing_in_an_image_still_counts_as_a_run():
+    """⚠ `reads` comes from `reads.capture_ids` (what a run CONSUMED) while the
+    tier figures come from `claims.capture_id` (what it FOUND). Deriving the
+    run count from the claims would hide the case an operator is hunting: a
+    photograph the engine read and got nothing from."""
+    with _queries() as (q, path):
+        _photograph(path)
+        _a_read_over(path, capture_ids=["cap-1"], claims=[])
+        rows, _ = q.images()
+        assert (rows[0].reads, rows[0].findings) == (1, 0)
+
+
+def test_an_images_findings_are_broken_down_by_tier():
+    with _queries() as (q, path):
+        _photograph(path)
+        _a_read_over(path, capture_ids=["cap-1"],
+                     claims=[("auto", "cap-1"), ("review", "cap-1"),
+                             ("unmatched", "cap-1")])
+        rows, _ = q.images()
+        image = rows[0]
+        assert (image.findings, image.auto, image.review, image.unmatched) == (
+            3, 1, 1, 1)
+
+
+def test_images_narrow_to_one_library_and_otherwise_span_every_tenant():
+    with _queries() as (q, path):
+        _photograph(path, capture_id="cap-a", shelf_id="sh-a",
+                    library_id="lib-a")
+        _photograph(path, capture_id="cap-b", shelf_id="sh-b",
+                    library_id="lib-b")
+        _, total = q.images()
+        assert total == 2
+        rows, total = q.images(library_id="lib-b")
+        assert total == 1 and rows[0].id == "cap-b"
+
+
+def test_the_staff_service_never_serves_image_bytes():
+    """⚠⚠ Metadata crosses tenants; photographs do not.
+
+    An operator looking at a household's actual pictures is a larger power than
+    counting them, and this service has no login, no audit trail and nobody to
+    explain it to. The console renders a thumbnail only for a library the
+    operator is a MEMBER of, through the product API — the same read/write
+    asymmetry, one axis over. Structural, because "we just didn't add that
+    route" is not a guarantee.
+    """
+    source = (REPO_ROOT / "app" / "staff_api" / "app.py").read_text("utf-8")
+    for way_to_send_bytes in ("FileResponse", "StreamingResponse",
+                              "PlainTextResponse", "Response("):
+        assert way_to_send_bytes not in source, way_to_send_bytes
+
+    with _db() as path:
+        app = create_app(StaffQueries(path))
+        served = [r for r in app.routes if str(r.path).startswith("/api/")]
+        assert served
+        for route in served:
+            # Every route answers with a declared pydantic model, i.e. JSON.
+            # A byte-serving route is exactly the one that would not.
+            assert getattr(route, "response_model", None) is not None, route.path
+
+
+# --- storage: the bytes are on disk, not in the database ---------------------
+
+def test_storage_agrees_with_the_store_that_wrote_the_blob():
+    """⚠⚠ The layout-drift guard.
+
+    `app/staff_api/storage.py` knows the blob layout on purpose — it may not
+    import `DiskBlobStore` (`tests/test_layering.py` keeps this service free of
+    `app.adapters`, which is the recorded reason its composition root is not in
+    `COMPOSITION_ROOTS`). So the two are checked against each OTHER here: the
+    real store writes a real image, and the staff reader must find it, with the
+    same size and the same digest. A layout change fails this test instead of
+    quietly reporting 0 MB.
+    """
+    from app.adapters.disk_blobs import DiskBlobStore
+    from app.staff_api.storage import BlobTree
+
+    tmp = tempfile.mkdtemp(prefix="booksnap-blobs-")
+    try:
+        store = DiskBlobStore(tmp)
+        ref = LibraryRef(id="lib-a")
+        blob = store.put(ref, _a_real_jpeg(), filename="shelf.jpg")
+
+        tree = BlobTree(tmp)
+        facts = tree.facts("lib-a", blob.key)
+        assert facts.present is True
+        assert facts.sha256 == blob.sha256
+        assert facts.bytes == blob.size
+        assert (facts.width, facts.height) == (blob.width, blob.height)
+
+        usage = tree.usage()["lib-a"]
+        assert usage.bytes >= blob.size
+        assert usage.files >= 2, "the image and its sidecar, at least"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_a_missing_blob_root_is_zero_storage_not_a_failed_dashboard():
+    """The database and the photographs can live on different machines. A
+    console that 500'd on a missing directory would be unopenable for a reason
+    nobody could guess."""
+    from app.staff_api.storage import BlobTree
+
+    assert BlobTree(None).usage() == {}
+    assert BlobTree("D:/no/such/blob/root").usage() == {}
+    with _queries() as (q, _):
+        assert q.overview()["image_bytes"] == 0
+
+
+def test_a_key_that_is_not_a_content_address_resolves_to_nothing():
+    """⚠ The key arrives from a database column, and `../` in a path segment is
+    how a reader that just joins strings walks out of the blob root. Validated,
+    never trusted — the same rule `DiskBlobStore` states for the same reason."""
+    from app.staff_api.storage import BlobTree
+
+    tree = BlobTree("D:/tmp/whatever")
+    for bad in ("../../etc/passwd", "..\\..\\secrets.txt", "short.jpg",
+                "0" * 64 + ".jp g", "0" * 63 + "z.jpg"):
+        assert tree._path("lib-a", bad) is None, bad
+    assert tree._path("lib-a", "0" * 64 + ".jpg") is not None
+
+
+def test_storage_lands_on_the_library_row_and_the_overview():
+    from app.adapters.disk_blobs import DiskBlobStore
+    from app.staff_api.storage import BlobTree
+
+    tmp = tempfile.mkdtemp(prefix="booksnap-blobs-")
+    try:
+        blob = DiskBlobStore(tmp).put(LibraryRef(id="lib-a"), _a_real_jpeg())
+        with _db() as path:
+            q = StaffQueries(path, BlobTree(tmp))
+            rows = {r.id: r for r in q.libraries()}
+            assert rows["lib-a"].image_bytes >= blob.size
+            assert rows["lib-b"].image_bytes == 0, "a tenant with no photos"
+            assert q.overview()["image_bytes"] == rows["lib-a"].image_bytes
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_reading_never_migrates_the_owners_database():
     """⚠⚠ The rule the whole service is shaped around. CLAUDE.md records that
     merely importing `app.main` advances the real database's schema; a console

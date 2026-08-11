@@ -50,6 +50,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/staff/v1/images": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Photographs across every tenant
+         * @description ⚠ This REPLACED `/libraries/{id}/shelves`, and the replacement is
+         *     the item, not a rename. See `ImageDTO`: a shelf is a placeholder minted
+         *     per photograph until pillar 6, so a console shelf list was a photograph
+         *     list wearing the wrong noun.
+         *
+         *     Cross-tenant, so it could not be `/api/v1/...`: that resolves the
+         *     caller's membership, and a system administrator is a member of nothing.
+         *     An empty page and a library that does not exist look the same here,
+         *     deliberately — the library list is the authority on which ids are real.
+         */
+        get: operations["images_api_staff_v1_images_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/staff/v1/libraries": {
         parameters: {
             query?: never;
@@ -75,13 +103,11 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * One library's shelves
-         * @description ⚠ Cross-tenant, so it cannot be `/api/v1/shelves`: that resolves the
-         *     caller's membership, and a system administrator is a member of
-         *     nothing. Note the consequence for the console — an EMPTY list and a
-         *     library that does not exist look the same here, deliberately: this
-         *     service has no reason to distinguish them, and the library list it
-         *     came from is the authority on which ids are real.
+         * One library's shelves (retiring — see /images)
+         * @description ⚠ Superseded by `/images`; still served until the console's library
+         *     screen becomes the account drawer. Cross-tenant, so it cannot be
+         *     `/api/v1/shelves`: that resolves the caller's membership, and a system
+         *     administrator is a member of nothing.
          */
         get: operations["shelves_api_staff_v1_libraries__library_id__shelves_get"];
         put?: never;
@@ -231,6 +257,86 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /**
+         * ImageDTO
+         * @description One photograph — the console's unit since revision 4.
+         *
+         *     ⚠ **This replaced `ShelfDTO`, and the replacement is the point.** VISION
+         *     §4.1a records that "one image = one shelf" is a PLACEHOLDER with a recorded
+         *     exit (P2.1): intake mints a shelf identity per photograph until pillar 6's
+         *     map can say two photographs are the same piece of wood. A console listing
+         *     shelves was therefore listing photographs under a noun they had not earned.
+         *     So the image leads, and `shelf_id`/`depth`/`order` are reported as the SLOT
+         *     it is currently filed at — the pair pillar 6 replaces with a real address.
+         *
+         *     ⚠ **No bytes are served by this service, only facts about them.** An
+         *     operator looking at a household's actual photographs is a larger power than
+         *     counting them; the console renders a thumbnail only for a library the
+         *     operator is a member of, through the product API, exactly as the household
+         *     client does.
+         */
+        ImageDTO: {
+            /** Auto */
+            auto: number;
+            /** Bytes */
+            bytes: number;
+            /** Captured At */
+            captured_at?: string | null;
+            /** Content Type */
+            content_type: string;
+            /** Depth */
+            depth: number;
+            /** Filename */
+            filename: string;
+            /** Findings */
+            findings: number;
+            /** Height */
+            height: number;
+            /**
+             * Id
+             * @description The capture id. There is no separate image entity yet — a capture IS a photograph filed somewhere, and `image_key` is its content address.
+             */
+            id: string;
+            /** Image Key */
+            image_key?: string | null;
+            /** Last Read */
+            last_read?: string | null;
+            /** Library Id */
+            library_id: string;
+            /** Order */
+            order: number;
+            /**
+             * Present
+             * @description The bytes are on disk. False is a real finding — a photograph the household can no longer see — not a blank cell.
+             */
+            present: boolean;
+            /**
+             * Reads
+             * @description Runs that CONSUMED this photograph (`reads.capture_ids`), which is not the same as runs that found something in it — a run that found nothing is exactly what an operator is looking for.
+             */
+            reads: number;
+            /** Review */
+            review: number;
+            /** Shelf Id */
+            shelf_id: string;
+            /** Shelf Label */
+            shelf_label: string;
+            /** Unmatched */
+            unmatched: number;
+            /** Width */
+            width: number;
+        };
+        /** ImagePageDTO */
+        ImagePageDTO: {
+            /** Items */
+            items: components["schemas"]["ImageDTO"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
+        };
         /** LibraryDTO */
         LibraryDTO: {
             /** Admins */
@@ -251,6 +357,16 @@ export interface components {
             duplicates: number;
             /** Id */
             id: string;
+            /**
+             * Image Bytes
+             * @default 0
+             */
+            image_bytes: number;
+            /**
+             * Image Files
+             * @default 0
+             */
+            image_files: number;
             /** Label */
             label: string;
             /** Last Activity */
@@ -302,6 +418,13 @@ export interface components {
             copies: number;
             /** Duplicates */
             duplicates: number;
+            /** Image Bytes */
+            image_bytes: number;
+            /**
+             * Image Files
+             * @description Files under the blob root, renditions and sidecars included — what the disk actually holds. Zero when no blob root is configured (the database and the photographs can live on different machines).
+             */
+            image_files: number;
             /** Lent Out */
             lent_out: number;
             /** Libraries */
@@ -343,7 +466,11 @@ export interface components {
             /** Status */
             status: string;
         };
-        /** ShelfDTO */
+        /**
+         * ShelfDTO
+         * @description ⚠ RETIRING — superseded by :class:`ImageDTO`. Still served because the
+         *     console's library screen still renders it; it goes with that screen.
+         */
         ShelfDTO: {
             /**
              * Books
@@ -508,6 +635,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BookPageDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    images_api_staff_v1_images_get: {
+        parameters: {
+            query?: {
+                library_id?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: {
+                "x-booksnap-staff"?: string | null;
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImagePageDTO"];
                 };
             };
             /** @description Validation Error */

@@ -35,6 +35,7 @@ from pathlib import Path
 
 from app.staff_api.app import create_app
 from app.staff_api.queries import StaffQueries
+from app.staff_api.storage import BlobTree
 
 
 def _load_dotenv() -> None:
@@ -72,9 +73,30 @@ def database_path() -> Path:
     return root / "product.db"
 
 
+def blob_root() -> Path:
+    """Where the product keeps uploaded photographs — resolved as it does.
+
+    ``BOOKSNAP_BLOBS`` wins; otherwise ``<BOOKSNAP_WORK>/product_blobs``. The
+    same eight duplicated lines, for the same reason as :func:`database_path`:
+    importing ``app.main`` to borrow them would migrate the owner's database.
+
+    ⚠ A path that does not exist is NOT an error. The database and the
+    photographs can live on different machines, and a console that refused to
+    start over a missing directory would be unopenable for a reason nobody
+    could guess. :class:`app.staff_api.storage.BlobTree` reports zero and the
+    dashboard shows zero — see the storage column's note.
+    """
+    explicit = os.environ.get("BOOKSNAP_BLOBS")
+    if explicit:
+        return Path(explicit)
+    work = os.environ.get("BOOKSNAP_WORK")
+    root = Path(work) if work else Path(__file__).resolve().parents[2] / "work"
+    return root / "product_blobs"
+
+
 def build() -> object:
     _load_dotenv()
-    return create_app(StaffQueries(database_path()))
+    return create_app(StaffQueries(database_path(), BlobTree(blob_root())))
 
 
 app = build()

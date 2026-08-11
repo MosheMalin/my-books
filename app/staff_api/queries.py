@@ -30,6 +30,12 @@ from pathlib import Path
 from typing import Any, Iterator, Sequence
 
 from app.domain.search import TextEntry, compile_sql_like, parse, score
+from app.staff_api.storage import BlobTree, Usage
+
+#: A library whose blob directory does not exist. Zero is the true answer for a
+#: tenant that has never uploaded a photograph, and it is also the answer when
+#: the tree lives on another machine — see :class:`BlobTree`.
+_NO_DISK = Usage()
 
 #: The §5.1 ladder, as SQL. A book's status is the strongest claim among its
 #: copies and is DERIVED, never stored — the product's own book listing derives
@@ -70,9 +76,15 @@ REQUIRED_COLUMNS = {
     "copies": ("id", "book_id", "library_id", "status", "shelf_id", "lent_out"),
     "shelves": ("id", "library_id", "label", "virtual", "depth_count",
                 "created_at"),
-    "captures": ("id", "library_id", "shelf_id"),
+    "captures": ("id", "library_id", "shelf_id", "depth", "order", "image_id",
+                 "captured_at"),
     "reads": ("id", "library_id", "shelf_id", "depth", "mode", "status",
-              "started_at", "finished_at"),
+              "started_at", "finished_at", "capture_ids"),
+    # ⚠ `claims` was used by `recent_reads` before it was declared here, which
+    # is exactly the gap `self_check` exists to close: a renamed `claims.
+    # read_id` would have surfaced as a 500 on the reads screen rather than as
+    # the named refusal this dict produces.
+    "claims": ("id", "read_id", "capture_id", "tier"),
     "duplicate_questions": ("id", "library_id"),
 }
 
@@ -172,6 +184,10 @@ class LibraryRow:
     duplicates: int
     lent_out: int
     last_activity: str | None
+    #: Files and bytes under this library's blob directory — everything the
+    #: disk holds, renditions included. See :mod:`app.staff_api.storage`.
+    image_files: int = 0
+    image_bytes: int = 0
 
 
 @dataclass(frozen=True)
@@ -227,6 +243,10 @@ class WorkRow:
 
 @dataclass(frozen=True)
 class ShelfRow:
+    """⚠ RETIRED at A3 of console revision 4 — see :class:`ImageRow`. It is
+    still here because the console's library screen still renders it; the day
+    that screen becomes the account drawer, this and its route go."""
+
     id: str
     library_id: str
     label: str
@@ -234,6 +254,48 @@ class ShelfRow:
     virtual: bool
     captures: int
     books: int
+    last_read: str | None
+
+
+@dataclass(frozen=True)
+class ImageRow:
+    """One photograph, and what has been made of it.
+
+    ⚠ **The image is the entity; the shelf is a BINDING it currently has.**
+    VISION §4.1a records that "one image = one shelf" is a placeholder with an
+    exit (P2.1) — intake mints a shelf identity per photograph until pillar 6's
+    map can say two photographs are the same piece of wood. A console listing
+    shelves is therefore mostly listing photographs under a noun they have not
+    earned, which is why this row leads with the image and reports
+    ``shelf_id``/``depth`` as the slot it is filed at.
+
+    The engine figures come from the CLAIM side, because that is where the data
+    actually binds: ``claims.capture_id`` names the photograph a finding came
+    from, and ``reads.capture_ids`` names the photographs a run consumed.
+    """
+
+    id: str
+    library_id: str
+    image_key: str | None
+    captured_at: str | None
+    # the binding (pillar 6 replaces this pair with a real address)
+    shelf_id: str
+    shelf_label: str
+    depth: int
+    order: int
+    # the bytes
+    present: bool
+    bytes: int
+    width: int
+    height: int
+    content_type: str
+    filename: str
+    # what the engine made of it
+    reads: int
+    findings: int
+    auto: int
+    review: int
+    unmatched: int
     last_read: str | None
 
 
@@ -272,12 +334,19 @@ def _work_row(r: sqlite3.Row) -> WorkRow:
 class StaffQueries:
     """Every cross-tenant question the console asks, in one place."""
 
-    def __init__(self, db_path: str | Path) -> None:
+    def __init__(self, db_path: str | Path,
+                 blobs: BlobTree | None = None) -> None:
         self.path = Path(db_path)
         if not self.path.exists():
             raise FileNotFoundError(
                 f"no product database at {self.path}; set BOOKSNAP_DB"
             )
+        # ⚠ Defaulting to an UNCONFIGURED tree rather than to the product's
+        # default location. Guessing would make a console pointed at one
+        # machine's database report another machine's disk; an absent tree
+        # reports zero and the composition root is the one place that decides
+        # where the bytes are.
+        self.blobs = blobs if blobs is not None else BlobTree(None)
         self.self_check()
 
     # --- guard ------------------------------------------------------------
@@ -312,6 +381,10 @@ class StaffQueries:
     # --- the whole system -------------------------------------------------
 
     def overview(self) -> dict[str, int]:
+        # One walk of the blob tree, outside the connection: the database and
+        # the disk answer different halves of "how big is this system", and
+        # neither knows the other's number.
+        disk = self.blobs.usage()
         with _open(self.path) as conn:
             def count(sql: str) -> int:
                 return int(conn.execute(sql).fetchone()[0])
@@ -339,6 +412,12 @@ class StaffQueries:
                 "auto": int(by_rank.get(0, 0)),
                 "approved": int(by_rank.get(1, 0)),
                 "manual": int(by_rank.get(2, 0)),
+                # ⚠ Summed over the WHOLE tree, including directories no
+                # library row matches. Bytes belonging to a deleted tenant
+                # still occupy the disk, and a total that omitted them would
+                # be wrong in the one direction an operator cares about.
+                "image_files": sum(u.files for u in disk.values()),
+                "image_bytes": sum(u.bytes for u in disk.values()),
             }
 
     # --- libraries --------------------------------------------------------
@@ -350,6 +429,7 @@ class StaffQueries:
         query per library: the point of this service is that "how big is
         everything" costs a bounded number of round trips.
         """
+        disk = self.blobs.usage()
         with _open(self.path) as conn:
             base = conn.execute(
                 "SELECT id, label, created_at FROM libraries"
@@ -410,6 +490,8 @@ class StaffQueries:
                 shelves=shelves.get(lid, 0), captures=captures.get(lid, 0),
                 reads=reads.get(lid, 0), duplicates=dupes.get(lid, 0),
                 lent_out=lent.get(lid, 0), last_activity=activity.get(lid),
+                image_files=disk.get(lid, _NO_DISK).files,
+                image_bytes=disk.get(lid, _NO_DISK).bytes,
             ))
         return tuple(out)
 
@@ -742,6 +824,118 @@ class StaffQueries:
             )
             for r in rows
         )
+
+    # --- shelves (retiring — see `images`) ----------------------------------
+
+    def shelves(self, library_id: str) -> tuple[ShelfRow, ...]:
+        """One library's shelves, with what stands on them.
+
+        ⚠ Superseded by :meth:`images`. Kept only until the console's library
+        screen becomes the account drawer (A3): a shelf today is an identity
+        minted per photograph (VISION §4.1a), so this list is a photograph list
+        under a noun it has not earned.
+        """
+        with _open(self.path) as conn:
+            rows = conn.execute(
+                "SELECT shelves.id, shelves.library_id, shelves.label,"
+                " shelves.depth_count, shelves.virtual,"
+                " (SELECT COUNT(*) FROM captures"
+                "   WHERE captures.shelf_id = shelves.id) AS captures,"
+                " (SELECT COUNT(DISTINCT book_id) FROM copies"
+                "   WHERE copies.shelf_id = shelves.id) AS books,"
+                " (SELECT MAX(COALESCE(finished_at, started_at)) FROM reads"
+                "   WHERE reads.shelf_id = shelves.id) AS last_read"
+                " FROM shelves WHERE shelves.library_id = ?"
+                " ORDER BY shelves.label, COALESCE(shelves.created_at, ''),"
+                " shelves.id",
+                (library_id,),
+            ).fetchall()
+        return tuple(
+            ShelfRow(
+                id=str(r["id"]), library_id=str(r["library_id"]),
+                label=r["label"] or "", depth_count=int(r["depth_count"]),
+                virtual=bool(r["virtual"]), captures=int(r["captures"]),
+                books=int(r["books"]), last_read=r["last_read"],
+            )
+            for r in rows
+        )
+
+    # --- images -------------------------------------------------------------
+
+    def images(
+        self, *, library_id: str | None = None, limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[tuple[ImageRow, ...], int]:
+        """Photographs across every tenant, newest first. ``(page, total)``.
+
+        ⚠ **Two sources, joined per row.** The database knows a capture's
+        identity, its binding and what the engine made of it; the disk knows
+        how many bytes it is. Neither knows the other's half, so the sidecars
+        are read for the PAGE only — 25 small reads, not one per capture in the
+        system.
+
+        ⚠ **`reads` counts runs that CONSUMED this photograph**, from
+        ``reads.capture_ids``, while the tier figures count findings from
+        ``claims.capture_id``. Those are genuinely different questions and a
+        run that produced nothing from an image is exactly the case an operator
+        is looking for, so the run count may not be derived from the claims.
+        """
+        where = " WHERE captures.library_id = ?" if library_id else ""
+        narrow: tuple[Any, ...] = (library_id,) if library_id else ()
+
+        # `json_each` over the JSON array of capture ids a read consumed. The
+        # column is JSON because §5.5's read is over a SET of photographs; this
+        # is the one place that set is queried from the other end.
+        consumed = (
+            "SELECT 1 FROM json_each(reads.capture_ids)"
+            " WHERE json_each.value = captures.id"
+        )
+        with _open(self.path) as conn:
+            total = int(conn.execute(
+                f"SELECT COUNT(*) FROM captures{where}", narrow).fetchone()[0])
+            rows = conn.execute(
+                "SELECT captures.id, captures.library_id, captures.shelf_id,"
+                " captures.depth, captures.\"order\" AS ord, captures.image_id,"
+                " captures.captured_at,"
+                " COALESCE(shelves.label, '') AS shelf_label,"
+                " (SELECT COUNT(*) FROM claims"
+                "    WHERE claims.capture_id = captures.id) AS findings,"
+                " (SELECT COUNT(*) FROM claims WHERE claims.capture_id ="
+                "    captures.id AND claims.tier = 'auto') AS auto,"
+                " (SELECT COUNT(*) FROM claims WHERE claims.capture_id ="
+                "    captures.id AND claims.tier = 'review') AS review,"
+                " (SELECT COUNT(*) FROM claims WHERE claims.capture_id ="
+                "    captures.id AND claims.tier = 'unmatched') AS unmatched,"
+                f" (SELECT COUNT(*) FROM reads WHERE EXISTS ({consumed}))"
+                "    AS reads,"
+                f" (SELECT MAX(COALESCE(reads.finished_at, reads.started_at))"
+                f"    FROM reads WHERE EXISTS ({consumed})) AS last_read"
+                " FROM captures"
+                " LEFT JOIN shelves ON shelves.id = captures.shelf_id"
+                f"{where}"
+                # Newest photograph first; `id` breaks the tie so paging is
+                # stable when a phone uploads a burst with one timestamp.
+                " ORDER BY COALESCE(captures.captured_at, '') DESC,"
+                " captures.id DESC LIMIT ? OFFSET ?",
+                (*narrow, limit, offset),
+            ).fetchall()
+
+        out = []
+        for r in rows:
+            facts = self.blobs.facts(str(r["library_id"]), r["image_id"])
+            out.append(ImageRow(
+                id=str(r["id"]), library_id=str(r["library_id"]),
+                image_key=r["image_id"], captured_at=r["captured_at"],
+                shelf_id=str(r["shelf_id"]), shelf_label=r["shelf_label"],
+                depth=int(r["depth"]), order=int(r["ord"]),
+                present=facts.present, bytes=facts.bytes,
+                width=facts.width, height=facts.height,
+                content_type=facts.content_type, filename=facts.filename,
+                reads=int(r["reads"]), findings=int(r["findings"]),
+                auto=int(r["auto"]), review=int(r["review"]),
+                unmatched=int(r["unmatched"]), last_read=r["last_read"],
+            ))
+        return tuple(out), total
 
     # --- activity ---------------------------------------------------------
 

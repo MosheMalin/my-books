@@ -153,6 +153,167 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "ImageDTO": {
+        "description": "One photograph — the console's unit since revision 4.\n\n⚠ **This replaced `ShelfDTO`, and the replacement is the point.** VISION\n§4.1a records that \"one image = one shelf\" is a PLACEHOLDER with a recorded\nexit (P2.1): intake mints a shelf identity per photograph until pillar 6's\nmap can say two photographs are the same piece of wood. A console listing\nshelves was therefore listing photographs under a noun they had not earned.\nSo the image leads, and `shelf_id`/`depth`/`order` are reported as the SLOT\nit is currently filed at — the pair pillar 6 replaces with a real address.\n\n⚠ **No bytes are served by this service, only facts about them.** An\noperator looking at a household's actual photographs is a larger power than\ncounting them; the console renders a thumbnail only for a library the\noperator is a member of, through the product API, exactly as the household\nclient does.",
+        "properties": {
+          "auto": {
+            "title": "Auto",
+            "type": "integer"
+          },
+          "bytes": {
+            "title": "Bytes",
+            "type": "integer"
+          },
+          "captured_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Captured At"
+          },
+          "content_type": {
+            "title": "Content Type",
+            "type": "string"
+          },
+          "depth": {
+            "title": "Depth",
+            "type": "integer"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "findings": {
+            "title": "Findings",
+            "type": "integer"
+          },
+          "height": {
+            "title": "Height",
+            "type": "integer"
+          },
+          "id": {
+            "description": "The capture id. There is no separate image entity yet — a capture IS a photograph filed somewhere, and `image_key` is its content address.",
+            "title": "Id",
+            "type": "string"
+          },
+          "image_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Key"
+          },
+          "last_read": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Read"
+          },
+          "library_id": {
+            "title": "Library Id",
+            "type": "string"
+          },
+          "order": {
+            "title": "Order",
+            "type": "integer"
+          },
+          "present": {
+            "description": "The bytes are on disk. False is a real finding — a photograph the household can no longer see — not a blank cell.",
+            "title": "Present",
+            "type": "boolean"
+          },
+          "reads": {
+            "description": "Runs that CONSUMED this photograph (`reads.capture_ids`), which is not the same as runs that found something in it — a run that found nothing is exactly what an operator is looking for.",
+            "title": "Reads",
+            "type": "integer"
+          },
+          "review": {
+            "title": "Review",
+            "type": "integer"
+          },
+          "shelf_id": {
+            "title": "Shelf Id",
+            "type": "string"
+          },
+          "shelf_label": {
+            "title": "Shelf Label",
+            "type": "string"
+          },
+          "unmatched": {
+            "title": "Unmatched",
+            "type": "integer"
+          },
+          "width": {
+            "title": "Width",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "library_id",
+          "shelf_id",
+          "shelf_label",
+          "depth",
+          "order",
+          "present",
+          "bytes",
+          "width",
+          "height",
+          "content_type",
+          "filename",
+          "reads",
+          "findings",
+          "auto",
+          "review",
+          "unmatched"
+        ],
+        "title": "ImageDTO",
+        "type": "object"
+      },
+      "ImagePageDTO": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ImageDTO"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "offset",
+          "limit"
+        ],
+        "title": "ImagePageDTO",
+        "type": "object"
+      },
       "LibraryDTO": {
         "properties": {
           "admins": {
@@ -197,6 +358,16 @@
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "image_bytes": {
+            "default": 0,
+            "title": "Image Bytes",
+            "type": "integer"
+          },
+          "image_files": {
+            "default": 0,
+            "title": "Image Files",
+            "type": "integer"
           },
           "label": {
             "title": "Label",
@@ -319,6 +490,15 @@
             "title": "Duplicates",
             "type": "integer"
           },
+          "image_bytes": {
+            "title": "Image Bytes",
+            "type": "integer"
+          },
+          "image_files": {
+            "description": "Files under the blob root, renditions and sidecars included — what the disk actually holds. Zero when no blob root is configured (the database and the photographs can live on different machines).",
+            "title": "Image Files",
+            "type": "integer"
+          },
           "lent_out": {
             "title": "Lent Out",
             "type": "integer"
@@ -366,6 +546,8 @@
           "auto",
           "approved",
           "manual",
+          "image_files",
+          "image_bytes",
           "authenticated",
           "orphan_libraries"
         ],
@@ -443,6 +625,7 @@
         "type": "object"
       },
       "ShelfDTO": {
+        "description": "⚠ RETIRING — superseded by :class:`ImageDTO`. Still served because the\nconsole's library screen still renders it; it goes with that screen.",
         "properties": {
           "books": {
             "description": "DISTINCT books with a copy standing here, not copies — two copies of one book is one book on the shelf.",
@@ -873,6 +1056,108 @@
         "summary": "Books across every tenant"
       }
     },
+    "/api/staff/v1/images": {
+      "get": {
+        "description": "⚠ This REPLACED `/libraries/{id}/shelves`, and the replacement is\nthe item, not a rename. See `ImageDTO`: a shelf is a placeholder minted\nper photograph until pillar 6, so a console shelf list was a photograph\nlist wearing the wrong noun.\n\nCross-tenant, so it could not be `/api/v1/...`: that resolves the\ncaller's membership, and a system administrator is a member of nothing.\nAn empty page and a library that does not exist look the same here,\ndeliberately — the library list is the authority on which ids are real.",
+        "operationId": "images_api_staff_v1_images_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "library_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Library Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-booksnap-staff",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Booksnap-Staff"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImagePageDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Photographs across every tenant"
+      }
+    },
     "/api/staff/v1/libraries": {
       "get": {
         "operationId": "libraries_api_staff_v1_libraries_get",
@@ -941,7 +1226,7 @@
     },
     "/api/staff/v1/libraries/{library_id}/shelves": {
       "get": {
-        "description": "⚠ Cross-tenant, so it cannot be `/api/v1/shelves`: that resolves the\ncaller's membership, and a system administrator is a member of\nnothing. Note the consequence for the console — an EMPTY list and a\nlibrary that does not exist look the same here, deliberately: this\nservice has no reason to distinguish them, and the library list it\ncame from is the authority on which ids are real.",
+        "description": "⚠ Superseded by `/images`; still served until the console's library\nscreen becomes the account drawer. Cross-tenant, so it cannot be\n`/api/v1/shelves`: that resolves the caller's membership, and a system\nadministrator is a member of nothing.",
         "operationId": "shelves_api_staff_v1_libraries__library_id__shelves_get",
         "parameters": [
           {
@@ -1012,7 +1297,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "One library's shelves"
+        "summary": "One library's shelves (retiring — see /images)"
       }
     },
     "/api/staff/v1/overview": {

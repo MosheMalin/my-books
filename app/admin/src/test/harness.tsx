@@ -81,7 +81,7 @@ export function makeStaffLibrary(over: Partial<StaffLibrary> = {}): StaffLibrary
     id: 'lib-1', label: 'הבית', created_at: '2026-01-01T00:00:00Z',
     members: 1, admins: 1, books: 0, copies: 0, auto: 0, approved: 0,
     manual: 0, shelves: 0, captures: 0, reads: 0, duplicates: 0,
-    lent_out: 0, last_activity: null,
+    lent_out: 0, last_activity: null, image_files: 0, image_bytes: 0,
     ...over,
   }
 }
@@ -99,7 +99,7 @@ export function makeOverview(over: Partial<StaffOverview> = {}): StaffOverview {
   return {
     accounts: 1, libraries: 1, memberships: 1, books: 0, copies: 0,
     shelves: 0, captures: 0, reads: 0, duplicates: 0, lent_out: 0,
-    auto: 0, approved: 0, manual: 0,
+    auto: 0, approved: 0, manual: 0, image_files: 0, image_bytes: 0,
     authenticated: true, orphan_libraries: [],
     ...over,
   }

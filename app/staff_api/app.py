@@ -76,6 +76,13 @@ class OverviewDTO(BaseModel):
                                   "this — and only this — is 'awaiting'.")
     approved: int
     manual: int
+    image_files: int = Field(
+        description="Files under the blob root, renditions and sidecars "
+                    "included — what the disk actually holds. Zero when no "
+                    "blob root is configured (the database and the photographs "
+                    "can live on different machines).",
+    )
+    image_bytes: int
     authenticated: bool = Field(
         description="False when no BOOKSNAP_STAFF_TOKEN is configured, i.e. "
                     "anyone who can reach this port can read every tenant.",
@@ -104,6 +111,8 @@ class LibraryDTO(BaseModel):
     duplicates: int
     lent_out: int
     last_activity: str | None = None
+    image_files: int = 0
+    image_bytes: int = 0
 
 
 class MembershipDTO(BaseModel):
@@ -188,6 +197,9 @@ class WorkPageDTO(BaseModel):
 
 
 class ShelfDTO(BaseModel):
+    """⚠ RETIRING — superseded by :class:`ImageDTO`. Still served because the
+    console's library screen still renders it; it goes with that screen."""
+
     id: str
     library_id: str
     label: str
@@ -198,6 +210,62 @@ class ShelfDTO(BaseModel):
                                    "not copies — two copies of one book is "
                                    "one book on the shelf.")
     last_read: str | None = None
+
+
+class ImageDTO(BaseModel):
+    """One photograph — the console's unit since revision 4.
+
+    ⚠ **This replaced `ShelfDTO`, and the replacement is the point.** VISION
+    §4.1a records that "one image = one shelf" is a PLACEHOLDER with a recorded
+    exit (P2.1): intake mints a shelf identity per photograph until pillar 6's
+    map can say two photographs are the same piece of wood. A console listing
+    shelves was therefore listing photographs under a noun they had not earned.
+    So the image leads, and `shelf_id`/`depth`/`order` are reported as the SLOT
+    it is currently filed at — the pair pillar 6 replaces with a real address.
+
+    ⚠ **No bytes are served by this service, only facts about them.** An
+    operator looking at a household's actual photographs is a larger power than
+    counting them; the console renders a thumbnail only for a library the
+    operator is a member of, through the product API, exactly as the household
+    client does.
+    """
+
+    id: str = Field(description="The capture id. There is no separate image "
+                                "entity yet — a capture IS a photograph filed "
+                                "somewhere, and `image_key` is its content "
+                                "address.")
+    library_id: str
+    image_key: str | None = None
+    captured_at: str | None = None
+    shelf_id: str
+    shelf_label: str
+    depth: int
+    order: int
+    present: bool = Field(description="The bytes are on disk. False is a real "
+                                      "finding — a photograph the household "
+                                      "can no longer see — not a blank cell.")
+    bytes: int
+    width: int
+    height: int
+    content_type: str
+    filename: str
+    reads: int = Field(description="Runs that CONSUMED this photograph "
+                                   "(`reads.capture_ids`), which is not the "
+                                   "same as runs that found something in it — "
+                                   "a run that found nothing is exactly what "
+                                   "an operator is looking for.")
+    findings: int
+    auto: int
+    review: int
+    unmatched: int
+    last_read: str | None = None
+
+
+class ImagePageDTO(BaseModel):
+    items: list[ImageDTO]
+    total: int
+    offset: int
+    limit: int
 
 
 class ReadDTO(BaseModel):
@@ -365,15 +433,35 @@ def create_app(queries: StaffQueries) -> FastAPI:
 
     @app.get("/api/staff/v1/libraries/{library_id}/shelves",
              response_model=list[ShelfDTO], dependencies=guard,
-             summary="One library's shelves")
+             summary="One library's shelves (retiring — see /images)")
     def shelves(library_id: str) -> list[ShelfDTO]:
-        """⚠ Cross-tenant, so it cannot be `/api/v1/shelves`: that resolves the
-        caller's membership, and a system administrator is a member of
-        nothing. Note the consequence for the console — an EMPTY list and a
-        library that does not exist look the same here, deliberately: this
-        service has no reason to distinguish them, and the library list it
-        came from is the authority on which ids are real."""
+        """⚠ Superseded by `/images`; still served until the console's library
+        screen becomes the account drawer. Cross-tenant, so it cannot be
+        `/api/v1/shelves`: that resolves the caller's membership, and a system
+        administrator is a member of nothing."""
         return [ShelfDTO(**vars(row)) for row in queries.shelves(library_id)]
+
+    @app.get("/api/staff/v1/images", response_model=ImagePageDTO,
+             dependencies=guard, summary="Photographs across every tenant")
+    def images(
+        library_id: str | None = None,
+        limit: int = Query(default=50, ge=1, le=200),
+        offset: int = Query(default=0, ge=0),
+    ) -> ImagePageDTO:
+        """⚠ This REPLACED `/libraries/{id}/shelves`, and the replacement is
+        the item, not a rename. See `ImageDTO`: a shelf is a placeholder minted
+        per photograph until pillar 6, so a console shelf list was a photograph
+        list wearing the wrong noun.
+
+        Cross-tenant, so it could not be `/api/v1/...`: that resolves the
+        caller's membership, and a system administrator is a member of nothing.
+        An empty page and a library that does not exist look the same here,
+        deliberately — the library list is the authority on which ids are real.
+        """
+        items, total = queries.images(library_id=library_id, limit=limit,
+                                      offset=offset)
+        return ImagePageDTO(items=[ImageDTO(**vars(row)) for row in items],
+                            total=total, offset=offset, limit=limit)
 
     @app.get("/api/staff/v1/reads", response_model=list[ReadDTO],
              dependencies=guard, summary="Recent reads, across every tenant")
