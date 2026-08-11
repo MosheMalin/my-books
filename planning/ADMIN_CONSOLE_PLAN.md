@@ -596,3 +596,86 @@ order, not a build order, and books still land first.
 - "a system admin is not a `Role`";
 - member management, deleting a library, and metering — still Phase 2, still
   waiting on P4.1 / P3.2 / P3.5 / P5.1.
+
+## Landed (2026-08-11)
+
+All five items, each on `main` before the next, each with its reviewers.
+
+| # | item | landed | reviewers | what they changed |
+|---|---|---|---|---|
+| A1 | works in the read model | ✅ | quality, data-integrity | three majors, all *wrong stated reasons* — see below |
+| A2 | images + storage | ✅ | data-integrity, security | six majors, including a 13.6-second unauthenticated request |
+| A3 | console: works | ✅ | quality | a real bug: the drawer lied about the spread it had just changed |
+| A4 | console: images | ✅ | (folded with A2's) | — |
+| A5 | console: accounts | ✅ | (folded with A3's) | — |
+
+### What the reviews were actually for
+
+Every major finding in this epic was a **stated reason that was wrong**, not a
+behaviour that was wrong — which is the failure mode CLAUDE.md names ("a wrong
+stated reason is what makes the next reader delete the guard"). Worth recording
+as a pattern, because it recurred five times:
+
+- `WORK_KEY_SQL` recomputed a key that `books.book_key` has stored since schema
+  v1, under a comment claiming that avoided needing a new column;
+- `WorkDTO.instances` documented a state `UNIQUE INDEX books_library_key`
+  forbids — and was why three aggregates were mutually substitutable with no
+  test noticing;
+- the search `HAVING` was justified by "found by any household's spelling",
+  which cannot happen because `search_text` derives from the same normalized
+  pair as the key;
+- `_walk`'s "symlinks are not followed" read as a guarantee about Windows
+  directory junctions, which ARE followed;
+- `onChanged`'s docstring said it kept the aggregate honest; it refetched the
+  list and left the open drawer stale.
+
+Two more that were behaviour, and both were measured rather than argued:
+
+- **`/images` cost 13.6 seconds of CPU for one `?limit=200`** at 4000 reads —
+  two correlated subqueries per row, each scanning every read in the system,
+  on a service whose credential may be unset. Grouped pre-passes: 14ms;
+- **the guard meta-test could not see a non-GET route or a `Mount`.** Both
+  demonstrated green: an unguarded `POST /overview` served every tenant's
+  totals, a `StaticFiles` mount served CLAUDE.md unauthenticated.
+
+### Verified live (revision 4)
+
+Against a copy of the owner's real database and blob tree — 286 books, 2
+tenants, 36 files / 21.5 MB of photographs, taken with SQLite's backup API so
+the live data was never opened:
+
+- **286 books collapse to 283 works.** The three held by both households (a
+  Maria V. Snyder trilogy) report *2 libraries · 2 copies* and list each
+  household's own spelling underneath;
+- **storage is read from the disk**: 21.5 MB total, 14.1 + 7.4 per account,
+  matching an independent `os.walk`. With the blob root removed the console
+  says *"we did not look"* rather than marking every photograph lost — the
+  third state a review insisted on;
+- **an image drawer** shows a real 4032×3024 `IMG_7849.jpeg`, 3 MB, filed at
+  depth 1, with *1 run · 12 auto · 0 review · 14 unmatched*. Its thumbnail
+  loads from `:8757` and never from `:8758`;
+- **the read/write split, both ways**: with the product API down every
+  household row reads *"not editable"*; with it up both offer edit and delete,
+  and neither offers approve, because both copies are `manual` (§5.1);
+- **the account drawer** carries users / books / images with the library id
+  labelled beneath the account name;
+- **Hebrew**: `dir=rtl`, every screen translated, the retired routes
+  (`#/libraries`, `#/users`) landing on the accounts list.
+
+⚠ The Browser pane did not composite frames — the third session in a row (see
+revision 2) — so this is DOM- and network-level verification, not paint.
+
+### Still deferred, unchanged
+
+Member management (P4.1 login, P4.3 invites), deleting a library (P3.2 policy,
+P3.5 purge), metering (P5.1). And two things this epic found and did not fix,
+because neither belongs to it:
+
+- **`filename` is uncapped on the WRITE path.** A review measured 40 MB per
+  console page from unauthenticated LAN uploads with megabyte-long names. The
+  console caps what it republishes at 200 characters; the real fix is at the
+  port where the name enters, which is product-side;
+- **`/works` costs two full group-sorts of `books` per request** — 8ms at 175
+  books, 2.8s at 70k. Fine forever at this product's scale; the lever, when
+  one is needed, is caching `total` or materialising the aggregate, NOT
+  rewriting the correlated subqueries (measured at 11% of it).

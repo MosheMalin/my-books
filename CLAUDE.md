@@ -287,6 +287,24 @@ different world — the product never reads it.
 - `resolve.dedupe` must list React AND the testing libraries — a second
   `@testing-library/dom` fires events outside `act` and reads as a timing
   flake. Read the vite-config warnings before touching either client's.
+- A client-test fake must AWAIT its handler, or no test can observe a screen
+  mid-fetch (two `key`-remount rules lost their gates this way) and an async
+  handler serialises to `{}`. `renderApp().rerender` must re-wrap its
+  providers — the bare one throws "useI18n outside <I18nProvider>", which
+  reads as a screen bug.
+- A route-guard meta-test must assert STRUCTURALLY (`require_staff` in
+  `route.dependant`, and no `Mount`) and probe each route with its OWN
+  methods. Path-based + GET-only missed an unguarded POST on an existing path
+  and a `StaticFiles` mount serving CLAUDE.md unauthenticated — both measured.
+- `response_model is not None` proves nothing about what a route SENDS:
+  FastAPI short-circuits on a returned `Response`. Assert the content type.
+- One correlated subquery per row over a JSON column is a DoS on an
+  unauthenticated service: `/images` measured 13.6s for one `limit=200`.
+  Grouped CTE pre-pass, 14ms.
+- The console's **"account" is the TENANT** (a `Library` record) while the
+  wire and the domain keep `library` — the owner's word for a customer, with
+  the id shown labelled so the mapping is visible. `accounts` on the wire is
+  the PEOPLE count. See planning/ADMIN_CONSOLE_PLAN.md revision 4.
 - `app/ui` is consumed as source: each client's `postinstall` installs it;
   `check-installed.mjs` + `install.test.ts` guard the `npm ci
   --ignore-scripts` path. One `npm install --prefix <client>` per client.
