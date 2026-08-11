@@ -43,6 +43,15 @@ STATUS_RANK_SQL = (
 #: rank -> name, matching :class:`app.domain.book.Status`.
 RANK_NAMES = ("auto", "approved", "manual")
 
+#: The aggregation key for a WORK — the same book identity the product uses.
+#:
+#: ⚠ ``app.domain.text.book_key`` is ``normalize(title)|normalize(author)`` and
+#: ``books.norm_title``/``books.norm_author`` are written BY that function on
+#: every write path, so this expression reconstructs the key without a new
+#: column and without a second normalizer. CLAUDE.md's rule is that two
+#: normalizers drift; this would have been the third place to grow one.
+WORK_KEY_SQL = "(books.norm_title || '|' || books.norm_author)"
+
 #: How many matching rows a ranked search pulls before ordering them in Python.
 #: `app/domain/search.py` documents the same linear-scan trade for ONE library
 #: (measured 4ms at 251 books, 53ms at 10k); across every tenant the number is
@@ -66,6 +75,59 @@ REQUIRED_COLUMNS = {
               "started_at", "finished_at"),
     "duplicate_questions": ("id", "library_id"),
 }
+
+
+#: Every book in the system as an INSTANCE of a work, with the display-order
+#: number that decides which spelling represents the group.
+#:
+#: ⚠ ``ROW_NUMBER() OVER (…)`` is the display rule, in one place. See
+#: :meth:`StaffQueries.works` for the argument; changing the ``ORDER BY``
+#: inside it changes which title the console shows for a work held twice.
+_WORK_CTE = f"""
+WITH inst AS (
+    SELECT books.id AS id,
+           books.library_id AS library_id,
+           books.title AS title,
+           books.author AS author,
+           books.added_at AS added_at,
+           books.norm_title AS norm_title,
+           books.sort_author AS sort_author,
+           books.search_text AS search_text,
+           {WORK_KEY_SQL} AS work_key,
+           {STATUS_RANK_SQL} AS rank,
+           (SELECT COUNT(*) FROM copies WHERE copies.book_id = books.id)
+             AS copy_count
+    FROM books
+),
+picked AS (
+    SELECT inst.*, ROW_NUMBER() OVER (
+        PARTITION BY work_key
+        ORDER BY rank DESC, COALESCE(added_at, '~') ASC, id ASC
+    ) AS pick
+    FROM inst
+)
+"""
+
+#: The aggregate itself. ``MAX(CASE WHEN pick = 1 …)`` reads oddly and is
+#: exactly right: one row per group has ``pick = 1``, so the aggregate returns
+#: that row's value — SQLite's bare-column shortcut would work here too and is
+#: undefined behaviour the day someone ports this.
+_WORK_GROUPED = """
+SELECT work_key AS key,
+       MAX(CASE WHEN pick = 1 THEN title END) AS title,
+       MAX(CASE WHEN pick = 1 THEN author END) AS author,
+       MAX(CASE WHEN pick = 1 THEN norm_title END) AS norm_title,
+       MAX(CASE WHEN pick = 1 THEN sort_author END) AS sort_author,
+       MAX(rank) AS rank,
+       MIN(rank) AS weakest,
+       COUNT(DISTINCT library_id) AS libraries,
+       COUNT(*) AS instances,
+       SUM(copy_count) AS copies,
+       MIN(added_at) AS first_added,
+       MAX(added_at) AS last_added
+FROM picked
+GROUP BY work_key
+"""
 
 
 class SchemaMismatch(RuntimeError):
@@ -142,6 +204,28 @@ class BookRow:
 
 
 @dataclass(frozen=True)
+class WorkRow:
+    """One book ACROSS every tenant — the console's unit since revision 4.
+
+    ``key`` is :data:`WORK_KEY_SQL`'s value, i.e. ``app.domain.text.book_key``.
+    ``title``/``author`` are the DISPLAY spelling, chosen by the rule in
+    :meth:`StaffQueries.works` — two households may hold one work under two
+    spellings that normalize alike, which is the whole point of the key.
+    """
+
+    key: str
+    title: str
+    author: str
+    status: str
+    mixed: bool
+    libraries: int
+    instances: int
+    copies: int
+    first_added: str | None
+    last_added: str | None
+
+
+@dataclass(frozen=True)
 class ShelfRow:
     id: str
     library_id: str
@@ -165,6 +249,24 @@ class ReadRow:
     started_at: str | None
     finished_at: str | None
     claims: int
+
+
+def _work_row(r: sqlite3.Row) -> WorkRow:
+    """One grouped row as a :class:`WorkRow`.
+
+    ``mixed`` is the honest half of a single status badge: a work held as
+    `manual` in one house and `auto` in another has no one status, and a
+    console that showed only the strongest would tell an operator hunting for
+    unapproved books that there are none.
+    """
+    strongest, weakest = int(r["rank"] or 0), int(r["weakest"] or 0)
+    return WorkRow(
+        key=str(r["key"]), title=r["title"] or "", author=r["author"] or "",
+        status=RANK_NAMES[strongest], mixed=strongest != weakest,
+        libraries=int(r["libraries"]), instances=int(r["instances"]),
+        copies=int(r["copies"] or 0),
+        first_added=r["first_added"], last_added=r["last_added"],
+    )
 
 
 class StaffQueries:
@@ -463,6 +565,145 @@ class StaffQueries:
             )
             for r in page
         ), total
+
+    # --- works (books, aggregated across every tenant) ---------------------
+
+    def works(
+        self,
+        *,
+        q: str = "",
+        library_id: str | None = None,
+        status: str | None = None,
+        sort: str = "title",
+        ascending: bool = True,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[tuple[WorkRow, ...], int]:
+        """One row per BOOK, across every tenant. Returns ``(page, total)``.
+
+        ⚠⚠ **Every narrowing here is a ``HAVING``, never a ``WHERE``, and that
+        is the whole design.** A filter selects which WORKS appear; it must not
+        change what each of them REPORTS. Filtering instances in the ``WHERE``
+        would make "in 3 libraries" read "in 1 library" the moment the operator
+        narrowed to one library or one status — a number that changes meaning
+        when you filter is a number nobody can trust, and the console's central
+        column is exactly that number.
+
+        ⚠ **The display title is a choice, not a fact.** Two households may
+        hold one work under two spellings that normalize alike — that is what
+        the key is FOR — so one has to be shown. The rule: the strongest §5.1
+        status first (a human typed `manual`; the engine guessed `auto`), then
+        the earliest ``added_at``, then the id. Written into the window
+        function in :data:`_WORK_CTE` and pinned by a test, so it cannot decay
+        into "whatever SQLite happened to return first".
+        """
+        if status is not None and status not in RANK_NAMES:
+            raise ValueError(f"unknown status {status!r}")
+
+        having: list[str] = []
+        params: list[Any] = []
+        # `SUM(CASE …) > 0` is "at least one instance satisfies this". Spelled
+        # out rather than EXISTS so all three filters read the same way.
+        if library_id:
+            having.append("SUM(CASE WHEN library_id = ? THEN 1 ELSE 0 END) > 0")
+            params.append(library_id)
+        if status is not None:
+            having.append("SUM(CASE WHEN rank = ? THEN 1 ELSE 0 END) > 0")
+            params.append(RANK_NAMES.index(status))
+
+        query = parse(q) if q.strip() else None
+        if query:
+            # ⚠ Matched against the instance's OWN `search_text`, not the
+            # display row's: a work is found by any spelling any household
+            # stored, then shown under the display rule above. Searching only
+            # the display row would hide a book from the operator because
+            # another tenant's copy won the tiebreak.
+            clause, like_params = compile_sql_like(query, "search_text")
+            if clause:
+                having.append(
+                    f"SUM(CASE WHEN ({clause}) THEN 1 ELSE 0 END) > 0")
+                params.extend(like_params)
+
+        having_sql = (" HAVING " + " AND ".join(having)) if having else ""
+        direction = "ASC" if ascending else "DESC"
+        order = {
+            "title": f"norm_title {direction}, key {direction}",
+            "author": f"sort_author {direction}, norm_title {direction},"
+                      f" key {direction}",
+            "first_added": f"COALESCE(first_added, '') {direction},"
+                           f" norm_title ASC, key ASC",
+            # "in how many libraries" — the question this screen exists to
+            # answer, so it is a sort key and not only a column.
+            "libraries": f"libraries {direction}, norm_title ASC, key ASC",
+        }.get(sort, f"norm_title {direction}, key {direction}")
+
+        grouped = f"{_WORK_CTE}{_WORK_GROUPED}{having_sql}"
+
+        with _open(self.path) as conn:
+            total = int(conn.execute(
+                f"{_WORK_CTE}SELECT COUNT(*) FROM ({_WORK_GROUPED}"
+                f"{having_sql})", params,
+            ).fetchone()[0])
+
+            if query:
+                # Ranked, like `books()`: the domain's own score decides the
+                # order, bounded by the same cap so a one-letter query cannot
+                # pull a whole system into memory.
+                rows = conn.execute(f"{grouped} LIMIT ?",
+                                    (*params, RANKED_SCAN_CAP)).fetchall()
+                page: Sequence[sqlite3.Row] = sorted(
+                    rows,
+                    key=lambda r: (
+                        -score(query, TextEntry(title=r["title"],
+                                                author=r["author"] or "")),
+                        r["norm_title"], r["key"],
+                    ),
+                )[offset:offset + limit]
+            else:
+                page = conn.execute(
+                    f"{grouped} ORDER BY {order} LIMIT ? OFFSET ?",
+                    (*params, limit, offset),
+                ).fetchall()
+
+        return tuple(_work_row(r) for r in page), total
+
+    def work_instances(self, key: str) -> tuple[BookRow, ...]:
+        """Every household's copy of ONE work, strongest claim first.
+
+        The other half of the aggregate: the row says "in 3 libraries", this
+        says which three and what each of them holds. Ordered by the same rule
+        that picks the display title, so the first row here is the one the
+        aggregate is named after.
+
+        ⚠ Matched on the composed key rather than by splitting it: a title
+        containing the separator would make ``key.split('|')`` wrong, and there
+        is nothing stopping one.
+        """
+        with _open(self.path) as conn:
+            rows = conn.execute(
+                "SELECT books.id, books.library_id, books.title, books.author,"
+                " books.added_at,"
+                f" {STATUS_RANK_SQL} AS rank,"
+                " (SELECT COUNT(*) FROM copies WHERE copies.book_id = books.id)"
+                "   AS copy_count,"
+                " (SELECT COUNT(DISTINCT shelf_id) FROM copies"
+                "   WHERE copies.book_id = books.id AND shelf_id IS NOT NULL)"
+                "   AS shelf_count"
+                f" FROM books WHERE {WORK_KEY_SQL} = ?"
+                " ORDER BY rank DESC, COALESCE(books.added_at, '~') ASC,"
+                " books.id ASC",
+                (key,),
+            ).fetchall()
+        return tuple(
+            BookRow(
+                id=str(r["id"]), library_id=str(r["library_id"]),
+                title=r["title"], author=r["author"] or "",
+                status=RANK_NAMES[int(r["rank"] or 0)],
+                copy_count=int(r["copy_count"]), added_at=r["added_at"],
+                shelf_count=int(r["shelf_count"]),
+            )
+            for r in rows
+        )
 
     # --- shelves ----------------------------------------------------------
 

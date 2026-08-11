@@ -36,6 +36,7 @@ from app.adapters.sqlite_store import SqliteBookStore, SqliteTenancyStore  # noq
 from app.domain import LibraryRef, new_book  # noqa: E402
 from app.domain.book import Status, add_copy  # noqa: E402
 from app.domain.tenancy import Account, Library, Membership, Role  # noqa: E402
+from app.domain.text import book_key  # noqa: E402
 from app.staff_api.app import STAFF_TOKEN_ENV, create_app  # noqa: E402
 from app.staff_api.queries import SchemaMismatch, StaffQueries, _open  # noqa: E402
 
@@ -249,6 +250,112 @@ def test_a_shelf_row_counts_distinct_books_not_copies():
         assert shelves["sh-1"].books == 1, "two copies of one book is one book"
 
 
+# --- works: books, aggregated across every tenant ---------------------------
+#
+# Revision 4 of the console plan: an operator's question about a book is "how
+# widespread is it", never "whose is it". These pin the two rules that makes
+# possible — one row per `book_key` across tenants, and a filter that selects
+# works without changing what one reports.
+
+def _also_in_lib_b(path: Path, *, title: str, author: str = "ארנסטו סבאטו",
+                   status: Status = Status.AUTO, added_at: str = "2026-05-01",
+                   book_id: str = "b1b", copy_id: str = "c1b") -> None:
+    """The same WORK in the second library, optionally spelled differently.
+
+    Written through the real store like `_seed`, so the `norm_title` /
+    `norm_author` the aggregate keys on are the ones the product's own write
+    path produces — not two hand-typed strings that agree with each other.
+    """
+    SqliteBookStore(path).save(
+        LibraryRef(id="lib-b"),
+        new_book(id=book_id, library_id="lib-b", copy_id=copy_id, title=title,
+                 author=author, status=status, added_at=added_at),
+    )
+
+
+def test_a_work_is_one_row_across_tenants_not_one_per_library():
+    """The whole frame change. Three books in two libraries where two of them
+    are the same title is THREE works, and the shared one says so."""
+    with _queries() as (q, path):
+        _also_in_lib_b(path, title="המנהרה")
+        rows, total = q.works()
+        assert total == 3, "four books, three distinct works"
+        shared = {r.title: r for r in rows}["המנהרה"]
+        assert (shared.libraries, shared.instances, shared.copies) == (2, 2, 2)
+
+
+def test_the_display_title_is_the_strongest_claim_then_the_earliest():
+    """⚠ Two households may hold one work under two spellings that normalize
+    alike — that is what the key is FOR — so one has to be shown, and the
+    choice must be a rule rather than whatever SQLite returned first. A human
+    typing a title (`manual`) outranks the engine's reading (`auto`), even
+    though this one was added three months later."""
+    with _queries() as (q, path):
+        _also_in_lib_b(path, title="המנהרה!", status=Status.MANUAL,
+                       added_at="2026-05-01")
+        rows, _ = q.works()
+        by_key = {r.key: r for r in rows}
+        work = by_key[book_key("המנהרה", "ארנסטו סבאטו")]
+        assert work.title == "המנהרה!", "the manual spelling wins"
+        assert work.first_added == "2026-02-01", "…but 'first found' is honest"
+        assert work.last_added == "2026-05-01"
+
+
+def test_a_filter_selects_works_but_never_changes_what_one_reports():
+    """⚠⚠ The reason every narrowing is a HAVING and not a WHERE. Narrowing to
+    one library must not make "in 2 libraries" read "in 1": a number that
+    changes meaning when you filter is a number nobody can trust, and it is
+    this screen's central column."""
+    with _queries() as (q, path):
+        _also_in_lib_b(path, title="המנהרה")
+        rows, total = q.works(library_id="lib-b")
+        assert total == 2, "lib-b holds two of the three works"
+        shared = {r.title: r for r in rows}["המנהרה"]
+        assert shared.libraries == 2, "still held by two households"
+        assert shared.copies == 2
+
+
+def test_a_status_filter_matches_a_work_with_any_instance_at_that_status():
+    """"Anything unapproved out there?" must find a work that one household
+    has approved and another has not."""
+    with _queries() as (q, path):
+        # b2 is APPROVED in lib-a; the same work arrives AUTO in lib-b.
+        _also_in_lib_b(path, title="אבק כוכבים", author="אסימוב, אייזיק",
+                       status=Status.AUTO, book_id="b2b", copy_id="c2b")
+        rows, _ = q.works(status="auto")
+        titles = {r.title for r in rows}
+        assert "אבק כוכבים" in titles
+        work = {r.title: r for r in rows}["אבק כוכבים"]
+        assert work.status == "approved", "the badge shows the strongest claim"
+        assert work.mixed is True, "…and says the households disagree"
+
+
+def test_a_work_is_found_by_any_households_spelling():
+    """The search matches an INSTANCE's stored text, not the display row's:
+    otherwise a book would be unfindable because another tenant's copy won the
+    tiebreak for which spelling to show."""
+    with _queries() as (q, path):
+        _also_in_lib_b(path, title="המנהרה", status=Status.MANUAL,
+                       added_at="2020-01-01")
+        rows, total = q.works(q="מנהרה")
+        assert total == 1 and rows[0].libraries == 2
+
+
+def test_work_instances_name_the_households_strongest_first():
+    with _queries() as (q, path):
+        _also_in_lib_b(path, title="המנהרה", status=Status.MANUAL)
+        instances = q.work_instances(book_key("המנהרה", "ארנסטו סבאטו"))
+        assert [(i.library_id, i.status) for i in instances] == [
+            ("lib-b", "manual"), ("lib-a", "auto")]
+
+
+def test_an_unknown_work_key_is_an_empty_list_not_an_error():
+    """A console asking about a work that has just been deleted elsewhere gets
+    "nobody holds it", which is the true answer."""
+    with _queries() as (q, _):
+        assert q.work_instances("no|such") == ()
+
+
 def test_reading_never_migrates_the_owners_database():
     """⚠⚠ The rule the whole service is shaped around. CLAUDE.md records that
     merely importing `app.main` advances the real database's schema; a console
@@ -387,6 +494,32 @@ def test_an_unknown_status_is_a_400_not_an_empty_page():
     with _client(None) as client:
         assert client.get("/api/staff/v1/books",
                           params={"status": "nope"}).status_code == 400
+
+
+def test_the_works_route_pages_the_aggregate_not_the_books():
+    with _client(None) as client:
+        body = client.get("/api/staff/v1/works", params={"limit": 2}).json()
+        assert body["total"] == 3
+        assert len(body["items"]) == 2
+        assert "library_id" not in body["items"][0], (
+            "a work has no library — that is the entire point of the type")
+
+
+def test_an_unknown_status_is_a_400_on_works_too():
+    with _client(None) as client:
+        assert client.get("/api/staff/v1/works",
+                          params={"status": "nope"}).status_code == 400
+
+
+def test_the_work_key_travels_as_a_query_parameter():
+    """It is `normalize(title)|normalize(author)` — Hebrew, spaces and a pipe.
+    A path segment would put the console one missed `encodeURIComponent` away
+    from a 404 nobody can explain."""
+    with _client(None) as client:
+        key = book_key("Sapiens", "Yuval Harari")
+        rows = client.get("/api/staff/v1/works/instances",
+                          params={"key": key}).json()
+        assert [r["library_id"] for r in rows] == ["lib-b"]
 
 
 def test_every_route_is_under_the_staff_prefix():

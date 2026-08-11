@@ -536,6 +536,119 @@
         ],
         "title": "ValidationError",
         "type": "object"
+      },
+      "WorkDTO": {
+        "description": "One book across every tenant — the console's unit since revision 4.\n\n⚠ There is no `library_id` here, and that is the point of the type. A\nsystem console's question about a book is *how widespread is it*, not\n*whose is it*; the per-household instances are a second call\n(`/works/instances`), because acting on one is a different, narrower job.",
+        "properties": {
+          "author": {
+            "title": "Author",
+            "type": "string"
+          },
+          "copies": {
+            "title": "Copies",
+            "type": "integer"
+          },
+          "first_added": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Added"
+          },
+          "instances": {
+            "description": "Book records, which exceeds `libraries` only if one library holds the same key twice.",
+            "title": "Instances",
+            "type": "integer"
+          },
+          "key": {
+            "description": "`app.domain.text.book_key` — `normalize(title)|normalize(author)`. Opaque to the client; pass it back verbatim.",
+            "title": "Key",
+            "type": "string"
+          },
+          "last_added": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Added"
+          },
+          "libraries": {
+            "description": "How many libraries hold it. Unaffected by the filters — see the query's note on HAVING vs WHERE.",
+            "title": "Libraries",
+            "type": "integer"
+          },
+          "mixed": {
+            "description": "Instances disagree about status. A work manual in one house and auto in another has no single status, and hiding that would answer 'anything unapproved?' wrongly.",
+            "title": "Mixed",
+            "type": "boolean"
+          },
+          "status": {
+            "description": "The STRONGEST §5.1 claim any household makes about this work.",
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "title",
+          "author",
+          "status",
+          "mixed",
+          "libraries",
+          "instances",
+          "copies"
+        ],
+        "title": "WorkDTO",
+        "type": "object"
+      },
+      "WorkPageDTO": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/WorkDTO"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "truncated": {
+            "description": "A ranked search stopped at the scan cap, so `total` is honest but pages past the cap are not reachable. Narrow the query.",
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "offset",
+          "limit",
+          "truncated"
+        ],
+        "title": "WorkPageDTO",
+        "type": "object"
       }
     }
   },
@@ -1056,6 +1169,230 @@
           }
         },
         "summary": "Recent reads, across every tenant"
+      }
+    },
+    "/api/staff/v1/works": {
+      "get": {
+        "description": "⚠ `library_id` and `status` SELECT works; they never narrow what a\nwork reports. \"In 3 libraries\" means three whatever the filter says —\nsee `StaffQueries.works` for why that had to be a `HAVING`.",
+        "operationId": "works_api_staff_v1_works_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "library_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Library Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "default": "title",
+              "title": "Sort",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "ascending",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Ascending",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-booksnap-staff",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Booksnap-Staff"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkPageDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Books aggregated across every tenant"
+      }
+    },
+    "/api/staff/v1/works/instances": {
+      "get": {
+        "description": "The key travels as a QUERY parameter, not a path segment.\n\nIt is `normalize(title)|normalize(author)` — Hebrew, spaces, a pipe,\nand whatever else a title contains. A path segment would need encoding\nthe console cannot get wrong only by being careful, and `/works/<key>`\nwould additionally collide with this very route the day a work is\ncalled \"instances\".",
+        "operationId": "work_instances_api_staff_v1_works_instances_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "title": "Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-booksnap-staff",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Booksnap-Staff"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/BookDTO"
+                  },
+                  "title": "Response Work Instances Api Staff V1 Works Instances Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Every household's copy of one work"
       }
     }
   }

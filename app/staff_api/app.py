@@ -143,6 +143,50 @@ class BookPageDTO(BaseModel):
     )
 
 
+class WorkDTO(BaseModel):
+    """One book across every tenant — the console's unit since revision 4.
+
+    ⚠ There is no `library_id` here, and that is the point of the type. A
+    system console's question about a book is *how widespread is it*, not
+    *whose is it*; the per-household instances are a second call
+    (`/works/instances`), because acting on one is a different, narrower job.
+    """
+
+    key: str = Field(description="`app.domain.text.book_key` — "
+                                 "`normalize(title)|normalize(author)`. Opaque "
+                                 "to the client; pass it back verbatim.")
+    title: str
+    author: str
+    status: str = Field(description="The STRONGEST §5.1 claim any household "
+                                    "makes about this work.")
+    mixed: bool = Field(description="Instances disagree about status. A work "
+                                    "manual in one house and auto in another "
+                                    "has no single status, and hiding that "
+                                    "would answer 'anything unapproved?' "
+                                    "wrongly.")
+    libraries: int = Field(description="How many libraries hold it. Unaffected "
+                                       "by the filters — see the query's note "
+                                       "on HAVING vs WHERE.")
+    instances: int = Field(description="Book records, which exceeds "
+                                       "`libraries` only if one library holds "
+                                       "the same key twice.")
+    copies: int
+    first_added: str | None = None
+    last_added: str | None = None
+
+
+class WorkPageDTO(BaseModel):
+    items: list[WorkDTO]
+    total: int
+    offset: int
+    limit: int
+    truncated: bool = Field(
+        description="A ranked search stopped at the scan cap, so `total` is "
+                    "honest but pages past the cap are not reachable. Narrow "
+                    "the query.",
+    )
+
+
 class ShelfDTO(BaseModel):
     id: str
     library_id: str
@@ -277,6 +321,47 @@ def create_app(queries: StaffQueries) -> FastAPI:
             total=total, offset=offset, limit=limit,
             truncated=bool(q.strip()) and total > RANKED_SCAN_CAP,
         )
+
+    @app.get("/api/staff/v1/works", response_model=WorkPageDTO,
+             dependencies=guard, summary="Books aggregated across every tenant")
+    def works(
+        q: str = "",
+        library_id: str | None = None,
+        book_status: str | None = Query(default=None, alias="status"),
+        sort: str = "title",
+        ascending: bool = True,
+        limit: int = Query(default=50, ge=1, le=200),
+        offset: int = Query(default=0, ge=0),
+    ) -> WorkPageDTO:
+        """⚠ `library_id` and `status` SELECT works; they never narrow what a
+        work reports. "In 3 libraries" means three whatever the filter says —
+        see `StaffQueries.works` for why that had to be a `HAVING`."""
+        if book_status is not None and book_status not in ("auto", "approved",
+                                                           "manual"):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                "status must be auto, approved or manual")
+        items, total = queries.works(
+            q=q, library_id=library_id, status=book_status, sort=sort,
+            ascending=ascending, limit=limit, offset=offset,
+        )
+        return WorkPageDTO(
+            items=[WorkDTO(**vars(row)) for row in items],
+            total=total, offset=offset, limit=limit,
+            truncated=bool(q.strip()) and total > RANKED_SCAN_CAP,
+        )
+
+    @app.get("/api/staff/v1/works/instances", response_model=list[BookDTO],
+             dependencies=guard, summary="Every household's copy of one work")
+    def work_instances(key: str) -> list[BookDTO]:
+        """The key travels as a QUERY parameter, not a path segment.
+
+        It is `normalize(title)|normalize(author)` — Hebrew, spaces, a pipe,
+        and whatever else a title contains. A path segment would need encoding
+        the console cannot get wrong only by being careful, and `/works/<key>`
+        would additionally collide with this very route the day a work is
+        called "instances".
+        """
+        return [BookDTO(**vars(row)) for row in queries.work_instances(key)]
 
     @app.get("/api/staff/v1/libraries/{library_id}/shelves",
              response_model=list[ShelfDTO], dependencies=guard,

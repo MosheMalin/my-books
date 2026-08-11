@@ -126,6 +126,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/staff/v1/works": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Books aggregated across every tenant
+         * @description ⚠ `library_id` and `status` SELECT works; they never narrow what a
+         *     work reports. "In 3 libraries" means three whatever the filter says —
+         *     see `StaffQueries.works` for why that had to be a `HAVING`.
+         */
+        get: operations["works_api_staff_v1_works_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/staff/v1/works/instances": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Every household's copy of one work
+         * @description The key travels as a QUERY parameter, not a path segment.
+         *
+         *     It is `normalize(title)|normalize(author)` — Hebrew, spaces, a pipe,
+         *     and whatever else a title contains. A path segment would need encoding
+         *     the console cannot get wrong only by being careful, and `/works/<key>`
+         *     would additionally collide with this very route the day a work is
+         *     called "instances".
+         */
+        get: operations["work_instances_api_staff_v1_works_instances_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -330,6 +378,68 @@ export interface components {
             /** Error Type */
             type: string;
         };
+        /**
+         * WorkDTO
+         * @description One book across every tenant — the console's unit since revision 4.
+         *
+         *     ⚠ There is no `library_id` here, and that is the point of the type. A
+         *     system console's question about a book is *how widespread is it*, not
+         *     *whose is it*; the per-household instances are a second call
+         *     (`/works/instances`), because acting on one is a different, narrower job.
+         */
+        WorkDTO: {
+            /** Author */
+            author: string;
+            /** Copies */
+            copies: number;
+            /** First Added */
+            first_added?: string | null;
+            /**
+             * Instances
+             * @description Book records, which exceeds `libraries` only if one library holds the same key twice.
+             */
+            instances: number;
+            /**
+             * Key
+             * @description `app.domain.text.book_key` — `normalize(title)|normalize(author)`. Opaque to the client; pass it back verbatim.
+             */
+            key: string;
+            /** Last Added */
+            last_added?: string | null;
+            /**
+             * Libraries
+             * @description How many libraries hold it. Unaffected by the filters — see the query's note on HAVING vs WHERE.
+             */
+            libraries: number;
+            /**
+             * Mixed
+             * @description Instances disagree about status. A work manual in one house and auto in another has no single status, and hiding that would answer 'anything unapproved?' wrongly.
+             */
+            mixed: boolean;
+            /**
+             * Status
+             * @description The STRONGEST §5.1 claim any household makes about this work.
+             */
+            status: string;
+            /** Title */
+            title: string;
+        };
+        /** WorkPageDTO */
+        WorkPageDTO: {
+            /** Items */
+            items: components["schemas"]["WorkDTO"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
+            /**
+             * Truncated
+             * @description A ranked search stopped at the scan cap, so `total` is honest but pages past the cap are not reachable. Narrow the query.
+             */
+            truncated: boolean;
+        };
     };
     responses: never;
     parameters: never;
@@ -531,6 +641,80 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReadDTO"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    works_api_staff_v1_works_get: {
+        parameters: {
+            query?: {
+                q?: string;
+                library_id?: string | null;
+                status?: string | null;
+                sort?: string;
+                ascending?: boolean;
+                limit?: number;
+                offset?: number;
+            };
+            header?: {
+                "x-booksnap-staff"?: string | null;
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkPageDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    work_instances_api_staff_v1_works_instances_get: {
+        parameters: {
+            query: {
+                key: string;
+            };
+            header?: {
+                "x-booksnap-staff"?: string | null;
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookDTO"][];
                 };
             };
             /** @description Validation Error */
