@@ -129,7 +129,7 @@ export function makeOverview(over: Partial<StaffOverview> = {}): StaffOverview {
 
 export function makeUser(over: Partial<StaffUser> = {}): StaffUser {
   return {
-    id: 'acc-1', display_name: 'משה', email: null,
+    id: 'usr-1', display_name: 'משה', email: null,
     created_at: '2026-01-01T00:00:00Z', memberships: [],
     ...over,
   }

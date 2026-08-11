@@ -151,7 +151,7 @@ def tenancy_contract(fn):
 
     ⚠ A sixth list, and the only one whose cases take no ``LibraryRef`` — this
     is the store that ANSWERS which libraries exist, so it is scoped by the
-    ACCOUNT instead (see the port's own ⚠⚠). Everything above narrows by
+    USER instead (see the port's own ⚠⚠). Everything above narrows by
     ``LIB``/``OTHER``; everything here narrows by ``USR``/``USR2``.
     """
     TENANCY_CONTRACT.append(fn)
@@ -1322,7 +1322,7 @@ def every_duplicate_queue_method_takes_a_library(store):
 
 # --- the tenancy spec (P3.1, §4.1) ------------------------------------------
 #
-# Scoped by ACCOUNT, not by library — the one suite in this file that is. See
+# Scoped by USER, not by library — the one suite in this file that is. See
 # `tenancy_contract`'s own note.
 
 def _seed_two_libraries(store):
@@ -1447,6 +1447,20 @@ def removing_a_member_removes_nobody_elses_membership_and_no_library(store):
     assert store.delete_membership(USR2.id, "lib-2") is False
     assert store.get_library("lib-2") is not None
     assert {lib.id for lib, _ in store.list_libraries(USR.id)} == {"lib-1", "lib-2"}
+
+    # ⚠ And now remove a member who holds MORE THAN ONE membership, from one
+    # of them. Deleting USR2 above cannot detect a delete that dropped its
+    # library narrowing — USR2 held exactly one row, so "delete this pair" and
+    # "delete every row for this user" remove the same thing. USR holds both
+    # libraries, so only this call separates them. Without it, a store whose
+    # DELETE forgot `library_id` passes the whole suite, and the first person
+    # ever removed from one library silently loses every library they are in —
+    # including ones they are the last admin of, which is the state
+    # `NoAdminLeft` exists to make unreachable (P3.7a's data-integrity review
+    # mutated exactly this and watched 734 tests stay green).
+    assert store.delete_membership(USR.id, "lib-1") is True
+    assert {lib.id for lib, _ in store.list_libraries(USR.id)} == {"lib-2"}
+    assert store.membership(USR.id, "lib-2") is not None
 
 
 @tenancy_contract
@@ -2046,6 +2060,15 @@ def test_a_v12_database_renames_its_accounts_to_users_and_keeps_every_grant():
             # residue that makes the next reader guess which is authoritative.
             assert "users" in names and "accounts" not in names
             assert "users_by_email" in names and "accounts_by_email" not in names
+            # ⚠ And the SECONDARY index survived. `RENAME COLUMN` preserves it
+            # for free, so this cannot fail today — it is here for v14, which
+            # re-keys `memberships` to (user_id, account_id) and is therefore a
+            # real table rebuild: the one operation that drops secondary
+            # indexes silently while every row and every read still looks
+            # right. Same shape as the PRIMARY KEY assertion below, one line
+            # away (P3.7a's quality review mutated exactly this and watched
+            # 418 tests pass).
+            assert "memberships_of_library" in names
             # The foreign key followed the rename, or `PRAGMA foreign_keys`
             # would be enforcing nothing at all on this table.
             assert ("users", "user_id") in {
@@ -2055,6 +2078,101 @@ def test_a_v12_database_renames_its_accounts_to_users_and_keeps_every_grant():
             assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
         finally:
             conn.close()
+
+
+def test_a_migration_that_dies_halfway_leaves_the_database_openable():
+    """v13 rolls back whole, so a crash costs an upgrade and not the file.
+
+    The failure this exists to prevent is not data loss, it is a BRICK. Every
+    other step in this file applies through `executescript`, which commits as
+    it goes: kill the process between two of v13's four statements without a
+    transaction and the file is left half-renamed with `user_version` still 12
+    — and every subsequent open re-enters the step and dies on `no such index:
+    accounts_by_email`, naming an index while the real state is a half-renamed
+    tenancy schema. The owner's 286 books would be behind a database no code
+    path will open (measured, P3.7a's data-integrity review).
+
+    So `_v13` opens its own transaction and leaves it OPEN for the runner to
+    commit — which is what also covers the `PRAGMA user_version` written after
+    the step returns. All three partial states must therefore be invisible,
+    and the retry must still work.
+    """
+    import sqlite3
+
+    from app.adapters.migrations import MIGRATIONS, _v13
+
+    class DiesAt:
+        """The real connection, until the nth statement — then the crash.
+
+        ⚠ The step under test is ``_v13`` ITSELF, driven through this. An
+        earlier version of this test re-listed v13's statements inline and
+        interrupted the copy: deleting the ``BEGIN`` from the real ``_v13``
+        left it green, which made it a test of the test. Never re-state the
+        thing you are trying to gate.
+        """
+
+        def __init__(self, conn, n):
+            self._conn, self._n, self._seen = conn, n, 0
+
+        def execute(self, *args, **kwargs):
+            self._seen += 1
+            if self._seen > self._n:
+                raise RuntimeError("simulated crash")
+            return self._conn.execute(*args, **kwargs)
+
+    def shape(conn):
+        return (
+            conn.execute("PRAGMA user_version").fetchone()[0],
+            sorted(r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
+            )),
+            [r[1] for r in conn.execute("PRAGMA table_info(memberships)")],
+        )
+
+    # 2/3/4 statements survive, counting `_v13`'s own BEGIN — so the crash
+    # lands after each of the three renames in turn.
+    for survive in (2, 3, 4):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "half.db"
+            conn = sqlite3.connect(str(path))
+            try:
+                for version, step in MIGRATIONS:
+                    if version > 12:
+                        break
+                    if isinstance(step, str):
+                        conn.executescript(step)
+                    else:
+                        step(conn)
+                conn.execute("PRAGMA user_version = 12")
+                conn.execute("INSERT INTO accounts (id, display_name) VALUES"
+                             " ('dev-owner', 'משה')")
+                conn.execute("INSERT INTO libraries (id, label) VALUES"
+                             " ('lib', 'הבית')")
+                conn.execute("INSERT INTO memberships (account_id, library_id,"
+                             " role) VALUES ('dev-owner', 'lib', 'admin')")
+                conn.commit()
+                before = shape(conn)
+
+                # The real step, inside the real `with conn:` the runner uses,
+                # interrupted partway.
+                try:
+                    with conn:
+                        _v13(DiesAt(conn, survive))
+                        conn.execute("PRAGMA user_version = 13")
+                except RuntimeError:
+                    pass
+
+                assert shape(conn) == before, (
+                    f"dying after {survive} statements left the file "
+                    f"half-upgraded: {shape(conn)}"
+                )
+            finally:
+                conn.close()
+
+            # And the retry that a restart performs still works.
+            store = SqliteTenancyStore(path)
+            held = store.membership("dev-owner", "lib")
+            assert held is not None and held.role is Role.ADMIN
 
 
 def test_deleting_a_shelf_never_touches_the_books_that_stood_on_it():

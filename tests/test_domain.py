@@ -1754,7 +1754,7 @@ OWNER = User(id="usr-1", display_name="משה")
 
 def test_creating_a_library_makes_its_creator_an_admin():
     """A library saved without a membership is invisible to the person who
-    made it (listing is BY ACCOUNT) and administrable by nobody. Returning
+    made it (listing is BY USER) and administrable by nobody. Returning
     both from one call is what makes that state unreachable from a caller
     that simply forgot the second write."""
     library, membership = new_library(id="lib-1", label="משפחת מלין", owner=OWNER)

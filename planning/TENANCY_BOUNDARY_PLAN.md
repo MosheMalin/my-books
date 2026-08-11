@@ -74,8 +74,12 @@ that can see the security property and one that cannot.
 - `app/adapters/sqlite_store.py` (`SqliteTenancyStore`, ~`745-882`) and
   `app/adapters/memory_store.py` (`MemoryTenancyStore`, `379-434`).
 - **migration v13**: `accounts` → `users`; `memberships.account_id` →
-  `user_id` (PK and the `memberships_of_library` index re-created);
-  `accounts_by_email` partial index follows the table.
+  `user_id`; `accounts_by_email` → `users_by_email`. *As landed:* SQLite's own
+  `RENAME TO`/`RENAME COLUMN` rewrite the REFERENCES clause, the composite
+  PRIMARY KEY and the secondary index in place, so this is four statements and
+  NOT the twelve-step table rebuild the docs prescribe for other alterations.
+  Measured to depend on `legacy_alter_table` being off (the default), not on
+  `foreign_keys`.
 - `app/api/dto.py` `AccountDTO`→`UserDTO`, `MetaResponse.account`→`.user`;
   `app/api/routers/meta.py`, `app/api/routers/libraries.py:_account`.
 - `app/staff_api/`: `AccountDTO`→`UserDTO`, route `/accounts`→`/users`,
@@ -169,8 +173,9 @@ a 429 test proving two libraries of one account share one cap.
 - `queries.py:orphan_libraries()` (`601-614`) is meaningless once every
   library has an owning account: replace with **accounts with no admin** and
   **accounts with no library**, which are the states that can actually occur.
-- `storage.py:9,27` say "account" and mean library — blob paths are NOT
-  moving, so fix the wording, not the layout.
+- ~~`storage.py:9,27` say "account" and mean library~~ — done early, in
+  P3.7a: blob paths are NOT moving, so it was a wording fix and it belonged
+  with the rename that made the word wrong.
 - contracts ×4.
 
 **Reviewers**: `review-data-integrity`, `review-security`, `review-quality`.

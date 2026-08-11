@@ -9,21 +9,30 @@ Mechanism is SQLite's own ``PRAGMA user_version``: an integer in the file
 header, so there is no bookkeeping table and no chance of the bookkeeping and
 the schema disagreeing. Each step runs once, in order.
 
-⚠ **A string step is NOT atomic, despite the ``with conn:`` in the runner.**
-``executescript`` issues an implicit COMMIT before it starts and then runs its
-statements in autocommit, so the context manager wraps nothing: a crash
-between two statements of one step leaves the file half-upgraded with
-``user_version`` still at the OLD number, and the next open re-enters the step
-from the top and raises on whatever already succeeded. The database is then
-openable only by hand. Callable steps do not have this problem.
+⚠ **A step is NOT atomic by default, despite the ``with conn:`` in the
+runner** — and that is true of BOTH kinds, which is the part it is easy to get
+wrong. ``executescript`` issues an implicit COMMIT before it starts and then
+runs in autocommit, so a string step commits as it goes. A callable is no
+safer for DDL: Python's ``sqlite3`` opens an implicit transaction only for
+DML, so ``ALTER``/``CREATE``/``DROP`` inside a callable also run in autocommit
+(measured, P3.7a's data-integrity review — an earlier draft of this very note
+claimed callables were exempt, which is the kind of wrong stated reason that
+stops the next reader adding the guard). Either way a crash mid-step leaves
+the file half-upgraded with ``user_version`` still at the OLD number, the next
+open re-enters the step from the top and raises on whatever already succeeded,
+and the database is then openable only by hand.
 
-This is true of every string step in this file and always has been; it is
-written down here because the comment that used to sit on the runner claimed
-the opposite, and a wrong stated reason is what stops the next reader adding
-the guard. The fix — wrapping the script in its own ``BEGIN``/``COMMIT`` so a
-mid-script failure leaves a transaction for ``with conn:`` to roll back —
-changes how all thirteen steps execute and is its own item, not a rider on a
-rename (P3.7a's migration review; see planning/TENANCY_BOUNDARY_PLAN.md).
+**What works is an explicit ``BEGIN`` inside a callable step, left OPEN for
+the runner to commit** — see :func:`_v13`. Leaving it open rather than issuing
+your own ``COMMIT`` is the load-bearing half: the runner writes
+``PRAGMA user_version`` after the step returns and inside the same
+``with conn:``, so only an open transaction puts the schema change and the
+version bump in one atomic unit. A step that commits itself can still be
+killed before the version is written, which re-enters the same brick.
+
+v1–v12 predate this and remain unguarded. Retrofitting them changes how twelve
+shipped steps execute and is its own item, not a rider on a rename (see
+planning/TENANCY_BOUNDARY_PLAN.md).
 
 Rules for adding a step:
   - APPEND, never edit a shipped one. An edited step has already run on the
@@ -513,19 +522,39 @@ INSERT INTO libraries (id)
 #
 # `ALTER TABLE ... RENAME TO` rewrites the REFERENCES clauses in other tables
 # (SQLite ≥ 3.25 with legacy_alter_table off, which is the default), so
-# `memberships.user_id` keeps pointing at the renamed table without the
-# 12-step table rebuild the SQLite docs describe for other alterations. The
-# index is dropped and recreated rather than left behind under its old name:
-# an index called `accounts_by_email` on a table called `users` is exactly the
-# kind of residue that makes the next reader doubt which one is authoritative.
-_V13 = """
-DROP INDEX accounts_by_email;
-
-ALTER TABLE accounts RENAME TO users;
-ALTER TABLE memberships RENAME COLUMN account_id TO user_id;
-
-CREATE UNIQUE INDEX users_by_email ON users (email) WHERE email IS NOT NULL;
-"""
+# `memberships.user_id` keeps pointing at the renamed table — and the composite
+# PRIMARY KEY and the secondary index come along too — without the 12-step
+# table rebuild the SQLite docs describe for other alterations. The email index
+# is dropped and recreated rather than left behind under its old name: an index
+# called `accounts_by_email` on a table called `users` is exactly the kind of
+# residue that makes the next reader doubt which one is authoritative.
+#
+# ⚠⚠ **A CALLABLE, and the `BEGIN` is the whole reason.** Every other string
+# step in this file is applied by `executescript`, which COMMITS as it goes —
+# so a crash between two of its statements leaves the file half-upgraded with
+# the OLD `user_version`, and the next open re-enters the step and dies on
+# whatever already succeeded. That is survivable for a `CREATE TABLE` step and
+# NOT survivable here: all three partial states of this rename re-enter at
+# `DROP INDEX accounts_by_email` and raise `no such index` — a database with
+# the owner's books in it, openable only by hand, reporting an index when the
+# real state is a half-renamed tenancy schema (measured, P3.7a's data-integrity
+# review).
+#
+# So this step opens its own transaction and does NOT close it: the runner's
+# `with conn:` commits on success — covering the `PRAGMA user_version` it
+# writes after this returns, which is the half that a step-local COMMIT would
+# leave outside — and rolls the whole thing back on any exception.
+# `conn.execute` per statement, never `executescript`, which would commit the
+# open transaction before running a line.
+def _v13(conn: sqlite3.Connection) -> None:
+    conn.execute("BEGIN")
+    conn.execute("DROP INDEX accounts_by_email")
+    conn.execute("ALTER TABLE accounts RENAME TO users")
+    conn.execute("ALTER TABLE memberships RENAME COLUMN account_id TO user_id")
+    conn.execute(
+        "CREATE UNIQUE INDEX users_by_email ON users (email)"
+        " WHERE email IS NOT NULL"
+    )
 
 # A step is either SQL to execute or a callable to run — both inside the same
 # once-only transaction. Callables exist because a derived column whose rule
@@ -544,7 +573,7 @@ MIGRATIONS: tuple[tuple[int, str | Step], ...] = (
     (10, _V10),
     (11, _V11),
     (12, _V12),
-    (13, _V13),
+    (13, _v13),
 )
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]

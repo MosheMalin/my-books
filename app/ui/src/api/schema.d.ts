@@ -540,7 +540,7 @@ export interface paths {
          *     copy of the resolver's dev-trusted rule in a second module, and the day
          *     they disagreed the switcher would be missing the very library on screen.
          *     Guaranteeing the membership row exists is the composition root's job
-         *     (``app.main:_bootstrap_dev_account``), and
+         *     (``app.main:_bootstrap_dev_user``), and
          *     ``test_the_library_meta_resolves_is_always_one_the_switcher_lists`` pins
          *     the agreement rather than trusting it.
          */

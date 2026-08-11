@@ -83,7 +83,7 @@ def list_libraries(
     copy of the resolver's dev-trusted rule in a second module, and the day
     they disagreed the switcher would be missing the very library on screen.
     Guaranteeing the membership row exists is the composition root's job
-    (``app.main:_bootstrap_dev_account``), and
+    (``app.main:_bootstrap_dev_user``), and
     ``test_the_library_meta_resolves_is_always_one_the_switcher_lists`` pins
     the agreement rather than trusting it.
     """
@@ -148,7 +148,7 @@ def patch_library(
     if membership is None or library is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no such library")
     # P3.2: the one direct `allowed()` call outside app/api/policy.py, because
-    # this route is on the ACCOUNT axis — `require()` resolves a library
+    # this route is on the USER axis — `require()` resolves a library
     # through `current_library`, which these routes are exempt from (the
     # closed list in tests/test_api.py). Same matrix, same data; only the
     # transport of "which library" differs. 403 (not 404) is honest here: the

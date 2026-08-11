@@ -301,6 +301,12 @@ NOT the system operator — that is the separate staff console (`app/admin` /
 `app/staff_api`, its own plan), which authorizes on its own axis and never
 through this matrix.
 
+⚠ **Not true of the code until P3.7b lands, and the code is the honest one
+meanwhile.** `app/domain/policy.py` still says "an admin INSIDE one account's
+library", and it means it: a user holding ADMIN in one library and VIEWER in
+another is representable and enforced today. Read the paragraph above as the
+target and §4.1a's table for what exists.
+
 *The last two rows still name a LIBRARY, and that is not a contradiction:* a
 capability is checked against the role the caller holds in the account that
 owns the library the request resolved to. The role is account-wide; the

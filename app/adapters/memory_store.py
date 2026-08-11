@@ -24,6 +24,7 @@ from app.domain import (
     Role,
     Shelf,
     Status,
+    User,
 )
 from app.domain.search import parse
 from app.domain.search import search as domain_search
