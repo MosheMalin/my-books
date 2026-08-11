@@ -201,22 +201,6 @@ class WorkPageDTO(BaseModel):
     )
 
 
-class ShelfDTO(BaseModel):
-    """⚠ RETIRING — superseded by :class:`ImageDTO`. Still served because the
-    console's library screen still renders it; it goes with that screen."""
-
-    id: str
-    library_id: str
-    label: str
-    depth_count: int
-    virtual: bool
-    captures: int
-    books: int = Field(description="DISTINCT books with a copy standing here, "
-                                   "not copies — two copies of one book is "
-                                   "one book on the shelf.")
-    last_read: str | None = None
-
-
 class ImageDTO(BaseModel):
     """One photograph — the console's unit since revision 4.
 
@@ -452,16 +436,6 @@ def create_app(queries: StaffQueries) -> FastAPI:
         called "instances".
         """
         return [BookDTO(**vars(row)) for row in queries.work_instances(key)]
-
-    @app.get("/api/staff/v1/libraries/{library_id}/shelves",
-             response_model=list[ShelfDTO], dependencies=guard,
-             summary="One library's shelves (retiring — see /images)")
-    def shelves(library_id: str) -> list[ShelfDTO]:
-        """⚠ Superseded by `/images`; still served until the console's library
-        screen becomes the account drawer. Cross-tenant, so it cannot be
-        `/api/v1/shelves`: that resolves the caller's membership, and a system
-        administrator is a member of nothing."""
-        return [ShelfDTO(**vars(row)) for row in queries.shelves(library_id)]
 
     @app.get("/api/staff/v1/images", response_model=ImagePageDTO,
              dependencies=guard, summary="Photographs across every tenant")

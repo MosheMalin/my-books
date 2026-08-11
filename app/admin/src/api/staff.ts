@@ -81,7 +81,6 @@ export type StaffBook = Schemas['BookDTO']
 /** `truncated` means a ranked search hit the server's scan cap: `total` is
  *  honest, but pages past the cap are unreachable. Told, not hidden. */
 export type StaffBookPage = Schemas['BookPageDTO']
-export type StaffShelf = Schemas['ShelfDTO']
 export type StaffRead = Schemas['ReadDTO']
 /** One book ACROSS every tenant — the console's unit since revision 4. It has
  *  no `library_id` on purpose: an operator's question about a book is how
@@ -141,9 +140,6 @@ export const listAllLibraries = (opts: StaffOptions = {}) =>
 
 export const listAllAccounts = (opts: StaffOptions = {}) =>
   get<StaffAccount[]>('/accounts', opts)
-
-export const listLibraryShelves = (libraryId: string, opts: StaffOptions = {}) =>
-  get<StaffShelf[]>(`/libraries/${encodeURIComponent(libraryId)}/shelves`, opts)
 
 export interface StaffBookQuery {
   q?: string | undefined

@@ -20,10 +20,9 @@ const HE = {
   app: 'booksnap',
   console: 'ניהול',
   nav_dashboard: 'סקירה',
-  nav_libraries: 'ספריות',
+  nav_accounts: 'חשבונות',
   nav_books: 'ספרים',
   nav_images: 'תמונות',
-  nav_users: 'משתמשים',
   nav_access: 'גישה',
   lang_toggle: 'English',
 
@@ -46,8 +45,9 @@ const HE = {
   stat_approved: 'אושרו',
   stat_manual: 'הוזנו ידנית',
   stat_unapproved: 'ממתינים לאישור',
-  dash_per_library: 'לפי ספרייה',
-  stat_accounts: 'חשבונות',
+  dash_per_account: 'לפי חשבון',
+  stat_accounts_tenants: 'חשבונות',
+  stat_people: 'אנשים',
   stat_memberships: 'חברויות',
   stat_copies: 'עותקים',
   stat_reads: 'קריאות',
@@ -74,6 +74,7 @@ const HE = {
   th_email: 'דוא״ל',
   th_memberships: 'חברויות',
   th_members: 'חברים',
+  th_users: 'משתמשים',
   th_admins: 'מנהלים',
   th_activity: 'פעילות אחרונה',
   th_findings: 'ממצאים',
@@ -211,6 +212,24 @@ const HE = {
   img_blind:
     'השירות אינו רואה את ספריית הקבצים, ולכן כל התמונות מדווחות כחסרות ואין נתוני נפח. זה אומר "לא בדקנו", לא "אבד".',
 
+  // accounts — הלקוח של המפעיל. "חשבון" כאן הוא הדייר; ברשומות הוא Library.
+  acct_title: 'חשבונות',
+  acct_sub: 'כל לקוח במערכת: מי מנהל אותו, כמה משתמשים, כמה ספרים וכמה מקום התמונות תופסות.',
+  acct_panel: 'פרטי החשבון',
+  acct_library_id: 'מזהה ספרייה',
+  acct_no_admin: 'אין מנהל',
+  acct_users: 'משתמשים',
+  acct_books: 'ספרים',
+  acct_images: 'תמונות',
+  acct_joined: 'הצטרף',
+  acct_all_books: (n: number) => `כל ${n} הספרים`,
+  acct_all_images: (n: number) => `כל ${n} התמונות`,
+  acct_no_member_management:
+    'הזמנה, הסרה ושינוי תפקיד אינם קיימים באף אחד משני השירותים — הם מחכים להתחברות (P4.1) ולזרימת ההזמנה (P4.3).',
+  acct_unaffiliated: 'חשבונות ללא שיוך',
+  acct_unaffiliated_why:
+    'אנשים שאינם חברים באף ספרייה. עד שתהיה התחברות איש אינו יכול להגיע אליהם, וזה המקום היחיד שבו הם מופיעים.',
+
   // book panel
   bp_title: 'פרטי הספר',
   bp_library: 'ספרייה',
@@ -275,10 +294,9 @@ const EN: Strings = {
   app: 'booksnap',
   console: 'admin',
   nav_dashboard: 'Overview',
-  nav_libraries: 'Libraries',
+  nav_accounts: 'Accounts',
   nav_books: 'Books',
   nav_images: 'Images',
-  nav_users: 'Users',
   nav_access: 'Access',
   lang_toggle: 'עברית',
 
@@ -300,8 +318,9 @@ const EN: Strings = {
   stat_approved: 'Approved',
   stat_manual: 'Entered by hand',
   stat_unapproved: 'Awaiting approval',
-  dash_per_library: 'By library',
-  stat_accounts: 'Accounts',
+  dash_per_account: 'By account',
+  stat_accounts_tenants: 'Accounts',
+  stat_people: 'People',
   stat_memberships: 'Memberships',
   stat_copies: 'Copies',
   stat_reads: 'Reads',
@@ -324,6 +343,7 @@ const EN: Strings = {
   th_email: 'Email',
   th_memberships: 'Memberships',
   th_members: 'Members',
+  th_users: 'Users',
   th_admins: 'Admins',
   th_activity: 'Last activity',
   th_findings: 'Findings',
@@ -452,6 +472,23 @@ const EN: Strings = {
     shown >= total ? `${total} images` : `${shown} of ${total} images`,
   img_blind:
     'This service cannot see the blob tree, so every image reports as missing and there are no size figures. That means "we did not look", not "they are gone".',
+
+  acct_title: 'Accounts',
+  acct_sub: 'Every customer in the system: who administers it, how many users, how many books, and how much room the images take.',
+  acct_panel: 'Account details',
+  acct_library_id: 'Library id',
+  acct_no_admin: 'no admin',
+  acct_users: 'Users',
+  acct_books: 'Books',
+  acct_images: 'Images',
+  acct_joined: 'Joined',
+  acct_all_books: (n: number) => `All ${n} books`,
+  acct_all_images: (n: number) => `All ${n} images`,
+  acct_no_member_management:
+    'Invite, remove and re-role exist in neither service — they wait on the login (P4.1) and the invite flow (P4.3).',
+  acct_unaffiliated: 'Unaffiliated accounts',
+  acct_unaffiliated_why:
+    'People who belong to no library. Until there is a login nobody can reach them, and this is the only place they appear.',
 
   bp_title: 'Book details',
   bp_library: 'Library',

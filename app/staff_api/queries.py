@@ -317,22 +317,6 @@ class WorkRow:
 
 
 @dataclass(frozen=True)
-class ShelfRow:
-    """⚠ RETIRED at A3 of console revision 4 — see :class:`ImageRow`. It is
-    still here because the console's library screen still renders it; the day
-    that screen becomes the account drawer, this and its route go."""
-
-    id: str
-    library_id: str
-    label: str
-    depth_count: int
-    virtual: bool
-    captures: int
-    books: int
-    last_read: str | None
-
-
-@dataclass(frozen=True)
 class ImageRow:
     """One photograph, and what has been made of it.
 
@@ -899,41 +883,6 @@ class StaffQueries:
                 status=RANK_NAMES[int(r["rank"] or 0)],
                 copy_count=int(r["copy_count"]), added_at=r["added_at"],
                 shelf_count=int(r["shelf_count"]),
-            )
-            for r in rows
-        )
-
-    # --- shelves (retiring — see `images`) ----------------------------------
-
-    def shelves(self, library_id: str) -> tuple[ShelfRow, ...]:
-        """One library's shelves, with what stands on them.
-
-        ⚠ Superseded by :meth:`images`. Kept only until the console's library
-        screen becomes the account drawer (A3): a shelf today is an identity
-        minted per photograph (VISION §4.1a), so this list is a photograph list
-        under a noun it has not earned.
-        """
-        with _open(self.path) as conn:
-            rows = conn.execute(
-                "SELECT shelves.id, shelves.library_id, shelves.label,"
-                " shelves.depth_count, shelves.virtual,"
-                " (SELECT COUNT(*) FROM captures"
-                "   WHERE captures.shelf_id = shelves.id) AS captures,"
-                " (SELECT COUNT(DISTINCT book_id) FROM copies"
-                "   WHERE copies.shelf_id = shelves.id) AS books,"
-                " (SELECT MAX(COALESCE(finished_at, started_at)) FROM reads"
-                "   WHERE reads.shelf_id = shelves.id) AS last_read"
-                " FROM shelves WHERE shelves.library_id = ?"
-                " ORDER BY shelves.label, COALESCE(shelves.created_at, ''),"
-                " shelves.id",
-                (library_id,),
-            ).fetchall()
-        return tuple(
-            ShelfRow(
-                id=str(r["id"]), library_id=str(r["library_id"]),
-                label=r["label"] or "", depth_count=int(r["depth_count"]),
-                virtual=bool(r["virtual"]), captures=int(r["captures"]),
-                books=int(r["books"]), last_read=r["last_read"],
             )
             for r in rows
         )

@@ -9,9 +9,21 @@ describe('parseHash', () => {
     expect(parseHash('#/nonsense')).toEqual({ name: 'dashboard' })
   })
 
-  it('reads the library list and one library', () => {
-    expect(parseHash('#/libraries')).toEqual({ name: 'libraries' })
-    expect(parseHash('#/libraries/lib-1')).toEqual({ name: 'library', id: 'lib-1' })
+  it('reads the account list and one account', () => {
+    expect(parseHash('#/accounts')).toEqual({ name: 'accounts' })
+    expect(parseHash('#/accounts/lib-1')).toEqual({ name: 'account', id: 'lib-1' })
+  })
+
+  /**
+   * ⚠⚠ The retired spellings still land somewhere sensible. Revision 4 merged
+   * the Libraries and Users tabs — two names for one entity — and a bookmark
+   * that answered with the dashboard would teach the operator that their link
+   * ROTTED rather than moved.
+   */
+  it('lands the retired library and user routes on the accounts screen', () => {
+    expect(parseHash('#/libraries')).toEqual({ name: 'accounts' })
+    expect(parseHash('#/libraries/lib-1')).toEqual({ name: 'account', id: 'lib-1' })
+    expect(parseHash('#/users')).toEqual({ name: 'accounts' })
   })
 
   /**
@@ -19,9 +31,9 @@ describe('parseHash', () => {
    * decoded, not pattern-matched. An id containing a `%` or a slash would
    * otherwise open the wrong library, or none.
    */
-  it('decodes a library id', () => {
-    expect(parseHash(`#/libraries/${encodeURIComponent('lib/one')}`))
-      .toEqual({ name: 'library', id: 'lib/one' })
+  it('decodes an account id', () => {
+    expect(parseHash(`#/accounts/${encodeURIComponent('lib/one')}`))
+      .toEqual({ name: 'account', id: 'lib/one' })
   })
 
   /**
@@ -36,18 +48,23 @@ describe('parseHash', () => {
       .toEqual({ name: 'books', libraryId: 'lib-2' })
   })
 
-  it('reads the users screen', () => {
-    expect(parseHash('#/users')).toEqual({ name: 'users' })
+  /** The images screen narrows the same way the books screen does, and for
+   *  the same reason — a shared link must land on the same view. */
+  it('carries the images screen narrowing', () => {
+    expect(parseHash('#/images')).toEqual({ name: 'images', libraryId: undefined })
+    expect(parseHash('#/images?library=lib-2'))
+      .toEqual({ name: 'images', libraryId: 'lib-2' })
   })
 
   it('round-trips every route through href', () => {
     for (const route of [
       { name: 'dashboard' },
-      { name: 'libraries' },
-      { name: 'library', id: 'lib/one' },
+      { name: 'accounts' },
+      { name: 'account', id: 'lib/one' },
       { name: 'books', libraryId: undefined },
       { name: 'books', libraryId: 'lib-2' },
-      { name: 'users' },
+      { name: 'images', libraryId: undefined },
+      { name: 'images', libraryId: 'lib-2' },
       { name: 'access' },
     ] as const) {
       expect(parseHash(href(route))).toEqual(route)

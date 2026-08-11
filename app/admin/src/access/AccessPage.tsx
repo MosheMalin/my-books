@@ -71,7 +71,7 @@ export function AccessPage() {
               {mine.map((lib) => (
                 <tr key={lib.id}>
                   <td className="rtl-safe">
-                    <a href={href({ name: 'library', id: lib.id })}>
+                    <a href={href({ name: 'account', id: lib.id })}>
                       {libraryName(lib.label, t.lib_unnamed)}
                     </a>
                     <div className="mono">{lib.id}</div>

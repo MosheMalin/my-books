@@ -230,30 +230,6 @@ def test_a_library_nobody_belongs_to_is_reported_as_an_orphan():
         assert q.orphan_libraries() == ("lib-lost",)
 
 
-def test_a_shelf_row_counts_distinct_books_not_copies():
-    """⚠ Two copies of one book on one shelf is ONE book standing there, and
-    the shelf screen's question is "what is on it"."""
-    with _queries() as (q, path):
-        from app.adapters.sqlite_store import SqliteShelfStore
-        from app.domain.shelf import Shelf
-
-        store = SqliteBookStore(path)
-        ref = LibraryRef(id="lib-a")
-        SqliteShelfStore(path).save_shelf(
-            ref, Shelf(id="sh-1", library_id="lib-a", label="מדף",
-                       created_at="2026-03-01"))
-        book = store.get(ref, "b1")
-        assert book is not None
-        book = add_copy(book, copy_id="c1b", shelf_id="sh-1", depth=1,
-                        status=Status.MANUAL)
-        book = add_copy(book, copy_id="c1c", shelf_id="sh-1", depth=1,
-                        status=Status.MANUAL)
-        store.save(ref, book)
-
-        shelves = {s.id: s for s in q.shelves("lib-a")}
-        assert shelves["sh-1"].books == 1, "two copies of one book is one book"
-
-
 # --- works: books, aggregated across every tenant ---------------------------
 #
 # Revision 4 of the console plan: an operator's question about a book is "how
@@ -797,7 +773,6 @@ def test_reading_never_migrates_the_owners_database():
         q.libraries()
         q.accounts()
         q.books(q="מנהרה")
-        q.shelves("lib-a")
         q.recent_reads()
 
         assert _user_version(path) == before

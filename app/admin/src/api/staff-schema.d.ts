@@ -95,29 +95,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/staff/v1/libraries/{library_id}/shelves": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * One library's shelves (retiring — see /images)
-         * @description ⚠ Superseded by `/images`; still served until the console's library
-         *     screen becomes the account drawer. Cross-tenant, so it cannot be
-         *     `/api/v1/shelves`: that resolves the caller's membership, and a system
-         *     administrator is a member of nothing.
-         */
-        get: operations["shelves_api_staff_v1_libraries__library_id__shelves_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/staff/v1/overview": {
         parameters: {
             query?: never;
@@ -476,32 +453,6 @@ export interface components {
             /** Status */
             status: string;
         };
-        /**
-         * ShelfDTO
-         * @description ⚠ RETIRING — superseded by :class:`ImageDTO`. Still served because the
-         *     console's library screen still renders it; it goes with that screen.
-         */
-        ShelfDTO: {
-            /**
-             * Books
-             * @description DISTINCT books with a copy standing here, not copies — two copies of one book is one book on the shelf.
-             */
-            books: number;
-            /** Captures */
-            captures: number;
-            /** Depth Count */
-            depth_count: number;
-            /** Id */
-            id: string;
-            /** Label */
-            label: string;
-            /** Last Read */
-            last_read?: string | null;
-            /** Library Id */
-            library_id: string;
-            /** Virtual */
-            virtual: boolean;
-        };
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -708,40 +659,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LibraryDTO"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    shelves_api_staff_v1_libraries__library_id__shelves_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "x-booksnap-staff"?: string | null;
-                authorization?: string | null;
-            };
-            path: {
-                library_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ShelfDTO"][];
                 };
             };
             /** @description Validation Error */
