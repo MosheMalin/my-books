@@ -248,7 +248,7 @@ export interface components {
             total: number;
             /**
              * Truncated
-             * @description A ranked search stopped at the scan cap, so `total` is honest but pages past the cap are not reachable. Narrow the query.
+             * @description A ranked search stopped at the scan cap: `total` is honest, but the rows were ranked over an arbitrary capped slice, so the best match may not be on any page you can reach. Narrow the query.
              */
             truncated: boolean;
         };
@@ -522,11 +522,6 @@ export interface components {
             /** First Added */
             first_added?: string | null;
             /**
-             * Instances
-             * @description Book records, which exceeds `libraries` only if one library holds the same key twice.
-             */
-            instances: number;
-            /**
              * Key
              * @description `app.domain.text.book_key` — `normalize(title)|normalize(author)`. Opaque to the client; pass it back verbatim.
              */
@@ -563,7 +558,7 @@ export interface components {
             total: number;
             /**
              * Truncated
-             * @description A ranked search stopped at the scan cap, so `total` is honest but pages past the cap are not reachable. Narrow the query.
+             * @description A ranked search stopped at the scan cap: `total` is honest, but the rows were ranked over an arbitrary capped slice, so the best match may not be on any page you can reach. Narrow the query.
              */
             truncated: boolean;
         };

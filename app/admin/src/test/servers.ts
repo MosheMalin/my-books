@@ -7,10 +7,12 @@
  * both from one set of rows would let a screen mix the scopes and still pass.
  */
 import {
-  fakeServer, makeAccount, makeOverview, makeStaffBook, makeStaffLibrary,
-  makeLibrary, type FakeServer,
+  fakeServer, makeAccount, makeOverview, makeStaffBook, makeStaffImage,
+  makeStaffLibrary, makeStaffWork, makeLibrary, type FakeServer,
 } from './harness'
-import type { StaffAccount, StaffBook, StaffLibrary, StaffOverview } from '../api/staff'
+import type {
+  StaffAccount, StaffBook, StaffImage, StaffLibrary, StaffOverview, StaffWork,
+} from '../api/staff'
 import type { LibraryDTO } from '../api/schema'
 
 export interface World {
@@ -18,6 +20,14 @@ export interface World {
   libraries: StaffLibrary[]
   accounts: StaffAccount[]
   books: StaffBook[]
+  /** The aggregate the Books screen actually renders. Kept SEPARATE from
+   *  `books` on purpose: the server derives works from books, and a fake that
+   *  derived them here would be a second implementation of the display-title
+   *  and spread rules — agreeing with itself while the real one drifts. */
+  works: StaffWork[]
+  /** Which books each work resolves to, keyed by `work.key`. */
+  instances: Record<string, StaffBook[]>
+  images: StaffImage[]
   /** What `/api/v1/libraries` answers — the operator's OWN memberships, which
    *  is deliberately a SUBSET of `libraries` in the default world so that
    *  "reads everything, writes only mine" is exercised by default. */
@@ -52,6 +62,41 @@ export const DEFAULT_WORLD: World = {
     makeStaffBook({ id: 'b3', library_id: 'lib-2', title: 'גגא', author: 'ג',
                     status: 'manual' }),
   ],
+  // ⚠ Three works over four books: 'אבא' is held by BOTH libraries — one of
+  // them a house the operator cannot write to — which is the default fixture
+  // precisely because "one book, several households" is the case the whole
+  // aggregate exists for.
+  works: [
+    makeStaffWork({ key: 'אבא|א', title: 'אבא', author: 'א', libraries: 2,
+                    copies: 3, mixed: true, status: 'manual' }),
+    makeStaffWork({ key: 'בבא|ב', title: 'בבא', author: 'ב',
+                    status: 'approved' }),
+    makeStaffWork({ key: 'גגא|ג', title: 'גגא', author: 'ג',
+                    status: 'manual' }),
+  ],
+  instances: {
+    'אבא|א': [
+      makeStaffBook({ id: 'b1', library_id: 'lib-1', title: 'אבא', author: 'א' }),
+      makeStaffBook({ id: 'b1b', library_id: 'lib-2', title: 'אבא!', author: 'א',
+                      status: 'manual' }),
+    ],
+    'בבא|ב': [
+      makeStaffBook({ id: 'b2', library_id: 'lib-1', title: 'בבא', author: 'ב',
+                      status: 'approved' }),
+    ],
+    'גגא|ג': [
+      makeStaffBook({ id: 'b3', library_id: 'lib-2', title: 'גגא', author: 'ג',
+                      status: 'manual' }),
+    ],
+  },
+  images: [
+    makeStaffImage({ id: 'cap-1', library_id: 'lib-1' }),
+    makeStaffImage({ id: 'cap-2', library_id: 'lib-2', shelf_id: 'sh-2',
+                     shelf_label: '', present: false, bytes: 0, width: 0,
+                     height: 0, content_type: '', filename: '',
+                     reads: 0, findings: 0, auto: 0, review: 0, unmatched: 0,
+                     last_read: null }),
+  ],
   // ⚠ Only lib-1. The operator SEES both libraries and may WRITE to one, which
   // is the console's central asymmetry and therefore the default fixture.
   mine: [makeLibrary({ id: 'lib-1', label: 'הבית', role: 'admin' })],
@@ -69,6 +114,29 @@ export function bothServices(world: Partial<World> = {}): FakeServer {
       const items = lib ? w.books.filter((b) => b.library_id === lib) : w.books
       return { items, total: items.length, offset: 0, limit: 25,
                truncated: false }
+    },
+    // ⚠ The narrowing SELECTS works and does not change what one reports —
+    // the fake filters the list and leaves each row's `libraries` alone,
+    // because that is what the server does and a fake that recomputed it
+    // would hide the bug this rule exists to prevent.
+    'GET /api/staff/v1/works/instances': (req) => {
+      const key = new URL(req.url, 'http://x').searchParams.get('key') ?? ''
+      return w.instances[key] ?? []
+    },
+    'GET /api/staff/v1/works': (req) => {
+      const url = new URL(req.url, 'http://x')
+      const lib = url.searchParams.get('library_id')
+      const items = lib
+        ? w.works.filter((k) => (w.instances[k.key] ?? [])
+            .some((b) => b.library_id === lib))
+        : w.works
+      return { items, total: items.length, offset: 0, limit: 25,
+               truncated: false }
+    },
+    'GET /api/staff/v1/images': (req) => {
+      const lib = new URL(req.url, 'http://x').searchParams.get('library_id')
+      const items = lib ? w.images.filter((i) => i.library_id === lib) : w.images
+      return { items, total: items.length, offset: 0, limit: 25 }
     },
     'GET /api/staff/v1/reads': () => [],
     'GET /api/v1/libraries': () => w.mine,

@@ -88,6 +88,13 @@ const HE = {
   th_author: 'מחבר',
   th_copies: 'עותקים',
   th_added: 'נוסף',
+  // A WORK's spread. Deliberately not `th_library` — that one names ONE
+  // library and this counts them, and the console's whole revision-4 point
+  // is that a book does not have a library.
+  th_libraries: 'ספריות',
+  th_first_found: 'נמצא לראשונה',
+  th_images: 'תמונות',
+  th_storage: 'אחסון',
   th_actions: 'פעולות',
 
   // libraries
@@ -140,6 +147,8 @@ const HE = {
   sort_title: 'כותרת',
   sort_author: 'מחבר',
   sort_recent: 'נוספו לאחרונה',
+  sort_first_found: 'נמצאו לראשונה',
+  sort_spread: 'במספר הספריות הגדול ביותר',
   books_sort_ignored: 'בחיפוש התוצאות מסודרות לפי רלוונטיות',
   // What the box READS while the server is ignoring the key — the
   // ordering actually in force, not a stale choice nobody applies.
@@ -157,6 +166,22 @@ const HE = {
     'במצב "כל הספריות" הרשימה נטענת מכל ספרייה בנפרד וממוינת בדפדפן, ולכן הסדר עשוי להיות מעט שונה ממיון של ספרייה אחת.',
   books_capped: (loaded: number, total: number) =>
     `נטענו ${loaded} מתוך ${total} ספרים. צמצמו את החיפוש או בחרו ספרייה אחת כדי לראות את השאר.`,
+
+  // works — books, aggregated across כל הדיירים
+  works_sub: 'שורה אחת לכל ספר, בכל המערכת. הספרייה אינה תכונה של ספר — היא רשימה שלו.',
+  works_mixed: 'סטטוס מעורב',
+  works_where: 'איפה הוא נמצא',
+  works_gone: 'אף ספרייה אינה מחזיקה את הספר הזה כרגע',
+  works_last_added: 'נוסף לאחרונה',
+  works_open_spread: (n: number) => `הצגת ${n} הספריות שמחזיקות את הספר`,
+  works_copies_here: (n: number) => `${n} עותקים`,
+  works_on_shelves: (n: number) => `על ${n} מדפים`,
+  works_display_title:
+    'הכותרת למעלה היא האיות של אחת הספריות — החזק ביותר, ובמקרה של תיקו הוותיק ביותר. לכל ספרייה מופיע האיות שלה למטה.',
+  works_edit_rekeys:
+    'שינוי כותרת או מחבר משנה את זהות הספר, ולכן העותק הזה עשוי לעבור לשורה אחרת ברשימה.',
+  works_filter_keeps_spread:
+    'הסינון בוחר אילו ספרים מוצגים; מספר הספריות שבשורה נשאר המספר האמיתי.',
 
   // book panel
   bp_title: 'פרטי הספר',
@@ -285,6 +310,10 @@ const EN: Strings = {
   th_author: 'Author',
   th_copies: 'Copies',
   th_added: 'Added',
+  th_libraries: 'Libraries',
+  th_first_found: 'First found',
+  th_images: 'Images',
+  th_storage: 'Storage',
   th_actions: 'Actions',
 
   lib_title: 'Libraries',
@@ -336,6 +365,8 @@ const EN: Strings = {
   sort_title: 'Title',
   sort_author: 'Author',
   sort_recent: 'Recently added',
+  sort_first_found: 'First found',
+  sort_spread: 'In most libraries',
   books_sort_ignored: 'While searching, results are ordered by relevance',
   books_sort_relevance: 'Relevance',
   books_lent: 'Lent out only',
@@ -351,6 +382,21 @@ const EN: Strings = {
     'In "all libraries" mode the list is fetched per library and sorted in the browser, so the order can differ slightly from a single library\'s.',
   books_capped: (loaded: number, total: number) =>
     `Loaded ${loaded} of ${total} books. Narrow the search, or pick one library, to see the rest.`,
+
+  works_sub: 'One row per book, across the whole system. A library is not a property of a book — it is a list of them.',
+  works_mixed: 'mixed',
+  works_where: 'Where it stands',
+  works_gone: 'No library holds this book right now',
+  works_last_added: 'Last added',
+  works_open_spread: (n: number) => `Show the ${n} libraries holding this book`,
+  works_copies_here: (n: number) => `${n} copies`,
+  works_on_shelves: (n: number) => `on ${n} shelves`,
+  works_display_title:
+    "The title above is one library's spelling — the strongest claim, oldest first on a tie. Each library's own spelling is shown below.",
+  works_edit_rekeys:
+    "Editing the title or author changes the book's identity, so this copy may move to a different row in the list.",
+  works_filter_keeps_spread:
+    'A filter selects which books are listed; the library count on a row stays the true one.',
 
   bp_title: 'Book details',
   bp_library: 'Library',

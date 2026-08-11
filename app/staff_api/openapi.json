@@ -125,7 +125,7 @@
             "type": "integer"
           },
           "truncated": {
-            "description": "A ranked search stopped at the scan cap, so `total` is honest but pages past the cap are not reachable. Narrow the query.",
+            "description": "A ranked search stopped at the scan cap: `total` is honest, but the rows were ranked over an arbitrary capped slice, so the best match may not be on any page you can reach. Narrow the query.",
             "title": "Truncated",
             "type": "boolean"
           }
@@ -742,11 +742,6 @@
             ],
             "title": "First Added"
           },
-          "instances": {
-            "description": "Book records, which exceeds `libraries` only if one library holds the same key twice.",
-            "title": "Instances",
-            "type": "integer"
-          },
           "key": {
             "description": "`app.domain.text.book_key` — `normalize(title)|normalize(author)`. Opaque to the client; pass it back verbatim.",
             "title": "Key",
@@ -790,7 +785,6 @@
           "status",
           "mixed",
           "libraries",
-          "instances",
           "copies"
         ],
         "title": "WorkDTO",
@@ -818,7 +812,7 @@
             "type": "integer"
           },
           "truncated": {
-            "description": "A ranked search stopped at the scan cap, so `total` is honest but pages past the cap are not reachable. Narrow the query.",
+            "description": "A ranked search stopped at the scan cap: `total` is honest, but the rows were ranked over an arbitrary capped slice, so the best match may not be on any page you can reach. Narrow the query.",
             "title": "Truncated",
             "type": "boolean"
           }

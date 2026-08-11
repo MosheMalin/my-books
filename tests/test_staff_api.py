@@ -259,29 +259,59 @@ def test_a_shelf_row_counts_distinct_books_not_copies():
 
 def _also_in_lib_b(path: Path, *, title: str, author: str = "ארנסטו סבאטו",
                    status: Status = Status.AUTO, added_at: str = "2026-05-01",
-                   book_id: str = "b1b", copy_id: str = "c1b") -> None:
+                   book_id: str = "b1b", copy_id: str = "c1b",
+                   copies: int = 1) -> None:
     """The same WORK in the second library, optionally spelled differently.
 
-    Written through the real store like `_seed`, so the `norm_title` /
-    `norm_author` the aggregate keys on are the ones the product's own write
-    path produces — not two hand-typed strings that agree with each other.
+    Written through the real store like `_seed`, so the `book_key` the
+    aggregate groups on is the one the product's own write path produces — not
+    a hand-typed string that agrees with itself.
     """
-    SqliteBookStore(path).save(
-        LibraryRef(id="lib-b"),
-        new_book(id=book_id, library_id="lib-b", copy_id=copy_id, title=title,
-                 author=author, status=status, added_at=added_at),
-    )
+    book = new_book(id=book_id, library_id="lib-b", copy_id=copy_id,
+                    title=title, author=author, status=status,
+                    added_at=added_at)
+    for n in range(1, copies):
+        book = add_copy(book, copy_id=f"{copy_id}-{n}", status=status)
+    SqliteBookStore(path).save(LibraryRef(id="lib-b"), book)
 
 
 def test_a_work_is_one_row_across_tenants_not_one_per_library():
     """The whole frame change. Three books in two libraries where two of them
-    are the same title is THREE works, and the shared one says so."""
+    are the same title is THREE works, and the shared one says so.
+
+    ⚠ The second household holds TWO copies, so `libraries` and `copies` are
+    different numbers. They coincided in the first version of this test, which
+    a review measured: `COUNT(DISTINCT library_id)` could be replaced by
+    `COUNT(*)`, and `SUM(copy_count)` by `COUNT(*)`, with nothing failing.
+    """
     with _queries() as (q, path):
-        _also_in_lib_b(path, title="המנהרה")
+        _also_in_lib_b(path, title="המנהרה", copies=2)
         rows, total = q.works()
         assert total == 3, "four books, three distinct works"
         shared = {r.title: r for r in rows}["המנהרה"]
-        assert (shared.libraries, shared.instances, shared.copies) == (2, 2, 2)
+        assert (shared.libraries, shared.copies) == (2, 3)
+        assert shared.mixed is False, "both households read it as auto"
+
+
+def test_the_display_title_breaks_a_tie_by_age_then_by_id():
+    """The other two thirds of the display rule. With both households at the
+    same §5.1 rung the EARLIEST wins; with the same date, the id does — an
+    order that is total, so the console cannot show one title today and
+    another tomorrow."""
+    with _queries() as (q, path):
+        _also_in_lib_b(path, title="המנהרה!", status=Status.AUTO,
+                       added_at="2020-01-01")
+        rows, _ = q.works()
+        work = {r.key: r for r in rows}[book_key("המנהרה", "ארנסטו סבאטו")]
+        assert work.title == "המנהרה!", "same rung, so the older one shows"
+
+    with _queries() as (q, path):
+        # Same rung AND same date: only the id can decide, and it must.
+        _also_in_lib_b(path, title="המנהרה!", status=Status.AUTO,
+                       added_at="2026-02-01", book_id="b0")
+        rows, _ = q.works()
+        work = {r.key: r for r in rows}[book_key("המנהרה", "ארנסטו סבאטו")]
+        assert work.title == "המנהרה!", "'b0' sorts before 'b1'"
 
 
 def test_the_display_title_is_the_strongest_claim_then_the_earliest():
@@ -330,15 +360,56 @@ def test_a_status_filter_matches_a_work_with_any_instance_at_that_status():
         assert work.mixed is True, "…and says the households disagree"
 
 
-def test_a_work_is_found_by_any_households_spelling():
-    """The search matches an INSTANCE's stored text, not the display row's:
-    otherwise a book would be unfindable because another tenant's copy won the
-    tiebreak for which spelling to show."""
+def test_a_work_is_found_by_the_products_measured_hebrew_rules():
+    """P1.5's rules, not a second implementation: a query for `מנהרה` finds the
+    stored `המנהרה` because a leading particle is tolerated in the QUERY.
+
+    ⚠ Its earlier name claimed the search matched "any household's spelling",
+    which a review showed cannot happen — `search_text` is derived from the
+    same normalized pair as the key, so every instance of one work carries a
+    byte-identical haystack. The behaviour was right and the reason was not.
+    """
     with _queries() as (q, path):
         _also_in_lib_b(path, title="המנהרה", status=Status.MANUAL,
                        added_at="2020-01-01")
         rows, total = q.works(q="מנהרה")
         assert total == 1 and rows[0].libraries == 2
+
+
+def test_a_query_that_parses_to_nothing_matches_nothing():
+    """⚠ Not "matches everything". `app/domain/search.py` states the rule and
+    the product's own store honours it; before a review measured it, a console
+    search box fed one punctuation character answered with the whole system —
+    and, because the ranked path never ran, called the answer truncated."""
+    with _queries() as (q, _):
+        assert q.works(q="!!!") == ((), 0)
+        assert q.books(q="!!!") == ((), 0)
+
+
+def test_an_unknown_sort_is_refused_rather_than_quietly_ordered_by_title():
+    """⚠ `/books` sorts by `recently_added`; a work's date key is
+    `first_added`. A caller carrying the other route's spelling must be told,
+    not served a plausible wrong ordering."""
+    with _queries() as (q, _):
+        for key in ("title", "author", "first_added", "libraries"):
+            q.works(sort=key)
+            q.works(sort=key, ascending=False)
+        try:
+            q.works(sort="recently_added")
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("an unknown sort key must be refused")
+
+
+def test_sorting_by_spread_puts_the_most_widely_held_first():
+    """The sort the screen exists for — "which titles is everybody holding"."""
+    with _queries() as (q, path):
+        _also_in_lib_b(path, title="המנהרה")
+        rows, _ = q.works(sort="libraries", ascending=False)
+        assert rows[0].title == "המנהרה"
+        rows, _ = q.works(sort="libraries", ascending=True)
+        assert rows[-1].title == "המנהרה"
 
 
 def test_work_instances_name_the_households_strongest_first():

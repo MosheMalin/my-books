@@ -575,9 +575,15 @@ because every one of them is a cross-tenant read.
 |---|---|---|---|
 | **A1** | **Works in the read model** — `works()` / `work_instances()`, `GET /works`, `GET /works/instances?key=`, ranked search over the aggregate, the display-title rule | quality, data-integrity, security | staff ring green; the display-title rule and the "one row per `book_key` across tenants" rule each pinned by a mutation-checked test; contract regenerated |
 | **A2** | **Images and storage in the read model** — `images()` (paged, cross-tenant, per-image reads/claims from `claims.capture_id` + `reads.capture_ids`), `storage.py` reading the blob tree, account-level figures (`admins` by name, `image_files`, `image_bytes`), `accounts_without_membership` on `/overview`; retire `/libraries/{id}/shelves` | quality, data-integrity, security | as above, plus the layout-drift test against `DiskBlobStore`, and a missing blob root reported as zero rather than a 500 |
-| **A3** | **Console: Accounts** — the merged tab (Libraries + Users), the account drawer with Users / Books / Images sections, `#/accounts`, redirects from `#/libraries` and `#/users`, unaffiliated accounts, dashboard restated in images + storage | quality, ux | admin ring green; verified in a real browser against the real database (snapshotted first); old routes still land somewhere sensible |
-| **A4** | **Console: Works** — the aggregate table, "in N libraries", the work drawer with its per-library instance list and per-instance actions, sort by spread | quality, ux | admin ring green; a book in a library the operator does not belong to still shows and still says read-only; browser-verified |
-| **A5** | **Console: Images** — the cross-tenant image list, filters, the image drawer (metadata, binding, reads and what they found), thumbnails only where the operator is a member | quality, ux, security | admin ring green; no image bytes requested from `:8758` by any code path; browser-verified |
+| **A3** | **Console: Works** — the aggregate table, "in N libraries", the work drawer with its per-library instance list and per-instance actions, sort by spread | quality, ux | admin ring green; a book in a library the operator does not belong to still shows and still says read-only; browser-verified |
+| **A4** | **Console: Images** — the cross-tenant image list, filters, the image drawer (metadata, binding, reads and what they found), thumbnails only where the operator is a member | quality, ux, security | admin ring green; no image bytes requested from `:8758` by any code path; browser-verified |
+| **A5** | **Console: Accounts** — the merged tab (Libraries + Users), the account drawer with Users / Books / Images sections, `#/accounts`, redirects from `#/libraries` and `#/users`, unaffiliated accounts, dashboard restated in images + storage; retires `/libraries/{id}/shelves` with its last caller | quality, ux | admin ring green; verified in a real browser against the real database (snapshotted first); old routes still land somewhere sensible |
+
+*Order amended while executing:* the Accounts screen links into Works and
+Images, so it lands LAST — otherwise its drawer would carry a "see all images"
+link to a tab that does not exist yet, which is the disabled-control shape this
+project refuses. The owner's numbering (books, accounts, images) is a priority
+order, not a build order, and books still land first.
 
 ### What this revision does NOT change
 

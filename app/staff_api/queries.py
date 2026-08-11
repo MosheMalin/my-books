@@ -49,14 +49,29 @@ STATUS_RANK_SQL = (
 #: rank -> name, matching :class:`app.domain.book.Status`.
 RANK_NAMES = ("auto", "approved", "manual")
 
-#: The aggregation key for a WORK — the same book identity the product uses.
+#: The aggregation key for a WORK — the STORED one the product writes.
 #:
-#: ⚠ ``app.domain.text.book_key`` is ``normalize(title)|normalize(author)`` and
-#: ``books.norm_title``/``books.norm_author`` are written BY that function on
-#: every write path, so this expression reconstructs the key without a new
-#: column and without a second normalizer. CLAUDE.md's rule is that two
-#: normalizers drift; this would have been the third place to grow one.
-WORK_KEY_SQL = "(books.norm_title || '|' || books.norm_author)"
+#: ⚠ This was ``(norm_title || '|' || norm_author)`` for one commit, with a
+#: comment claiming it avoided needing a new column. It did not: ``book_key``
+#: has been a column since schema v1, written from ``Book.key`` (i.e.
+#: ``app.domain.text.book_key``) on every save, carrying
+#: ``UNIQUE INDEX books_library_key``, and read by the product's own
+#: ``get_by_key``. Recomputing it made a FOURTH expression of one identity —
+#: caught by a review, which measured that a separator change was pinned but a
+#: divergence between the column and the recomputation was not. A console
+#: built to be authoritative about book identity must read the same value the
+#: product keys on, not a lookalike.
+WORK_KEY_SQL = "books.book_key"
+
+#: Sort keys :meth:`StaffQueries.works` understands.
+#:
+#: ⚠ Validated rather than silently defaulted, unlike ``books()``. The two
+#: routes' keys genuinely differ — a work's date is ``first_added`` (the
+#: earliest anywhere), a book's is ``recently_added`` — so a caller carrying
+#: the other route's spelling would otherwise get title order and no hint,
+#: which is exactly the "answers plausibly" failure this codebase keeps
+#: recording about stale servers.
+WORK_SORTS = ("title", "author", "first_added", "libraries")
 
 #: How many matching rows a ranked search pulls before ordering them in Python.
 #: `app/domain/search.py` documents the same linear-scan trade for ONE library
@@ -71,7 +86,7 @@ REQUIRED_COLUMNS = {
     "accounts": ("id", "display_name", "email", "created_at"),
     "libraries": ("id", "label", "created_at"),
     "memberships": ("account_id", "library_id", "role", "joined_at"),
-    "books": ("id", "library_id", "title", "author", "added_at",
+    "books": ("id", "library_id", "title", "author", "added_at", "book_key",
               "search_text", "sort_author", "norm_title", "norm_author"),
     "copies": ("id", "book_id", "library_id", "status", "shelf_id", "lent_out"),
     "shelves": ("id", "library_id", "label", "virtual", "depth_count",
@@ -132,8 +147,13 @@ SELECT work_key AS key,
        MAX(CASE WHEN pick = 1 THEN sort_author END) AS sort_author,
        MAX(rank) AS rank,
        MIN(rank) AS weakest,
+       -- ⚠ `COUNT(*)` is EQUAL to this today and must not replace it: the
+       -- equality holds only because `UNIQUE INDEX books_library_key` forbids
+       -- one library holding a key twice. A mutation to `COUNT(*)` survives
+       -- the suite for that reason (measured), so this comment is the guard —
+       -- DISTINCT states the question, which is "how many libraries", not
+       -- "how many rows".
        COUNT(DISTINCT library_id) AS libraries,
-       COUNT(*) AS instances,
        SUM(copy_count) AS copies,
        MIN(added_at) AS first_added,
        MAX(added_at) AS last_added
@@ -235,7 +255,6 @@ class WorkRow:
     status: str
     mixed: bool
     libraries: int
-    instances: int
     copies: int
     first_added: str | None
     last_added: str | None
@@ -325,8 +344,7 @@ def _work_row(r: sqlite3.Row) -> WorkRow:
     return WorkRow(
         key=str(r["key"]), title=r["title"] or "", author=r["author"] or "",
         status=RANK_NAMES[strongest], mixed=strongest != weakest,
-        libraries=int(r["libraries"]), instances=int(r["instances"]),
-        copies=int(r["copies"] or 0),
+        libraries=int(r["libraries"]), copies=int(r["copies"] or 0),
         first_added=r["first_added"], last_added=r["last_added"],
     )
 
@@ -579,6 +597,10 @@ class StaffQueries:
             params.append(RANK_NAMES.index(status))
 
         query = parse(q) if q.strip() else None
+        if q.strip() and not query:
+            # See `works()`: empty terms means "match nothing", never "match
+            # everything". The product's own store already answers that way.
+            return (), 0
         if query:
             clause, like_params = compile_sql_like(query, "books.search_text")
             if clause:
@@ -618,7 +640,8 @@ class StaffQueries:
                 # cannot pull a whole system into memory; the caller is told
                 # when the cap bit rather than shown a silently short list.
                 rows = conn.execute(
-                    f"{select}{clause_sql} LIMIT ?",
+                    # Deterministic slice — see `works()` for the argument.
+                    f"{select}{clause_sql} ORDER BY books.id LIMIT ?",
                     (*params, RANKED_SCAN_CAP),
                 ).fetchall()
                 scored = sorted(
@@ -671,6 +694,17 @@ class StaffQueries:
         when you filter is a number nobody can trust, and the console's central
         column is exactly that number.
 
+        ⚠ **While `q` ranks, `sort` and `ascending` are ignored** — relevance
+        IS the order. The console's control goes inert and reads "relevance"
+        for that reason; a caller that is not the console should know it too.
+
+        ⚠ **Cost**: two passes over `books` per call (one for `total`, one for
+        the page), each a group-sort over every row. Measured by a review:
+        8ms at 175 books, 158ms at 3.5k, 2.8s at 70k. The owner's real data is
+        251 books. The lever, when one is needed, is caching `total` or
+        materialising the aggregate — NOT rewriting the correlated subqueries,
+        which were measured at 11% of it.
+
         ⚠ **The display title is a choice, not a fact.** Two households may
         hold one work under two spellings that normalize alike — that is what
         the key is FOR — so one has to be shown. The rule: the strongest §5.1
@@ -681,6 +715,8 @@ class StaffQueries:
         """
         if status is not None and status not in RANK_NAMES:
             raise ValueError(f"unknown status {status!r}")
+        if sort not in WORK_SORTS:
+            raise ValueError(f"unknown sort {sort!r}")
 
         having: list[str] = []
         params: list[Any] = []
@@ -694,12 +730,24 @@ class StaffQueries:
             params.append(RANK_NAMES.index(status))
 
         query = parse(q) if q.strip() else None
+        if q.strip() and not query:
+            # ⚠ A query that parses to no terms means "match nothing", never
+            # "match everything" — `app/domain/search.py` says so and the
+            # product's own store honours it. Without this line a search box
+            # fed one punctuation character answers with the entire system,
+            # and (because the ranked path never runs) reports it as
+            # truncated. Found by a review, which measured `q="!!!"` returning
+            # every book here while the product returned none.
+            return (), 0
         if query:
-            # ⚠ Matched against the instance's OWN `search_text`, not the
-            # display row's: a work is found by any spelling any household
-            # stored, then shown under the display rule above. Searching only
-            # the display row would hide a book from the operator because
-            # another tenant's copy won the tiebreak.
+            # ⚠ `search_text` is derived from the same normalized pair as the
+            # key (`app/domain/search.py:haystack`), so every instance of one
+            # work carries a byte-identical haystack: matching per instance and
+            # matching the group are equivalent here, and neither can find a
+            # "different spelling" — there is no such thing at this column.
+            # Written as a HAVING anyway so all three narrowings read the same
+            # way, and so it stays correct if `search_text` ever grows a
+            # per-instance term (a subtitle, a publisher).
             clause, like_params = compile_sql_like(query, "search_text")
             if clause:
                 having.append(
@@ -717,7 +765,7 @@ class StaffQueries:
             # "in how many libraries" — the question this screen exists to
             # answer, so it is a sort key and not only a column.
             "libraries": f"libraries {direction}, norm_title ASC, key ASC",
-        }.get(sort, f"norm_title {direction}, key {direction}")
+        }[sort]
 
         grouped = f"{_WORK_CTE}{_WORK_GROUPED}{having_sql}"
 
@@ -731,7 +779,15 @@ class StaffQueries:
                 # Ranked, like `books()`: the domain's own score decides the
                 # order, bounded by the same cap so a one-letter query cannot
                 # pull a whole system into memory.
-                rows = conn.execute(f"{grouped} LIMIT ?",
+                # ⚠ `ORDER BY key` inside the CAP, though Python re-sorts
+                # by score straight after. Without it the LIMIT takes an
+                # arbitrary slice of the grouped set, so which works are
+                # ranked at all varies between identical requests — a review
+                # measured the exact-title hit vanishing from page 1 entirely.
+                # Deterministic is not the same as correct (the best match can
+                # still be outside the cap, which is what `truncated` says),
+                # but two identical requests must agree.
+                rows = conn.execute(f"{grouped} ORDER BY key LIMIT ?",
                                     (*params, RANKED_SCAN_CAP)).fetchall()
                 page: Sequence[sqlite3.Row] = sorted(
                     rows,

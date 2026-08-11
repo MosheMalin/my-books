@@ -20,7 +20,7 @@ import { I18nProvider } from '../lib/i18n'
 import { SystemProvider } from '../lib/system'
 import type { BookDTO, LibraryDTO } from '../api/schema'
 import type {
-  StaffAccount, StaffBook, StaffLibrary, StaffOverview,
+  StaffAccount, StaffBook, StaffImage, StaffLibrary, StaffOverview, StaffWork,
 } from '../api/staff'
 
 export interface Recorded {
@@ -91,6 +91,27 @@ export function makeStaffBook(over: Partial<StaffBook> = {}): StaffBook {
     id: 'b1', library_id: 'lib-1', title: 'ספר', author: 'מחבר',
     status: 'auto', copy_count: 1, shelf_count: 0,
     added_at: '2026-01-02T00:00:00Z',
+    ...over,
+  }
+}
+
+export function makeStaffWork(over: Partial<StaffWork> = {}): StaffWork {
+  return {
+    key: 'ספר|מחבר', title: 'ספר', author: 'מחבר', status: 'auto',
+    mixed: false, libraries: 1, copies: 1,
+    first_added: '2026-01-02T00:00:00Z', last_added: '2026-01-02T00:00:00Z',
+    ...over,
+  }
+}
+
+export function makeStaffImage(over: Partial<StaffImage> = {}): StaffImage {
+  return {
+    id: 'cap-1', library_id: 'lib-1', image_key: 'a'.repeat(64) + '.jpg',
+    captured_at: '2026-01-03T00:00:00Z', shelf_id: 'sh-1', shelf_label: 'מדף',
+    depth: 1, order: 0, present: true, bytes: 120_000, width: 1200,
+    height: 900, content_type: 'image/jpeg', filename: 'shelf.jpg',
+    reads: 1, findings: 3, auto: 2, review: 1, unmatched: 0,
+    last_read: '2026-01-04T00:00:00Z',
     ...over,
   }
 }

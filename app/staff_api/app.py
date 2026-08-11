@@ -30,7 +30,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from app.staff_api.queries import (
-    RANKED_SCAN_CAP, SchemaMismatch, StaffQueries,
+    RANK_NAMES, RANKED_SCAN_CAP, SchemaMismatch, StaffQueries, WORK_SORTS,
 )
 
 #: Header the console presents its token in. ``Authorization: Bearer …`` is
@@ -146,9 +146,10 @@ class BookPageDTO(BaseModel):
     offset: int
     limit: int
     truncated: bool = Field(
-        description="A ranked search stopped at the scan cap, so `total` is "
-                    "honest but pages past the cap are not reachable. Narrow "
-                    "the query.",
+        description="A ranked search stopped at the scan cap: `total` is "
+                    "honest, but the rows were ranked over an arbitrary "
+                    "capped slice, so the best match may not be on any page "
+                    "you can reach. Narrow the query.",
     )
 
 
@@ -176,9 +177,6 @@ class WorkDTO(BaseModel):
     libraries: int = Field(description="How many libraries hold it. Unaffected "
                                        "by the filters — see the query's note "
                                        "on HAVING vs WHERE.")
-    instances: int = Field(description="Book records, which exceeds "
-                                       "`libraries` only if one library holds "
-                                       "the same key twice.")
     copies: int
     first_added: str | None = None
     last_added: str | None = None
@@ -190,9 +188,10 @@ class WorkPageDTO(BaseModel):
     offset: int
     limit: int
     truncated: bool = Field(
-        description="A ranked search stopped at the scan cap, so `total` is "
-                    "honest but pages past the cap are not reachable. Narrow "
-                    "the query.",
+        description="A ranked search stopped at the scan cap: `total` is "
+                    "honest, but the rows were ranked over an arbitrary "
+                    "capped slice, so the best match may not be on any page "
+                    "you can reach. Narrow the query.",
     )
 
 
@@ -376,8 +375,7 @@ def create_app(queries: StaffQueries) -> FastAPI:
         limit: int = Query(default=50, ge=1, le=200),
         offset: int = Query(default=0, ge=0),
     ) -> BookPageDTO:
-        if book_status is not None and book_status not in ("auto", "approved",
-                                                           "manual"):
+        if book_status is not None and book_status not in RANK_NAMES:
             raise HTTPException(status.HTTP_400_BAD_REQUEST,
                                 "status must be auto, approved or manual")
         items, total = queries.books(
@@ -404,10 +402,16 @@ def create_app(queries: StaffQueries) -> FastAPI:
         """⚠ `library_id` and `status` SELECT works; they never narrow what a
         work reports. "In 3 libraries" means three whatever the filter says —
         see `StaffQueries.works` for why that had to be a `HAVING`."""
-        if book_status is not None and book_status not in ("auto", "approved",
-                                                           "manual"):
+        if book_status is not None and book_status not in RANK_NAMES:
             raise HTTPException(status.HTTP_400_BAD_REQUEST,
                                 "status must be auto, approved or manual")
+        if sort not in WORK_SORTS:
+            # ⚠ A 400, not a silent fall back to title order. `/books` sorts by
+            # `recently_added` and a work's date key is `first_added`; a caller
+            # carrying the wrong spelling would otherwise be served a plausible
+            # wrong ordering with nothing on screen to say so.
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                f"sort must be one of {', '.join(WORK_SORTS)}")
         items, total = queries.works(
             q=q, library_id=library_id, status=book_status, sort=sort,
             ascending=ascending, limit=limit, offset=offset,
