@@ -163,7 +163,10 @@ export function BooksPage({ initialLibraryId }: { initialLibraryId: string | und
         />
       </div>
 
-      {status && <p className="sub">{t.works_filter_keeps_spread}</p>}
+      {/* ⚠ BOTH filters, not just status. A review caught that the sentence
+          explaining what a filter does not change was missing for the
+          LIBRARY filter — the one revision 4 is actually about. */}
+      {(status || libraryId) && <p className="sub">{t.works_filter_keeps_spread}</p>}
       {searching && <p className="sub">{t.books_sort_ignored}</p>}
       {result.data?.truncated && <p className="note warn">{t.books_truncated}</p>}
 

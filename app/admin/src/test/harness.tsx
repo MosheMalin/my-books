@@ -13,7 +13,7 @@
  * with the code while both are wrong.
  */
 import { render, type RenderResult } from '@testing-library/react'
-import type { ReactElement } from 'react'
+import type { ReactElement, ReactNode } from 'react'
 import { vi } from 'vitest'
 
 import { I18nProvider } from '../lib/i18n'
@@ -174,7 +174,11 @@ export function fakeServer(defaults: Record<string, (req: Recorded) => unknown> 
       return new Response(JSON.stringify({ detail: `unrouted ${method} ${url}` }),
                           { status: 599 })
     }
-    const payload = best(req)
+    // ⚠ AWAITED. Without it a handler cannot be slow, so no test can
+    // exercise a screen mid-fetch — which is how the work panel's `key`
+    // lost its gate — and an async handler was silently `JSON.stringify`ed
+    // to `{}` rather than failing.
+    const payload = await best(req)
     if (payload instanceof Response) return payload
     return new Response(JSON.stringify(payload ?? null),
                         { status: 200, headers: { 'Content-Type': 'application/json' } })
@@ -187,10 +191,19 @@ export function fakeServer(defaults: Record<string, (req: Recorded) => unknown> 
   }
 }
 
+const wrapped = (ui: ReactNode) => (
+  <I18nProvider>
+    <SystemProvider>{ui}</SystemProvider>
+  </I18nProvider>
+)
+
+/**
+ * ⚠ `rerender` is OVERRIDDEN to re-wrap. Testing Library's own replaces the
+ * whole tree with what it is handed, so a bare `rerender(<Screen …/>)` drops
+ * the providers and the screen throws "useI18n outside <I18nProvider>" —
+ * which reads as a bug in the screen rather than in the call.
+ */
 export function renderApp(ui: ReactElement): RenderResult {
-  return render(
-    <I18nProvider>
-      <SystemProvider>{ui}</SystemProvider>
-    </I18nProvider>,
-  )
+  const result = render(wrapped(ui))
+  return { ...result, rerender: (next: ReactNode) => result.rerender(wrapped(next)) }
 }

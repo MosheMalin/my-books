@@ -27,6 +27,11 @@ export interface World {
   works: StaffWork[]
   /** Which books each work resolves to, keyed by `work.key`. */
   instances: Record<string, StaffBook[]>
+  /** What `/works?library_id=<id>` answers. Fixture data, not derived — see
+   *  the handler. ⚠ Each row keeps its FULL spread: narrowing to lib-2 still
+   *  reports 'אבא' as held by two libraries, because that is what the server
+   *  does and it is the rule the screen exists to honour. */
+  worksIn: Record<string, StaffWork[]>
   images: StaffImage[]
   /** What `/api/v1/libraries` answers — the operator's OWN memberships, which
    *  is deliberately a SUBSET of `libraries` in the default world so that
@@ -55,8 +60,13 @@ export const DEFAULT_WORLD: World = {
       { library_id: 'lib-2', role: 'admin', joined_at: '2026-01-03' },
     ] }),
   ],
+  // ⚠ The same four books the `instances` map resolves to. They disagreed for
+  // one commit (three here, four there) and it was latent only because nothing
+  // read both — the account drawer now does.
   books: [
     makeStaffBook({ id: 'b1', library_id: 'lib-1', title: 'אבא', author: 'א' }),
+    makeStaffBook({ id: 'b1b', library_id: 'lib-2', title: 'אבא!', author: 'א',
+                    status: 'manual' }),
     makeStaffBook({ id: 'b2', library_id: 'lib-1', title: 'בבא', author: 'ב',
                     status: 'approved' }),
     makeStaffBook({ id: 'b3', library_id: 'lib-2', title: 'גגא', author: 'ג',
@@ -74,6 +84,20 @@ export const DEFAULT_WORLD: World = {
     makeStaffWork({ key: 'גגא|ג', title: 'גגא', author: 'ג',
                     status: 'manual' }),
   ],
+  worksIn: {
+    'lib-1': [
+      makeStaffWork({ key: 'אבא|א', title: 'אבא', author: 'א', libraries: 2,
+                      copies: 3, mixed: true, status: 'manual' }),
+      makeStaffWork({ key: 'בבא|ב', title: 'בבא', author: 'ב',
+                      status: 'approved' }),
+    ],
+    'lib-2': [
+      makeStaffWork({ key: 'אבא|א', title: 'אבא', author: 'א', libraries: 2,
+                      copies: 3, mixed: true, status: 'manual' }),
+      makeStaffWork({ key: 'גגא|ג', title: 'גגא', author: 'ג',
+                      status: 'manual' }),
+    ],
+  },
   instances: {
     'אבא|א': [
       makeStaffBook({ id: 'b1', library_id: 'lib-1', title: 'אבא', author: 'א' }),
@@ -124,12 +148,14 @@ export function bothServices(world: Partial<World> = {}): FakeServer {
       return w.instances[key] ?? []
     },
     'GET /api/staff/v1/works': (req) => {
-      const url = new URL(req.url, 'http://x')
-      const lib = url.searchParams.get('library_id')
-      const items = lib
-        ? w.works.filter((k) => (w.instances[k.key] ?? [])
-            .some((b) => b.library_id === lib))
-        : w.works
+      const lib = new URL(req.url, 'http://x').searchParams.get('library_id')
+      // ⚠ A LOOKUP, not a derivation. Which works a library filter selects is
+      // a server decision (a HAVING over the grouped set), and an earlier
+      // version of this fake computed it from `instances` — which meant the
+      // test named for that rule was largely asserting the fake's own
+      // arithmetic. The narrowed answers are fixture data now, like every
+      // other payload here.
+      const items = lib ? (w.worksIn[lib] ?? []) : w.works
       return { items, total: items.length, offset: 0, limit: 25,
                truncated: false }
     },

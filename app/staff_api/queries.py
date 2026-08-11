@@ -392,9 +392,14 @@ def _work_row(r: sqlite3.Row) -> WorkRow:
 class StaffQueries:
     """Every cross-tenant question the console asks, in one place."""
 
-    def __init__(self, db_path: str | Path,
-                 blobs: BlobTree | None = None) -> None:
+    def __init__(self, db_path: str | Path, blobs: BlobTree | None = None,
+                 scan_cap: int = RANKED_SCAN_CAP) -> None:
         self.path = Path(db_path)
+        # ⚠ Injectable ONLY so a test can reach it. `RANKED_SCAN_CAP` is 5000
+        # and a fixture will never seed that many rows, so the determinism the
+        # capped scan was fixed for had no gate — a review measured both
+        # `ORDER BY`s removable with the suite green.
+        self.scan_cap = scan_cap
         if not self.path.exists():
             raise FileNotFoundError(
                 f"no product database at {self.path}; set BOOKSNAP_DB"
@@ -686,7 +691,7 @@ class StaffQueries:
                 rows = conn.execute(
                     # Deterministic slice — see `works()` for the argument.
                     f"{select}{clause_sql} ORDER BY books.id LIMIT ?",
-                    (*params, RANKED_SCAN_CAP),
+                    (*params, self.scan_cap),
                 ).fetchall()
                 scored = sorted(
                     rows,
@@ -823,16 +828,22 @@ class StaffQueries:
                 # Ranked, like `books()`: the domain's own score decides the
                 # order, bounded by the same cap so a one-letter query cannot
                 # pull a whole system into memory.
-                # ⚠ `ORDER BY key` inside the CAP, though Python re-sorts
-                # by score straight after. Without it the LIMIT takes an
-                # arbitrary slice of the grouped set, so which works are
-                # ranked at all varies between identical requests — a review
-                # measured the exact-title hit vanishing from page 1 entirely.
-                # Deterministic is not the same as correct (the best match can
-                # still be outside the cap, which is what `truncated` says),
-                # but two identical requests must agree.
+                # ⚠ `ORDER BY key` inside the CAP, though Python re-sorts by
+                # score straight after. Without it the LIMIT takes an
+                # unspecified slice of the grouped set: which works get ranked
+                # at all is then whatever the planner chose, and a review
+                # measured the exact-title hit vanishing from page 1.
+                #
+                # ⚠ Removing it is an EQUIVALENT MUTANT today (measured):
+                # SQLite's GROUP BY happens to emit rows in grouping-key order,
+                # so the slice is the same either way and no test can tell.
+                # It stays because "happens to" is not a contract — the day the
+                # aggregate grows an index-driven plan, or moves to another
+                # engine, the slice changes and nothing would have said so.
+                # Deterministic is not the same as correct: the best match can
+                # still be outside the cap, which is what `truncated` says.
                 rows = conn.execute(f"{grouped} ORDER BY key LIMIT ?",
-                                    (*params, RANKED_SCAN_CAP)).fetchall()
+                                    (*params, self.scan_cap)).fetchall()
                 page: Sequence[sqlite3.Row] = sorted(
                     rows,
                     key=lambda r: (

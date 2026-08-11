@@ -41,6 +41,15 @@ import {
   libraryName, useAsync, vouchedFor,
 } from '@booksnap/ui'
 
+/** The strongest §5.1 claim in a set. The ladder is `manual` > `approved` >
+ *  `auto`, and `@booksnap/ui` owns the ORDER as `vouchedFor`'s two rungs — this
+ *  is the third, and it is here rather than shared because only this panel
+ *  re-derives an aggregate the server already computed. */
+const LADDER = ['auto', 'approved', 'manual']
+const strongest = (all: string[]): string =>
+  all.reduce((best, one) =>
+    LADDER.indexOf(one) > LADDER.indexOf(best) ? one : best, 'auto')
+
 export function WorkPanel({ work, onClose, onChanged }: {
   work: StaffWork
   onClose: () => void
@@ -76,6 +85,34 @@ export function WorkPanel({ work, onClose, onChanged }: {
     onChanged()
   }
 
+  /**
+   * ⚠⚠ **The summary is DERIVED from the instances, not read off the row.**
+   *
+   * The row is a snapshot taken when the drawer opened, and `onChanged`
+   * refetches the LIST — which does not touch this component's props, because
+   * `selected` is a captured object and its key has not changed. A review
+   * measured the consequence: delete the operator's copy of a two-library
+   * work, watch its household card disappear from the list below, and the
+   * summary above still reads "2 libraries". That is exactly the lie
+   * `onChanged`'s own docstring claims to prevent, one level up.
+   *
+   * So the instances — which ARE refetched — are the source, and the row is
+   * only the fallback for the moment before they arrive. The two agree by
+   * construction: the server derives the aggregate from the same rows.
+   */
+  const rows = instances.data
+  const summary = rows === undefined ? {
+    libraries: work.libraries, copies: work.copies,
+    status: work.status, mixed: work.mixed,
+  } : {
+    libraries: new Set(rows.map((r) => r.library_id)).size,
+    copies: rows.reduce((n, r) => n + r.copy_count, 0),
+    // The §5.1 ladder, as the server derives it: the strongest claim any
+    // household makes, and whether they disagree.
+    status: strongest(rows.map((r) => r.status)),
+    mixed: new Set(rows.map((r) => r.status)).size > 1,
+  }
+
   return (
     <>
       <div className="scrim" onClick={onClose} />
@@ -95,18 +132,18 @@ export function WorkPanel({ work, onClose, onChanged }: {
         <div style={{ marginTop: 14 }}>
           <div className="kv">
             <span className="k">{t.th_libraries}</span>
-            <span>{num(work.libraries)}</span>
+            <span>{num(summary.libraries)}</span>
           </div>
           <div className="kv">
             <span className="k">{t.bp_status}</span>
             <span>
-              <StatusBadge status={work.status} />
-              {work.mixed && <> <span className="badge">{t.works_mixed}</span></>}
+              <StatusBadge status={summary.status} />
+              {summary.mixed && <> <span className="badge">{t.works_mixed}</span></>}
             </span>
           </div>
           <div className="kv">
             <span className="k">{t.bp_copies}</span>
-            <span>{num(work.copies)}</span>
+            <span>{num(summary.copies)}</span>
           </div>
           <div className="kv">
             <span className="k">{t.th_first_found}</span>
@@ -128,7 +165,7 @@ export function WorkPanel({ work, onClose, onChanged }: {
             ways that normalize alike — that is what the key is for — so the
             panel says which title it is showing rather than implying the work
             has one. */}
-        {work.libraries > 1 && (
+        {summary.libraries > 1 && (
           <p className="sub" style={{ marginTop: 8 }}>{t.works_display_title}</p>
         )}
 
@@ -226,9 +263,15 @@ function Instance({ book, onChanged }: {
       {/* The household's OWN spelling, when it is not the one the panel is
           titled with — otherwise the operator cannot tell why two rows
           normalize to one work. */}
-      <div className="rtl-safe a" style={{ marginTop: 2 }}>
-        {book.title}{book.author ? ` · ${book.author}` : ''}
-      </div>
+      {/* ⚠ TWO elements, not one string. `.rtl-safe` is
+          `unicode-bidi: plaintext`, which resolves ONE direction per paragraph
+          from its first strong character — so a Hebrew title beside a Latin
+          author would lay the author out in the title's direction and put the
+          separator on the wrong side. Direction per STRING is the rule
+          (CLAUDE.md, §7.2); the panel's own heading two blocks up already
+          splits them for the same reason. */}
+      <div className="rtl-safe a" style={{ marginTop: 2 }}>{book.title}</div>
+      {book.author && <div className="rtl-safe a">{book.author}</div>}
 
       <div className="sub" style={{ marginTop: 4 }}>
         {t.works_copies_here(book.copy_count)}

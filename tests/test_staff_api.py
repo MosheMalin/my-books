@@ -400,6 +400,72 @@ def test_work_instances_name_the_households_strongest_first():
             ("lib-b", "manual"), ("lib-a", "auto")]
 
 
+def test_the_aggregate_groups_by_the_STORED_key_not_a_recomputed_one():
+    """⚠⚠ `books.book_key` is the identity the product writes and indexes; the
+    read model must read it rather than rebuild it from `norm_title` and
+    `norm_author`.
+
+    Two reviewers argued the point and the fix went in — and then a third
+    measured that reverting it passed anyway, because the two agree on every
+    row a fixture can produce through the store. So this row is written with
+    RAW SQL, giving it a stored key that the recomputation would not produce:
+    exactly the state a separator change in `app/domain/text.py` creates before
+    anyone backfills. The aggregate must follow the column.
+    """
+    with _queries() as (q, path):
+        conn = sqlite3.connect(path)
+        try:
+            row = conn.execute(
+                "SELECT * FROM books WHERE id = 'b1'").fetchone()
+            names = [d[0] for d in conn.execute(
+                "SELECT * FROM books LIMIT 0").description]
+            values = dict(zip(names, row))
+            values["id"] = "b1-twin"
+            # Same normalized text, DIFFERENT stored key: the recomputation
+            # would merge these two, the stored column keeps them apart.
+            values["book_key"] = "a-key-nothing-would-recompute"
+            conn.execute(
+                f"INSERT INTO books ({','.join(names)}) VALUES "
+                f"({','.join('?' * len(names))})",
+                [values[n] for n in names])
+            copy_names = [d[0] for d in conn.execute(
+                "SELECT * FROM copies LIMIT 0").description]
+            copy_row = dict(zip(copy_names, conn.execute(
+                "SELECT * FROM copies WHERE book_id = 'b1'").fetchone()))
+            copy_row["id"], copy_row["book_id"] = "c1-twin", "b1-twin"
+            conn.execute(
+                f"INSERT INTO copies ({','.join(copy_names)}) VALUES "
+                f"({','.join('?' * len(copy_names))})",
+                [copy_row[n] for n in copy_names])
+            conn.commit()
+        finally:
+            conn.close()
+
+        keys = {r.key for r in q.works()[0]}
+        assert "a-key-nothing-would-recompute" in keys, (
+            "the aggregate must group by the stored book_key")
+
+
+def test_the_capped_scan_returns_the_same_page_twice():
+    """⚠ Which works survive the cap must not vary between identical requests.
+
+    ⚠ This does NOT kill the mutation that removes the query's `ORDER BY key`,
+    and that is recorded rather than papered over: SQLite's GROUP BY emits rows
+    in grouping-key order anyway, so the two are indistinguishable today. The
+    clause stays because "happens to" is not a contract (see the query's own
+    note), and this case stays because it is the regression guard for the day
+    the aggregate's PLAN changes — which is the only thing that could make the
+    slice vary. The cap is injectable purely so any of this is reachable: 5000
+    rows is not a fixture.
+    """
+    with _db() as path:
+        q = StaffQueries(path, scan_cap=2)
+        first, _ = q.works(q="א")
+        second, _ = q.works(q="א")
+        assert [w.key for w in first] == [w.key for w in second]
+        assert len(first) <= 2
+
+
 def test_an_unknown_work_key_is_an_empty_list_not_an_error():
     """A console asking about a work that has just been deleted elsewhere gets
     "nobody holds it", which is the true answer."""
@@ -953,6 +1019,11 @@ def test_an_unknown_status_is_a_400_on_works_too():
     with _client(None) as client:
         assert client.get("/api/staff/v1/works",
                           params={"status": "nope"}).status_code == 400
+        # ⚠ And an unknown SORT, at the route, is a 400 rather than the 500 the
+        # query layer's ValueError would otherwise become. `/books` takes
+        # `recently_added`; a caller carrying that spelling here must be told.
+        assert client.get("/api/staff/v1/works",
+                          params={"sort": "recently_added"}).status_code == 400
 
 
 def test_the_work_key_travels_as_a_query_parameter():

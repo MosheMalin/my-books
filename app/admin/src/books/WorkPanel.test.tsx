@@ -19,6 +19,19 @@ let s: FakeServer
 const card = (library: string): HTMLElement =>
   screen.getByText(library).closest('.card') as HTMLElement
 
+/** Mount the panel the way the page does — KEYED on the work — so a rerender
+ *  with a different work remounts it. */
+function renderWork(work: StaffWork) {
+  const onChanged = vi.fn()
+  const result = renderApp(
+    <WorkPanel key={work.key} work={work} onClose={() => {}} onChanged={onChanged} />)
+  return {
+    onChanged,
+    rerender: (next: StaffWork) => result.rerender(
+      <WorkPanel key={next.key} work={next} onClose={() => {}} onChanged={onChanged} />),
+  }
+}
+
 function mount(over: Partial<StaffWork> = {}) {
   const onChanged = vi.fn()
   const work = makeStaffWork({
@@ -51,6 +64,10 @@ describe('WorkPanel', () => {
     expect(within(panel).getByText(/^ספריות$|^Libraries$/)).toBeInTheDocument()
     expect(within(panel).getByText(/נמצא לראשונה|First found/)).toBeInTheDocument()
     expect(within(panel).queryByText(/^מדף$|^Shelf$/)).not.toBeInTheDocument()
+    // …and no library either — the half the test's own name promised and did
+    // not gate. Scoped to the dialog and singular: the filter above the table
+    // legitimately carries the same word.
+    expect(within(panel).queryByText(/^ספרייה$|^Library$/)).not.toBeInTheDocument()
   })
 
   it('lists every household that holds it, with that household\'s own spelling',
@@ -176,6 +193,74 @@ describe('WorkPanel', () => {
     const mine = card('הבית')
     await user.click(within(mine).getByRole('button', { name: /אישור|Approve/ }))
     await waitFor(() => expect(onChanged).toHaveBeenCalled())
+  })
+
+  /**
+   * ⚠⚠ …and the DRAWER's own summary must follow, which is the half a review
+   * measured as broken: the list behind refetched, the household card vanished
+   * from the panel, and the summary above it still read "2 libraries". The row
+   * is a snapshot and `onChanged` cannot change it, so the summary is derived
+   * from the instances — the thing that IS refetched.
+   */
+  it('does not keep a spread the write just invalidated', async () => {
+    const user = userEvent.setup()
+    let instances = [
+      { id: 'b1', library_id: 'lib-1', title: 'אבא', author: 'א',
+        status: 'auto', copy_count: 1, shelf_count: 0, added_at: null },
+      { id: 'b1b', library_id: 'lib-2', title: 'אבא!', author: 'א',
+        status: 'manual', copy_count: 2, shelf_count: 0, added_at: null },
+    ]
+    s.route('GET /api/staff/v1/works/instances', () => instances)
+    s.route('DELETE /api/v1/books', () => {
+      instances = instances.filter((b) => b.library_id !== 'lib-1')
+      return new Response(null, { status: 204 })
+    })
+
+    mount()
+    await screen.findByText('הבית')
+    const summary = screen.getByText(/^ספריות$|^Libraries$/).closest('.kv') as HTMLElement
+    expect(within(summary).getByText('2')).toBeInTheDocument()
+
+    await user.click(within(card('הבית'))
+      .getByRole('button', { name: /מחיקה מהספרייה|Delete from library/ }))
+    await user.click(within(card('הבית'))
+      .getByRole('button', { name: /^מחיקה$|^Delete$/ }))
+
+    await waitFor(() => {
+      expect(screen.queryByText('הבית')).not.toBeInTheDocument()
+    })
+    expect(within(summary).getByText('1')).toBeInTheDocument()
+  })
+
+  /**
+   * ⚠⚠ Choosing a different work must abandon whatever the open one loaded, or
+   * the panel shows one work's households under another's title. The reset is
+   * the CALLER's `key` on this component; an effect version was tried in the
+   * retired `BookPanel` and was silently defeated by effect ordering.
+   *
+   * The ring could not catch this until the fake learned to be slow — see
+   * `harness.tsx`. With an instant fetch there is no window in which the stale
+   * data is on screen.
+   */
+  it('drops the previous household list the moment the work changes', async () => {
+    let release: (() => void) | undefined
+    s.route('GET /api/staff/v1/works/instances', async (req) => {
+      const key = new URL(req.url, 'http://x').searchParams.get('key')
+      if (key === 'בבא|ב') await new Promise<void>((r) => { release = r })
+      return key === 'אבא|א'
+        ? [{ id: 'b1', library_id: 'lib-1', title: 'אבא', author: 'א',
+             status: 'auto', copy_count: 1, shelf_count: 0, added_at: null }]
+        : []
+    })
+
+    const { rerender } = renderWork(makeStaffWork({ key: 'אבא|א', title: 'אבא' }))
+    await screen.findByText('הבית')
+
+    rerender(makeStaffWork({ key: 'בבא|ב', title: 'בבא' }))
+    // The previous work's household must be gone the moment the key changes —
+    // not when the new fetch lands.
+    expect(screen.queryByText('הבית')).not.toBeInTheDocument()
+    release?.()
   })
 
   /** ⚠ The focus/Escape effect must NOT depend on `onClose` — it is a fresh

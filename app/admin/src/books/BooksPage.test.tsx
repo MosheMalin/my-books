@@ -64,8 +64,12 @@ describe('BooksPage', () => {
     await screen.findByText('אבא')
     expect(screen.queryByText('בבא')).not.toBeInTheDocument()
     expect(s.calls.some((c) => c.url.includes('library_id=lib-2'))).toBe(true)
-    // Still two, though only one of them is in view.
+    // Still two, though only one of them is in view…
     expect(screen.getByRole('button', { name: /2 הספריות|2 libraries/ }))
+      .toBeInTheDocument()
+    // …and the screen SAYS that is deliberate, for the library filter and not
+    // only for the status one.
+    expect(screen.getByText(/נשאר המספר האמיתי|stays the true one/))
       .toBeInTheDocument()
   })
 
@@ -88,8 +92,8 @@ describe('BooksPage', () => {
    * Carrying A–Z's "ascending" onto "in most libraries" silently answers a
    * question nobody asked: "the rarest first".
    */
-  it('resets the sort direction when the key changes', async () => {
-    bothServices()
+  it('resets the sort direction when the key changes, and sends both', async () => {
+    const s = bothServices()
     const user = userEvent.setup()
     renderApp(<BooksPage initialLibraryId={undefined} />)
     await screen.findByText('אבא')
@@ -98,6 +102,14 @@ describe('BooksPage', () => {
     await user.selectOptions(screen.getByLabelText(/מיון|Sort/), 'libraries')
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /יורד|Descending/ })).toBeInTheDocument()
+    })
+    // ⚠ …and it reaches the SERVER. The reset was pinned on the client and the
+    // key was pinned on the server, with nothing gating the wire between them —
+    // so dropping `sort` from the request left the whole ring green while "in
+    // most libraries" quietly returned title order.
+    await waitFor(() => {
+      expect(s.calls.some((c) => c.url.includes('sort=libraries')
+                              && c.url.includes('ascending=false'))).toBe(true)
     })
   })
 

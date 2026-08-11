@@ -251,9 +251,14 @@ export function AccountsPage({ openId }: { openId: string | undefined }) {
                       {admins.length === 0
                         ? <span className="badge warn">{t.acct_no_admin}</span>
                         : admins.map((a) => (
+                            // ⚠ Falls back to the ID, not to the word
+                            // "unnamed". Until P4.1 an account has no login and
+                            // usually no display name, so a column of
+                            // "unnamed" rows identifies nobody — which is
+                            // exactly what this column exists to do.
                             <div key={a.id}>
                               {a.display_name.trim()
-                                || <span className="a">{t.users_unnamed}</span>}
+                                || <span className="mono">{a.id}</span>}
                             </div>
                           ))}
                     </td>
