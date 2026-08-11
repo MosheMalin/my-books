@@ -307,6 +307,13 @@ td.actions { white-space: nowrap; }
   overflow-y: auto;
   padding: var(--pad);
 }
+/* ⚠ The account drawer carries three tables (users, books, images) where the
+   work and image drawers carry a key/value list. 460px turns each of those
+   tables into a horizontal scroller, which is a worse way to read a section
+   than a wider drawer is to read a page. Still capped at the viewport, so the
+   phone case is unchanged. */
+.panel.wide { width: min(720px, 100%); }
+
 .panel .kv {
   display: flex;
   gap: 8px;

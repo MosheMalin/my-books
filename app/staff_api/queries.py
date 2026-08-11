@@ -30,6 +30,12 @@ from pathlib import Path
 from typing import Any, Iterator, Sequence
 
 from app.domain.search import TextEntry, compile_sql_like, parse, score
+from app.staff_api.storage import BlobTree, Usage
+
+#: A library whose blob directory does not exist. Zero is the true answer for a
+#: tenant that has never uploaded a photograph, and it is also the answer when
+#: the tree lives on another machine — see :class:`BlobTree`.
+_NO_DISK = Usage()
 
 #: The §5.1 ladder, as SQL. A book's status is the strongest claim among its
 #: copies and is DERIVED, never stored — the product's own book listing derives
@@ -42,6 +48,30 @@ STATUS_RANK_SQL = (
 
 #: rank -> name, matching :class:`app.domain.book.Status`.
 RANK_NAMES = ("auto", "approved", "manual")
+
+#: The aggregation key for a WORK — the STORED one the product writes.
+#:
+#: ⚠ This was ``(norm_title || '|' || norm_author)`` for one commit, with a
+#: comment claiming it avoided needing a new column. It did not: ``book_key``
+#: has been a column since schema v1, written from ``Book.key`` (i.e.
+#: ``app.domain.text.book_key``) on every save, carrying
+#: ``UNIQUE INDEX books_library_key``, and read by the product's own
+#: ``get_by_key``. Recomputing it made a FOURTH expression of one identity —
+#: caught by a review, which measured that a separator change was pinned but a
+#: divergence between the column and the recomputation was not. A console
+#: built to be authoritative about book identity must read the same value the
+#: product keys on, not a lookalike.
+WORK_KEY_SQL = "books.book_key"
+
+#: Sort keys :meth:`StaffQueries.works` understands.
+#:
+#: ⚠ Validated rather than silently defaulted, unlike ``books()``. The two
+#: routes' keys genuinely differ — a work's date is ``first_added`` (the
+#: earliest anywhere), a book's is ``recently_added`` — so a caller carrying
+#: the other route's spelling would otherwise get title order and no hint,
+#: which is exactly the "answers plausibly" failure this codebase keeps
+#: recording about stale servers.
+WORK_SORTS = ("title", "author", "first_added", "libraries")
 
 #: How many matching rows a ranked search pulls before ordering them in Python.
 #: `app/domain/search.py` documents the same linear-scan trade for ONE library
@@ -56,16 +86,136 @@ REQUIRED_COLUMNS = {
     "accounts": ("id", "display_name", "email", "created_at"),
     "libraries": ("id", "label", "created_at"),
     "memberships": ("account_id", "library_id", "role", "joined_at"),
-    "books": ("id", "library_id", "title", "author", "added_at",
+    "books": ("id", "library_id", "title", "author", "added_at", "book_key",
               "search_text", "sort_author", "norm_title", "norm_author"),
     "copies": ("id", "book_id", "library_id", "status", "shelf_id", "lent_out"),
     "shelves": ("id", "library_id", "label", "virtual", "depth_count",
                 "created_at"),
-    "captures": ("id", "library_id", "shelf_id"),
+    "captures": ("id", "library_id", "shelf_id", "depth", "order", "image_id",
+                 "captured_at"),
     "reads": ("id", "library_id", "shelf_id", "depth", "mode", "status",
-              "started_at", "finished_at"),
+              "started_at", "finished_at", "capture_ids"),
+    # ⚠ `claims` was used by `recent_reads` before it was declared here, which
+    # is exactly the gap `self_check` exists to close: a renamed `claims.
+    # read_id` would have surfaced as a 500 on the reads screen rather than as
+    # the named refusal this dict produces.
+    "claims": ("id", "read_id", "capture_id", "tier"),
     "duplicate_questions": ("id", "library_id"),
 }
+
+
+#: Every book in the system as an INSTANCE of a work, with the display-order
+#: number that decides which spelling represents the group.
+#:
+#: ⚠ ``ROW_NUMBER() OVER (…)`` is the display rule, in one place. See
+#: :meth:`StaffQueries.works` for the argument; changing the ``ORDER BY``
+#: inside it changes which title the console shows for a work held twice.
+_WORK_CTE = f"""
+WITH inst AS (
+    SELECT books.id AS id,
+           books.library_id AS library_id,
+           books.title AS title,
+           books.author AS author,
+           books.added_at AS added_at,
+           books.norm_title AS norm_title,
+           books.sort_author AS sort_author,
+           books.search_text AS search_text,
+           {WORK_KEY_SQL} AS work_key,
+           {STATUS_RANK_SQL} AS rank,
+           (SELECT COUNT(*) FROM copies WHERE copies.book_id = books.id)
+             AS copy_count
+    FROM books
+),
+picked AS (
+    SELECT inst.*, ROW_NUMBER() OVER (
+        PARTITION BY work_key
+        ORDER BY rank DESC, COALESCE(added_at, '~') ASC, id ASC
+    ) AS pick
+    FROM inst
+)
+"""
+
+#: The aggregate itself. ``MAX(CASE WHEN pick = 1 …)`` reads oddly and is
+#: exactly right: one row per group has ``pick = 1``, so the aggregate returns
+#: that row's value — SQLite's bare-column shortcut would work here too and is
+#: undefined behaviour the day someone ports this.
+_WORK_GROUPED = """
+SELECT work_key AS key,
+       MAX(CASE WHEN pick = 1 THEN title END) AS title,
+       MAX(CASE WHEN pick = 1 THEN author END) AS author,
+       MAX(CASE WHEN pick = 1 THEN norm_title END) AS norm_title,
+       MAX(CASE WHEN pick = 1 THEN sort_author END) AS sort_author,
+       MAX(rank) AS rank,
+       MIN(rank) AS weakest,
+       -- ⚠ `COUNT(*)` is EQUAL to this today and must not replace it: the
+       -- equality holds only because `UNIQUE INDEX books_library_key` forbids
+       -- one library holding a key twice. A mutation to `COUNT(*)` survives
+       -- the suite for that reason (measured), so this comment is the guard —
+       -- DISTINCT states the question, which is "how many libraries", not
+       -- "how many rows".
+       COUNT(DISTINCT library_id) AS libraries,
+       SUM(copy_count) AS copies,
+       MIN(added_at) AS first_added,
+       MAX(added_at) AS last_added
+FROM picked
+GROUP BY work_key
+"""
+
+
+def images_sql(where: str = "") -> str:
+    """One page of photographs, with what the engine made of each.
+
+    ⚠⚠ **A module-level function, and the test EXPLAINs this exact string.**
+    The two engine figures were correlated subqueries once, asked per returned
+    row, each scanning every ``reads`` row in the system and expanding its
+    ``capture_ids`` array. Two reviewers measured the same thing
+    independently — **13.6 seconds of SQLite CPU for one ``?limit=200``** at
+    4000 reads, on a service whose credential may be unset, with the route
+    holding a threadpool worker for the duration. Grouped: 14ms on the same
+    data. The cost is invisible in a three-row fixture, so the shape is what
+    gets pinned, and it is pinned against the string that actually runs.
+
+    ⚠ ``json_valid`` guard: ``json_each`` RAISES on a malformed array, and the
+    pre-pass is not narrowed by library — so ONE tenant's bad row would blank
+    the cross-tenant page for everybody. Not reachable through the product's
+    write path (the column is ``NOT NULL`` and always written by
+    ``json.dumps``), which is why it is a cheap guard rather than a migration.
+    """
+    return f"""
+WITH consumed AS (
+    SELECT je.value AS capture_id, COUNT(*) AS runs,
+           MAX(COALESCE(reads.finished_at, reads.started_at)) AS last_read
+    FROM reads, json_each(reads.capture_ids) je
+    WHERE json_valid(reads.capture_ids)
+    GROUP BY je.value
+),
+found AS (
+    SELECT capture_id, COUNT(*) AS findings,
+           SUM(tier = 'auto') AS auto,
+           SUM(tier = 'review') AS review,
+           SUM(tier = 'unmatched') AS unmatched
+    FROM claims GROUP BY capture_id
+)
+SELECT captures.id, captures.library_id, captures.shelf_id,
+       captures.depth, captures."order" AS ord, captures.image_id,
+       captures.captured_at,
+       COALESCE(shelves.label, '') AS shelf_label,
+       COALESCE(found.findings, 0) AS findings,
+       COALESCE(found.auto, 0) AS auto,
+       COALESCE(found.review, 0) AS review,
+       COALESCE(found.unmatched, 0) AS unmatched,
+       COALESCE(consumed.runs, 0) AS reads,
+       consumed.last_read AS last_read
+FROM captures
+LEFT JOIN shelves ON shelves.id = captures.shelf_id
+LEFT JOIN consumed ON consumed.capture_id = captures.id
+LEFT JOIN found ON found.capture_id = captures.id
+{where}
+-- Newest photograph first; `id` breaks the tie so paging is stable when a
+-- phone uploads a burst carrying one timestamp.
+ORDER BY COALESCE(captures.captured_at, '') DESC, captures.id DESC
+LIMIT ? OFFSET ?
+"""
 
 
 class SchemaMismatch(RuntimeError):
@@ -110,6 +260,10 @@ class LibraryRow:
     duplicates: int
     lent_out: int
     last_activity: str | None
+    #: Files and bytes under this library's blob directory — everything the
+    #: disk holds, renditions included. See :mod:`app.staff_api.storage`.
+    image_files: int = 0
+    image_bytes: int = 0
 
 
 @dataclass(frozen=True)
@@ -142,14 +296,65 @@ class BookRow:
 
 
 @dataclass(frozen=True)
-class ShelfRow:
+class WorkRow:
+    """One book ACROSS every tenant — the console's unit since revision 4.
+
+    ``key`` is :data:`WORK_KEY_SQL`'s value, i.e. ``app.domain.text.book_key``.
+    ``title``/``author`` are the DISPLAY spelling, chosen by the rule in
+    :meth:`StaffQueries.works` — two households may hold one work under two
+    spellings that normalize alike, which is the whole point of the key.
+    """
+
+    key: str
+    title: str
+    author: str
+    status: str
+    mixed: bool
+    libraries: int
+    copies: int
+    first_added: str | None
+    last_added: str | None
+
+
+@dataclass(frozen=True)
+class ImageRow:
+    """One photograph, and what has been made of it.
+
+    ⚠ **The image is the entity; the shelf is a BINDING it currently has.**
+    VISION §4.1a records that "one image = one shelf" is a placeholder with an
+    exit (P2.1) — intake mints a shelf identity per photograph until pillar 6's
+    map can say two photographs are the same piece of wood. A console listing
+    shelves is therefore mostly listing photographs under a noun they have not
+    earned, which is why this row leads with the image and reports
+    ``shelf_id``/``depth`` as the slot it is filed at.
+
+    The engine figures come from the CLAIM side, because that is where the data
+    actually binds: ``claims.capture_id`` names the photograph a finding came
+    from, and ``reads.capture_ids`` names the photographs a run consumed.
+    """
+
     id: str
     library_id: str
-    label: str
-    depth_count: int
-    virtual: bool
-    captures: int
-    books: int
+    image_key: str | None
+    captured_at: str | None
+    # the binding (pillar 6 replaces this pair with a real address)
+    shelf_id: str
+    shelf_label: str
+    depth: int
+    order: int
+    # the bytes
+    present: bool
+    bytes: int
+    width: int
+    height: int
+    content_type: str
+    filename: str
+    # what the engine made of it
+    reads: int
+    findings: int
+    auto: int
+    review: int
+    unmatched: int
     last_read: str | None
 
 
@@ -167,15 +372,44 @@ class ReadRow:
     claims: int
 
 
+def _work_row(r: sqlite3.Row) -> WorkRow:
+    """One grouped row as a :class:`WorkRow`.
+
+    ``mixed`` is the honest half of a single status badge: a work held as
+    `manual` in one house and `auto` in another has no one status, and a
+    console that showed only the strongest would tell an operator hunting for
+    unapproved books that there are none.
+    """
+    strongest, weakest = int(r["rank"] or 0), int(r["weakest"] or 0)
+    return WorkRow(
+        key=str(r["key"]), title=r["title"] or "", author=r["author"] or "",
+        status=RANK_NAMES[strongest], mixed=strongest != weakest,
+        libraries=int(r["libraries"]), copies=int(r["copies"] or 0),
+        first_added=r["first_added"], last_added=r["last_added"],
+    )
+
+
 class StaffQueries:
     """Every cross-tenant question the console asks, in one place."""
 
-    def __init__(self, db_path: str | Path) -> None:
+    def __init__(self, db_path: str | Path, blobs: BlobTree | None = None,
+                 scan_cap: int = RANKED_SCAN_CAP) -> None:
         self.path = Path(db_path)
+        # ⚠ Injectable ONLY so a test can reach it. `RANKED_SCAN_CAP` is 5000
+        # and a fixture will never seed that many rows, so the determinism the
+        # capped scan was fixed for had no gate — a review measured both
+        # `ORDER BY`s removable with the suite green.
+        self.scan_cap = scan_cap
         if not self.path.exists():
             raise FileNotFoundError(
                 f"no product database at {self.path}; set BOOKSNAP_DB"
             )
+        # ⚠ Defaulting to an UNCONFIGURED tree rather than to the product's
+        # default location. Guessing would make a console pointed at one
+        # machine's database report another machine's disk; an absent tree
+        # reports zero and the composition root is the one place that decides
+        # where the bytes are.
+        self.blobs = blobs if blobs is not None else BlobTree(None)
         self.self_check()
 
     # --- guard ------------------------------------------------------------
@@ -210,6 +444,10 @@ class StaffQueries:
     # --- the whole system -------------------------------------------------
 
     def overview(self) -> dict[str, int]:
+        # One walk of the blob tree, outside the connection: the database and
+        # the disk answer different halves of "how big is this system", and
+        # neither knows the other's number.
+        disk = self.blobs.usage()
         with _open(self.path) as conn:
             def count(sql: str) -> int:
                 return int(conn.execute(sql).fetchone()[0])
@@ -237,6 +475,16 @@ class StaffQueries:
                 "auto": int(by_rank.get(0, 0)),
                 "approved": int(by_rank.get(1, 0)),
                 "manual": int(by_rank.get(2, 0)),
+                # ⚠ Summed over the WHOLE tree, including directories no
+                # library row matches. Bytes belonging to a deleted tenant
+                # still occupy the disk, and a total that omitted them would
+                # be wrong in the one direction an operator cares about.
+                "image_files": sum(u.files for u in disk.values()),
+                "image_bytes": sum(u.bytes for u in disk.values()),
+                # Three states, not two — see `BlobTree.visible`. Zero storage
+                # and "the disk is on another machine" look identical, and
+                # only one of them is a reason to go looking.
+                "blobs_visible": int(self.blobs.visible),
             }
 
     # --- libraries --------------------------------------------------------
@@ -248,6 +496,7 @@ class StaffQueries:
         query per library: the point of this service is that "how big is
         everything" costs a bounded number of round trips.
         """
+        disk = self.blobs.usage()
         with _open(self.path) as conn:
             base = conn.execute(
                 "SELECT id, label, created_at FROM libraries"
@@ -308,6 +557,8 @@ class StaffQueries:
                 shelves=shelves.get(lid, 0), captures=captures.get(lid, 0),
                 reads=reads.get(lid, 0), duplicates=dupes.get(lid, 0),
                 lent_out=lent.get(lid, 0), last_activity=activity.get(lid),
+                image_files=disk.get(lid, _NO_DISK).files,
+                image_bytes=disk.get(lid, _NO_DISK).bytes,
             ))
         return tuple(out)
 
@@ -395,6 +646,10 @@ class StaffQueries:
             params.append(RANK_NAMES.index(status))
 
         query = parse(q) if q.strip() else None
+        if q.strip() and not query:
+            # See `works()`: empty terms means "match nothing", never "match
+            # everything". The product's own store already answers that way.
+            return (), 0
         if query:
             clause, like_params = compile_sql_like(query, "books.search_text")
             if clause:
@@ -434,8 +689,9 @@ class StaffQueries:
                 # cannot pull a whole system into memory; the caller is told
                 # when the cap bit rather than shown a silently short list.
                 rows = conn.execute(
-                    f"{select}{clause_sql} LIMIT ?",
-                    (*params, RANKED_SCAN_CAP),
+                    # Deterministic slice — see `works()` for the argument.
+                    f"{select}{clause_sql} ORDER BY books.id LIMIT ?",
+                    (*params, self.scan_cap),
                 ).fetchall()
                 scored = sorted(
                     rows,
@@ -464,43 +720,238 @@ class StaffQueries:
             for r in page
         ), total
 
-    # --- shelves ----------------------------------------------------------
+    # --- works (books, aggregated across every tenant) ---------------------
 
-    def shelves(self, library_id: str) -> tuple[ShelfRow, ...]:
-        """One library's shelves, with what stands on them.
+    def works(
+        self,
+        *,
+        q: str = "",
+        library_id: str | None = None,
+        status: str | None = None,
+        sort: str = "title",
+        ascending: bool = True,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[tuple[WorkRow, ...], int]:
+        """One row per BOOK, across every tenant. Returns ``(page, total)``.
 
-        Cross-tenant, so it cannot come from `/api/v1/shelves` — that resolves
-        the caller's membership, and a system administrator is a member of
-        nothing.
+        ⚠⚠ **Every narrowing here is a ``HAVING``, never a ``WHERE``, and that
+        is the whole design.** A filter selects which WORKS appear; it must not
+        change what each of them REPORTS. Filtering instances in the ``WHERE``
+        would make "in 3 libraries" read "in 1 library" the moment the operator
+        narrowed to one library or one status — a number that changes meaning
+        when you filter is a number nobody can trust, and the console's central
+        column is exactly that number.
 
-        ⚠ ``books`` counts DISTINCT books with a copy on the shelf, not copies:
-        two copies of one book on one shelf is one book standing there, and
-        the shelf screen's question is "what is on it".
+        ⚠ **While `q` ranks, `sort` and `ascending` are ignored** — relevance
+        IS the order. The console's control goes inert and reads "relevance"
+        for that reason; a caller that is not the console should know it too.
+
+        ⚠ **Cost**: two passes over `books` per call (one for `total`, one for
+        the page), each a group-sort over every row. Measured by a review:
+        8ms at 175 books, 158ms at 3.5k, 2.8s at 70k. The owner's real data is
+        251 books. The lever, when one is needed, is caching `total` or
+        materialising the aggregate — NOT rewriting the correlated subqueries,
+        which were measured at 11% of it.
+
+        ⚠ **The display title is a choice, not a fact.** Two households may
+        hold one work under two spellings that normalize alike — that is what
+        the key is FOR — so one has to be shown. The rule: the strongest §5.1
+        status first (a human typed `manual`; the engine guessed `auto`), then
+        the earliest ``added_at``, then the id. Written into the window
+        function in :data:`_WORK_CTE` and pinned by a test, so it cannot decay
+        into "whatever SQLite happened to return first".
+        """
+        if status is not None and status not in RANK_NAMES:
+            raise ValueError(f"unknown status {status!r}")
+        if sort not in WORK_SORTS:
+            raise ValueError(f"unknown sort {sort!r}")
+
+        having: list[str] = []
+        params: list[Any] = []
+        # `SUM(CASE …) > 0` is "at least one instance satisfies this". Spelled
+        # out rather than EXISTS so all three filters read the same way.
+        if library_id:
+            having.append("SUM(CASE WHEN library_id = ? THEN 1 ELSE 0 END) > 0")
+            params.append(library_id)
+        if status is not None:
+            having.append("SUM(CASE WHEN rank = ? THEN 1 ELSE 0 END) > 0")
+            params.append(RANK_NAMES.index(status))
+
+        query = parse(q) if q.strip() else None
+        if q.strip() and not query:
+            # ⚠ A query that parses to no terms means "match nothing", never
+            # "match everything" — `app/domain/search.py` says so and the
+            # product's own store honours it. Without this line a search box
+            # fed one punctuation character answers with the entire system,
+            # and (because the ranked path never runs) reports it as
+            # truncated. Found by a review, which measured `q="!!!"` returning
+            # every book here while the product returned none.
+            return (), 0
+        if query:
+            # ⚠ `search_text` is derived from the same normalized pair as the
+            # key (`app/domain/search.py:haystack`), so every instance of one
+            # work carries a byte-identical haystack: matching per instance and
+            # matching the group are equivalent here, and neither can find a
+            # "different spelling" — there is no such thing at this column.
+            # Written as a HAVING anyway so all three narrowings read the same
+            # way, and so it stays correct if `search_text` ever grows a
+            # per-instance term (a subtitle, a publisher).
+            clause, like_params = compile_sql_like(query, "search_text")
+            if clause:
+                having.append(
+                    f"SUM(CASE WHEN ({clause}) THEN 1 ELSE 0 END) > 0")
+                params.extend(like_params)
+
+        having_sql = (" HAVING " + " AND ".join(having)) if having else ""
+        direction = "ASC" if ascending else "DESC"
+        order = {
+            "title": f"norm_title {direction}, key {direction}",
+            "author": f"sort_author {direction}, norm_title {direction},"
+                      f" key {direction}",
+            "first_added": f"COALESCE(first_added, '') {direction},"
+                           f" norm_title ASC, key ASC",
+            # "in how many libraries" — the question this screen exists to
+            # answer, so it is a sort key and not only a column.
+            "libraries": f"libraries {direction}, norm_title ASC, key ASC",
+        }[sort]
+
+        grouped = f"{_WORK_CTE}{_WORK_GROUPED}{having_sql}"
+
+        with _open(self.path) as conn:
+            total = int(conn.execute(
+                f"{_WORK_CTE}SELECT COUNT(*) FROM ({_WORK_GROUPED}"
+                f"{having_sql})", params,
+            ).fetchone()[0])
+
+            if query:
+                # Ranked, like `books()`: the domain's own score decides the
+                # order, bounded by the same cap so a one-letter query cannot
+                # pull a whole system into memory.
+                # ⚠ `ORDER BY key` inside the CAP, though Python re-sorts by
+                # score straight after. Without it the LIMIT takes an
+                # unspecified slice of the grouped set: which works get ranked
+                # at all is then whatever the planner chose, and a review
+                # measured the exact-title hit vanishing from page 1.
+                #
+                # ⚠ Removing it is an EQUIVALENT MUTANT today (measured):
+                # SQLite's GROUP BY happens to emit rows in grouping-key order,
+                # so the slice is the same either way and no test can tell.
+                # It stays because "happens to" is not a contract — the day the
+                # aggregate grows an index-driven plan, or moves to another
+                # engine, the slice changes and nothing would have said so.
+                # Deterministic is not the same as correct: the best match can
+                # still be outside the cap, which is what `truncated` says.
+                rows = conn.execute(f"{grouped} ORDER BY key LIMIT ?",
+                                    (*params, self.scan_cap)).fetchall()
+                page: Sequence[sqlite3.Row] = sorted(
+                    rows,
+                    key=lambda r: (
+                        -score(query, TextEntry(title=r["title"],
+                                                author=r["author"] or "")),
+                        r["norm_title"], r["key"],
+                    ),
+                )[offset:offset + limit]
+            else:
+                page = conn.execute(
+                    f"{grouped} ORDER BY {order} LIMIT ? OFFSET ?",
+                    (*params, limit, offset),
+                ).fetchall()
+
+        return tuple(_work_row(r) for r in page), total
+
+    def work_instances(self, key: str) -> tuple[BookRow, ...]:
+        """Every household's copy of ONE work, strongest claim first.
+
+        The other half of the aggregate: the row says "in 3 libraries", this
+        says which three and what each of them holds. Ordered by the same rule
+        that picks the display title, so the first row here is the one the
+        aggregate is named after.
+
+        ⚠ Matched on the composed key rather than by splitting it: a title
+        containing the separator would make ``key.split('|')`` wrong, and there
+        is nothing stopping one.
         """
         with _open(self.path) as conn:
             rows = conn.execute(
-                "SELECT shelves.id, shelves.library_id, shelves.label,"
-                " shelves.depth_count, shelves.virtual,"
-                " (SELECT COUNT(*) FROM captures"
-                "   WHERE captures.shelf_id = shelves.id) AS captures,"
-                " (SELECT COUNT(DISTINCT book_id) FROM copies"
-                "   WHERE copies.shelf_id = shelves.id) AS books,"
-                " (SELECT MAX(COALESCE(finished_at, started_at)) FROM reads"
-                "   WHERE reads.shelf_id = shelves.id) AS last_read"
-                " FROM shelves WHERE shelves.library_id = ?"
-                " ORDER BY shelves.label, COALESCE(shelves.created_at, ''),"
-                " shelves.id",
-                (library_id,),
+                "SELECT books.id, books.library_id, books.title, books.author,"
+                " books.added_at,"
+                f" {STATUS_RANK_SQL} AS rank,"
+                " (SELECT COUNT(*) FROM copies WHERE copies.book_id = books.id)"
+                "   AS copy_count,"
+                " (SELECT COUNT(DISTINCT shelf_id) FROM copies"
+                "   WHERE copies.book_id = books.id AND shelf_id IS NOT NULL)"
+                "   AS shelf_count"
+                f" FROM books WHERE {WORK_KEY_SQL} = ?"
+                " ORDER BY rank DESC, COALESCE(books.added_at, '~') ASC,"
+                " books.id ASC",
+                (key,),
             ).fetchall()
         return tuple(
-            ShelfRow(
+            BookRow(
                 id=str(r["id"]), library_id=str(r["library_id"]),
-                label=r["label"] or "", depth_count=int(r["depth_count"]),
-                virtual=bool(r["virtual"]), captures=int(r["captures"]),
-                books=int(r["books"]), last_read=r["last_read"],
+                title=r["title"], author=r["author"] or "",
+                status=RANK_NAMES[int(r["rank"] or 0)],
+                copy_count=int(r["copy_count"]), added_at=r["added_at"],
+                shelf_count=int(r["shelf_count"]),
             )
             for r in rows
         )
+
+    # --- images -------------------------------------------------------------
+
+    def images(
+        self, *, library_id: str | None = None, limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[tuple[ImageRow, ...], int]:
+        """Photographs across every tenant, newest first. ``(page, total)``.
+
+        ⚠ **Two sources, joined per row.** The database knows a capture's
+        identity, its binding and what the engine made of it; the disk knows
+        how many bytes it is. Neither knows the other's half, so the sidecars
+        are read for the PAGE only — 25 small reads, not one per capture in the
+        system.
+
+        ⚠ **`reads` counts runs that CONSUMED this photograph**, from
+        ``reads.capture_ids``, while the tier figures count findings from
+        ``claims.capture_id``. Those are genuinely different questions and a
+        run that produced nothing from an image is exactly the case an operator
+        is looking for, so the run count may not be derived from the claims.
+
+        ⚠⚠ **Both engine figures are GROUPED pre-passes, never correlated
+        subqueries.** The first version asked each of them per returned row,
+        and each inner query scanned every ``reads`` row in the system and
+        expanded its ``capture_ids`` array: two reviewers measured the same
+        thing independently — **13.6 seconds of SQLite CPU for one
+        ``?limit=200``** at 4000 reads, on a service whose credential may be
+        unset. One unauthenticated request per threadpool worker took the
+        console down. The grouped form measured 2.6s → 14ms on the same data.
+        """
+        where = " WHERE captures.library_id = ?" if library_id else ""
+        narrow: tuple[Any, ...] = (library_id,) if library_id else ()
+
+        with _open(self.path) as conn:
+            total = int(conn.execute(
+                f"SELECT COUNT(*) FROM captures{where}", narrow).fetchone()[0])
+            rows = conn.execute(images_sql(where),
+                                (*narrow, limit, offset)).fetchall()
+
+        out = []
+        for r in rows:
+            facts = self.blobs.facts(str(r["library_id"]), r["image_id"])
+            out.append(ImageRow(
+                id=str(r["id"]), library_id=str(r["library_id"]),
+                image_key=r["image_id"], captured_at=r["captured_at"],
+                shelf_id=str(r["shelf_id"]), shelf_label=r["shelf_label"],
+                depth=int(r["depth"]), order=int(r["ord"]),
+                present=facts.present, bytes=facts.bytes,
+                width=facts.width, height=facts.height,
+                content_type=facts.content_type, filename=facts.filename,
+                reads=int(r["reads"]), findings=int(r["findings"]),
+                auto=int(r["auto"]), review=int(r["review"]),
+                unmatched=int(r["unmatched"]), last_read=r["last_read"],
+            ))
+        return tuple(out), total
 
     # --- activity ---------------------------------------------------------
 

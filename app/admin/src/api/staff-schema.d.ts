@@ -50,6 +50,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/staff/v1/images": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Photographs across every tenant
+         * @description ⚠ This REPLACED `/libraries/{id}/shelves`, and the replacement is
+         *     the item, not a rename. See `ImageDTO`: a shelf is a placeholder minted
+         *     per photograph until pillar 6, so a console shelf list was a photograph
+         *     list wearing the wrong noun.
+         *
+         *     Cross-tenant, so it could not be `/api/v1/...`: that resolves the
+         *     caller's membership, and a system administrator is a member of nothing.
+         *     An empty page and a library that does not exist look the same here,
+         *     deliberately — the library list is the authority on which ids are real.
+         */
+        get: operations["images_api_staff_v1_images_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/staff/v1/libraries": {
         parameters: {
             query?: never;
@@ -59,31 +87,6 @@ export interface paths {
         };
         /** Every library in the system */
         get: operations["libraries_api_staff_v1_libraries_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/staff/v1/libraries/{library_id}/shelves": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * One library's shelves
-         * @description ⚠ Cross-tenant, so it cannot be `/api/v1/shelves`: that resolves the
-         *     caller's membership, and a system administrator is a member of
-         *     nothing. Note the consequence for the console — an EMPTY list and a
-         *     library that does not exist look the same here, deliberately: this
-         *     service has no reason to distinguish them, and the library list it
-         *     came from is the authority on which ids are real.
-         */
-        get: operations["shelves_api_staff_v1_libraries__library_id__shelves_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -118,6 +121,54 @@ export interface paths {
         };
         /** Recent reads, across every tenant */
         get: operations["reads_api_staff_v1_reads_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/staff/v1/works": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Books aggregated across every tenant
+         * @description ⚠ `library_id` and `status` SELECT works; they never narrow what a
+         *     work reports. "In 3 libraries" means three whatever the filter says —
+         *     see `StaffQueries.works` for why that had to be a `HAVING`.
+         */
+        get: operations["works_api_staff_v1_works_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/staff/v1/works/instances": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Every household's copy of one work
+         * @description The key travels as a QUERY parameter, not a path segment.
+         *
+         *     It is `normalize(title)|normalize(author)` — Hebrew, spaces, a pipe,
+         *     and whatever else a title contains. A path segment would need encoding
+         *     the console cannot get wrong only by being careful, and `/works/<key>`
+         *     would additionally collide with this very route the day a work is
+         *     called "instances".
+         */
+        get: operations["work_instances_api_staff_v1_works_instances_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -174,7 +225,7 @@ export interface components {
             total: number;
             /**
              * Truncated
-             * @description A ranked search stopped at the scan cap, so `total` is honest but pages past the cap are not reachable. Narrow the query.
+             * @description A ranked search stopped at the scan cap: `total` is honest, but the rows were ranked over an arbitrary capped slice, so the best match may not be on any page you can reach. Narrow the query.
              */
             truncated: boolean;
         };
@@ -182,6 +233,91 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /**
+         * ImageDTO
+         * @description One photograph — the console's unit since revision 4.
+         *
+         *     ⚠ **This replaced `ShelfDTO`, and the replacement is the point.** VISION
+         *     §4.1a records that "one image = one shelf" is a PLACEHOLDER with a recorded
+         *     exit (P2.1): intake mints a shelf identity per photograph until pillar 6's
+         *     map can say two photographs are the same piece of wood. A console listing
+         *     shelves was therefore listing photographs under a noun they had not earned.
+         *     So the image leads, and `shelf_id`/`depth`/`order` are reported as the SLOT
+         *     it is currently filed at — the pair pillar 6 replaces with a real address.
+         *
+         *     ⚠ **No bytes are served by this service, only facts about them.** An
+         *     operator looking at a household's actual photographs is a larger power than
+         *     counting them; the console renders a thumbnail only for a library the
+         *     operator is a member of, through the product API, exactly as the household
+         *     client does.
+         */
+        ImageDTO: {
+            /** Auto */
+            auto: number;
+            /** Bytes */
+            bytes: number;
+            /** Captured At */
+            captured_at?: string | null;
+            /** Content Type */
+            content_type: string;
+            /** Depth */
+            depth: number;
+            /** Filename */
+            filename: string;
+            /** Findings */
+            findings: number;
+            /** Height */
+            height: number;
+            /**
+             * Id
+             * @description The capture id. There is no separate image entity yet — a capture IS a photograph filed somewhere, and `image_key` is its content address.
+             */
+            id: string;
+            /** Image Key */
+            image_key?: string | null;
+            /** Last Read */
+            last_read?: string | null;
+            /** Library Id */
+            library_id: string;
+            /** Order */
+            order: number;
+            /**
+             * Present
+             * @description The bytes are on disk. False is a real finding — a photograph the household can no longer see — not a blank cell. ⚠ Only when `blobs_visible`; otherwise it means nobody looked.
+             */
+            present: boolean;
+            /**
+             * Reads
+             * @description Runs that CONSUMED this photograph (`reads.capture_ids`), which is not the same as runs that found something in it — a run that found nothing is exactly what an operator is looking for.
+             */
+            reads: number;
+            /** Review */
+            review: number;
+            /** Shelf Id */
+            shelf_id: string;
+            /** Shelf Label */
+            shelf_label: string;
+            /** Unmatched */
+            unmatched: number;
+            /** Width */
+            width: number;
+        };
+        /** ImagePageDTO */
+        ImagePageDTO: {
+            /**
+             * Blobs Visible
+             * @description ⚠ Read this BEFORE `present`. When false, the service cannot see the blob tree at all (the database and the photographs may live on different machines), so every row reports `present: false` and zero bytes — which is 'we did not look', not 'they are gone'. A console that conflated the two would announce that every photograph in every tenant was lost, and hide a real loss among the noise.
+             */
+            blobs_visible: boolean;
+            /** Items */
+            items: components["schemas"]["ImageDTO"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
         };
         /** LibraryDTO */
         LibraryDTO: {
@@ -203,6 +339,16 @@ export interface components {
             duplicates: number;
             /** Id */
             id: string;
+            /**
+             * Image Bytes
+             * @default 0
+             */
+            image_bytes: number;
+            /**
+             * Image Files
+             * @default 0
+             */
+            image_files: number;
             /** Label */
             label: string;
             /** Last Activity */
@@ -246,6 +392,11 @@ export interface components {
              * @description Books nobody has approved (§5.1's lowest rung). `manual` outranks `approved`, so this — and only this — is 'awaiting'.
              */
             auto: number;
+            /**
+             * Blobs Visible
+             * @description This process can see the blob tree. When false the two figures above are zero because nobody looked, not because nothing is there — and every image reports `present: false` for the same reason.
+             */
+            blobs_visible: boolean;
             /** Books */
             books: number;
             /** Captures */
@@ -254,6 +405,13 @@ export interface components {
             copies: number;
             /** Duplicates */
             duplicates: number;
+            /** Image Bytes */
+            image_bytes: number;
+            /**
+             * Image Files
+             * @description Files under the blob root, renditions and sidecars included — what the disk actually holds. Zero when no blob root is configured (the database and the photographs can live on different machines).
+             */
+            image_files: number;
             /** Lent Out */
             lent_out: number;
             /** Libraries */
@@ -295,28 +453,6 @@ export interface components {
             /** Status */
             status: string;
         };
-        /** ShelfDTO */
-        ShelfDTO: {
-            /**
-             * Books
-             * @description DISTINCT books with a copy standing here, not copies — two copies of one book is one book on the shelf.
-             */
-            books: number;
-            /** Captures */
-            captures: number;
-            /** Depth Count */
-            depth_count: number;
-            /** Id */
-            id: string;
-            /** Label */
-            label: string;
-            /** Last Read */
-            last_read?: string | null;
-            /** Library Id */
-            library_id: string;
-            /** Virtual */
-            virtual: boolean;
-        };
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -329,6 +465,63 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /**
+         * WorkDTO
+         * @description One book across every tenant — the console's unit since revision 4.
+         *
+         *     ⚠ There is no `library_id` here, and that is the point of the type. A
+         *     system console's question about a book is *how widespread is it*, not
+         *     *whose is it*; the per-household instances are a second call
+         *     (`/works/instances`), because acting on one is a different, narrower job.
+         */
+        WorkDTO: {
+            /** Author */
+            author: string;
+            /** Copies */
+            copies: number;
+            /** First Added */
+            first_added?: string | null;
+            /**
+             * Key
+             * @description `app.domain.text.book_key` — `normalize(title)|normalize(author)`. Opaque to the client; pass it back verbatim.
+             */
+            key: string;
+            /** Last Added */
+            last_added?: string | null;
+            /**
+             * Libraries
+             * @description How many libraries hold it. Unaffected by the filters — see the query's note on HAVING vs WHERE.
+             */
+            libraries: number;
+            /**
+             * Mixed
+             * @description Instances disagree about status. A work manual in one house and auto in another has no single status, and hiding that would answer 'anything unapproved?' wrongly.
+             */
+            mixed: boolean;
+            /**
+             * Status
+             * @description The STRONGEST §5.1 claim any household makes about this work.
+             */
+            status: string;
+            /** Title */
+            title: string;
+        };
+        /** WorkPageDTO */
+        WorkPageDTO: {
+            /** Items */
+            items: components["schemas"]["WorkDTO"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
+            /**
+             * Truncated
+             * @description A ranked search stopped at the scan cap: `total` is honest, but the rows were ranked over an arbitrary capped slice, so the best match may not be on any page you can reach. Narrow the query.
+             */
+            truncated: boolean;
         };
     };
     responses: never;
@@ -411,6 +604,42 @@ export interface operations {
             };
         };
     };
+    images_api_staff_v1_images_get: {
+        parameters: {
+            query?: {
+                library_id?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: {
+                "x-booksnap-staff"?: string | null;
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImagePageDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     libraries_api_staff_v1_libraries_get: {
         parameters: {
             query?: never;
@@ -430,40 +659,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LibraryDTO"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    shelves_api_staff_v1_libraries__library_id__shelves_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "x-booksnap-staff"?: string | null;
-                authorization?: string | null;
-            };
-            path: {
-                library_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ShelfDTO"][];
                 };
             };
             /** @description Validation Error */
@@ -531,6 +726,80 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReadDTO"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    works_api_staff_v1_works_get: {
+        parameters: {
+            query?: {
+                q?: string;
+                library_id?: string | null;
+                status?: string | null;
+                sort?: string;
+                ascending?: boolean;
+                limit?: number;
+                offset?: number;
+            };
+            header?: {
+                "x-booksnap-staff"?: string | null;
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkPageDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    work_instances_api_staff_v1_works_instances_get: {
+        parameters: {
+            query: {
+                key: string;
+            };
+            header?: {
+                "x-booksnap-staff"?: string | null;
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookDTO"][];
                 };
             };
             /** @description Validation Error */

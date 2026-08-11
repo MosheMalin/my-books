@@ -418,3 +418,264 @@ matters HERE is which of this plan's notes are now obsolete:
 
 Phase 2's list is unchanged: member management still needs P4.1's login,
 deleting a library still needs the six-aggregate cascade and P3.5's purge.
+
+---
+
+# Revision 4 (2026-08-11): the console stops thinking in one library
+
+The owner read revision 3 and named what is still wrong with it — not a bug,
+a *frame*:
+
+> unlike the user application, it should not think in terms of a single
+> library or single account. when it comes to books info, it's either about
+> aggregation or lists. … in the tab users. It should be account. … And indeed
+> rather than Shelf, the images are images.
+
+Revisions 1–3 built a system console out of the household client's nouns. Every
+screen still answers *"…in which library?"*, because that is the question the
+product is built to answer and the code was borrowed from it. An operator never
+asks it. Their questions are **how many**, **across whom**, and **which of
+them**. Three of the console's nouns are wrong for that reader, and this
+revision replaces them.
+
+## The three wrong nouns, and what replaces each
+
+| today | the operator's question it fails | revision 4 |
+|---|---|---|
+| a book row belongs to ONE library | *"is this title common, or does one household have it?"* | a **work**: one row per `book_key`, "in N libraries", the instances behind a drawer |
+| the **Users** tab lists people | *"who are my customers and how big are they?"* | an **Account**: created, admins, users, books, image storage — the people are a section inside it |
+| the **Shelves** table | *"what has been photographed, how much space does it take, what did the engine make of it?"* | an **Image**: the photograph is the thing; the shelf it is filed at is a *binding* it shows, not its identity |
+
+### 1. Books aggregate into works
+
+A book row today is `(library_id, book id)` and the table carries a **Library**
+column. That column is the frame the owner is naming: it makes the system-wide
+book list a concatenation of household lists rather than a catalogue.
+
+The aggregation key is **`app.domain.text.book_key`** —
+`normalize(title)|normalize(author)`, the same function the product keys books
+with and the same one `booksnap.library` uses. CLAUDE.md's rule is that two
+normalizers drift; this is the third place that would have grown one. It is
+computable in SQL without a new column, because `books.norm_title` and
+`books.norm_author` are already stored and already written by that function.
+
+What the row shows: title, author, the strongest status among its instances,
+**how many libraries hold it**, total copies, and **when it was first added
+anywhere**. What it does not show: a library, a shelf.
+
+Three consequences worth stating, because each is a decision:
+
+- **the displayed title is a choice, not a fact.** Two households may hold one
+  work under two spellings that normalize alike (that is the whole point of the
+  key). The rule is: prefer the strongest §5.1 status (`manual` outranks
+  `approved` outranks `auto` — a human typed it), then the earliest `added_at`,
+  then the id. Stated in the query and pinned by a test, so it cannot become
+  "whatever SQLite returned first";
+- **writing stays per instance.** Approve/edit/delete act on one household's
+  book, through the product API, under revision 2's read-cross-tenant /
+  write-your-own-memberships split. So the actions live in the drawer's
+  per-library list, never on the aggregate row — there is no "approve
+  everywhere" button, and there must not be one before there is an audit
+  trail;
+- **the library filter survives as a filter.** "Works present in library X" is
+  a legitimate narrowing and it is how the account drawer links into this
+  screen. What dies is the library as a *column* and as a book's *property*.
+
+### 2. The Users tab becomes Accounts
+
+The owner's list for a row — *when it was created, who are the admins, how
+many users, how many books, images storage* — describes a **customer**, not a
+person. A person has no admins and no users.
+
+⚠ **So the console's "account" is the tenant, and today the tenant record is a
+`Library`.** This is a naming decision made deliberately, and it is the one
+place this revision diverges from the domain's vocabulary:
+
+- **the wire keeps `library`.** VISION §4.1 settled it twice — *Account is a
+  person, one identity*; *Library is the isolation boundary*; *there is ONE
+  tenancy layer, not two*. Renaming the entity would re-decide a settled thing
+  and break the product client, the stores, and every `library_id` on every
+  row;
+- **the console says "account"**, because that is the operator's word for the
+  thing they administer, and VISION itself writes *"an admin inside one
+  account's library"* (§4.2) — the two words are already used as near
+  synonyms at that level, and §4.1 records that **one library per account is
+  the default and the normal case**;
+- the drawer shows the **library id** under the account name, labelled as
+  such, so the mapping is visible rather than hidden. Nothing is renamed in
+  storage and the reversal cost is a tab label plus one page.
+
+**The Libraries tab merges into it.** Two tabs listing the same entity under
+two names is exactly the incoherence this revision is fixing; the old
+Libraries table already carried most of the columns the owner asked for.
+Create-library and rename stay on the merged screen, where they always were.
+
+⚠ **A person with no membership would become invisible.** The Users tab was
+the only screen that listed people directly; a tenant-shaped list cannot show
+someone who belongs to no tenant. That is a real regression and it is
+answered, not accepted: the Accounts screen carries an *unaffiliated accounts*
+section, the mirror of the existing `orphan_libraries` warning (a library with
+no member ↔ a member with no library), and `/overview` reports both.
+
+**Reported, not profiled — still.** Revision 2's line holds: the drawer's
+Users section shows identity, role and join date, never a per-person activity
+feed. Aggregate figures describe the collection.
+
+### 3. Shelves become images
+
+> rather than Shelf, the images are images. they will later be bound to
+> shelves/bookcase. but on their own they are images … the runs and result are
+> bound to the image.
+
+This is not a rename — it is the console dropping a placeholder it was
+displaying as if it were furniture. VISION §4.1a is explicit: *"one image = one
+shelf" is a PLACEHOLDER with a recorded exit* (P2.1), and intake mints a shelf
+identity per image until pillar 6's map can say two photos are the same piece
+of wood. So a console "shelves" table is mostly a list of photographs wearing a
+noun they have not earned, and it will keep being one until P6.1b.
+
+The image is the durable thing, and the data agrees: `claims.capture_id` binds
+every engine finding to the photograph it came from, and `reads.capture_ids`
+records which photographs a run consumed. So an Images screen can answer *what
+was photographed, when, how big, what ran on it, and what it found* without
+naming a shelf at all — and it shows the shelf/depth it is currently filed at
+as a **binding**, secondary and labelled, the slot pillar 6 will replace.
+
+⚠ **The staff service still serves no image BYTES.** Metadata crosses tenants;
+photographs do not. An operator looking at a household's actual pictures is a
+larger power than counting them, and revision 2's argument (no login, no audit
+trail, nobody to explain it to) applies with more force to a photograph than to
+a title. Thumbnails appear only for libraries the operator is a member of,
+fetched from the product API exactly as the household client fetches them —
+the same read/write asymmetry, one axis over.
+
+### 4. Storage: where the bytes are counted
+
+Nothing in the database knows how large a photograph is — `app/ports/blobs.py`
+keeps bytes out of it on purpose (D1), and size lives in the on-disk sidecar
+`DiskBlobStore` writes. The staff service may not import that adapter
+(`tests/test_layering.py` pins it) so it reads the blob tree directly, in one
+new file, and **knows the layout on purpose** — the identical trade
+`queries.py` already makes with the schema, with the identical guard: a test
+pins the staff reader's path against `DiskBlobStore`'s, so a layout change
+fails a test instead of quietly reporting 0 MB.
+
+Counted honestly: **every file under the library's blob dir**, thumbnails
+included, because that is what the disk holds. Sidecar JSON is counted too and
+is negligible; the number is "space this account occupies", not "sum of the
+originals".
+
+## The items
+
+Each is one cycle, landed on `main` before the next. Reviewer sets follow
+CLAUDE.md's table; `review-data-integrity` is standing on every server item
+because every one of them is a cross-tenant read.
+
+| # | item | reviewers | done when |
+|---|---|---|---|
+| **A1** | **Works in the read model** — `works()` / `work_instances()`, `GET /works`, `GET /works/instances?key=`, ranked search over the aggregate, the display-title rule | quality, data-integrity, security | staff ring green; the display-title rule and the "one row per `book_key` across tenants" rule each pinned by a mutation-checked test; contract regenerated |
+| **A2** | **Images and storage in the read model** — `images()` (paged, cross-tenant, per-image reads/claims from `claims.capture_id` + `reads.capture_ids`), `storage.py` reading the blob tree, account-level figures (`admins` by name, `image_files`, `image_bytes`), `accounts_without_membership` on `/overview`; retire `/libraries/{id}/shelves` | quality, data-integrity, security | as above, plus the layout-drift test against `DiskBlobStore`, and a missing blob root reported as zero rather than a 500 |
+| **A3** | **Console: Works** — the aggregate table, "in N libraries", the work drawer with its per-library instance list and per-instance actions, sort by spread | quality, ux | admin ring green; a book in a library the operator does not belong to still shows and still says read-only; browser-verified |
+| **A4** | **Console: Images** — the cross-tenant image list, filters, the image drawer (metadata, binding, reads and what they found), thumbnails only where the operator is a member | quality, ux, security | admin ring green; no image bytes requested from `:8758` by any code path; browser-verified |
+| **A5** | **Console: Accounts** — the merged tab (Libraries + Users), the account drawer with Users / Books / Images sections, `#/accounts`, redirects from `#/libraries` and `#/users`, unaffiliated accounts, dashboard restated in images + storage; retires `/libraries/{id}/shelves` with its last caller | quality, ux | admin ring green; verified in a real browser against the real database (snapshotted first); old routes still land somewhere sensible |
+
+*Order amended while executing:* the Accounts screen links into Works and
+Images, so it lands LAST — otherwise its drawer would carry a "see all images"
+link to a tab that does not exist yet, which is the disabled-control shape this
+project refuses. The owner's numbering (books, accounts, images) is a priority
+order, not a build order, and books still land first.
+
+### What this revision does NOT change
+
+- the two services, their two credentials, and the read-cross-tenant /
+  write-your-own-memberships split (revision 2) — every item above sits
+  inside it;
+- the domain, the schema, and the product client. **No migration.** Every
+  figure here is a new `SELECT` over columns that already exist, or a
+  `st_size` on a file that already exists;
+- "a system admin is not a `Role`";
+- member management, deleting a library, and metering — still Phase 2, still
+  waiting on P4.1 / P3.2 / P3.5 / P5.1.
+
+## Landed (2026-08-11)
+
+All five items, each on `main` before the next, each with its reviewers.
+
+| # | item | landed | reviewers | what they changed |
+|---|---|---|---|---|
+| A1 | works in the read model | ✅ | quality, data-integrity | three majors, all *wrong stated reasons* — see below |
+| A2 | images + storage | ✅ | data-integrity, security | six majors, including a 13.6-second unauthenticated request |
+| A3 | console: works | ✅ | quality | a real bug: the drawer lied about the spread it had just changed |
+| A4 | console: images | ✅ | (folded with A2's) | — |
+| A5 | console: accounts | ✅ | (folded with A3's) | — |
+
+### What the reviews were actually for
+
+Every major finding in this epic was a **stated reason that was wrong**, not a
+behaviour that was wrong — which is the failure mode CLAUDE.md names ("a wrong
+stated reason is what makes the next reader delete the guard"). Worth recording
+as a pattern, because it recurred five times:
+
+- `WORK_KEY_SQL` recomputed a key that `books.book_key` has stored since schema
+  v1, under a comment claiming that avoided needing a new column;
+- `WorkDTO.instances` documented a state `UNIQUE INDEX books_library_key`
+  forbids — and was why three aggregates were mutually substitutable with no
+  test noticing;
+- the search `HAVING` was justified by "found by any household's spelling",
+  which cannot happen because `search_text` derives from the same normalized
+  pair as the key;
+- `_walk`'s "symlinks are not followed" read as a guarantee about Windows
+  directory junctions, which ARE followed;
+- `onChanged`'s docstring said it kept the aggregate honest; it refetched the
+  list and left the open drawer stale.
+
+Two more that were behaviour, and both were measured rather than argued:
+
+- **`/images` cost 13.6 seconds of CPU for one `?limit=200`** at 4000 reads —
+  two correlated subqueries per row, each scanning every read in the system,
+  on a service whose credential may be unset. Grouped pre-passes: 14ms;
+- **the guard meta-test could not see a non-GET route or a `Mount`.** Both
+  demonstrated green: an unguarded `POST /overview` served every tenant's
+  totals, a `StaticFiles` mount served CLAUDE.md unauthenticated.
+
+### Verified live (revision 4)
+
+Against a copy of the owner's real database and blob tree — 286 books, 2
+tenants, 36 files / 21.5 MB of photographs, taken with SQLite's backup API so
+the live data was never opened:
+
+- **286 books collapse to 283 works.** The three held by both households (a
+  Maria V. Snyder trilogy) report *2 libraries · 2 copies* and list each
+  household's own spelling underneath;
+- **storage is read from the disk**: 21.5 MB total, 14.1 + 7.4 per account,
+  matching an independent `os.walk`. With the blob root removed the console
+  says *"we did not look"* rather than marking every photograph lost — the
+  third state a review insisted on;
+- **an image drawer** shows a real 4032×3024 `IMG_7849.jpeg`, 3 MB, filed at
+  depth 1, with *1 run · 12 auto · 0 review · 14 unmatched*. Its thumbnail
+  loads from `:8757` and never from `:8758`;
+- **the read/write split, both ways**: with the product API down every
+  household row reads *"not editable"*; with it up both offer edit and delete,
+  and neither offers approve, because both copies are `manual` (§5.1);
+- **the account drawer** carries users / books / images with the library id
+  labelled beneath the account name;
+- **Hebrew**: `dir=rtl`, every screen translated, the retired routes
+  (`#/libraries`, `#/users`) landing on the accounts list.
+
+⚠ The Browser pane did not composite frames — the third session in a row (see
+revision 2) — so this is DOM- and network-level verification, not paint.
+
+### Still deferred, unchanged
+
+Member management (P4.1 login, P4.3 invites), deleting a library (P3.2 policy,
+P3.5 purge), metering (P5.1). And two things this epic found and did not fix,
+because neither belongs to it:
+
+- **`filename` is uncapped on the WRITE path.** A review measured 40 MB per
+  console page from unauthenticated LAN uploads with megabyte-long names. The
+  console caps what it republishes at 200 characters; the real fix is at the
+  port where the name enters, which is product-side;
+- **`/works` costs two full group-sorts of `books` per request** — 8ms at 175
+  books, 2.8s at 70k. Fine forever at this product's scale; the lever, when
+  one is needed, is caching `total` or materialising the aggregate, NOT
+  rewriting the correlated subqueries (measured at 11% of it).

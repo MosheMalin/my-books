@@ -14,7 +14,8 @@ import { href } from '../lib/route'
 import { OpenServiceWarning } from '../lib/StaffToken'
 import { useSystem } from '../lib/system'
 import { Empty, ErrorBox, Loading } from '@booksnap/ui'
-import { StatCard } from '../lib/ui'
+import { formatBytes, StatCard } from '../lib/ui'
+
 
 export function Dashboard() {
   const { t, lang } = useI18n()
@@ -38,8 +39,12 @@ export function Dashboard() {
       )}
 
       <div className="stats">
-        <StatCard label={t.stat_accounts} value={num(overview.accounts)} />
-        <StatCard label={t.stat_libraries} value={num(overview.libraries)} />
+        {/* ⚠ `accounts` is the PEOPLE count and `libraries` is the account
+            count, because the console renamed the tenant and the wire did
+            not — see `AccountsPage`. Labelled so the two cannot be read as
+            one number reported twice. */}
+        <StatCard label={t.stat_accounts_tenants} value={num(overview.libraries)} />
+        <StatCard label={t.stat_people} value={num(overview.accounts)} />
         <StatCard label={t.stat_memberships} value={num(overview.memberships)} />
         <StatCard label={t.stat_books} value={num(overview.books)} />
         <StatCard label={t.stat_copies} value={num(overview.copies)} />
@@ -49,15 +54,23 @@ export function Dashboard() {
         <StatCard label={t.stat_unapproved} warn value={num(overview.auto)} />
         <StatCard label={t.stat_approved} value={num(overview.approved)} />
         <StatCard label={t.stat_manual} value={num(overview.manual)} />
-        <StatCard label={t.stat_shelves} value={num(overview.shelves)} />
-        <StatCard label={t.stat_photos} value={num(overview.captures)} />
+        {/* ⚠ Images, not shelves. A shelf today is an identity minted per
+            photograph (VISION §4.1a), so a shelf count on a system dashboard
+            was a photograph count wearing the wrong noun — and the storage
+            figure beside it is the one an operator actually acts on. */}
+        <StatCard label={t.th_images} value={num(overview.captures)} />
+        <StatCard label={t.th_storage}
+                  value={overview.blobs_visible
+                    ? formatBytes(overview.image_bytes, lang) : '—'} />
         <StatCard label={t.stat_reads} value={num(overview.reads)} />
         <StatCard label={t.stat_duplicates} warn={overview.duplicates > 0}
                   value={num(overview.duplicates)} />
         <StatCard label={t.stat_lent} value={num(overview.lent_out)} />
       </div>
 
-      <h2>{t.dash_per_library}</h2>
+      {!overview.blobs_visible && <p className="note warn">{t.img_blind}</p>}
+
+      <h2>{t.dash_per_account}</h2>
       {libraries.length === 0 ? (
         <Empty>{t.lib_empty}</Empty>
       ) : (
@@ -65,12 +78,12 @@ export function Dashboard() {
           <table>
             <thead>
               <tr>
-                <th>{t.th_library}</th>
-                <th className="num">{t.th_members}</th>
+                <th>{t.th_account}</th>
+                <th className="num">{t.th_users}</th>
                 <th className="num">{t.th_books}</th>
                 <th className="num">{t.stat_unapproved}</th>
-                <th className="num">{t.th_shelves}</th>
-                <th className="num">{t.th_photos}</th>
+                <th className="num">{t.th_images}</th>
+                <th className="num">{t.th_storage}</th>
                 <th className="num">{t.th_duplicates}</th>
                 <th className="num">{t.th_lent}</th>
                 <th>{t.th_activity}</th>
@@ -80,18 +93,18 @@ export function Dashboard() {
               {libraries.map((lib) => (
                 <tr key={lib.id}>
                   <td className="rtl-safe">
-                    <a href={href({ name: 'library', id: lib.id })}>
+                    <a href={href({ name: 'account', id: lib.id })}>
                       {libraryName(lib.label, t.lib_unnamed)}
                     </a>
-                    {/* A library with no members is the one anomaly this
+                    {/* An account with no members is the one anomaly this
                         table can surface that no household screen can. */}
                     {lib.members === 0 && <> <span className="badge">!</span></>}
                   </td>
                   <td className="num">{num(lib.members)}</td>
                   <td className="num">{num(lib.books)}</td>
                   <td className="num">{num(lib.auto)}</td>
-                  <td className="num">{num(lib.shelves)}</td>
                   <td className="num">{num(lib.captures)}</td>
+                  <td className="num">{formatBytes(lib.image_bytes, lang)}</td>
                   <td className="num">{num(lib.duplicates)}</td>
                   <td className="num">{num(lib.lent_out)}</td>
                   <td>{formatDate(lib.last_activity, lang) || '—'}</td>

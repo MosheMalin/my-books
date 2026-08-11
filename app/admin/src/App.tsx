@@ -9,11 +9,10 @@
  * its own route. So there is no scope to key on and nothing to remount.
  */
 import { AccessPage } from './access/AccessPage'
+import { AccountsPage } from './accounts/AccountsPage'
 import { BooksPage } from './books/BooksPage'
 import { Dashboard } from './dash/Dashboard'
-import { LibrariesPage } from './libraries/LibrariesPage'
-import { LibraryDetail } from './libraries/LibraryDetail'
-import { UsersPage } from './users/UsersPage'
+import { ImagesPage } from './images/ImagesPage'
 import { useI18n } from './lib/i18n'
 import { href, useRoute, type Route } from './lib/route'
 import { StaffTokenForm } from './lib/StaffToken'
@@ -24,15 +23,15 @@ function Tabs({ route }: { route: Route }) {
   const tabs: Array<{ to: Route; label: string; active: boolean }> = [
     { to: { name: 'dashboard' }, label: t.nav_dashboard, active: route.name === 'dashboard' },
     {
-      to: { name: 'libraries' },
-      label: t.nav_libraries,
-      // The detail screen is a child of the list, so the tab stays lit while
-      // one library is open — otherwise the console looks like it has no
-      // section at all from a deep link.
-      active: route.name === 'libraries' || route.name === 'library',
+      to: { name: 'accounts' },
+      label: t.nav_accounts,
+      // The drawer is a child of the list, so the tab stays lit while one
+      // account is open — otherwise a deep link lands on a console that looks
+      // like it has no section at all.
+      active: route.name === 'accounts' || route.name === 'account',
     },
     { to: { name: 'books', libraryId: undefined }, label: t.nav_books, active: route.name === 'books' },
-    { to: { name: 'users' }, label: t.nav_users, active: route.name === 'users' },
+    { to: { name: 'images', libraryId: undefined }, label: t.nav_images, active: route.name === 'images' },
     { to: { name: 'access' }, label: t.nav_access, active: route.name === 'access' },
   ]
   return (
@@ -50,10 +49,10 @@ function Tabs({ route }: { route: Route }) {
 function Screen({ route }: { route: Route }) {
   switch (route.name) {
     case 'dashboard': return <Dashboard />
-    case 'libraries': return <LibrariesPage />
-    case 'library': return <LibraryDetail libraryId={route.id} />
+    case 'accounts': return <AccountsPage openId={undefined} />
+    case 'account': return <AccountsPage openId={route.id} />
     case 'books': return <BooksPage initialLibraryId={route.libraryId} />
-    case 'users': return <UsersPage />
+    case 'images': return <ImagesPage initialLibraryId={route.libraryId} />
     case 'access': return <AccessPage />
   }
 }

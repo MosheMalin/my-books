@@ -13,14 +13,14 @@
  * with the code while both are wrong.
  */
 import { render, type RenderResult } from '@testing-library/react'
-import type { ReactElement } from 'react'
+import type { ReactElement, ReactNode } from 'react'
 import { vi } from 'vitest'
 
 import { I18nProvider } from '../lib/i18n'
 import { SystemProvider } from '../lib/system'
 import type { BookDTO, LibraryDTO } from '../api/schema'
 import type {
-  StaffAccount, StaffBook, StaffLibrary, StaffOverview,
+  StaffAccount, StaffBook, StaffImage, StaffLibrary, StaffOverview, StaffWork,
 } from '../api/staff'
 
 export interface Recorded {
@@ -81,7 +81,7 @@ export function makeStaffLibrary(over: Partial<StaffLibrary> = {}): StaffLibrary
     id: 'lib-1', label: 'הבית', created_at: '2026-01-01T00:00:00Z',
     members: 1, admins: 1, books: 0, copies: 0, auto: 0, approved: 0,
     manual: 0, shelves: 0, captures: 0, reads: 0, duplicates: 0,
-    lent_out: 0, last_activity: null,
+    lent_out: 0, last_activity: null, image_files: 0, image_bytes: 0,
     ...over,
   }
 }
@@ -95,11 +95,33 @@ export function makeStaffBook(over: Partial<StaffBook> = {}): StaffBook {
   }
 }
 
+export function makeStaffWork(over: Partial<StaffWork> = {}): StaffWork {
+  return {
+    key: 'ספר|מחבר', title: 'ספר', author: 'מחבר', status: 'auto',
+    mixed: false, libraries: 1, copies: 1,
+    first_added: '2026-01-02T00:00:00Z', last_added: '2026-01-02T00:00:00Z',
+    ...over,
+  }
+}
+
+export function makeStaffImage(over: Partial<StaffImage> = {}): StaffImage {
+  return {
+    id: 'cap-1', library_id: 'lib-1', image_key: 'a'.repeat(64) + '.jpg',
+    captured_at: '2026-01-03T00:00:00Z', shelf_id: 'sh-1', shelf_label: 'מדף',
+    depth: 1, order: 0, present: true, bytes: 120_000, width: 1200,
+    height: 900, content_type: 'image/jpeg', filename: 'shelf.jpg',
+    reads: 1, findings: 3, auto: 2, review: 1, unmatched: 0,
+    last_read: '2026-01-04T00:00:00Z',
+    ...over,
+  }
+}
+
 export function makeOverview(over: Partial<StaffOverview> = {}): StaffOverview {
   return {
     accounts: 1, libraries: 1, memberships: 1, books: 0, copies: 0,
     shelves: 0, captures: 0, reads: 0, duplicates: 0, lent_out: 0,
-    auto: 0, approved: 0, manual: 0,
+    auto: 0, approved: 0, manual: 0, image_files: 0, image_bytes: 0,
+    blobs_visible: true,
     authenticated: true, orphan_libraries: [],
     ...over,
   }
@@ -152,7 +174,11 @@ export function fakeServer(defaults: Record<string, (req: Recorded) => unknown> 
       return new Response(JSON.stringify({ detail: `unrouted ${method} ${url}` }),
                           { status: 599 })
     }
-    const payload = best(req)
+    // ⚠ AWAITED. Without it a handler cannot be slow, so no test can
+    // exercise a screen mid-fetch — which is how the work panel's `key`
+    // lost its gate — and an async handler was silently `JSON.stringify`ed
+    // to `{}` rather than failing.
+    const payload = await best(req)
     if (payload instanceof Response) return payload
     return new Response(JSON.stringify(payload ?? null),
                         { status: 200, headers: { 'Content-Type': 'application/json' } })
@@ -165,10 +191,19 @@ export function fakeServer(defaults: Record<string, (req: Recorded) => unknown> 
   }
 }
 
+const wrapped = (ui: ReactNode) => (
+  <I18nProvider>
+    <SystemProvider>{ui}</SystemProvider>
+  </I18nProvider>
+)
+
+/**
+ * ⚠ `rerender` is OVERRIDDEN to re-wrap. Testing Library's own replaces the
+ * whole tree with what it is handed, so a bare `rerender(<Screen …/>)` drops
+ * the providers and the screen throws "useI18n outside <I18nProvider>" —
+ * which reads as a bug in the screen rather than in the call.
+ */
 export function renderApp(ui: ReactElement): RenderResult {
-  return render(
-    <I18nProvider>
-      <SystemProvider>{ui}</SystemProvider>
-    </I18nProvider>,
-  )
+  const result = render(wrapped(ui))
+  return { ...result, rerender: (next: ReactNode) => result.rerender(wrapped(next)) }
 }

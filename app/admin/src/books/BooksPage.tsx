@@ -1,28 +1,41 @@
 /**
- * Every book in the system — one tenant-spanning, server-paged query.
+ * Every book in the system, as a CATALOGUE rather than a pile of household
+ * lists — one row per work, across every tenant.
  *
- * ⚠ This screen used to carry the console's one real compromise: with no
- * cross-library route, "all libraries" meant fetching each tenant separately,
- * merging in the browser, and sorting with `localeCompare` — which is not the
- * server's normalized key, so the merged order differed from a single
- * library's and the screen had to say so. `GET /api/staff/v1/books` retired
- * all of it: ordering and Hebrew ranking now happen once, server-side, by the
- * same measured rules the product uses.
+ * ⚠⚠ **There is no library column, and its absence is the item.** The owner's
+ * note that opened console revision 4:
  *
- * ⚠ Reading spans every tenant; WRITING does not. The moderation actions in
- * the panel go through the product API, which resolves the operator's own
- * membership — so a book in a library they do not belong to is shown and not
- * editable, and the panel says which it is.
+ *   > unlike the user application, it should not think in terms of a single
+ *   > library or single account. when it comes to books info, it's either
+ *   > about aggregation or lists.
+ *
+ * A book row used to be `(library_id, book id)`, which made this screen a
+ * concatenation of household lists — it answered *whose is it*, a question an
+ * operator never asks. It now answers *how widespread is it*: how many
+ * libraries hold this work, and when it was first seen anywhere. The
+ * households are behind the drawer, because that is where acting on one
+ * belongs.
+ *
+ * ⚠ The library SELECT survives as a filter. "Works present in library X" is a
+ * legitimate narrowing and it is how the account screen links in here. It does
+ * not change what a row reports: a work in three libraries still says three
+ * while the list is filtered to one — see the server's HAVING-not-WHERE note.
+ *
+ * ⚠ Reading spans every tenant; WRITING does not, and that is unchanged. The
+ * moderation actions live in the drawer's per-household list and go through
+ * the product API, which resolves the operator's own membership.
  */
 import { useEffect, useMemo, useState } from 'react'
 
-import { listAllBooks, type StaffBook } from '../api/staff'
+import { listWorks, type StaffWork } from '../api/staff'
 import { useI18n, type Strings } from '../lib/i18n'
 import { navigate } from '../lib/route'
 import { useSystem } from '../lib/system'
 import {
-  Empty, ErrorBox, Loading, SortControl, StatusBadge, formatDate, formatNumber, libraryName, useAsync, Select } from '@booksnap/ui'
-import { BookPanel } from './BookPanel'
+  Empty, ErrorBox, Loading, SortControl, StatusBadge, formatDate,
+  formatNumber, libraryName, useAsync, Select,
+} from '@booksnap/ui'
+import { WorkPanel } from './WorkPanel'
 
 /** Rows per screen. */
 const PAGE = 25
@@ -30,28 +43,29 @@ const PAGE = 25
 /** Typing pauses before a request goes out. Matches the product's own. */
 const DEBOUNCE_MS = 250
 
-type Sort = 'title' | 'author' | 'recently_added'
+type Sort = 'title' | 'author' | 'first_added' | 'libraries'
 
 /**
  * What this screen can sort by, and — the load-bearing half — the direction
- * each key MEANS. A–Z for text, newest first for a date: carrying A–Z's
- * "ascending" onto a date key silently answers a question nobody asked
- * ("recently added, oldest first").
+ * each key MEANS. A–Z for text, newest first for a date, widest first for a
+ * count: carrying A–Z's "ascending" onto a date key silently answers a
+ * question nobody asked.
  *
- * ⚠ It is declared here, per option, rather than as a rule inside the shared
- * control: which keys exist is this screen's business, and a control that
- * guessed a direction from a key's NAME would be wrong the first time a screen
- * added `least_recently_seen`.
+ * ⚠ Declared here, per option, rather than as a rule inside the shared
+ * control: which keys exist is this screen's business, and a control guessing
+ * a direction from a key's NAME would be wrong the first time a screen added
+ * one it had not seen.
  */
 const SORT_OPTIONS = [
   { value: 'title', label: 'sort_title' },
   { value: 'author', label: 'sort_author' },
-  { value: 'recently_added', label: 'sort_recent', naturalAscending: false },
+  { value: 'first_added', label: 'sort_first_found', naturalAscending: false },
+  { value: 'libraries', label: 'sort_spread', naturalAscending: false },
 ] as const satisfies readonly { value: Sort; label: keyof Strings; naturalAscending?: boolean }[]
 
 export function BooksPage({ initialLibraryId }: { initialLibraryId: string | undefined }) {
   const { t, ui, lang } = useI18n()
-  const { libraries, loading: sysLoading, labelOf, canWrite } = useSystem()
+  const { libraries, loading: sysLoading } = useSystem()
 
   const [libraryId, setLibraryId] = useState<string | undefined>(initialLibraryId)
   const [typed, setTyped] = useState('')
@@ -60,16 +74,7 @@ export function BooksPage({ initialLibraryId }: { initialLibraryId: string | und
   const [sort, setSort] = useState<Sort>('title')
   const [ascending, setAscending] = useState(true)
   const [page, setPage] = useState(0)
-  const [selected, setSelected] = useState<StaffBook | undefined>(undefined)
-
-  /**
-   * Writes are folded in locally instead of refetching: a page of a
-   * system-wide list is a real query, and redoing it after every approve
-   * would make the console feel broken on a phone. `null` marks a deleted
-   * book; the table applies the map while rendering, and the next real fetch
-   * supersedes it.
-   */
-  const [overrides, setOverrides] = useState<Map<string, StaffBook | null>>(new Map())
+  const [selected, setSelected] = useState<StaffWork | undefined>(undefined)
 
   useEffect(() => {
     const id = setTimeout(() => setQ(typed), DEBOUNCE_MS)
@@ -77,14 +82,14 @@ export function BooksPage({ initialLibraryId }: { initialLibraryId: string | und
   }, [typed])
 
   // Any change to WHAT is being asked returns to the first page. Staying on
-  // page 4 of a filter that now matches 12 books shows an empty table, which
+  // page 4 of a filter that now matches 12 works shows an empty table, which
   // reads as "no results".
   useEffect(() => {
     setPage(0)
   }, [libraryId, q, status, sort, ascending])
 
   const result = useAsync(
-    (signal) => listAllBooks({
+    (signal) => listWorks({
       q: q.trim() || undefined,
       libraryId, status, sort, ascending,
       limit: PAGE, offset: page * PAGE,
@@ -92,31 +97,19 @@ export function BooksPage({ initialLibraryId }: { initialLibraryId: string | und
     [libraryId, q, status, sort, ascending, page],
   )
 
-  const rows = useMemo(() => {
-    const items = result.data?.items ?? []
-    return items.flatMap((book) => {
-      if (!overrides.has(book.id)) return [book]
-      const replacement = overrides.get(book.id)
-      return replacement ? [replacement] : []
-    })
-  }, [result.data, overrides])
-
-  const onChanged = (bookId: string, book: StaffBook | null) => {
-    setOverrides((prev) => new Map(prev).set(bookId, book))
-    if (book === null) setSelected(undefined)
-    else setSelected((cur) => (cur && cur.id === bookId ? book : cur))
-  }
+  const rows = useMemo(() => result.data?.items ?? [], [result.data])
 
   if (sysLoading) return <Loading />
 
   const total = result.data?.total ?? 0
   const searching = q.trim().length > 0
   const lastPage = Math.max(0, Math.ceil(total / PAGE) - 1)
+  const num = (n: number) => formatNumber(n, lang)
 
   return (
     <>
       <h1>{t.books_title}</h1>
-      <p className="sub">{t.sys_scope}</p>
+      <p className="sub">{t.works_sub}</p>
 
       <div className="row" style={{ marginBottom: 12 }}>
         <Select value={libraryId ?? ''} aria-label={t.bp_library}
@@ -151,15 +144,10 @@ export function BooksPage({ initialLibraryId }: { initialLibraryId: string | und
           <option value="manual">{ui.st_manual}</option>
         </Select>
 
-        {/* The product's control, shared (`@booksnap/ui`) rather than the
-            bare select + ↑/↓ button this screen used to draw. That version
-            read as two questions and, worse, carried A–Z's "ascending" onto
-            the date key on a key change — the bug the reset below prevents,
-            declared per option so it cannot be forgotten.
-
-            ⚠ Inert while searching: the server ranks by RELEVANCE (P1.5's
-            measured Hebrew search) and ignores `sort`, so a live control
-            would promise an ordering nobody applies. */}
+        {/* ⚠ Inert while searching: the server ranks by RELEVANCE (P1.5's
+            measured Hebrew search) and ignores `sort`, so a live control would
+            promise an ordering nobody applies. The box READS "relevance" —
+            the ordering actually in force — rather than a key being ignored. */}
         <SortControl
           value={sort}
           ascending={ascending}
@@ -167,9 +155,6 @@ export function BooksPage({ initialLibraryId }: { initialLibraryId: string | und
           label={t.books_sort}
           disabled={searching}
           disabledReason={t.books_sort_ignored}
-          // The box says what the ordering IS while searching, rather than a
-          // key the server is ignoring — the product's own behaviour, and the
-          // reason the shared control has this prop at all.
           inertOption={{ value: 'relevance', label: t.books_sort_relevance }}
           onChange={(next, asc) => {
             setSort(next as Sort)
@@ -178,6 +163,10 @@ export function BooksPage({ initialLibraryId }: { initialLibraryId: string | und
         />
       </div>
 
+      {/* ⚠ BOTH filters, not just status. A review caught that the sentence
+          explaining what a filter does not change was missing for the
+          LIBRARY filter — the one revision 4 is actually about. */}
+      {(status || libraryId) && <p className="sub">{t.works_filter_keeps_spread}</p>}
       {searching && <p className="sub">{t.books_sort_ignored}</p>}
       {result.data?.truncated && <p className="note warn">{t.books_truncated}</p>}
 
@@ -193,31 +182,42 @@ export function BooksPage({ initialLibraryId }: { initialLibraryId: string | und
                 <th>{t.th_title}</th>
                 <th>{t.th_author}</th>
                 <th>{t.th_status}</th>
-                {!libraryId && <th>{t.th_library}</th>}
+                <th className="num">{t.th_libraries}</th>
                 <th className="num">{t.th_copies}</th>
-                <th>{t.th_added}</th>
+                <th>{t.th_first_found}</th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((book) => (
-                <tr key={`${book.library_id}:${book.id}`}
-                    onClick={() => setSelected(book)}
+              {rows.map((work) => (
+                <tr key={work.key} onClick={() => setSelected(work)}
                     style={{ cursor: 'pointer' }}>
                   <td className="rtl-safe">
                     <button type="button" className="btn link"
-                            onClick={(e) => { e.stopPropagation(); setSelected(book) }}>
-                      <span className="t">{book.title}</span>
+                            onClick={(e) => { e.stopPropagation(); setSelected(work) }}>
+                      <span className="t">{work.title}</span>
                     </button>
                   </td>
-                  <td className="rtl-safe a">{book.author}</td>
-                  <td><StatusBadge status={book.status} /></td>
-                  {!libraryId && (
-                    <td className="rtl-safe a">
-                      {libraryName(labelOf(book.library_id), t.lib_unnamed)}
-                    </td>
-                  )}
-                  <td className="num">{book.copy_count}</td>
-                  <td>{formatDate(book.added_at, lang) || '—'}</td>
+                  <td className="rtl-safe a">{work.author}</td>
+                  <td>
+                    <StatusBadge status={work.status} />
+                    {/* ⚠ A work held `manual` in one house and `auto` in
+                        another has no single status. Showing only the
+                        strongest would answer "anything unapproved out there?"
+                        with a confident no. */}
+                    {work.mixed && <> <span className="badge">{t.works_mixed}</span></>}
+                  </td>
+                  <td className="num">
+                    {/* The number IS the link — the owner's own sketch. It
+                        opens the same drawer the title does, because the list
+                        of households is what the drawer is mostly for. */}
+                    <button type="button" className="btn link"
+                            aria-label={t.works_open_spread(work.libraries)}
+                            onClick={(e) => { e.stopPropagation(); setSelected(work) }}>
+                      {num(work.libraries)}
+                    </button>
+                  </td>
+                  <td className="num">{num(work.copies)}</td>
+                  <td>{formatDate(work.first_added, lang) || '—'}</td>
                 </tr>
               ))}
             </tbody>
@@ -246,15 +246,13 @@ export function BooksPage({ initialLibraryId }: { initialLibraryId: string | und
       </div>
 
       {selected && (
-        // ⚠ Keyed on the book, so choosing another row REMOUNTS the panel and
+        // ⚠ Keyed on the work, so choosing another row REMOUNTS the panel and
         // a half-typed edit cannot survive onto a different book. See the
         // panel's own note for why this is a key rather than an effect.
-        <BookPanel key={`${selected.library_id}:${selected.id}`}
-                   book={selected}
-                   libraryLabel={libraryName(labelOf(selected.library_id), t.lib_unnamed)}
-                   writable={canWrite(selected.library_id)}
+        <WorkPanel key={selected.key}
+                   work={selected}
                    onClose={() => setSelected(undefined)}
-                   onChanged={onChanged} />
+                   onChanged={result.reload} />
       )}
     </>
   )

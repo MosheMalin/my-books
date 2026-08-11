@@ -1,6 +1,6 @@
 /**
- * The cross-tenant book list, and the read/write asymmetry only a rendered
- * screen can catch.
+ * The cross-tenant book CATALOGUE — one row per work — and the read/write
+ * asymmetry only a rendered screen can catch.
  */
 import { screen, waitFor, within } from '@testing-library/react'
 import { userEvent } from '@booksnap/ui/testing/user'
@@ -16,67 +16,110 @@ beforeEach(() => {
 
 describe('BooksPage', () => {
   /**
-   * ⚠⚠ One request, spanning every tenant. This replaced a per-library
-   * fan-out whose results were merged and re-sorted in the browser with
-   * `localeCompare` — which is not the server's normalized key, so the merged
-   * order differed from a single library's and the screen had to apologise
-   * for it. Ordering and Hebrew ranking now happen once, server-side.
+   * ⚠⚠ One row per WORK, from one request. The screen used to list
+   * `(library, book)` pairs, which made a system-wide book list a
+   * concatenation of household lists — it answered "whose is it", a question
+   * an operator never asks.
    */
-  it('lists every tenant\'s books from one staff request', async () => {
+  it('lists one row per book across every tenant, with no library column', async () => {
     const s = bothServices()
     renderApp(<BooksPage initialLibraryId={undefined} />)
 
     expect(await screen.findByText('אבא')).toBeInTheDocument()
-    expect(screen.getByText('גגא')).toBeInTheDocument()
+    const table = screen.getByRole('table')
+    // The two households that hold 'אבא' are ONE row here…
+    expect(within(table).getAllByText('אבא')).toHaveLength(1)
+    // …and neither library's name appears in the table at all.
+    expect(within(table).queryByText('הבית')).not.toBeInTheDocument()
+    expect(within(table).queryByText('ההורים')).not.toBeInTheDocument()
 
-    expect(s.calls.filter((c) => c.url.startsWith('/api/staff/v1/books')))
+    expect(s.calls.filter((c) => c.url.startsWith('/api/staff/v1/works')))
       .toHaveLength(1)
     expect(s.calls.filter((c) => c.url.startsWith('/api/v1/books'))).toHaveLength(0)
   })
 
-  it('labels each row with the library it came from', async () => {
-    bothServices()
-    renderApp(<BooksPage initialLibraryId={undefined} />)
-    await screen.findByText('אבא')
-
-    // Scoped to the table — the picker above it names every library too — and
-    // `getAllByText`, because lib-1 legitimately owns two of the three rows.
-    const table = screen.getByRole('table')
-    expect(within(table).getAllByText('הבית')).toHaveLength(2)
-    expect(within(table).getAllByText('ההורים')).toHaveLength(1)
-  })
-
-  it('narrows to one library through the server, not the browser', async () => {
-    const s = bothServices()
-    renderApp(<BooksPage initialLibraryId="lib-2" />)
-
-    expect(await screen.findByText('גגא')).toBeInTheDocument()
-    expect(screen.queryByText('אבא')).not.toBeInTheDocument()
-    expect(s.calls.some((c) => c.url.includes('library_id=lib-2'))).toBe(true)
-  })
-
-  /**
-   * ⚠ Changing the sort KEY resets the direction to that key's natural one.
-   * Carrying A–Z's "ascending" onto a date key silently answers a question
-   * nobody asked: "recently added, oldest first".
-   */
-  it('resets the sort direction when the key changes', async () => {
+  /** The owner's own sketch: the spread is a number, and the number is the
+   *  link that opens the list behind it. */
+  it('shows how many libraries hold a work, as a control that opens the list', async () => {
     bothServices()
     const user = userEvent.setup()
     renderApp(<BooksPage initialLibraryId={undefined} />)
     await screen.findByText('אבא')
 
+    await user.click(screen.getByRole('button', { name: /2 הספריות|2 libraries/ }))
+    const panel = await screen.findByRole('dialog')
+    expect(within(panel).getByText('הבית')).toBeInTheDocument()
+    expect(within(panel).getByText('ההורים')).toBeInTheDocument()
+  })
+
+  /**
+   * ⚠⚠ A filter SELECTS works; it must not change what one reports. If
+   * narrowing to lib-2 made 'אבא' read "in 1 library", the console's central
+   * column would be a number that changes meaning when you filter.
+   */
+  it('keeps a work\'s spread honest while the list is narrowed to one library', async () => {
+    const s = bothServices()
+    renderApp(<BooksPage initialLibraryId="lib-2" />)
+
+    await screen.findByText('אבא')
+    expect(screen.queryByText('בבא')).not.toBeInTheDocument()
+    expect(s.calls.some((c) => c.url.includes('library_id=lib-2'))).toBe(true)
+    // Still two, though only one of them is in view…
+    expect(screen.getByRole('button', { name: /2 הספריות|2 libraries/ }))
+      .toBeInTheDocument()
+    // …and the screen SAYS that is deliberate, for the library filter and not
+    // only for the status one.
+    expect(screen.getByText(/נשאר המספר האמיתי|stays the true one/))
+      .toBeInTheDocument()
+  })
+
+  /** ⚠ A work held `manual` in one house and `auto` in another has no single
+   *  status. Showing only the strongest would answer "anything unapproved out
+   *  there?" with a confident no. */
+  it('says so when the households disagree about status', async () => {
+    bothServices()
+    renderApp(<BooksPage initialLibraryId={undefined} />)
+    await screen.findByText('אבא')
+
+    const row = screen.getByText('אבא').closest('tr')!
+    expect(within(row).getByText(/מעורב|mixed/)).toBeInTheDocument()
+    expect(within(screen.getByText('בבא').closest('tr')!)
+      .queryByText(/מעורב|mixed/)).not.toBeInTheDocument()
+  })
+
+  /**
+   * ⚠ Changing the sort KEY resets the direction to that key's natural one.
+   * Carrying A–Z's "ascending" onto "in most libraries" silently answers a
+   * question nobody asked: "the rarest first".
+   */
+  it('resets the sort direction when the key changes, and sends both', async () => {
+    const s = bothServices()
+    const user = userEvent.setup()
+    renderApp(<BooksPage initialLibraryId={undefined} />)
+    await screen.findByText('אבא')
+
     expect(screen.getByRole('button', { name: /עולה|Ascending/ })).toBeInTheDocument()
-    await user.selectOptions(screen.getByLabelText(/מיון|Sort/), 'recently_added')
+    await user.selectOptions(screen.getByLabelText(/מיון|Sort/), 'libraries')
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /יורד|Descending/ })).toBeInTheDocument()
+    })
+    // ⚠ …and it reaches the SERVER. The reset was pinned on the client and the
+    // key was pinned on the server, with nothing gating the wire between them —
+    // so dropping `sort` from the request left the whole ring green while "in
+    // most libraries" quietly returned title order.
+    await waitFor(() => {
+      expect(s.calls.some((c) => c.url.includes('sort=libraries')
+                              && c.url.includes('ascending=false'))).toBe(true)
     })
   })
 
   /**
    * ⚠ While searching, the server ranks by RELEVANCE (P1.5's measured Hebrew
    * search) and ignores `sort`. A live sort control would promise an ordering
-   * nobody applies, so it is inert and the screen says why.
+   * nobody applies, so it is inert and the box READS the ordering in force —
+   * not a key the server is discarding. (A first version asserted only that
+   * the word "relevance" appeared SOMEWHERE, which matched the sentence below
+   * the row and was green while the box still said "title".)
    */
   it('sends the query to the server and marks the sort inert', async () => {
     const s = bothServices()
@@ -86,79 +129,12 @@ describe('BooksPage', () => {
 
     await user.type(screen.getByLabelText(/חיפוש|Search/), 'מנהרה')
     await waitFor(() => {
-      expect(s.calls.some((c) => c.url.includes('/api/staff/v1/books')
+      expect(s.calls.some((c) => c.url.startsWith('/api/staff/v1/works')
                               && c.url.includes(encodeURIComponent('מנהרה')))).toBe(true)
     })
-    // ⚠ The box must READ "relevance", not merely be greyed with the reason
-    // beside it. The first version of this test asserted
-    // `getByText(/רלוונטיות|relevance/)` — which matched the SENTENCE below
-    // the row (`books_sort_ignored` contains the word) and was green while the
-    // box still said "כותרת", a key the server was ignoring. Found by a UX
-    // review in a real browser, not by this ring.
     const sort = screen.getByLabelText(/מיון|Sort/)
     expect(sort).toBeDisabled()
     expect(sort).toHaveValue('relevance')
-  })
-
-  /**
-   * ⚠⚠ The console's central asymmetry, made visible. Reading spans every
-   * tenant; writing goes through the product API, which resolves the
-   * operator's own membership and 404s for anything else. A book in a library
-   * they do not belong to must therefore show no action buttons — offering
-   * one would be offering a click that fails.
-   */
-  it('offers no moderation on a book outside the operator\'s own libraries', async () => {
-    bothServices()
-    const user = userEvent.setup()
-    renderApp(<BooksPage initialLibraryId={undefined} />)
-
-    // lib-2 is NOT in `mine` in the default world.
-    await user.click(await screen.findByText('גגא'))
-    const panel = await screen.findByRole('dialog')
-
-    expect(within(panel).queryByRole('button', { name: /עריכת כותרת|Edit title/ }))
-      .not.toBeInTheDocument()
-    expect(within(panel).queryByRole('button', { name: /מחיקה|Delete/ }))
-      .not.toBeInTheDocument()
-    // …and says why, rather than leaving a panel that looks broken.
-    expect(within(panel).getByText(/אינכם חברים|not a member/)).toBeInTheDocument()
-  })
-
-  it('offers moderation on a book in a library the operator administers', async () => {
-    bothServices()
-    const user = userEvent.setup()
-    renderApp(<BooksPage initialLibraryId={undefined} />)
-
-    await user.click(await screen.findByText('אבא'))
-    const panel = await screen.findByRole('dialog')
-    expect(within(panel).getByRole('button', { name: /עריכת כותרת|Edit title/ }))
-      .toBeInTheDocument()
-  })
-
-  /**
-   * ⚠⚠ Choosing a different row must abandon whatever was half-typed, or the
-   * next Save renames the wrong book — across tenants, at that. The panel is
-   * keyed on the book for exactly this; an effect that copied props into state
-   * was tried first and was silently defeated by effect ordering (see
-   * `BookPanel`'s note).
-   */
-  it('abandons a half-typed edit when another book is selected', async () => {
-    bothServices()
-    const user = userEvent.setup()
-    renderApp(<BooksPage initialLibraryId="lib-1" />)
-    await screen.findByText('אבא')
-
-    await user.click(screen.getByText('אבא'))
-    await user.click(await screen.findByRole('button', { name: /עריכת כותרת|Edit title/ }))
-    await user.clear(screen.getByLabelText(/^כותרת$|^Title$/))
-    await user.type(screen.getByLabelText(/^כותרת$|^Title$/), 'חצי')
-
-    await user.click(screen.getByText('בבא'))
-
-    const panel = await screen.findByRole('dialog')
-    expect(screen.queryByLabelText(/^כותרת$|^Title$/)).not.toBeInTheDocument()
-    expect(within(panel).getByText('בבא')).toBeInTheDocument()
-    expect(screen.queryByDisplayValue('חצי')).not.toBeInTheDocument()
   })
 
   /** A ranked search stops at the server's scan cap; pages past it are
@@ -166,7 +142,7 @@ describe('BooksPage', () => {
    *  reads as "that is all there is". */
   it('reports a truncated search', async () => {
     const s = bothServices()
-    s.route('GET /api/staff/v1/books', () =>
+    s.route('GET /api/staff/v1/works', () =>
       ({ items: [], total: 99999, offset: 0, limit: 25, truncated: true }))
     const user = userEvent.setup()
     renderApp(<BooksPage initialLibraryId={undefined} />)

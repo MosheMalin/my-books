@@ -30,7 +30,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from app.staff_api.queries import (
-    RANKED_SCAN_CAP, SchemaMismatch, StaffQueries,
+    RANK_NAMES, RANKED_SCAN_CAP, SchemaMismatch, StaffQueries, WORK_SORTS,
 )
 
 #: Header the console presents its token in. ``Authorization: Bearer …`` is
@@ -76,6 +76,19 @@ class OverviewDTO(BaseModel):
                                   "this — and only this — is 'awaiting'.")
     approved: int
     manual: int
+    image_files: int = Field(
+        description="Files under the blob root, renditions and sidecars "
+                    "included — what the disk actually holds. Zero when no "
+                    "blob root is configured (the database and the photographs "
+                    "can live on different machines).",
+    )
+    image_bytes: int
+    blobs_visible: bool = Field(
+        description="This process can see the blob tree. When false the two "
+                    "figures above are zero because nobody looked, not "
+                    "because nothing is there — and every image reports "
+                    "`present: false` for the same reason.",
+    )
     authenticated: bool = Field(
         description="False when no BOOKSNAP_STAFF_TOKEN is configured, i.e. "
                     "anyone who can reach this port can read every tenant.",
@@ -104,6 +117,8 @@ class LibraryDTO(BaseModel):
     duplicates: int
     lent_out: int
     last_activity: str | None = None
+    image_files: int = 0
+    image_bytes: int = 0
 
 
 class MembershipDTO(BaseModel):
@@ -137,23 +152,121 @@ class BookPageDTO(BaseModel):
     offset: int
     limit: int
     truncated: bool = Field(
-        description="A ranked search stopped at the scan cap, so `total` is "
-                    "honest but pages past the cap are not reachable. Narrow "
-                    "the query.",
+        description="A ranked search stopped at the scan cap: `total` is "
+                    "honest, but the rows were ranked over an arbitrary "
+                    "capped slice, so the best match may not be on any page "
+                    "you can reach. Narrow the query.",
     )
 
 
-class ShelfDTO(BaseModel):
-    id: str
+class WorkDTO(BaseModel):
+    """One book across every tenant — the console's unit since revision 4.
+
+    ⚠ There is no `library_id` here, and that is the point of the type. A
+    system console's question about a book is *how widespread is it*, not
+    *whose is it*; the per-household instances are a second call
+    (`/works/instances`), because acting on one is a different, narrower job.
+    """
+
+    key: str = Field(description="`app.domain.text.book_key` — "
+                                 "`normalize(title)|normalize(author)`. Opaque "
+                                 "to the client; pass it back verbatim.")
+    title: str
+    author: str
+    status: str = Field(description="The STRONGEST §5.1 claim any household "
+                                    "makes about this work.")
+    mixed: bool = Field(description="Instances disagree about status. A work "
+                                    "manual in one house and auto in another "
+                                    "has no single status, and hiding that "
+                                    "would answer 'anything unapproved?' "
+                                    "wrongly.")
+    libraries: int = Field(description="How many libraries hold it. Unaffected "
+                                       "by the filters — see the query's note "
+                                       "on HAVING vs WHERE.")
+    copies: int
+    first_added: str | None = None
+    last_added: str | None = None
+
+
+class WorkPageDTO(BaseModel):
+    items: list[WorkDTO]
+    total: int
+    offset: int
+    limit: int
+    truncated: bool = Field(
+        description="A ranked search stopped at the scan cap: `total` is "
+                    "honest, but the rows were ranked over an arbitrary "
+                    "capped slice, so the best match may not be on any page "
+                    "you can reach. Narrow the query.",
+    )
+
+
+class ImageDTO(BaseModel):
+    """One photograph — the console's unit since revision 4.
+
+    ⚠ **This replaced `ShelfDTO`, and the replacement is the point.** VISION
+    §4.1a records that "one image = one shelf" is a PLACEHOLDER with a recorded
+    exit (P2.1): intake mints a shelf identity per photograph until pillar 6's
+    map can say two photographs are the same piece of wood. A console listing
+    shelves was therefore listing photographs under a noun they had not earned.
+    So the image leads, and `shelf_id`/`depth`/`order` are reported as the SLOT
+    it is currently filed at — the pair pillar 6 replaces with a real address.
+
+    ⚠ **No bytes are served by this service, only facts about them.** An
+    operator looking at a household's actual photographs is a larger power than
+    counting them; the console renders a thumbnail only for a library the
+    operator is a member of, through the product API, exactly as the household
+    client does.
+    """
+
+    id: str = Field(description="The capture id. There is no separate image "
+                                "entity yet — a capture IS a photograph filed "
+                                "somewhere, and `image_key` is its content "
+                                "address.")
     library_id: str
-    label: str
-    depth_count: int
-    virtual: bool
-    captures: int
-    books: int = Field(description="DISTINCT books with a copy standing here, "
-                                   "not copies — two copies of one book is "
-                                   "one book on the shelf.")
+    image_key: str | None = None
+    captured_at: str | None = None
+    shelf_id: str
+    shelf_label: str
+    depth: int
+    order: int
+    present: bool = Field(description="The bytes are on disk. False is a real "
+                                      "finding — a photograph the household "
+                                      "can no longer see — not a blank cell. "
+                                      "⚠ Only when `blobs_visible`; otherwise "
+                                      "it means nobody looked.")
+    bytes: int
+    width: int
+    height: int
+    content_type: str
+    filename: str
+    reads: int = Field(description="Runs that CONSUMED this photograph "
+                                   "(`reads.capture_ids`), which is not the "
+                                   "same as runs that found something in it — "
+                                   "a run that found nothing is exactly what "
+                                   "an operator is looking for.")
+    findings: int
+    auto: int
+    review: int
+    unmatched: int
     last_read: str | None = None
+
+
+class ImagePageDTO(BaseModel):
+    items: list[ImageDTO]
+    total: int
+    offset: int
+    limit: int
+    blobs_visible: bool = Field(
+        description="⚠ Read this BEFORE `present`. When false, the service "
+                    "cannot see the blob tree at all (the database and the "
+                    "photographs may live on different machines), so every "
+                    "row reports `present: false` and zero bytes — which is "
+                    "'we did not look', not 'they are gone'. A console that "
+                    "conflated the two would announce that every photograph "
+                    "in every tenant was lost, and hide a real loss among "
+                    "the noise.",
+    )
 
 
 class ReadDTO(BaseModel):
@@ -264,8 +377,7 @@ def create_app(queries: StaffQueries) -> FastAPI:
         limit: int = Query(default=50, ge=1, le=200),
         offset: int = Query(default=0, ge=0),
     ) -> BookPageDTO:
-        if book_status is not None and book_status not in ("auto", "approved",
-                                                           "manual"):
+        if book_status is not None and book_status not in RANK_NAMES:
             raise HTTPException(status.HTTP_400_BAD_REQUEST,
                                 "status must be auto, approved or manual")
         items, total = queries.books(
@@ -278,17 +390,75 @@ def create_app(queries: StaffQueries) -> FastAPI:
             truncated=bool(q.strip()) and total > RANKED_SCAN_CAP,
         )
 
-    @app.get("/api/staff/v1/libraries/{library_id}/shelves",
-             response_model=list[ShelfDTO], dependencies=guard,
-             summary="One library's shelves")
-    def shelves(library_id: str) -> list[ShelfDTO]:
-        """⚠ Cross-tenant, so it cannot be `/api/v1/shelves`: that resolves the
-        caller's membership, and a system administrator is a member of
-        nothing. Note the consequence for the console — an EMPTY list and a
-        library that does not exist look the same here, deliberately: this
-        service has no reason to distinguish them, and the library list it
-        came from is the authority on which ids are real."""
-        return [ShelfDTO(**vars(row)) for row in queries.shelves(library_id)]
+    @app.get("/api/staff/v1/works", response_model=WorkPageDTO,
+             dependencies=guard, summary="Books aggregated across every tenant")
+    def works(
+        q: str = "",
+        library_id: str | None = None,
+        book_status: str | None = Query(default=None, alias="status"),
+        sort: str = "title",
+        ascending: bool = True,
+        limit: int = Query(default=50, ge=1, le=200),
+        offset: int = Query(default=0, ge=0),
+    ) -> WorkPageDTO:
+        """⚠ `library_id` and `status` SELECT works; they never narrow what a
+        work reports. "In 3 libraries" means three whatever the filter says —
+        see `StaffQueries.works` for why that had to be a `HAVING`."""
+        if book_status is not None and book_status not in RANK_NAMES:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                "status must be auto, approved or manual")
+        if sort not in WORK_SORTS:
+            # ⚠ A 400, not a silent fall back to title order. `/books` sorts by
+            # `recently_added` and a work's date key is `first_added`; a caller
+            # carrying the wrong spelling would otherwise be served a plausible
+            # wrong ordering with nothing on screen to say so.
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                f"sort must be one of {', '.join(WORK_SORTS)}")
+        items, total = queries.works(
+            q=q, library_id=library_id, status=book_status, sort=sort,
+            ascending=ascending, limit=limit, offset=offset,
+        )
+        return WorkPageDTO(
+            items=[WorkDTO(**vars(row)) for row in items],
+            total=total, offset=offset, limit=limit,
+            truncated=bool(q.strip()) and total > RANKED_SCAN_CAP,
+        )
+
+    @app.get("/api/staff/v1/works/instances", response_model=list[BookDTO],
+             dependencies=guard, summary="Every household's copy of one work")
+    def work_instances(key: str) -> list[BookDTO]:
+        """The key travels as a QUERY parameter, not a path segment.
+
+        It is `normalize(title)|normalize(author)` — Hebrew, spaces, a pipe,
+        and whatever else a title contains. A path segment would need encoding
+        the console cannot get wrong only by being careful, and `/works/<key>`
+        would additionally collide with this very route the day a work is
+        called "instances".
+        """
+        return [BookDTO(**vars(row)) for row in queries.work_instances(key)]
+
+    @app.get("/api/staff/v1/images", response_model=ImagePageDTO,
+             dependencies=guard, summary="Photographs across every tenant")
+    def images(
+        library_id: str | None = None,
+        limit: int = Query(default=50, ge=1, le=200),
+        offset: int = Query(default=0, ge=0),
+    ) -> ImagePageDTO:
+        """⚠ This REPLACED `/libraries/{id}/shelves`, and the replacement is
+        the item, not a rename. See `ImageDTO`: a shelf is a placeholder minted
+        per photograph until pillar 6, so a console shelf list was a photograph
+        list wearing the wrong noun.
+
+        Cross-tenant, so it could not be `/api/v1/...`: that resolves the
+        caller's membership, and a system administrator is a member of nothing.
+        An empty page and a library that does not exist look the same here,
+        deliberately — the library list is the authority on which ids are real.
+        """
+        items, total = queries.images(library_id=library_id, limit=limit,
+                                      offset=offset)
+        return ImagePageDTO(items=[ImageDTO(**vars(row)) for row in items],
+                            total=total, offset=offset, limit=limit,
+                            blobs_visible=queries.blobs.visible)
 
     @app.get("/api/staff/v1/reads", response_model=list[ReadDTO],
              dependencies=guard, summary="Recent reads, across every tenant")

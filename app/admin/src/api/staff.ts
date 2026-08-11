@@ -81,8 +81,14 @@ export type StaffBook = Schemas['BookDTO']
 /** `truncated` means a ranked search hit the server's scan cap: `total` is
  *  honest, but pages past the cap are unreachable. Told, not hidden. */
 export type StaffBookPage = Schemas['BookPageDTO']
-export type StaffShelf = Schemas['ShelfDTO']
 export type StaffRead = Schemas['ReadDTO']
+/** One book ACROSS every tenant — the console's unit since revision 4. It has
+ *  no `library_id` on purpose: an operator's question about a book is how
+ *  widespread it is, and the per-household instances are a second call. */
+export type StaffWork = Schemas['WorkDTO']
+export type StaffWorkPage = Schemas['WorkPageDTO']
+export type StaffImage = Schemas['ImageDTO']
+export type StaffImagePage = Schemas['ImagePageDTO']
 
 // --- transport --------------------------------------------------------------
 
@@ -135,9 +141,6 @@ export const listAllLibraries = (opts: StaffOptions = {}) =>
 export const listAllAccounts = (opts: StaffOptions = {}) =>
   get<StaffAccount[]>('/accounts', opts)
 
-export const listLibraryShelves = (libraryId: string, opts: StaffOptions = {}) =>
-  get<StaffShelf[]>(`/libraries/${encodeURIComponent(libraryId)}/shelves`, opts)
-
 export interface StaffBookQuery {
   q?: string | undefined
   libraryId?: string | undefined
@@ -168,6 +171,53 @@ export const listAllBooks = (query: StaffBookQuery = {}, opts: StaffOptions = {}
     limit: query.limit,
     offset: query.offset,
   })
+
+export interface StaffWorkQuery {
+  q?: string | undefined
+  libraryId?: string | undefined
+  status?: string | undefined
+  sort?: 'title' | 'author' | 'first_added' | 'libraries' | undefined
+  ascending?: boolean | undefined
+  limit?: number | undefined
+  offset?: number | undefined
+}
+
+/**
+ * Books aggregated across every tenant — one row per `book_key`.
+ *
+ * ⚠ `libraryId` and `status` SELECT works; they do not narrow what a work
+ * reports. A work held by three households still says three while the list is
+ * filtered to one of them — see the server's note on HAVING vs WHERE. A
+ * console that assumed otherwise would present a spread count that shrinks
+ * when you filter, which is a number nobody can trust.
+ */
+export const listWorks = (query: StaffWorkQuery = {}, opts: StaffOptions = {}) =>
+  get<StaffWorkPage>('/works', opts, {
+    q: query.q,
+    library_id: query.libraryId,
+    status: query.status,
+    sort: query.sort,
+    ascending: query.ascending,
+    limit: query.limit,
+    offset: query.offset,
+  })
+
+/** Every household's copy of one work. The key is opaque — pass back exactly
+ *  what the row carried; it is `normalize(title)|normalize(author)` and
+ *  reconstructing it here would be a second normalizer. */
+export const listWorkInstances = (key: string, opts: StaffOptions = {}) =>
+  get<StaffBook[]>('/works/instances', opts, { key })
+
+/** Photographs across every tenant. ⚠ Metadata only — this service serves no
+ *  image BYTES, by construction. A thumbnail comes from the product API, and
+ *  only for a library the operator is a member of. */
+export const listImages = (
+  query: { libraryId?: string | undefined; limit?: number | undefined;
+           offset?: number | undefined } = {},
+  opts: StaffOptions = {},
+) => get<StaffImagePage>('/images', opts, {
+  library_id: query.libraryId, limit: query.limit, offset: query.offset,
+})
 
 export const listRecentReads = (
   limit = 30, libraryId?: string, opts: StaffOptions = {},
