@@ -29,7 +29,7 @@ import { Empty, ErrorBox, Loading } from '@booksnap/ui'
 
 export function AccessPage() {
   const { t, lang } = useI18n()
-  const { overview, mine, accounts, loading, error, reload } = useSystem()
+  const { overview, mine, users, loading, error, reload } = useSystem()
 
   if (loading) return <Loading />
 
@@ -97,7 +97,7 @@ export function AccessPage() {
           <li>{t.acc_gap_list}</li>
           <li>{t.acc_gap_delete}</li>
         </ul>
-        <p>{t.acc_gap_counts(accounts.length, overview?.libraries ?? 0)}</p>
+        <p>{t.acc_gap_counts(users.length, overview?.libraries ?? 0)}</p>
       </div>
 
       <p className="note warn">{t.acc_no_auth}</p>

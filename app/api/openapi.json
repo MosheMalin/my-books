@@ -1,27 +1,6 @@
 {
   "components": {
     "schemas": {
-      "AccountDTO": {
-        "description": "Who the server thinks is asking (§4.1).\n\nDev-trusted until pillar 4: there is no login, so this is whichever\nprincipal the composition root built. It is on the wire now because the\nswitcher's list is *this account's* libraries, and a client that cannot\nname the account cannot explain an empty list.",
-        "properties": {
-          "display_name": {
-            "default": "",
-            "description": "Shown in the UI, if set.",
-            "title": "Display Name",
-            "type": "string"
-          },
-          "id": {
-            "description": "Opaque account identifier.",
-            "title": "Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id"
-        ],
-        "title": "AccountDTO",
-        "type": "object"
-      },
       "AlternativeDTO": {
         "description": "One ranked runner-up `booksnap.match.explain()` considered for a\nclaim's OCR text (P2.7) — what the review UI's \"why?\" panel renders.\n``reason`` is empty for a candidate that passed the matcher's own gates\n(a real runner-up) and names the gate that refused one that didn't.",
         "properties": {
@@ -1347,10 +1326,6 @@
       "MetaResponse": {
         "description": "Service identity + who is asking + the library resolved for them.",
         "properties": {
-          "account": {
-            "$ref": "#/components/schemas/AccountDTO",
-            "description": "The caller (dev-trusted until P4.1)."
-          },
           "api_version": {
             "description": "API major version, e.g. 'v1'.",
             "title": "Api Version",
@@ -1365,6 +1340,10 @@
             "$ref": "#/components/schemas/LibraryRefDTO",
             "description": "Library resolved for this caller."
           },
+          "user": {
+            "$ref": "#/components/schemas/UserDTO",
+            "description": "The caller (dev-trusted until P4.1)."
+          },
           "version": {
             "description": "Server package version.",
             "title": "Version",
@@ -1376,7 +1355,7 @@
           "version",
           "api_version",
           "library",
-          "account"
+          "user"
         ],
         "title": "MetaResponse",
         "type": "object"
@@ -1811,6 +1790,27 @@
         ],
         "title": "Status",
         "type": "string"
+      },
+      "UserDTO": {
+        "description": "Who the server thinks is asking (§4.1).\n\nDev-trusted until pillar 4: there is no login, so this is whichever\nprincipal the composition root built. It is on the wire now because the\nswitcher's list is *this user's* libraries, and a client that cannot\nname the user cannot explain an empty list.\n\n⚠ Called ``AccountDTO`` until P3.7a. The word \"account\" now belongs to the\nCUSTOMER (VISION §4.1, 2026-08-11) and arrives on the wire at P3.7b —\nreading this field as a tenant is the mistake the rename exists to stop.",
+        "properties": {
+          "display_name": {
+            "default": "",
+            "description": "Shown in the UI, if set.",
+            "title": "Display Name",
+            "type": "string"
+          },
+          "id": {
+            "description": "Opaque user identifier.",
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "UserDTO",
+        "type": "object"
       },
       "ValidationError": {
         "properties": {
@@ -3138,7 +3138,7 @@
     },
     "/api/v1/libraries": {
       "get": {
-        "description": "Ordered by the domain's own key, so the switcher never reshuffles.\n\nAn account that belongs to nothing gets ``[]``, not an error — a real\nstate (P4.3's sign-up, before the first library) the client has to render.\n\n⚠ **Store data only, with no special case for the principal's own default\nlibrary** — even though :func:`app.api.deps.current_library` serves that\none without consulting the store. Patching it in here would put a second\ncopy of the resolver's dev-trusted rule in a second module, and the day\nthey disagreed the switcher would be missing the very library on screen.\nGuaranteeing the membership row exists is the composition root's job\n(``app.main:_bootstrap_dev_account``), and\n``test_the_library_meta_resolves_is_always_one_the_switcher_lists`` pins\nthe agreement rather than trusting it.",
+        "description": "Ordered by the domain's own key, so the switcher never reshuffles.\n\nA user that belongs to nothing gets ``[]``, not an error — a real\nstate (P4.3's sign-up, before the first library) the client has to render.\n\n⚠ **Store data only, with no special case for the principal's own default\nlibrary** — even though :func:`app.api.deps.current_library` serves that\none without consulting the store. Patching it in here would put a second\ncopy of the resolver's dev-trusted rule in a second module, and the day\nthey disagreed the switcher would be missing the very library on screen.\nGuaranteeing the membership row exists is the composition root's job\n(``app.main:_bootstrap_dev_user``), and\n``test_the_library_meta_resolves_is_always_one_the_switcher_lists`` pins\nthe agreement rather than trusting it.",
         "operationId": "list_libraries_api_v1_libraries_get",
         "responses": {
           "200": {
@@ -3156,7 +3156,7 @@
             "description": "Successful Response"
           }
         },
-        "summary": "Libraries this account belongs to",
+        "summary": "Libraries this user belongs to",
         "tags": [
           "libraries"
         ]
@@ -3204,7 +3204,7 @@
     },
     "/api/v1/libraries/{library_id}": {
       "patch": {
-        "description": "404 for a library this account is not a member of — never 403 (§4.2).\n\nThe membership is looked up FIRST and the library second: asking the other\nway round would answer \"no such library\" for a real library and \"not\nfound\" for a fictional one from two different branches, and only one of\nthem stays honest when P3.2 adds roles.",
+        "description": "404 for a library this user is not a member of — never 403 (§4.2).\n\nThe membership is looked up FIRST and the library second: asking the other\nway round would answer \"no such library\" for a real library and \"not\nfound\" for a fictional one from two different branches, and only one of\nthem stays honest when P3.2 adds roles.",
         "operationId": "patch_library_api_v1_libraries__library_id__patch",
         "parameters": [
           {

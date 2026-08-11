@@ -7,7 +7,7 @@ separate application rather than a role inside the product API.
 ⚠ **The credential is the whole security model here, and it is not the same
 one the product uses.** `/api/v1` has no authentication at all — a deliberate
 single-household trade until pillar 4 — and that trade does NOT carry over: a
-route that returns every account and every household's book list is a
+route that returns every user and every household's book list is a
 different exposure from one that returns your own. So this service reads
 ``BOOKSNAP_STAFF_TOKEN`` and, when it is set, refuses every request that does
 not present it.
@@ -61,7 +61,7 @@ STAFF_TOKEN_ENV = "BOOKSNAP_STAFF_TOKEN"
 class OverviewDTO(BaseModel):
     """System-wide totals. Every figure spans every tenant."""
 
-    accounts: int
+    users: int
     libraries: int
     memberships: int
     books: int
@@ -127,7 +127,7 @@ class MembershipDTO(BaseModel):
     joined_at: str | None = None
 
 
-class AccountDTO(BaseModel):
+class UserDTO(BaseModel):
     id: str
     display_name: str
     email: str | None = None
@@ -339,9 +339,9 @@ def create_app(queries: StaffQueries) -> FastAPI:
     def libraries() -> list[LibraryDTO]:
         return [LibraryDTO(**vars(row)) for row in queries.libraries()]
 
-    @app.get("/api/staff/v1/accounts", response_model=list[AccountDTO],
-             dependencies=guard, summary="Every account, with its memberships")
-    def accounts() -> list[AccountDTO]:
+    @app.get("/api/staff/v1/users", response_model=list[UserDTO],
+             dependencies=guard, summary="Every user, with their memberships")
+    def users() -> list[UserDTO]:
         """⚠ This is the route that has no equivalent in `/api/v1`, and could
         not have one: the product API answers *"which libraries may I name"*,
         never *"who is in the system"*.
@@ -354,7 +354,7 @@ def create_app(queries: StaffQueries) -> FastAPI:
         live on the library rows instead.
         """
         return [
-            AccountDTO(
+            UserDTO(
                 id=row.id, display_name=row.display_name, email=row.email,
                 created_at=row.created_at,
                 memberships=[
@@ -363,7 +363,7 @@ def create_app(queries: StaffQueries) -> FastAPI:
                     for m in row.memberships
                 ],
             )
-            for row in queries.accounts()
+            for row in queries.users()
         ]
 
     @app.get("/api/staff/v1/books", response_model=BookPageDTO,

@@ -92,85 +92,158 @@ is measurable at all. Web/tenancy code depends on the core, never the reverse.
 ### 4.1 Entities
 
 ```
-Account (a person, one identity)
-  └─ membership in one or more Libraries (role-scoped)
-
-Library  (a household's collection — the tenancy boundary)
-  ├─ Members: Account × Role
-  ├─ Places (1..n)   ← a user may have several: home, office, parents'
-  │    └─ Bookcases → Shelves
-  ├─ Shelves ── (0..n) Captures (photos)  ← one shelf may span several photos
-  ├─ Runs (immutable archive, as today)
-  └─ Books (confirmed catalog — the deliverable)
+Account (a customer — THE tenancy boundary)
+  ├─ Users (1..n)      ← a person, one identity; Account × User × Role
+  └─ Libraries (1..n)  ← a collection; LOGICAL separation, not a boundary
+       ├─ Places (1..n)   ← home, office, the parents' — pillar 6
+       │    └─ Bookcases → Shelves
+       ├─ Shelves ── (0..n) Captures (photos)  ← one shelf may span several photos
+       ├─ Runs (immutable archive, as today)
+       └─ Books (confirmed catalog — the deliverable)
 ```
 
-Note the distinction: **Library** is the permission/tenancy unit ("the Malin
-family collection"); **Place** is a physical location within it — a room, or
-a whole site. A user having several places was called out explicitly and must
-not be collapsed into a single implicit root.
+Four nouns, and every one of them has been confused with another at least
+once:
+
+- **Account** — the customer. One household, one shop, one school. This is
+  the **hard separation**: a user of account A must not be able to learn that
+  account B exists. Everything below hangs off exactly one account.
+- **User** — a person, one identity, a member of one or more Accounts (I hold
+  my own, and may be invited to my parents'). Role is held **per account**.
+- **Library** — a collection inside an account: "the family books", "the
+  shop's stock". Separation between two libraries of one account is
+  **logical, not enforced** — see the 2026-08-11 revision below for exactly
+  what that buys and what it costs.
+- **Place** — where books physically stand: a room, or a whole site. Pillar 6.
 
 *Naming, settled 2026-08-10 before H5's lint lands at P6.1:* the noun is
 **Place**; *PhysicalLibrary* is its retired synonym and must not appear in
 code — it contains the very word it exists to be distinguished from, which is
 how "the living-room library" gets typed.
 
-**[SETTLED 2026-08-10, owner] What makes something a TENANT.** The
-discriminator is **ownership, never geography**: a different tenant is a
-different account's/household's collection. Within one account, multiple
-physical libraries — the living room, the child's room, and equally a whole
-other SITE (the office, shelves standing at the parents') — are **locations
-of one Library**, never Libraries of their own. Consequences:
+**[SETTLED 2026-08-10, owner — unchanged] Ownership, never geography.** The
+discriminator for a tenant is *whose books these are*, never whose roof they
+stand under. The living room, the child's room, and equally a whole other
+SITE (the office, shelves standing at the parents') are **Places** — never
+tenants, and never Libraries of their own. My parents' OWN collection is
+THEIR account, which I may join as a user. Whose books, not whose roof. The
+2026-08-11 revision below moves which LEVEL holds the boundary; it does not
+touch this discriminator.
 
-- **one Library per account is the default and the normal case.** A second
-  Library under your own account is a rare, deliberate act (a genuinely
-  separate collection you administer — a shop's stock, a classroom set), not
-  an organizational tool. The way an account normally comes to see a second
-  Library is MEMBERSHIP in someone else's (P4.3 invites);
-- the "home, office, parents'" example above is about MY books stored in
-  three places — all one tenant. My parents' OWN collection is THEIR
-  Library, which I may join as a member. Whose books, not whose roof;
-- splitting one collection across two Libraries has a real, silent cost:
-  search, dedup and §5.4's duplicate question are all tenant-scoped, so a
-  second copy of a book you already own would never be flagged. This is why
-  the boundary must not be used for rooms;
-- the client must not ADVERTISE multi-library to an account that has one —
-  the switcher renders as a plain label until a second Library genuinely
-  exists, and creating one carries guidance saying what a Library is for.
-  Rooms get their proper noun (Place) with the map, pillar 6.
+**[REVISED 2026-08-11, owner — supersedes "there is ONE tenancy layer, not
+two"] The tenant is the ACCOUNT; a Library is a logical partition inside it.**
 
-**[SETTLED 2026-08-10, owner] There is ONE tenancy layer, not two.** Asked
-directly — *"should we have 2 layers of tenants, account and libraries?"* —
-and the answer is no, because the two words are doing different jobs already:
+Asked on 2026-08-10 whether there should be two layers of tenants, the answer
+recorded here was *no*, with Library as the isolation boundary and Account as
+a pure identity axis. That is reversed. The owner, 2026-08-11:
 
-- **Library is the isolation boundary.** Every store method leads with a
-  `LibraryRef`, every persisted row carries a `library_id`, and the contract
-  suite proves a foreign record reads as ABSENT (§4.2). A second *enforced*
-  scope would mean every query narrowing twice, and each of the six aggregates
-  gaining a second way to leak;
-- **Account is the identity axis.** It owns memberships and answers *which
-  libraries may I name* — which is why `TenancyStore` is deliberately the one
-  port scoped by account rather than by library. It is not a container the
-  data sits inside; it is who is asking.
+> within an account there can be multiple libraries, and multiple users. and
+> it will not be strange if user can see books across all libraries. but user
+> from account A should not be able to [know] anything about account B. So the
+> hard separation is not in library level, but in account level.
 
-So "account, then library" is not tenancy nested in tenancy. It is one
-boundary plus an identity that indexes it, which is what is already built.
+**What forced it.** The boundary was already in the wrong place in practice
+and the console had to write the mismatch down: `ADMIN_CONSOLE_PLAN.md`
+revision 4 says *"the console's 'account' is the tenant, and today the tenant
+record is a Library"*, and shows the library id labelled under the account
+name so the mapping stays visible. A plan that needs a paragraph to explain
+that the operator's word for a customer maps to a different record than the
+domain carries is a model that is wrong, not a plan that is unclear.
 
-**A cap on libraries per account is the right shape for "how many"** — a
-policy number checked at create time on the ACCOUNT (never a second scope on
-the data), the same way §1.2's run-rate cap is one number with a stated reason
-rather than a quota system. `[OPEN]` what the number is; it belongs with P4.1
-sign-up, since today a library is only created by an authenticated call the
-owner makes for themselves.
+**What it buys** — and note that "a user can see books across libraries" is
+NOT on this list. That was always available as a query and never needed a
+tenancy change:
+
+- **one place to attach a customer**: billing, free quota, BYO API key, and
+  §1.2's run-rate cap. That cap is per-LIBRARY today, which means a customer
+  multiplies their own quota by pressing *new library*;
+- **invite once**: a user joins the ACCOUNT and gets what that account owns,
+  instead of N membership rows that drift apart;
+- **"the last admin cannot step down" becomes a customer-level rule**, which
+  is the level it was always really about;
+- the operator console gets a real record instead of a gloss.
+
+**What survives from the 2026-08-10 argument, in full.** The objection to two
+layers was that *"every query narrows twice, and each of the six aggregates
+gains a second way to leak"*. That objection is correct, and it is honoured by
+building this as ONE enforced data scope, not two:
+
+- **`library_id` stays the one physical scope.** Every store method keeps
+  leading with a `LibraryRef`, every row keeps its column, every read index
+  keeps leading with it, blobs keep `libraries/<library_id>/`.
+  `test_store_contract.py`'s isolation suite — a foreign record reads as
+  ABSENT — keeps holding unchanged, and it is the strongest safety property
+  in this codebase;
+- **the account boundary is enforced at the DOOR, not in the tables.**
+  `libraries` gains an `account_id`, and `app/api/deps.py:current_library`
+  resolves a named library by asking *"is this library owned by an account
+  this user belongs to?"* instead of *"is there a membership row for this
+  (user, library)?"*. Foreign and fictional stay the same answer — **404,
+  never 403** (§4.2);
+- so there is exactly one narrowing in SQL and one authorization decision, in
+  the two modules that already own those jobs. Library isolation is not
+  weakened: it is demoted from *the* boundary to defence in depth INSIDE the
+  boundary, which costs nothing, because it is already built and proven.
+
+**Consequences, each of them a rule:**
+
+- **the same book in two libraries of one account is two separate Books**
+  (owner, 2026-08-11). `book_key` uniqueness stays per-library. A user who
+  wants a single record MERGES them — a new operation, deliberately not built
+  now and not designed away;
+- **§5.4's duplicate question stays library-scoped**, unchanged. Its "already
+  listed copy" answer is a RELINK, and a relink moves a copy to a shelf; a
+  copy in library A cannot relink to a shelf in library B without moving the
+  Book, which is the merge above and not a relink. `reconcile.py` and
+  `copy_resolution.py` do not change;
+- **a role is held per ACCOUNT and covers every library in it.** A user
+  restricted to one library of an account is not expressible, and that is
+  accepted (owner, 2026-08-11): nobody has asked for it, and the shape that
+  would allow it — a library scope on the membership row — is a column added
+  when someone does, not a dead one added now;
+- **splitting one real collection across two libraries still has a silent
+  cost.** Search, dedup and §5.4 are library-scoped, so a second copy of a
+  book you already own is not flagged across the split. Moving the boundary
+  does not remove that cost — it converts it from a tenancy constraint into a
+  GUIDANCE problem, so the guidance gets LOUDER, not quieter: **one library
+  is still the normal case**, the switcher still renders as a plain label
+  until a second genuinely exists, and creating one still carries guidance
+  saying what a Library is for. Rooms get their proper noun (Place) with the
+  map, pillar 6.
+
+**Naming, and the rename it forces.** Today `Account` in the domain is a
+PERSON. That word is the owner's — and the console's — name for a CUSTOMER,
+so the noun moves up and the person gets its own:
+
+| was | is | what it is |
+|---|---|---|
+| `Account` | **`User`** | a person, one identity |
+| — | **`Account`** | the customer; the tenancy boundary |
+| `Library` | `Library` | a collection inside an account — logical |
+| `Membership` (Account × Library × Role) | `Membership` (**User × Account** × Role) | |
+
+⚠ The migration that renames the `accounts` table to `users` while a NEW
+`accounts` table means something else is the one genuinely dangerous step of
+this work. It is a new schema version with a backfill (never an edit in
+place), and it goes through `review-migration` BEFORE it is committed.
+
+**A cap on libraries per account** is still the right shape for "how many" —
+a policy number checked at create time on the account, never a second scope
+on the data, the same way §1.2's run-rate cap is one number with a stated
+reason rather than a quota system. `[OPEN]` what the number is; it belongs
+with P4.1 sign-up.
 
 ### 4.1a The whole chain, and what of it exists today
 
-The owner's own summary, 2026-08-10, reconciled with the nouns above — this
-is the picture to hold, and the right-hand column is the honest state:
+The owner's own summary, 2026-08-10, reconciled with the nouns above and with
+the 2026-08-11 revision — this is the picture to hold, and the right-hand
+column is the honest state:
 
 | level | what it is | today |
 |---|---|---|
-| **Account** | a person, one identity | `app/domain/tenancy.py` (P3.1). No login yet — P4.1 |
-| **Library** | that account's collection; the tenancy boundary | built and enforced everywhere (P3.1–P3.3) |
+| **Account** | the customer; **the tenancy boundary** | the boundary moves here at P3.7 (2026-08-11); until then a Library *was* the tenant |
+| **User** | a person, one identity | `app/domain/tenancy.py` (P3.1, named `Account` until P3.7). No login yet — P4.1 |
+| **Library** | a collection inside an account — logical separation | built and enforced everywhere (P3.1–P3.3) as the one PHYSICAL scope, and it stays that after P3.7 |
 | **Place** | where books are kept: home, the child's room, the office, the parents' shelves | **not built** — pillar 6 |
 | **Bookcase** | one piece of furniture, with columns across and levels down | **not built** — pillar 6 |
 | **Shelf** | one shelf, with `depth` rows front-to-back | built as IDENTITY only (P2.1): an id, an optional label, a declared depth — deliberately **no address** |
@@ -221,11 +294,23 @@ decision, and the test is where it gets written down twice.
 | Rename the library | | | ✓ |
 | Delete photos, delete the library | | | ✓ |
 
-⚠ **Admin here is an admin inside one account's library** (owner,
-2026-08-10): the role governs a single household's collection. It is NOT the
-system operator — that is the separate staff console (`app/admin` /
+⚠ **Admin here is an admin inside one ACCOUNT** (owner, 2026-08-10, restated
+2026-08-11): the role governs a single customer's collections — every library
+that account owns, since §4.1's revision holds the role at the account. It is
+NOT the system operator — that is the separate staff console (`app/admin` /
 `app/staff_api`, its own plan), which authorizes on its own axis and never
 through this matrix.
+
+⚠ **Not true of the code until P3.7b lands, and the code is the honest one
+meanwhile.** `app/domain/policy.py` still says "an admin INSIDE one account's
+library", and it means it: a user holding ADMIN in one library and VIEWER in
+another is representable and enforced today. Read the paragraph above as the
+target and §4.1a's table for what exists.
+
+*The last two rows still name a LIBRARY, and that is not a contradiction:* a
+capability is checked against the role the caller holds in the account that
+owns the library the request resolved to. The role is account-wide; the
+object it acts on is still one library.
 
 Remaining open sub-question: a role between Viewer and Editor that may mark
 lending but not edit the catalog. Nothing forecloses it — it would be a new
@@ -238,8 +323,12 @@ Target: from sign-up to *first correct book on screen* in under five minutes,
 without the user creating any API account. The free-quota decision exists
 precisely to make this possible. Sketch:
 
-1. sign in (magic link / Google / Apple);
-2. create a Library, name it; optionally name a first Place;
+1. sign in (magic link / Google / Apple) — which mints the **User**;
+2. create an **Account** and its first Library, name the library; optionally
+   name a first Place. Signing up creates BOTH: an account with no library is
+   a customer with nowhere to put a book, so P4.1 never leaves that state
+   reachable from onboarding (§4.1's revision, 2026-08-11). A SECOND library
+   is a later, deliberate act carrying the "what a Library is for" guidance;
 3. guided first capture — one shelf, with framing/lighting guidance;
 4. run on our key (free quota), show results;
 5. walk them through approving/correcting one shelf, so the review model is
@@ -374,7 +463,14 @@ genuine ambiguity:
 | Two spines, same shelf, same run | **Never ask.** This is a mis-assignment, and `dup_drop_frac` already drops it. Unchanged. |
 | Same shelf **and same depth**, re-photographed in a later run | **Never ask.** Same copy: append provenance, update last-seen. |
 | Overlapping captures of one shelf at the same depth (§5.3) | **Never ask.** Resolved by capture-overlap dedup. |
-| A different shelf, **a different row of the same shelf** (§5.7), or a different physical library | **Ask.** This is the real case. |
+| A different shelf, **a different row of the same shelf** (§5.7), or a different **Place** | **Ask.** This is the real case. |
+
+⚠ **All four rows are scoped to ONE library**, and stay that way after the
+2026-08-11 tenancy revision (§4.1). The same book confirmed in a second
+library of the same account is a second Book and asks nothing: "already
+listed copy" is a relink onto a shelf, and there is no shelf in library A for
+a copy in library B to relink to. Reconciling the two is the merge operation
+§4.1 records as not built.
 
 **Default when the question is skipped or the run is never reviewed:
 "already listed copy"** — one copy, relinked. The asymmetry is the same one

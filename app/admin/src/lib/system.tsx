@@ -3,7 +3,7 @@
  * product API), loaded once and shared by every screen.
  *
  * ⚠⚠ **The two are different scopes and must not be conflated.**
- * `libraries`/`accounts`/`overview` come from `/api/staff/v1` and span EVERY
+ * `libraries`/`users`/`overview` come from `/api/staff/v1` and span EVERY
  * tenant. `mine` comes from `/api/v1/libraries` and is only the operator's own
  * memberships — the sole set they may write to, because every product route
  * resolves a library through membership and answers 404 for anything else
@@ -21,15 +21,15 @@ import {
 
 import { listLibraries } from '../api/client'
 import {
-  getOverview, listAllAccounts, listAllLibraries,
-  type StaffAccount, type StaffLibrary, type StaffOverview,
+  getOverview, listAllLibraries, listAllUsers,
+  type StaffLibrary, type StaffOverview, type StaffUser,
 } from '../api/staff'
 import type { LibraryDTO } from '../api/schema'
 
 interface SystemState {
   overview: StaffOverview | undefined
   libraries: StaffLibrary[]
-  accounts: StaffAccount[]
+  users: StaffUser[]
   /** The operator's OWN memberships — the only libraries they may write to. */
   mine: LibraryDTO[]
   loading: boolean
@@ -49,7 +49,7 @@ const Ctx = createContext<SystemState | null>(null)
 export function SystemProvider({ children }: { children: ReactNode }) {
   const [overview, setOverview] = useState<StaffOverview | undefined>(undefined)
   const [libraries, setLibraries] = useState<StaffLibrary[]>([])
-  const [accounts, setAccounts] = useState<StaffAccount[]>([])
+  const [users, setUsers] = useState<StaffUser[]>([])
   const [mine, setMine] = useState<LibraryDTO[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | undefined>(undefined)
@@ -70,16 +70,16 @@ export function SystemProvider({ children }: { children: ReactNode }) {
     // usable, so the operator can see the one library they administer while
     // being told plainly why the rest is missing.
     Promise.allSettled([
-      getOverview(opts), listAllLibraries(opts), listAllAccounts(opts),
+      getOverview(opts), listAllLibraries(opts), listAllUsers(opts),
       listLibraries(opts),
-    ]).then(([o, libs, accs, own]) => {
+    ]).then(([o, libs, usrs, own]) => {
       if (id !== seq.current) return
       if (o.status === 'fulfilled') setOverview(o.value)
       if (libs.status === 'fulfilled') setLibraries(libs.value)
-      if (accs.status === 'fulfilled') setAccounts(accs.value)
+      if (usrs.status === 'fulfilled') setUsers(usrs.value)
       if (own.status === 'fulfilled') setMine(own.value)
 
-      const failure = [o, libs, accs].find((r) => r.status === 'rejected')
+      const failure = [o, libs, usrs].find((r) => r.status === 'rejected')
       if (failure && failure.status === 'rejected') {
         const reason = failure.reason as { status?: number; message?: string }
         setNeedsToken(reason?.status === 401)
@@ -98,7 +98,7 @@ export function SystemProvider({ children }: { children: ReactNode }) {
     const writable = new Set(mine.map((l) => l.id))
     const labels = new Map(libraries.map((l) => [l.id, l.label]))
     return {
-      overview, libraries, accounts, mine, loading, error, needsToken, reload,
+      overview, libraries, users, mine, loading, error, needsToken, reload,
       canWrite: (id: string) => writable.has(id),
       // Falls back to the product list, then to the id: a library that exists
       // in one source and not the other still needs a name on screen, and an
@@ -106,7 +106,7 @@ export function SystemProvider({ children }: { children: ReactNode }) {
       labelOf: (id: string) =>
         labels.get(id) || mine.find((l) => l.id === id)?.label || '',
     }
-  }, [overview, libraries, accounts, mine, loading, error, needsToken, reload])
+  }, [overview, libraries, users, mine, loading, error, needsToken, reload])
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

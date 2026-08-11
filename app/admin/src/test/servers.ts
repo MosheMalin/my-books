@@ -7,18 +7,18 @@
  * both from one set of rows would let a screen mix the scopes and still pass.
  */
 import {
-  fakeServer, makeAccount, makeOverview, makeStaffBook, makeStaffImage,
+  fakeServer, makeOverview, makeStaffBook, makeStaffImage, makeUser,
   makeStaffLibrary, makeStaffWork, makeLibrary, type FakeServer,
 } from './harness'
 import type {
-  StaffAccount, StaffBook, StaffImage, StaffLibrary, StaffOverview, StaffWork,
+  StaffBook, StaffImage, StaffLibrary, StaffOverview, StaffUser, StaffWork,
 } from '../api/staff'
 import type { LibraryDTO } from '../api/schema'
 
 export interface World {
   overview: StaffOverview
   libraries: StaffLibrary[]
-  accounts: StaffAccount[]
+  users: StaffUser[]
   books: StaffBook[]
   /** The aggregate the Books screen actually renders. Kept SEPARATE from
    *  `books` on purpose: the server derives works from books, and a fake that
@@ -41,7 +41,7 @@ export interface World {
 
 export const DEFAULT_WORLD: World = {
   overview: makeOverview({
-    accounts: 2, libraries: 2, memberships: 3, books: 3, copies: 3,
+    users: 2, libraries: 2, memberships: 3, books: 3, copies: 3,
     auto: 1, approved: 1, manual: 1, shelves: 2, captures: 4, reads: 2,
     duplicates: 1, lent_out: 1,
   }),
@@ -51,11 +51,11 @@ export const DEFAULT_WORLD: World = {
     makeStaffLibrary({ id: 'lib-2', label: 'ההורים', members: 1, admins: 1,
                        books: 1, manual: 1, shelves: 1, captures: 1 }),
   ],
-  accounts: [
-    makeAccount({ id: 'acc-1', display_name: 'משה', memberships: [
+  users: [
+    makeUser({ id: 'usr-1', display_name: 'משה', memberships: [
       { library_id: 'lib-1', role: 'admin', joined_at: '2026-01-01' },
     ] }),
-    makeAccount({ id: 'acc-2', display_name: 'שכן', memberships: [
+    makeUser({ id: 'usr-2', display_name: 'שכן', memberships: [
       { library_id: 'lib-1', role: 'viewer', joined_at: '2026-01-02' },
       { library_id: 'lib-2', role: 'admin', joined_at: '2026-01-03' },
     ] }),
@@ -131,7 +131,7 @@ export function bothServices(world: Partial<World> = {}): FakeServer {
   return fakeServer({
     'GET /api/staff/v1/overview': () => w.overview,
     'GET /api/staff/v1/libraries': () => w.libraries,
-    'GET /api/staff/v1/accounts': () => w.accounts,
+    'GET /api/staff/v1/users': () => w.users,
     'GET /api/staff/v1/books': (req) => {
       const url = new URL(req.url, 'http://x')
       const lib = url.searchParams.get('library_id')

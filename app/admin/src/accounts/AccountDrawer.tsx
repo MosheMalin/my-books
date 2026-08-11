@@ -41,7 +41,7 @@ export function AccountDrawer({ library, onClose }: {
   onClose: () => void
 }) {
   const { t, lang } = useI18n()
-  const { accounts } = useSystem()
+  const { users } = useSystem()
 
   const books = useAsync(
     (signal) => listAllBooks({ libraryId: library.id, sort: 'recently_added',
@@ -54,7 +54,7 @@ export function AccountDrawer({ library, onClose }: {
   )
 
   const num = (n: number) => formatNumber(n, lang)
-  const members = accounts.flatMap((account) => {
+  const members = users.flatMap((account) => {
     const m = account.memberships.find((x) => x.library_id === library.id)
     return m ? [{ account, membership: m }] : []
   })

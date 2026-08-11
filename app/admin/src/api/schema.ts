@@ -35,7 +35,7 @@ type Schemas = components['schemas']
  *  server has no route that lists libraries across accounts. */
 export type LibraryDTO = Schemas['LibraryDTO']
 export type MetaResponse = Schemas['MetaResponse']
-export type AccountDTO = Schemas['AccountDTO']
+export type UserDTO = Schemas['UserDTO']
 
 // --- books -----------------------------------------------------------------
 

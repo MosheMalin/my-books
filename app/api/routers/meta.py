@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends
 
 from app import API_VERSION, __version__
 from app.api.deps import get_principal, get_tenancy_store
-from app.api.dto import AccountDTO, LibraryRefDTO, MetaResponse
+from app.api.dto import LibraryRefDTO, MetaResponse, UserDTO
 from app.api.policy import require
 from app.domain import Capability, LibraryRef
 from app.ports import Principal
@@ -30,19 +30,19 @@ def get_meta(
     asked for (P3.1), not a server-side constant. A client that sends a
     library it may not have gets 404 from the resolver rather than a
     misleading 200 naming a different one."""
-    account = tenancy.get_account(principal.id)
+    user = tenancy.get_user(principal.id)
     return MetaResponse(
         app="booksnap",
         version=__version__,
         api_version=API_VERSION,
         library=LibraryRefDTO(id=library.id, label=library.label),
-        # The account row may not exist yet on a fresh database (it is created
+        # The user row may not exist yet on a fresh database (it is created
         # by the composition root, or on the first `POST /libraries`). Falling
         # back to the principal's own id keeps `meta` a route that always
         # answers — it is the one the client calls to find out whether the
         # server is there at all.
-        account=AccountDTO(
+        user=UserDTO(
             id=principal.id,
-            display_name=account.display_name if account else "",
+            display_name=user.display_name if user else "",
         ),
     )

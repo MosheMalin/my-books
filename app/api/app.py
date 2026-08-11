@@ -150,7 +150,7 @@ def create_app(
         redoc_url=None,
     )
     app.include_router(meta.router, prefix=API_PREFIX)
-    # Account-scoped, unlike every other router here — these are the routes a
+    # User-scoped, unlike every other router here — these are the routes a
     # caller uses to find out which libraries it may name (see the router's
     # own ⚠⚠, and the closed exemption list in tests/test_api.py).
     app.include_router(libraries.router, prefix=API_PREFIX)

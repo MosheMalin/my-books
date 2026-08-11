@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
-"""/api/v1/libraries — the switcher's data, and the only account-scoped routes.
+"""/api/v1/libraries — the switcher's data, and the only user-scoped routes.
 
 ⚠⚠ **These are the routes exempt from H2's "every route resolves its library
 through ``current_library``" meta-test**, and the exemption is a closed list in
 ``tests/test_api.py``, not a convention. The reason is circularity: these
 routes are how a caller LEARNS which libraries it may name, so requiring them
 to resolve one first would mean a client with no valid selection — a fresh
-browser, a renamed library, an account whose membership was just removed — has
-no way to find out. They resolve an **account** instead, through the same
+browser, a renamed library, a user whose membership was just removed — has
+no way to find out. They resolve a **user** instead, through the same
 ``get_principal`` every other route already depends on, so they are scoped;
 just on the other axis.
 
@@ -30,7 +30,7 @@ purge (`BlobStore.purge`) — but the cascade itself is still a design owed:
 today no store has a "drop everything in this library" operation, and adding
 six of them for a route nobody has asked to press is speculation. When it is
 built, note the meta-test exemption list is keyed by (method, path), so
-`DELETE /libraries/{id}` will NOT inherit the account-scoped exemption
+`DELETE /libraries/{id}` will NOT inherit the user-scoped exemption
 silently. Member management (invite, change role, remove) is P4.3's, for the
 same reason: an invite with no login to accept it is not a feature.
 """
@@ -40,7 +40,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import get_clock, get_id_gen, get_principal, get_tenancy_store
 from app.api.dto import LibraryCreate, LibraryDTO, LibraryPatch
-from app.domain import Account, Capability, allowed, new_library, rename_library
+from app.domain import Capability, User, allowed, new_library, rename_library
 from app.domain.tenancy import LibraryNeedsAName
 from app.ports import Clock, IdGen, Principal
 from app.ports.tenancy import TenancyStore
@@ -48,33 +48,33 @@ from app.ports.tenancy import TenancyStore
 router = APIRouter(prefix="/libraries", tags=["libraries"])
 
 
-def _account(principal: Principal, tenancy: TenancyStore) -> Account:
-    """The caller's account record, created on first sight if need be.
+def _user(principal: Principal, tenancy: TenancyStore) -> User:
+    """The caller's user record, created on first sight if need be.
 
     A dev-trusted principal exists before any row does (that is what
     "dev-trusted" means), and the composition root already ensures the owner's
-    account — but a fresh database reached through some other entry point
+    user row — but a fresh database reached through some other entry point
     would otherwise 500 the first time someone pressed *new library*. Creating
     it here is idempotent and cheap; P4.1 replaces the whole path with a
-    session lookup, where an unknown account is a real error.
+    session lookup, where an unknown user is a real error.
     """
-    existing = tenancy.get_account(principal.id)
+    existing = tenancy.get_user(principal.id)
     if existing is not None:
         return existing
-    account = Account(id=principal.id)
-    tenancy.save_account(account)
-    return account
+    user = User(id=principal.id)
+    tenancy.save_user(user)
+    return user
 
 
 @router.get("", response_model=list[LibraryDTO],
-            summary="Libraries this account belongs to")
+            summary="Libraries this user belongs to")
 def list_libraries(
     principal: Principal = Depends(get_principal),
     tenancy: TenancyStore = Depends(get_tenancy_store),
 ) -> list[LibraryDTO]:
     """Ordered by the domain's own key, so the switcher never reshuffles.
 
-    An account that belongs to nothing gets ``[]``, not an error — a real
+    A user that belongs to nothing gets ``[]``, not an error — a real
     state (P4.3's sign-up, before the first library) the client has to render.
 
     ⚠ **Store data only, with no special case for the principal's own default
@@ -83,7 +83,7 @@ def list_libraries(
     copy of the resolver's dev-trusted rule in a second module, and the day
     they disagreed the switcher would be missing the very library on screen.
     Guaranteeing the membership row exists is the composition root's job
-    (``app.main:_bootstrap_dev_account``), and
+    (``app.main:_bootstrap_dev_user``), and
     ``test_the_library_meta_resolves_is_always_one_the_switcher_lists`` pins
     the agreement rather than trusting it.
     """
@@ -115,10 +115,10 @@ def create_library(
     (`test_a_library_is_not_a_place`). Do not "fix" this route in either
     direction without re-reading VISION §4.1.
     """
-    account = _account(principal, tenancy)
+    user = _user(principal, tenancy)
     try:
         library, membership = new_library(
-            id=ids.new_id(), label=body.label, owner=account,
+            id=ids.new_id(), label=body.label, owner=user,
             created_at=clock.now_iso(),
         )
     except LibraryNeedsAName as exc:
@@ -136,7 +136,7 @@ def patch_library(
     principal: Principal = Depends(get_principal),
     tenancy: TenancyStore = Depends(get_tenancy_store),
 ) -> LibraryDTO:
-    """404 for a library this account is not a member of — never 403 (§4.2).
+    """404 for a library this user is not a member of — never 403 (§4.2).
 
     The membership is looked up FIRST and the library second: asking the other
     way round would answer "no such library" for a real library and "not
@@ -148,7 +148,7 @@ def patch_library(
     if membership is None or library is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no such library")
     # P3.2: the one direct `allowed()` call outside app/api/policy.py, because
-    # this route is on the ACCOUNT axis — `require()` resolves a library
+    # this route is on the USER axis — `require()` resolves a library
     # through `current_library`, which these routes are exempt from (the
     # closed list in tests/test_api.py). Same matrix, same data; only the
     # transport of "which library" differs. 403 (not 404) is honest here: the

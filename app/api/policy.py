@@ -95,7 +95,7 @@ def require(capability: Capability):
         if not allowed(role, capability):
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN,
-                f"'{capability.value}' needs a role this account's "
+                f"'{capability.value}' needs a role this user's "
                 f"'{role.value}' membership does not grant (§4.2)",
             )
         return library

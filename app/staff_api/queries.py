@@ -83,9 +83,9 @@ RANKED_SCAN_CAP = 5000
 #: Columns this module depends on, per table. Checked at startup so a schema
 #: change is a refusal to serve rather than a silently wrong dashboard.
 REQUIRED_COLUMNS = {
-    "accounts": ("id", "display_name", "email", "created_at"),
+    "users": ("id", "display_name", "email", "created_at"),
     "libraries": ("id", "label", "created_at"),
-    "memberships": ("account_id", "library_id", "role", "joined_at"),
+    "memberships": ("user_id", "library_id", "role", "joined_at"),
     "books": ("id", "library_id", "title", "author", "added_at", "book_key",
               "search_text", "sort_author", "norm_title", "norm_author"),
     "copies": ("id", "book_id", "library_id", "status", "shelf_id", "lent_out"),
@@ -268,14 +268,14 @@ class LibraryRow:
 
 @dataclass(frozen=True)
 class MembershipRow:
-    account_id: str
+    user_id: str
     library_id: str
     role: str
     joined_at: str | None
 
 
 @dataclass(frozen=True)
-class AccountRow:
+class UserRow:
     id: str
     display_name: str
     email: str | None
@@ -457,7 +457,7 @@ class StaffQueries:
                 " GROUP BY rank"
             ).fetchall())
             return {
-                "accounts": count("SELECT COUNT(*) FROM accounts"),
+                "users": count("SELECT COUNT(*) FROM users"),
                 "libraries": count("SELECT COUNT(*) FROM libraries"),
                 "memberships": count("SELECT COUNT(*) FROM memberships"),
                 "books": count("SELECT COUNT(*) FROM books"),
@@ -564,8 +564,8 @@ class StaffQueries:
 
     # --- people -----------------------------------------------------------
 
-    def accounts(self) -> tuple[AccountRow, ...]:
-        """Every account, with every membership it holds.
+    def users(self) -> tuple[UserRow, ...]:
+        """Every user, with every membership they hold.
 
         ⚠ This is the screen that did not exist before, and could not: the
         product API answers "which libraries may *I* name", never "who is in
@@ -575,22 +575,22 @@ class StaffQueries:
         """
         with _open(self.path) as conn:
             rows = conn.execute(
-                "SELECT id, display_name, email, created_at FROM accounts"
+                "SELECT id, display_name, email, created_at FROM users"
                 " ORDER BY COALESCE(created_at, ''), id"
             ).fetchall()
             memberships = conn.execute(
-                "SELECT account_id, library_id, role, joined_at FROM memberships"
-                " ORDER BY account_id, library_id"
+                "SELECT user_id, library_id, role, joined_at FROM memberships"
+                " ORDER BY user_id, library_id"
             ).fetchall()
 
         held: dict[str, list[MembershipRow]] = {}
         for m in memberships:
-            held.setdefault(str(m["account_id"]), []).append(MembershipRow(
-                account_id=str(m["account_id"]), library_id=str(m["library_id"]),
+            held.setdefault(str(m["user_id"]), []).append(MembershipRow(
+                user_id=str(m["user_id"]), library_id=str(m["library_id"]),
                 role=str(m["role"]), joined_at=m["joined_at"],
             ))
         return tuple(
-            AccountRow(
+            UserRow(
                 id=str(r["id"]), display_name=r["display_name"] or "",
                 email=r["email"], created_at=r["created_at"],
                 memberships=tuple(held.get(str(r["id"]), ())),

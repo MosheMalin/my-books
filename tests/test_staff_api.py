@@ -37,7 +37,7 @@ from app.adapters.migrations import migrate  # noqa: E402
 from app.adapters.sqlite_store import SqliteBookStore, SqliteTenancyStore  # noqa: E402
 from app.domain import LibraryRef, new_book  # noqa: E402
 from app.domain.book import Status, add_copy  # noqa: E402
-from app.domain.tenancy import Account, Library, Membership, Role  # noqa: E402
+from app.domain.tenancy import Library, Membership, Role, User  # noqa: E402
 from app.domain.text import book_key  # noqa: E402
 from app.staff_api.app import STAFF_TOKEN_ENV, create_app  # noqa: E402
 from app.staff_api.queries import (  # noqa: E402
@@ -46,7 +46,7 @@ from app.staff_api.queries import (  # noqa: E402
 
 
 def _seed(path: Path) -> None:
-    """Two libraries, two accounts, three books — through the REAL stores.
+    """Two libraries, two users, three books — through the REAL stores.
 
     ⚠ Written with the product's own write path rather than raw INSERTs. The
     read model's whole risk is disagreeing with how the product actually
@@ -56,18 +56,18 @@ def _seed(path: Path) -> None:
     tenancy = SqliteTenancyStore(path)
     books = SqliteBookStore(path)
 
-    tenancy.save_account(Account(id="acc-1", display_name="משה",
+    tenancy.save_user(User(id="usr-1", display_name="משה",
                                  created_at="2026-01-01T00:00:00Z"))
-    tenancy.save_account(Account(id="acc-2", display_name="שותף",
+    tenancy.save_user(User(id="usr-2", display_name="שותף",
                                  created_at="2026-01-02T00:00:00Z"))
     for lib_id, label in (("lib-a", "הבית"), ("lib-b", "החנות")):
         tenancy.save_library(Library(id=lib_id, label=label,
                                      created_at="2026-01-01T00:00:00Z"))
-    tenancy.save_membership(Membership(account_id="acc-1", library_id="lib-a",
+    tenancy.save_membership(Membership(user_id="usr-1", library_id="lib-a",
                                        role=Role.ADMIN))
-    tenancy.save_membership(Membership(account_id="acc-1", library_id="lib-b",
+    tenancy.save_membership(Membership(user_id="usr-1", library_id="lib-b",
                                        role=Role.ADMIN))
-    tenancy.save_membership(Membership(account_id="acc-2", library_id="lib-a",
+    tenancy.save_membership(Membership(user_id="usr-2", library_id="lib-a",
                                        role=Role.VIEWER))
 
     ref_a, ref_b = LibraryRef(id="lib-a"), LibraryRef(id="lib-b")
@@ -146,7 +146,7 @@ def test_the_overview_counts_every_tenant_not_just_one():
     with _queries() as (q, _):
         o = q.overview()
         assert o["libraries"] == 2
-        assert o["accounts"] == 2
+        assert o["users"] == 2
         assert o["books"] == 3
         assert o["memberships"] == 3
 
@@ -201,12 +201,12 @@ def test_search_crosses_tenants():
         assert rows[0].library_id == "lib-b"
 
 
-def test_accounts_report_every_membership_they_hold():
+def test_users_report_every_membership_they_hold():
     with _queries() as (q, _):
-        by_id = {a.id: a for a in q.accounts()}
-        assert {(m.library_id, m.role) for m in by_id["acc-1"].memberships} == {
+        by_id = {u.id: u for u in q.users()}
+        assert {(m.library_id, m.role) for m in by_id["usr-1"].memberships} == {
             ("lib-a", "admin"), ("lib-b", "admin")}
-        assert [(m.library_id, m.role) for m in by_id["acc-2"].memberships] == [
+        assert [(m.library_id, m.role) for m in by_id["usr-2"].memberships] == [
             ("lib-a", "viewer")]
 
 
@@ -837,7 +837,7 @@ def test_reading_never_migrates_the_owners_database():
 
         q.overview()
         q.libraries()
-        q.accounts()
+        q.users()
         q.books(q="מנהרה")
         q.recent_reads()
 
@@ -883,7 +883,7 @@ def test_a_moved_schema_is_refused_loudly_at_startup():
 # --- the credential --------------------------------------------------------
 #
 # ⚠ `/api/v1` has no authentication, deliberately, and that trade does NOT
-# carry over: a route returning every account and every household's books is a
+# carry over: a route returning every user and every household's books is a
 # different exposure from one returning your own.
 
 def test_without_a_token_configured_it_serves_and_says_so():

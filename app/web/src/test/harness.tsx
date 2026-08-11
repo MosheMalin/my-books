@@ -72,7 +72,7 @@ export interface FakeServer {
    *  `lentOut` (a fact on the copy itself) this cannot be derived from a
    *  fixture's own fields; a test opts a book in by adding its id here. */
   openDuplicateIds: Set<string>
-  /** The libraries this account belongs to (P3.1). One by default — the
+  /** The libraries this user belongs to (P3.1). One by default — the
    *  household that has not created a second. */
   libraries: LibraryDTO[]
   /** Every request's `X-Booksnap-Library`, in order and index-aligned with
@@ -130,7 +130,7 @@ export function fakeServer(initial: FakeBookRecord[] = []): FakeServer {
         version: '0.1.0',
         api_version: 'v1',
         library: { id: 'lib-test', label: 'ספרייה' },
-        account: { id: 'p-test', display_name: '' },
+        user: { id: 'p-test', display_name: '' },
       })
     }
 

@@ -161,7 +161,7 @@ function RenameCell({ library, onRenamed, onCancel }: {
 
 export function AccountsPage({ openId }: { openId: string | undefined }) {
   const {
-    libraries, accounts, mine, overview, loading, error, reload, canWrite,
+    libraries, users, mine, overview, loading, error, reload, canWrite,
   } = useSystem()
   const { t, lang } = useI18n()
   const [editingId, setEditingId] = useState<string | undefined>(undefined)
@@ -179,13 +179,13 @@ export function AccountsPage({ openId }: { openId: string | undefined }) {
    *  already holds — the server has no `admin_names` field and does not need
    *  one; deriving it here keeps membership described in exactly one place. */
   const adminsOf = (libraryId: string) =>
-    accounts.filter((a) => a.memberships.some(
+    users.filter((a) => a.memberships.some(
       (m) => m.library_id === libraryId && m.role === 'admin'))
 
   // ⚠ The mirror of `orphan_libraries`. A tenant-shaped list cannot show a
   // person who belongs to no tenant, and the Users tab was the only place they
   // appeared. Derived, not fetched: the provider already has every account.
-  const unaffiliated = accounts.filter((a) => a.memberships.length === 0)
+  const unaffiliated = users.filter((a) => a.memberships.length === 0)
 
   return (
     <>

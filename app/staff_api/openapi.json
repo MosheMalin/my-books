@@ -1,54 +1,6 @@
 {
   "components": {
     "schemas": {
-      "AccountDTO": {
-        "properties": {
-          "created_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Created At"
-          },
-          "display_name": {
-            "title": "Display Name",
-            "type": "string"
-          },
-          "email": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Email"
-          },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "memberships": {
-            "items": {
-              "$ref": "#/components/schemas/MembershipDTO"
-            },
-            "title": "Memberships",
-            "type": "array"
-          }
-        },
-        "required": [
-          "id",
-          "display_name",
-          "memberships"
-        ],
-        "title": "AccountDTO",
-        "type": "object"
-      },
       "BookDTO": {
         "properties": {
           "added_at": {
@@ -462,10 +414,6 @@
       "OverviewDTO": {
         "description": "System-wide totals. Every figure spans every tenant.",
         "properties": {
-          "accounts": {
-            "title": "Accounts",
-            "type": "integer"
-          },
           "approved": {
             "title": "Approved",
             "type": "integer"
@@ -541,10 +489,14 @@
           "shelves": {
             "title": "Shelves",
             "type": "integer"
+          },
+          "users": {
+            "title": "Users",
+            "type": "integer"
           }
         },
         "required": [
-          "accounts",
+          "users",
           "libraries",
           "memberships",
           "books",
@@ -634,6 +586,54 @@
           "claims"
         ],
         "title": "ReadDTO",
+        "type": "object"
+      },
+      "UserDTO": {
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "memberships": {
+            "items": {
+              "$ref": "#/components/schemas/MembershipDTO"
+            },
+            "title": "Memberships",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "display_name",
+          "memberships"
+        ],
+        "title": "UserDTO",
         "type": "object"
       },
       "ValidationError": {
@@ -792,73 +792,6 @@
   },
   "openapi": "3.1.0",
   "paths": {
-    "/api/staff/v1/accounts": {
-      "get": {
-        "description": "⚠ This is the route that has no equivalent in `/api/v1`, and could\nnot have one: the product API answers *\"which libraries may I name\"*,\nnever *\"who is in the system\"*.\n\nIt reports identity and membership — who exists, and what they may\nreach. It deliberately does not report what any individual has been\nREADING or photographing: \"statistics about the users\" is a fair thing\nfor an operator to want, and a per-person activity feed of someone's\nown household is a different and much larger power. Aggregate figures\nlive on the library rows instead.",
-        "operationId": "accounts_api_staff_v1_accounts_get",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "x-booksnap-staff",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Booksnap-Staff"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/AccountDTO"
-                  },
-                  "title": "Response Accounts Api Staff V1 Accounts Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Every account, with its memberships"
-      }
-    },
     "/api/staff/v1/books": {
       "get": {
         "operationId": "books_api_staff_v1_books_get",
@@ -1328,6 +1261,73 @@
           }
         },
         "summary": "Recent reads, across every tenant"
+      }
+    },
+    "/api/staff/v1/users": {
+      "get": {
+        "description": "⚠ This is the route that has no equivalent in `/api/v1`, and could\nnot have one: the product API answers *\"which libraries may I name\"*,\nnever *\"who is in the system\"*.\n\nIt reports identity and membership — who exists, and what they may\nreach. It deliberately does not report what any individual has been\nREADING or photographing: \"statistics about the users\" is a fair thing\nfor an operator to want, and a per-person activity feed of someone's\nown household is a different and much larger power. Aggregate figures\nlive on the library rows instead.",
+        "operationId": "users_api_staff_v1_users_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-booksnap-staff",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Booksnap-Staff"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/UserDTO"
+                  },
+                  "title": "Response Users Api Staff V1 Users Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Every user, with their memberships"
       }
     },
     "/api/staff/v1/works": {

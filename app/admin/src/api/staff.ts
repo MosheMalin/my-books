@@ -76,7 +76,7 @@ type Schemas = components['schemas']
 export type StaffOverview = Schemas['OverviewDTO']
 export type StaffLibrary = Schemas['LibraryDTO']
 export type StaffMembership = Schemas['MembershipDTO']
-export type StaffAccount = Schemas['AccountDTO']
+export type StaffUser = Schemas['UserDTO']
 export type StaffBook = Schemas['BookDTO']
 /** `truncated` means a ranked search hit the server's scan cap: `total` is
  *  honest, but pages past the cap are unreachable. Told, not hidden. */
@@ -138,8 +138,8 @@ export const getOverview = (opts: StaffOptions = {}) =>
 export const listAllLibraries = (opts: StaffOptions = {}) =>
   get<StaffLibrary[]>('/libraries', opts)
 
-export const listAllAccounts = (opts: StaffOptions = {}) =>
-  get<StaffAccount[]>('/accounts', opts)
+export const listAllUsers = (opts: StaffOptions = {}) =>
+  get<StaffUser[]>('/users', opts)
 
 export interface StaffBookQuery {
   q?: string | undefined

@@ -61,7 +61,7 @@ describe('the staff token', () => {
   it('a refused token replaces the console with the form', async () => {
     const s = bothServices()
     for (const route of ['GET /api/staff/v1/overview', 'GET /api/staff/v1/libraries',
-                         'GET /api/staff/v1/accounts']) {
+                         'GET /api/staff/v1/users']) {
       s.route(route, () => new Response(JSON.stringify({ detail: 'a staff token is required' }),
                                         { status: 401 }))
     }

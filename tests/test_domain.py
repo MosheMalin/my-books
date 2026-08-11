@@ -23,9 +23,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from app.domain import (
-    FIRE_TABLE,
-    POLICY,
-    Account,
     AmbiguousCopy,
     Book,
     Capability,
@@ -40,14 +37,16 @@ from app.domain import (
     DiffSummary,
     DomainError,
     DuplicateQuestion,
+    FIRE_TABLE,
     FireDecision,
     Library,
     LibraryNeedsAName,
     Membership,
     NoAdminLeft,
+    POLICY,
     PolicyUndeclared,
-    Provenance,
     PromptKind,
+    Provenance,
     Read,
     ReadAlreadyFinished,
     ReadStatus,
@@ -58,23 +57,24 @@ from app.domain import (
     UnknownCopy,
     UnknownDepth,
     UnknownMember,
+    User,
     VirtualShelfHasNoDepth,
     add_copy,
     add_depth,
     allowed,
     append_claim,
     approve,
+    book_key,
     build_prompt,
     capture_onto_a_new_shelf,
-    book_key,
     counts_toward_library,
     deletion_sites,
     depth_staleness,
     edit,
     edit_copy,
     fail_read,
-    fires,
     finish_read,
+    fires,
     lend,
     new_book,
     new_capture,
@@ -1749,17 +1749,17 @@ def test_two_copies_on_one_row_record_one_no_not_two():
 
 # --- tenancy (P3.1, §4.1/§4.2/§4.3) ---------------------------------------
 
-OWNER = Account(id="acc-1", display_name="משה")
+OWNER = User(id="usr-1", display_name="משה")
 
 
 def test_creating_a_library_makes_its_creator_an_admin():
     """A library saved without a membership is invisible to the person who
-    made it (listing is BY ACCOUNT) and administrable by nobody. Returning
+    made it (listing is BY USER) and administrable by nobody. Returning
     both from one call is what makes that state unreachable from a caller
     that simply forgot the second write."""
     library, membership = new_library(id="lib-1", label="משפחת מלין", owner=OWNER)
     assert membership.library_id == library.id
-    assert membership.account_id == OWNER.id
+    assert membership.user_id == OWNER.id
     assert membership.role is Role.ADMIN
 
 
@@ -1785,38 +1785,38 @@ def test_the_last_admin_cannot_be_demoted_or_removed():
     """§4.2 gives only an admin "invite/remove members, change roles", so a
     library whose last admin steps down can never invite anyone, be renamed
     or be deleted — an unadministrable tenant only a database edit rescues."""
-    members = (Membership("acc-1", "lib-1", Role.ADMIN),
-               Membership("acc-2", "lib-1", Role.EDITOR))
-    _raises(NoAdminLeft, set_role, members, "acc-1", Role.VIEWER)
-    _raises(NoAdminLeft, remove_member, members, "acc-1")
+    members = (Membership("usr-1", "lib-1", Role.ADMIN),
+               Membership("usr-2", "lib-1", Role.EDITOR))
+    _raises(NoAdminLeft, set_role, members, "usr-1", Role.VIEWER)
+    _raises(NoAdminLeft, remove_member, members, "usr-1")
 
 
 def test_an_admin_may_step_down_once_another_admin_exists():
     """The rule is "at least one", not "the first one forever" — otherwise
     handing the library over to someone else is impossible."""
-    members = (Membership("acc-1", "lib-1", Role.ADMIN),
-               Membership("acc-2", "lib-1", Role.ADMIN))
-    left = remove_member(members, "acc-1")
-    assert [m.account_id for m in left] == ["acc-2"]
-    demoted = set_role(members, "acc-1", Role.VIEWER)
-    assert {m.account_id: m.role for m in demoted}["acc-1"] is Role.VIEWER
+    members = (Membership("usr-1", "lib-1", Role.ADMIN),
+               Membership("usr-2", "lib-1", Role.ADMIN))
+    left = remove_member(members, "usr-1")
+    assert [m.user_id for m in left] == ["usr-2"]
+    demoted = set_role(members, "usr-1", Role.VIEWER)
+    assert {m.user_id: m.role for m in demoted}["usr-1"] is Role.VIEWER
 
 
 def test_changing_a_role_replaces_it_rather_than_adding_a_second_membership():
-    """One membership per (account, library) — the store declares it as a
+    """One membership per (user, library) — the store declares it as a
     composite primary key, and a domain op that appended instead would make
     "what is my role here" ambiguous before the store ever saw it."""
-    members = (Membership("acc-1", "lib-1", Role.ADMIN),
-               Membership("acc-2", "lib-1", Role.VIEWER))
-    after = set_role(members, "acc-2", Role.EDITOR)
+    members = (Membership("usr-1", "lib-1", Role.ADMIN),
+               Membership("usr-2", "lib-1", Role.VIEWER))
+    after = set_role(members, "usr-2", Role.EDITOR)
     assert len(after) == 2
     assert [m.role for m in after] == [Role.ADMIN, Role.EDITOR]
 
 
 def test_acting_on_a_non_member_raises_rather_than_inventing_a_membership():
-    members = (Membership("acc-1", "lib-1", Role.ADMIN),)
-    _raises(UnknownMember, set_role, members, "acc-9", Role.EDITOR)
-    _raises(UnknownMember, remove_member, members, "acc-9")
+    members = (Membership("usr-1", "lib-1", Role.ADMIN),)
+    _raises(UnknownMember, set_role, members, "usr-9", Role.EDITOR)
+    _raises(UnknownMember, remove_member, members, "usr-9")
 
 
 def test_a_role_says_who_you_are_and_never_what_you_may_do():

@@ -47,7 +47,6 @@ from app.adapters.memory_store import (
 from app.api import deps
 from app.api.app import bind_ports, create_app
 from app.domain import (
-    Account,
     Decision,
     DecisionKind,
     Library,
@@ -56,6 +55,7 @@ from app.domain import (
     Provenance,
     Role,
     Status,
+    User,
     new_book,
 )
 from app.ports.reader import ReadAlternative, ReadClaim
@@ -99,13 +99,13 @@ def _tenancy(principal: StubPrincipal) -> MemoryTenancyStore:
     """A tenancy store that already knows this principal and its library.
 
     Seeded rather than empty because that is the state every app reaches at
-    startup: `app/main.py` bootstraps the account and its membership, and a
+    startup: `app/main.py` bootstraps the user and its membership, and a
     test whose store disagreed with its own principal would be testing a
     wiring bug, not a rule. Tests that WANT the disagreement (a foreign
     library, an unknown one) build their own.
     """
     store = MemoryTenancyStore()
-    store.save_account(Account(id=principal.id))
+    store.save_user(User(id=principal.id))
     store.save_library(Library(id=principal.library.id,
                                label=principal.library.label))
     store.save_membership(
@@ -379,7 +379,7 @@ def test_a_request_with_no_library_header_still_gets_the_default_one():
         assert client.get(f"{API_PREFIX}/meta").json()["library"]["id"] == "lib-test"
 
 
-def test_the_switcher_lists_this_accounts_libraries_with_their_roles():
+def test_the_switcher_lists_this_users_libraries_with_their_roles():
     p = StubPrincipal()
     tenancy = _tenancy(p)
     _second_library(p, tenancy)
@@ -484,9 +484,9 @@ def test_the_header_wins_over_a_stale_query_parameter():
     assert body["library"]["id"] == "lib-test"
 
 
-def test_meta_names_the_account_so_an_empty_switcher_can_be_explained():
+def test_meta_names_the_user_so_an_empty_switcher_can_be_explained():
     with TestClient(_app()) as client:
-        assert client.get(f"{API_PREFIX}/meta").json()["account"]["id"] == "p-test"
+        assert client.get(f"{API_PREFIX}/meta").json()["user"]["id"] == "p-test"
 
 
 # --- books: the P1.4 surface ---------------------------------------------
@@ -893,7 +893,7 @@ def _dependency_calls(route: APIRoute) -> set:
 # The ONLY routes allowed to skip `current_library` (P3.1). They are how a
 # caller learns which libraries it may name, so requiring them to resolve one
 # first is circular: a client with no valid selection — a fresh browser, a
-# membership just removed — could never recover. They are account-scoped
+# membership just removed — could never recover. They are user-scoped
 # instead, which the second half of the meta-test below asserts, so "exempt"
 # never means "unscoped".
 #
@@ -905,7 +905,7 @@ def _dependency_calls(route: APIRoute) -> set:
 # deliberately-absent delete-library route) or P4.3's member routes at these
 # paths would inherit a path-only exemption silently and could ship unpoliced
 # with every meta-test green.
-_ACCOUNT_SCOPED = {
+_USER_SCOPED = {
     ("GET", f"{API_PREFIX}/libraries"),
     ("POST", f"{API_PREFIX}/libraries"),
     ("PATCH", f"{API_PREFIX}/libraries/{{library_id}}"),
@@ -913,7 +913,7 @@ _ACCOUNT_SCOPED = {
 
 
 def _exempt(path: str, route: APIRoute) -> bool:
-    return all((m, path) in _ACCOUNT_SCOPED for m in route.methods)
+    return all((m, path) in _USER_SCOPED for m in route.methods)
 
 
 def test_every_api_route_resolves_its_library_from_the_principal():
@@ -936,7 +936,7 @@ def test_every_api_route_declares_exactly_one_policy_capability():
     would enforce the STRICTER intersection today and read as either-or to the
     next person — a disagreement between what the code does and what it says.
 
-    The account-scoped routes are exempt from the LIBRARY-capability axis
+    The user-scoped routes are exempt from the LIBRARY-capability axis
     (same closed list, same circularity argument) — but not from policy:
     the rename route consults the same matrix directly, which
     `test_renaming_a_library_is_admin_only` proves over HTTP.
@@ -1039,7 +1039,7 @@ def test_a_membership_row_on_your_own_library_outranks_the_dev_trusted_fallback(
 
 
 def test_renaming_a_library_is_admin_only():
-    """The account-scoped routes are exempt from `require()`'s transport, not
+    """The user-scoped routes are exempt from `require()`'s transport, not
     from the matrix — the rename consults the same POLICY table directly."""
     p, tenancy = _viewer_of_second_library(role=Role.EDITOR)
     with TestClient(_app(principal=p, tenancy=tenancy)) as c:
@@ -1066,16 +1066,16 @@ def test_a_foreign_library_is_still_404_never_403_now_that_policy_exists():
             assert r.status_code == 404, (lib, r.status_code)
 
 
-def test_the_account_scoped_routes_are_still_scoped_by_something():
+def test_the_user_scoped_routes_are_still_scoped_by_something():
     """The exemption is from the LIBRARY axis, not from tenancy. A route that
-    resolved neither a library nor an account would serve everyone's data —
+    resolved neither a library nor a user would serve everyone's data —
     and it would pass the test above simply by being on the list."""
     routes = {(m, p): r for p, r in _api_routes(_app()) for m in r.methods}
-    for method, path in _ACCOUNT_SCOPED:
+    for method, path in _USER_SCOPED:
         assert (method, path) in routes, \
             f"{method} {path} is exempted but does not exist"
         assert deps.get_principal in _dependency_calls(routes[(method, path)]), \
-            f"{method} {path} resolves neither a library nor an account"
+            f"{method} {path} resolves neither a library nor a user"
 
 
 def test_library_resolution_has_exactly_one_implementation():
@@ -1549,7 +1549,7 @@ def _wait_until_settled(client, shelf_id: str, read_id: str, *, timeout: float =
 
 
 def test_two_concurrent_reads_in_two_libraries_do_not_observe_each_other():
-    """P3.4's named test case, over real HTTP: one account, two libraries,
+    """P3.4's named test case, over real HTTP: one user, two libraries,
     one QueuedJobRunner. Each read reports its own library's progress,
     stopping one leaves the other running, and the tenant key the router
     hands the runner is the LIBRARY id — the fairness axis — pinned with a

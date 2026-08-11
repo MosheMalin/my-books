@@ -46,7 +46,7 @@ from app.adapters.sqlite_store import (
     SqliteTenancyStore,
 )
 from app.api.app import create_app
-from app.domain import Account, Library, Membership, Role
+from app.domain import Library, Membership, Role, User
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WEB_DIST = REPO_ROOT / "app" / "web" / "dist"
@@ -104,8 +104,8 @@ def blob_root() -> Path:
     return Path(explicit) if explicit else _work() / "product_blobs"
 
 
-def _bootstrap_dev_account(tenancy: SqliteTenancyStore, principal) -> None:
-    """Make the dev principal a real, stored account with a real membership.
+def _bootstrap_dev_user(tenancy: SqliteTenancyStore, principal) -> None:
+    """Make the dev principal a real, stored user with a real membership.
 
     P3.1's resolver serves ``principal.library`` without a store lookup (the
     dev-trusted case), but ``GET /libraries`` deliberately does NOT patch that
@@ -125,9 +125,9 @@ def _bootstrap_dev_account(tenancy: SqliteTenancyStore, principal) -> None:
     blank label is filled in. P4.1 replaces this whole function with a real
     sign-up.
     """
-    account = tenancy.get_account(principal.id)
-    if account is None:
-        tenancy.save_account(Account(id=principal.id))
+    user = tenancy.get_user(principal.id)
+    if user is None:
+        tenancy.save_user(User(id=principal.id))
     ref = principal.library
     library = tenancy.get_library(ref.id)
     if library is None:
@@ -151,10 +151,10 @@ def build() -> object:
     blobs = DiskBlobStore(blob_root())
     books = SqliteBookStore(path)
     tenancy = SqliteTenancyStore(path)
-    _bootstrap_dev_account(tenancy, principal)
+    _bootstrap_dev_user(tenancy, principal)
     return create_app(
         principal_provider=lambda: principal,
-        # P3.1: accounts, libraries and memberships — the SIXTH aggregate in
+        # P3.1: users, libraries and memberships — the SIXTH aggregate in
         # this one file, and the sharpest version of the reason they share it.
         # "May this person see this?" and "what is there to see?" must never be
         # answerable from two databases that could disagree about the moment.

@@ -6,7 +6,7 @@
 not become a backup of the photo album), so size lives on disk — in the file
 itself and in the JSON sidecar :class:`app.adapters.disk_blobs.DiskBlobStore`
 writes beside it. A console that wants to answer *"how much space does this
-account occupy"* has to look at the tree.
+library occupy"* has to look at the tree.
 
 ⚠ **And it may not import the adapter that owns that tree.**
 ``tests/test_layering.py:test_the_staff_service_binds_no_adapter_and_so_needs_
@@ -24,7 +24,7 @@ same digest. A layout change fails a test rather than quietly reporting 0 MB.
 **What is counted, and why it is not the sum of the originals.** Every file
 under a library's blob directory: originals, the ``~thumb`` renditions the
 store generates, and the sidecars. That is what the disk holds, and "space this
-account occupies" is the question an operator is asking when they look at a
+library occupies" is the question an operator is asking when they look at a
 storage column. The alternative — summing the sidecars' ``size`` fields — would
 report a number smaller than the disk by however many renditions exist, which
 is the sort of plausible-but-wrong figure this service exists not to produce.

@@ -528,10 +528,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Libraries this account belongs to
+         * Libraries this user belongs to
          * @description Ordered by the domain's own key, so the switcher never reshuffles.
          *
-         *     An account that belongs to nothing gets ``[]``, not an error — a real
+         *     A user that belongs to nothing gets ``[]``, not an error — a real
          *     state (P4.3's sign-up, before the first library) the client has to render.
          *
          *     ⚠ **Store data only, with no special case for the principal's own default
@@ -540,7 +540,7 @@ export interface paths {
          *     copy of the resolver's dev-trusted rule in a second module, and the day
          *     they disagreed the switcher would be missing the very library on screen.
          *     Guaranteeing the membership row exists is the composition root's job
-         *     (``app.main:_bootstrap_dev_account``), and
+         *     (``app.main:_bootstrap_dev_user``), and
          *     ``test_the_library_meta_resolves_is_always_one_the_switcher_lists`` pins
          *     the agreement rather than trusting it.
          */
@@ -586,7 +586,7 @@ export interface paths {
         head?: never;
         /**
          * Rename a library
-         * @description 404 for a library this account is not a member of — never 403 (§4.2).
+         * @description 404 for a library this user is not a member of — never 403 (§4.2).
          *
          *     The membership is looked up FIRST and the library second: asking the other
          *     way round would answer "no such library" for a real library and "not
@@ -1040,28 +1040,6 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /**
-         * AccountDTO
-         * @description Who the server thinks is asking (§4.1).
-         *
-         *     Dev-trusted until pillar 4: there is no login, so this is whichever
-         *     principal the composition root built. It is on the wire now because the
-         *     switcher's list is *this account's* libraries, and a client that cannot
-         *     name the account cannot explain an empty list.
-         */
-        AccountDTO: {
-            /**
-             * Display Name
-             * @description Shown in the UI, if set.
-             * @default
-             */
-            display_name: string;
-            /**
-             * Id
-             * @description Opaque account identifier.
-             */
-            id: string;
-        };
         /**
          * AlternativeDTO
          * @description One ranked runner-up `booksnap.match.explain()` considered for a
@@ -1838,8 +1816,6 @@ export interface components {
          * @description Service identity + who is asking + the library resolved for them.
          */
         MetaResponse: {
-            /** @description The caller (dev-trusted until P4.1). */
-            account: components["schemas"]["AccountDTO"];
             /**
              * Api Version
              * @description API major version, e.g. 'v1'.
@@ -1852,6 +1828,8 @@ export interface components {
             app: string;
             /** @description Library resolved for this caller. */
             library: components["schemas"]["LibraryRefDTO"];
+            /** @description The caller (dev-trusted until P4.1). */
+            user: components["schemas"]["UserDTO"];
             /**
              * Version
              * @description Server package version.
@@ -2070,6 +2048,32 @@ export interface components {
          * @enum {string}
          */
         Status: "auto" | "approved" | "manual";
+        /**
+         * UserDTO
+         * @description Who the server thinks is asking (§4.1).
+         *
+         *     Dev-trusted until pillar 4: there is no login, so this is whichever
+         *     principal the composition root built. It is on the wire now because the
+         *     switcher's list is *this user's* libraries, and a client that cannot
+         *     name the user cannot explain an empty list.
+         *
+         *     ⚠ Called ``AccountDTO`` until P3.7a. The word "account" now belongs to the
+         *     CUSTOMER (VISION §4.1, 2026-08-11) and arrives on the wire at P3.7b —
+         *     reading this field as a tenant is the mistake the rename exists to stop.
+         */
+        UserDTO: {
+            /**
+             * Display Name
+             * @description Shown in the UI, if set.
+             * @default
+             */
+            display_name: string;
+            /**
+             * Id
+             * @description Opaque user identifier.
+             */
+            id: string;
+        };
         /** ValidationError */
         ValidationError: {
             /** Context */
