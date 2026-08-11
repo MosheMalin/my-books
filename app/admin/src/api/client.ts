@@ -217,6 +217,19 @@ export const deleteBook = (
   request('DELETE', `/api/v1/books/${encodeURIComponent(id)}`,
           { ...opts, libraryId })
 
+/**
+ * A photograph's thumbnail, from the PRODUCT api.
+ *
+ * ⚠⚠ Not from the staff service, which serves no image bytes by construction —
+ * metadata crosses tenants, photographs do not. So this URL resolves the
+ * operator's own membership and answers 404 for a household they do not belong
+ * to, which is why the caller only builds one where `canWrite` is true. The
+ * library rides in the query string because an `<img src>` cannot carry a
+ * header (the same reason `exportUrl` does).
+ */
+export const thumbUrl = (libraryId: string, key: string | null): string =>
+  browserUrl(`/api/v1/images/${encodeURIComponent(key ?? '')}/thumb`, libraryId)
+
 export const exportUrl = (libraryId: string, format: 'csv' | 'json'): string =>
   browserUrl('/api/v1/books/export', libraryId, { format })
 

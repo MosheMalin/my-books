@@ -11,6 +11,7 @@
 import { AccessPage } from './access/AccessPage'
 import { BooksPage } from './books/BooksPage'
 import { Dashboard } from './dash/Dashboard'
+import { ImagesPage } from './images/ImagesPage'
 import { LibrariesPage } from './libraries/LibrariesPage'
 import { LibraryDetail } from './libraries/LibraryDetail'
 import { UsersPage } from './users/UsersPage'
@@ -32,6 +33,7 @@ function Tabs({ route }: { route: Route }) {
       active: route.name === 'libraries' || route.name === 'library',
     },
     { to: { name: 'books', libraryId: undefined }, label: t.nav_books, active: route.name === 'books' },
+    { to: { name: 'images', libraryId: undefined }, label: t.nav_images, active: route.name === 'images' },
     { to: { name: 'users' }, label: t.nav_users, active: route.name === 'users' },
     { to: { name: 'access' }, label: t.nav_access, active: route.name === 'access' },
   ]
@@ -53,6 +55,7 @@ function Screen({ route }: { route: Route }) {
     case 'libraries': return <LibrariesPage />
     case 'library': return <LibraryDetail libraryId={route.id} />
     case 'books': return <BooksPage initialLibraryId={route.libraryId} />
+    case 'images': return <ImagesPage initialLibraryId={route.libraryId} />
     case 'users': return <UsersPage />
     case 'access': return <AccessPage />
   }

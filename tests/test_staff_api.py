@@ -29,7 +29,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+from fastapi.routing import APIRoute  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
+from starlette.routing import Mount  # noqa: E402
 
 from app.adapters.migrations import migrate  # noqa: E402
 from app.adapters.sqlite_store import SqliteBookStore, SqliteTenancyStore  # noqa: E402
@@ -38,7 +40,9 @@ from app.domain.book import Status, add_copy  # noqa: E402
 from app.domain.tenancy import Account, Library, Membership, Role  # noqa: E402
 from app.domain.text import book_key  # noqa: E402
 from app.staff_api.app import STAFF_TOKEN_ENV, create_app  # noqa: E402
-from app.staff_api.queries import SchemaMismatch, StaffQueries, _open  # noqa: E402
+from app.staff_api.queries import (  # noqa: E402
+    SchemaMismatch, StaffQueries, _open, images_sql,
+)
 
 
 def _seed(path: Path) -> None:
@@ -560,14 +564,26 @@ def test_the_staff_service_never_serves_image_bytes():
                               "PlainTextResponse", "Response("):
         assert way_to_send_bytes not in source, way_to_send_bytes
 
-    with _db() as path:
-        app = create_app(StaffQueries(path))
-        served = [r for r in app.routes if str(r.path).startswith("/api/")]
-        assert served
-        for route in served:
-            # Every route answers with a declared pydantic model, i.e. JSON.
-            # A byte-serving route is exactly the one that would not.
-            assert getattr(route, "response_model", None) is not None, route.path
+    # ⚠ And then what it SENDS, because the source scan is a spelling check.
+    # A review measured the gap: a route declaring `response_model=ImageDTO`
+    # and RETURNING a `Response` instance short-circuits FastAPI entirely and
+    # served `image/jpeg` with the suite green. So every route is called and
+    # its content type read.
+    with _client(None) as client:
+        for route in client.app.routes:  # type: ignore[attr-defined]
+            if not isinstance(route, APIRoute):
+                continue
+            concrete = re.sub(r"\{[^}]+\}", "no-such-id", str(route.path))
+            for method in sorted(route.methods or {"GET"}):
+                answer = client.request(method, concrete, follow_redirects=False)
+                # A 4xx is fine (a missing query parameter is a 422 and still
+                # JSON); a REDIRECT is not — `RedirectResponse` to the product
+                # API's byte route was one of the measured mutations.
+                assert not 300 <= answer.status_code < 400, (
+                    method, concrete, answer.status_code)
+                assert answer.headers["content-type"].startswith(
+                    "application/json"), (method, concrete,
+                                          answer.headers["content-type"])
 
 
 # --- storage: the bytes are on disk, not in the database ---------------------
@@ -599,9 +615,20 @@ def test_storage_agrees_with_the_store_that_wrote_the_blob():
         assert facts.bytes == blob.size
         assert (facts.width, facts.height) == (blob.width, blob.height)
 
+        # ⚠ EXACT, not `>=`. A review measured both directions of the loose
+        # version: a `_walk` that skipped every `~thumb` file, and a
+        # `DiskBlobStore` that moved renditions to their own directory, each
+        # left the suite green while the staff reader under-reported a tree by
+        # 48%. `>=` is blind in precisely the direction the storage column
+        # fails. So the expectation is an independent walk of the WHOLE root.
+        actual_files = actual_bytes = 0
+        for folder, _dirs, names in os.walk(tmp):
+            for name in names:
+                actual_files += 1
+                actual_bytes += os.path.getsize(os.path.join(folder, name))
         usage = tree.usage()["lib-a"]
-        assert usage.bytes >= blob.size
-        assert usage.files >= 2, "the image and its sidecar, at least"
+        assert (usage.files, usage.bytes) == (actual_files, actual_bytes)
+        assert usage.files == 3, "the image, its sidecar and its thumbnail"
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -616,6 +643,70 @@ def test_a_missing_blob_root_is_zero_storage_not_a_failed_dashboard():
     assert BlobTree("D:/no/such/blob/root").usage() == {}
     with _queries() as (q, _):
         assert q.overview()["image_bytes"] == 0
+
+
+def test_a_library_id_is_validated_before_it_becomes_a_path_segment():
+    """⚠ The asymmetry two reviewers found: the KEY was validated from the
+    first commit and the library id, three lines away, was not.
+
+    `pathlib` does not normalise `..`, and a drive-qualified or UNC segment
+    REPLACES the root rather than extending it — measured on Windows, reading
+    a planted file outside the tree with its metadata. Not reachable through
+    today's uuid ids, but `tools/import_legacy.py` writes an operator-supplied
+    `--library` verbatim and the owner's own tree holds a `dev-library`, so
+    "ids are always hex" is a convention, not an invariant.
+    """
+    from app.staff_api.storage import BlobTree
+
+    tree = BlobTree("D:/tmp/blobroot")
+    key = "0" * 64 + ".jpg"
+    for bad in ("..", "../..", "..\..", "C:/Windows", "//server/share",
+                "\\server\share", "lib/../..", ""):
+        assert tree._dir(bad) is None, bad
+        assert tree._path(bad, key) is None, bad
+    assert tree._dir("dev-library") is not None, "a real, non-uuid id still works"
+
+
+def test_an_invisible_blob_tree_is_not_the_same_as_a_lost_photograph():
+    """⚠⚠ Three states, not two. With no blob root configured — a state
+    `main.py:blob_root` deliberately tolerates, because the database and the
+    photographs can live on different machines — every capture reports
+    `present=False`, which the DTO documents as "a photograph the household can
+    no longer see". Without this flag the console announces that every
+    photograph in every tenant is lost, and hides a real loss in the noise."""
+    from app.staff_api.storage import BlobTree
+
+    assert BlobTree(None).visible is False
+    assert BlobTree("D:/no/such/root").visible is False
+
+    tmp = tempfile.mkdtemp(prefix="booksnap-blobs-")
+    try:
+        assert BlobTree(tmp).visible is False, "an empty dir is not a blob tree"
+        (Path(tmp) / "libraries").mkdir()
+        assert BlobTree(tmp).visible is True
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_a_blob_deleted_mid_page_degrades_one_row_rather_than_the_page():
+    """⚠ `exists()`-then-`stat()` is a RACE and `tools/blob_gc.py` is the other
+    runner. A review reproduced the 500: one orphan unlinked while the console
+    rendered `/images` blanked the whole cross-tenant page."""
+    from app.adapters.disk_blobs import DiskBlobStore
+    from app.staff_api.storage import BlobTree
+
+    tmp = tempfile.mkdtemp(prefix="booksnap-blobs-")
+    try:
+        store = DiskBlobStore(tmp)
+        blob = store.put(LibraryRef(id="lib-a"), _a_real_jpeg())
+        tree = BlobTree(tmp)
+        path = tree._path("lib-a", blob.key)
+        assert path is not None and path.exists()
+        path.unlink()
+        facts = tree.facts("lib-a", blob.key)
+        assert facts.present is False and facts.bytes == 0
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def test_a_key_that_is_not_a_content_address_resolves_to_nothing():
@@ -646,6 +737,51 @@ def test_storage_lands_on_the_library_row_and_the_overview():
             assert q.overview()["image_bytes"] == rows["lib-a"].image_bytes
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_a_malformed_capture_id_list_does_not_blank_the_whole_page():
+    """⚠ `json_each` RAISES on a malformed array, and the subquery that reads
+    `reads.capture_ids` is not narrowed by library — so ONE tenant's bad row
+    would 500 the cross-tenant page for everybody. Not reachable through the
+    product's write path, which is why the guard is a `json_valid` and not a
+    migration."""
+    with _queries() as (q, path):
+        _photograph(path)
+        _a_read_over(path, capture_ids=["cap-1"], claims=[("auto", "cap-1")])
+        conn = sqlite3.connect(path)
+        try:
+            conn.execute("UPDATE reads SET capture_ids = 'not json'")
+            conn.commit()
+        finally:
+            conn.close()
+
+        rows, total = q.images()
+        assert total == 1
+        # The run is no longer counted (its row is unreadable), and that is the
+        # honest answer — but the page renders, and the findings still do.
+        assert rows[0].findings == 1
+
+
+def test_the_engine_figures_are_grouped_pre_passes_not_per_row_scans():
+    """⚠⚠ The shape, pinned structurally, because the cost is invisible in a
+    3-row fixture. Two reviewers independently measured the correlated version
+    at 13.6 SECONDS for one `?limit=200` on a service whose credential may be
+    unset — one unauthenticated request per threadpool worker. The grouped form
+    was 14ms on the same data.
+
+    A query plan is the only place this is observable without seeding
+    thousands of rows: a correlated subquery shows up as CORRELATED SCALAR
+    SUBQUERY, and there must be none.
+    """
+    with _queries() as (q, path):
+        _photograph(path)
+        _a_read_over(path, capture_ids=["cap-1"], claims=[("auto", "cap-1")])
+        with _open(path) as conn:
+            plan = " ".join(
+                str(row) for row in
+                conn.execute("EXPLAIN QUERY PLAN " + images_sql(), (25, 0)).fetchall()
+            ).upper()
+        assert "CORRELATED" not in plan, plan
 
 
 def test_reading_never_migrates_the_owners_database():
@@ -736,16 +872,57 @@ def test_with_a_token_configured_every_route_refuses_without_it():
     with no declaration FAILS rather than defaulting to open.
     """
     with _client("s3cret") as client:
-        paths = [str(r.path) for r in client.app.routes  # type: ignore[attr-defined]
-                 if str(r.path).startswith("/api/staff/v1/")]
-        assert len(paths) >= 6, paths
-        for path in paths:
+        routes = [r for r in client.app.routes  # type: ignore[attr-defined]
+                  if isinstance(r, APIRoute)]
+        assert len(routes) >= 7, routes
+
+        # ⚠⚠ STRUCTURAL first, behavioural second — because the behavioural
+        # half alone missed two whole classes of route, both measured by a
+        # security review as green mutations:
+        #
+        #   - an unguarded POST at a path a guarded GET already occupied. The
+        #     path was in the list, the test GET'd it, got its 401 from the
+        #     other route, and passed — while `POST /overview` served every
+        #     tenant's totals with no token;
+        #   - `app.mount("/blobs", StaticFiles(directory="."))`, whose path
+        #     starts with neither prefix. Measured serving CLAUDE.md, 20kB,
+        #     unauthenticated, while every guarded route still answered 401.
+        for route in routes:
+            names = _dependency_names(route)
+            assert "require_staff" in names, f"{route.path} {sorted(names)}"
+
+        # A mount is not an APIRoute and cannot carry a dependency at all, so
+        # the only safe number of them is zero.
+        assert not [r for r in client.app.routes  # type: ignore[attr-defined]
+                    if isinstance(r, Mount)], "a mount bypasses every guard"
+
+        for route in routes:
             # A path parameter needs something to stand in for it. The refusal
             # must happen in the DEPENDENCY, before any lookup, so a value that
             # matches nothing is exactly right — a 404 here would mean the
-            # credential was checked too late to protect the answer.
-            concrete = re.sub(r"\{[^}]+\}", "no-such-id", path)
-            assert client.get(concrete).status_code == 401, concrete
+            # credential was checked too late to protect the answer. Probed
+            # with the route's OWN methods, not with GET.
+            concrete = re.sub(r"\{[^}]+\}", "no-such-id", str(route.path))
+            for method in sorted(route.methods or {"GET"}):
+                answer = client.request(method, concrete)
+                assert answer.status_code == 401, (method, concrete)
+
+
+def _dependency_names(route: APIRoute) -> set[str]:
+    """Every dependency callable reachable from a route, flattened.
+
+    Asserting on the flattened tree rather than on `route.dependencies` is the
+    point: a guard could equally be declared on the router or on a parent, and
+    what matters is whether `require_staff` actually runs.
+    """
+    names: set[str] = set()
+    pending = [route.dependant]
+    while pending:
+        node = pending.pop()
+        if node.call is not None:
+            names.add(getattr(node.call, "__name__", ""))
+        pending.extend(node.dependencies)
+    return names
 
 
 def test_the_token_is_accepted_in_either_transport():

@@ -162,6 +162,62 @@ GROUP BY work_key
 """
 
 
+def images_sql(where: str = "") -> str:
+    """One page of photographs, with what the engine made of each.
+
+    ⚠⚠ **A module-level function, and the test EXPLAINs this exact string.**
+    The two engine figures were correlated subqueries once, asked per returned
+    row, each scanning every ``reads`` row in the system and expanding its
+    ``capture_ids`` array. Two reviewers measured the same thing
+    independently — **13.6 seconds of SQLite CPU for one ``?limit=200``** at
+    4000 reads, on a service whose credential may be unset, with the route
+    holding a threadpool worker for the duration. Grouped: 14ms on the same
+    data. The cost is invisible in a three-row fixture, so the shape is what
+    gets pinned, and it is pinned against the string that actually runs.
+
+    ⚠ ``json_valid`` guard: ``json_each`` RAISES on a malformed array, and the
+    pre-pass is not narrowed by library — so ONE tenant's bad row would blank
+    the cross-tenant page for everybody. Not reachable through the product's
+    write path (the column is ``NOT NULL`` and always written by
+    ``json.dumps``), which is why it is a cheap guard rather than a migration.
+    """
+    return f"""
+WITH consumed AS (
+    SELECT je.value AS capture_id, COUNT(*) AS runs,
+           MAX(COALESCE(reads.finished_at, reads.started_at)) AS last_read
+    FROM reads, json_each(reads.capture_ids) je
+    WHERE json_valid(reads.capture_ids)
+    GROUP BY je.value
+),
+found AS (
+    SELECT capture_id, COUNT(*) AS findings,
+           SUM(tier = 'auto') AS auto,
+           SUM(tier = 'review') AS review,
+           SUM(tier = 'unmatched') AS unmatched
+    FROM claims GROUP BY capture_id
+)
+SELECT captures.id, captures.library_id, captures.shelf_id,
+       captures.depth, captures."order" AS ord, captures.image_id,
+       captures.captured_at,
+       COALESCE(shelves.label, '') AS shelf_label,
+       COALESCE(found.findings, 0) AS findings,
+       COALESCE(found.auto, 0) AS auto,
+       COALESCE(found.review, 0) AS review,
+       COALESCE(found.unmatched, 0) AS unmatched,
+       COALESCE(consumed.runs, 0) AS reads,
+       consumed.last_read AS last_read
+FROM captures
+LEFT JOIN shelves ON shelves.id = captures.shelf_id
+LEFT JOIN consumed ON consumed.capture_id = captures.id
+LEFT JOIN found ON found.capture_id = captures.id
+{where}
+-- Newest photograph first; `id` breaks the tie so paging is stable when a
+-- phone uploads a burst carrying one timestamp.
+ORDER BY COALESCE(captures.captured_at, '') DESC, captures.id DESC
+LIMIT ? OFFSET ?
+"""
+
+
 class SchemaMismatch(RuntimeError):
     """The product database is not the shape this read model expects."""
 
@@ -436,6 +492,10 @@ class StaffQueries:
                 # be wrong in the one direction an operator cares about.
                 "image_files": sum(u.files for u in disk.values()),
                 "image_bytes": sum(u.bytes for u in disk.values()),
+                # Three states, not two — see `BlobTree.visible`. Zero storage
+                # and "the disk is on another machine" look identical, and
+                # only one of them is a reason to go looking.
+                "blobs_visible": int(self.blobs.visible),
             }
 
     # --- libraries --------------------------------------------------------
@@ -843,44 +903,6 @@ class StaffQueries:
             for r in rows
         )
 
-    # --- shelves ----------------------------------------------------------
-
-    def shelves(self, library_id: str) -> tuple[ShelfRow, ...]:
-        """One library's shelves, with what stands on them.
-
-        Cross-tenant, so it cannot come from `/api/v1/shelves` — that resolves
-        the caller's membership, and a system administrator is a member of
-        nothing.
-
-        ⚠ ``books`` counts DISTINCT books with a copy on the shelf, not copies:
-        two copies of one book on one shelf is one book standing there, and
-        the shelf screen's question is "what is on it".
-        """
-        with _open(self.path) as conn:
-            rows = conn.execute(
-                "SELECT shelves.id, shelves.library_id, shelves.label,"
-                " shelves.depth_count, shelves.virtual,"
-                " (SELECT COUNT(*) FROM captures"
-                "   WHERE captures.shelf_id = shelves.id) AS captures,"
-                " (SELECT COUNT(DISTINCT book_id) FROM copies"
-                "   WHERE copies.shelf_id = shelves.id) AS books,"
-                " (SELECT MAX(COALESCE(finished_at, started_at)) FROM reads"
-                "   WHERE reads.shelf_id = shelves.id) AS last_read"
-                " FROM shelves WHERE shelves.library_id = ?"
-                " ORDER BY shelves.label, COALESCE(shelves.created_at, ''),"
-                " shelves.id",
-                (library_id,),
-            ).fetchall()
-        return tuple(
-            ShelfRow(
-                id=str(r["id"]), library_id=str(r["library_id"]),
-                label=r["label"] or "", depth_count=int(r["depth_count"]),
-                virtual=bool(r["virtual"]), captures=int(r["captures"]),
-                books=int(r["books"]), last_read=r["last_read"],
-            )
-            for r in rows
-        )
-
     # --- shelves (retiring — see `images`) ----------------------------------
 
     def shelves(self, library_id: str) -> tuple[ShelfRow, ...]:
@@ -935,46 +957,24 @@ class StaffQueries:
         ``claims.capture_id``. Those are genuinely different questions and a
         run that produced nothing from an image is exactly the case an operator
         is looking for, so the run count may not be derived from the claims.
+
+        ⚠⚠ **Both engine figures are GROUPED pre-passes, never correlated
+        subqueries.** The first version asked each of them per returned row,
+        and each inner query scanned every ``reads`` row in the system and
+        expanded its ``capture_ids`` array: two reviewers measured the same
+        thing independently — **13.6 seconds of SQLite CPU for one
+        ``?limit=200``** at 4000 reads, on a service whose credential may be
+        unset. One unauthenticated request per threadpool worker took the
+        console down. The grouped form measured 2.6s → 14ms on the same data.
         """
         where = " WHERE captures.library_id = ?" if library_id else ""
         narrow: tuple[Any, ...] = (library_id,) if library_id else ()
 
-        # `json_each` over the JSON array of capture ids a read consumed. The
-        # column is JSON because §5.5's read is over a SET of photographs; this
-        # is the one place that set is queried from the other end.
-        consumed = (
-            "SELECT 1 FROM json_each(reads.capture_ids)"
-            " WHERE json_each.value = captures.id"
-        )
         with _open(self.path) as conn:
             total = int(conn.execute(
                 f"SELECT COUNT(*) FROM captures{where}", narrow).fetchone()[0])
-            rows = conn.execute(
-                "SELECT captures.id, captures.library_id, captures.shelf_id,"
-                " captures.depth, captures.\"order\" AS ord, captures.image_id,"
-                " captures.captured_at,"
-                " COALESCE(shelves.label, '') AS shelf_label,"
-                " (SELECT COUNT(*) FROM claims"
-                "    WHERE claims.capture_id = captures.id) AS findings,"
-                " (SELECT COUNT(*) FROM claims WHERE claims.capture_id ="
-                "    captures.id AND claims.tier = 'auto') AS auto,"
-                " (SELECT COUNT(*) FROM claims WHERE claims.capture_id ="
-                "    captures.id AND claims.tier = 'review') AS review,"
-                " (SELECT COUNT(*) FROM claims WHERE claims.capture_id ="
-                "    captures.id AND claims.tier = 'unmatched') AS unmatched,"
-                f" (SELECT COUNT(*) FROM reads WHERE EXISTS ({consumed}))"
-                "    AS reads,"
-                f" (SELECT MAX(COALESCE(reads.finished_at, reads.started_at))"
-                f"    FROM reads WHERE EXISTS ({consumed})) AS last_read"
-                " FROM captures"
-                " LEFT JOIN shelves ON shelves.id = captures.shelf_id"
-                f"{where}"
-                # Newest photograph first; `id` breaks the tie so paging is
-                # stable when a phone uploads a burst with one timestamp.
-                " ORDER BY COALESCE(captures.captured_at, '') DESC,"
-                " captures.id DESC LIMIT ? OFFSET ?",
-                (*narrow, limit, offset),
-            ).fetchall()
+            rows = conn.execute(images_sql(where),
+                                (*narrow, limit, offset)).fetchall()
 
         out = []
         for r in rows:

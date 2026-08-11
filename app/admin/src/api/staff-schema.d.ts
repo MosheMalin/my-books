@@ -307,7 +307,7 @@ export interface components {
             order: number;
             /**
              * Present
-             * @description The bytes are on disk. False is a real finding — a photograph the household can no longer see — not a blank cell.
+             * @description The bytes are on disk. False is a real finding — a photograph the household can no longer see — not a blank cell. ⚠ Only when `blobs_visible`; otherwise it means nobody looked.
              */
             present: boolean;
             /**
@@ -328,6 +328,11 @@ export interface components {
         };
         /** ImagePageDTO */
         ImagePageDTO: {
+            /**
+             * Blobs Visible
+             * @description ⚠ Read this BEFORE `present`. When false, the service cannot see the blob tree at all (the database and the photographs may live on different machines), so every row reports `present: false` and zero bytes — which is 'we did not look', not 'they are gone'. A console that conflated the two would announce that every photograph in every tenant was lost, and hide a real loss among the noise.
+             */
+            blobs_visible: boolean;
             /** Items */
             items: components["schemas"]["ImageDTO"][];
             /** Limit */
@@ -410,6 +415,11 @@ export interface components {
              * @description Books nobody has approved (§5.1's lowest rung). `manual` outranks `approved`, so this — and only this — is 'awaiting'.
              */
             auto: number;
+            /**
+             * Blobs Visible
+             * @description This process can see the blob tree. When false the two figures above are zero because nobody looked, not because nothing is there — and every image reports `present: false` for the same reason.
+             */
+            blobs_visible: boolean;
             /** Books */
             books: number;
             /** Captures */

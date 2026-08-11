@@ -83,6 +83,12 @@ class OverviewDTO(BaseModel):
                     "can live on different machines).",
     )
     image_bytes: int
+    blobs_visible: bool = Field(
+        description="This process can see the blob tree. When false the two "
+                    "figures above are zero because nobody looked, not "
+                    "because nothing is there — and every image reports "
+                    "`present: false` for the same reason.",
+    )
     authenticated: bool = Field(
         description="False when no BOOKSNAP_STAFF_TOKEN is configured, i.e. "
                     "anyone who can reach this port can read every tenant.",
@@ -242,7 +248,9 @@ class ImageDTO(BaseModel):
     order: int
     present: bool = Field(description="The bytes are on disk. False is a real "
                                       "finding — a photograph the household "
-                                      "can no longer see — not a blank cell.")
+                                      "can no longer see — not a blank cell. "
+                                      "⚠ Only when `blobs_visible`; otherwise "
+                                      "it means nobody looked.")
     bytes: int
     width: int
     height: int
@@ -265,6 +273,16 @@ class ImagePageDTO(BaseModel):
     total: int
     offset: int
     limit: int
+    blobs_visible: bool = Field(
+        description="⚠ Read this BEFORE `present`. When false, the service "
+                    "cannot see the blob tree at all (the database and the "
+                    "photographs may live on different machines), so every "
+                    "row reports `present: false` and zero bytes — which is "
+                    "'we did not look', not 'they are gone'. A console that "
+                    "conflated the two would announce that every photograph "
+                    "in every tenant was lost, and hide a real loss among "
+                    "the noise.",
+    )
 
 
 class ReadDTO(BaseModel):
@@ -465,7 +483,8 @@ def create_app(queries: StaffQueries) -> FastAPI:
         items, total = queries.images(library_id=library_id, limit=limit,
                                       offset=offset)
         return ImagePageDTO(items=[ImageDTO(**vars(row)) for row in items],
-                            total=total, offset=offset, limit=limit)
+                            total=total, offset=offset, limit=limit,
+                            blobs_visible=queries.blobs.visible)
 
     @app.get("/api/staff/v1/reads", response_model=list[ReadDTO],
              dependencies=guard, summary="Recent reads, across every tenant")

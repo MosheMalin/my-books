@@ -23,6 +23,7 @@ export type Route =
   | { name: 'libraries' }
   | { name: 'library'; id: string }
   | { name: 'books'; libraryId: string | undefined }
+  | { name: 'images'; libraryId: string | undefined }
   | { name: 'users' }
   | { name: 'access' }
 
@@ -42,6 +43,9 @@ export function parseHash(hash: string): Route {
   if (parts[0] === 'books') {
     return { name: 'books', libraryId: query.get('library') ?? undefined }
   }
+  if (parts[0] === 'images') {
+    return { name: 'images', libraryId: query.get('library') ?? undefined }
+  }
   if (parts[0] === 'users') return { name: 'users' }
   if (parts[0] === 'access') return { name: 'access' }
   return { name: 'dashboard' }
@@ -56,6 +60,10 @@ export const href = (route: Route): string => {
       return route.libraryId
         ? `#/books?library=${encodeURIComponent(route.libraryId)}`
         : '#/books'
+    case 'images':
+      return route.libraryId
+        ? `#/images?library=${encodeURIComponent(route.libraryId)}`
+        : '#/images'
     case 'users': return '#/users'
     case 'access': return '#/access'
   }

@@ -22,6 +22,7 @@ const HE = {
   nav_dashboard: 'סקירה',
   nav_libraries: 'ספריות',
   nav_books: 'ספרים',
+  nav_images: 'תמונות',
   nav_users: 'משתמשים',
   nav_access: 'גישה',
   lang_toggle: 'English',
@@ -183,6 +184,33 @@ const HE = {
   works_filter_keeps_spread:
     'הסינון בוחר אילו ספרים מוצגים; מספר הספריות שבשורה נשאר המספר האמיתי.',
 
+  // images — התמונה היא הישות; המדף הוא שיוך זמני (VISION §4.1a)
+  img_title: 'כל התמונות במערכת',
+  img_sub: 'התמונה היא הישות. השיוך למדף הוא זמני — המפה הפיזית (בקשה 6) תחליף אותו.',
+  img_panel: 'פרטי התמונה',
+  img_empty: 'אין תמונות',
+  img_taken: 'צולמה',
+  img_undated: 'ללא תאריך',
+  img_filed_at: 'מתויקת ב',
+  img_depth_n: (n: number) => `שורה ${n}`,
+  img_order_n: (n: number) => `מיקום ${n}`,
+  img_runs: 'קריאות',
+  img_last_read: 'קריאה אחרונה',
+  img_missing: 'הקבצים חסרים',
+  img_missing_long: 'הקובץ אינו נמצא בדיסק. התמונה הזו אבדה מבחינת בעלי הספרייה.',
+  img_no_preview: 'התצוגה המקדימה זמינה רק בספריות שאתם חברים בהן. הנתונים חוצים דיירים; התצלומים לא.',
+  img_alt: 'תצלום המדף',
+  img_filename: 'שם הקובץ',
+  img_key: 'כתובת תוכן',
+  img_read_nothing: 'הקריאה עברה על התמונה הזו ולא מצאה דבר — כנראה נושא לבדיקה.',
+  img_readonly: 'קריאה בלבד: שירות הניהול אינו כותב. מחיקה או שיוך מחדש נעשים באפליקציה של הבית.',
+  img_tiers: (auto: number, review: number, unmatched: number) =>
+    `${auto} אוטומטי · ${review} לבדיקה · ${unmatched} ללא התאמה`,
+  img_count: (shown: number, total: number) =>
+    shown >= total ? `${total} תמונות` : `${shown} מתוך ${total} תמונות`,
+  img_blind:
+    'השירות אינו רואה את ספריית הקבצים, ולכן כל התמונות מדווחות כחסרות ואין נתוני נפח. זה אומר "לא בדקנו", לא "אבד".',
+
   // book panel
   bp_title: 'פרטי הספר',
   bp_library: 'ספרייה',
@@ -249,6 +277,7 @@ const EN: Strings = {
   nav_dashboard: 'Overview',
   nav_libraries: 'Libraries',
   nav_books: 'Books',
+  nav_images: 'Images',
   nav_users: 'Users',
   nav_access: 'Access',
   lang_toggle: 'עברית',
@@ -397,6 +426,32 @@ const EN: Strings = {
     "Editing the title or author changes the book's identity, so this copy may move to a different row in the list.",
   works_filter_keeps_spread:
     'A filter selects which books are listed; the library count on a row stays the true one.',
+
+  img_title: 'Every image in the system',
+  img_sub: 'The image is the entity. Filing it at a shelf is a placeholder — the physical map (pillar 6) replaces it.',
+  img_panel: 'Image details',
+  img_empty: 'No images',
+  img_taken: 'Taken',
+  img_undated: 'No date',
+  img_filed_at: 'Filed at',
+  img_depth_n: (n: number) => `depth ${n}`,
+  img_order_n: (n: number) => `position ${n}`,
+  img_runs: 'Runs',
+  img_last_read: 'Last read',
+  img_missing: 'bytes gone',
+  img_missing_long: 'The file is not on disk. This photograph is lost as far as the household is concerned.',
+  img_no_preview: 'A preview is shown only for libraries you belong to. Metadata crosses tenants; photographs do not.',
+  img_alt: 'The shelf photograph',
+  img_filename: 'File name',
+  img_key: 'Content address',
+  img_read_nothing: 'A run consumed this image and found nothing — usually worth a look.',
+  img_readonly: 'Read-only: the staff service does not write. Deleting or re-filing is done in the household app.',
+  img_tiers: (auto: number, review: number, unmatched: number) =>
+    `${auto} auto · ${review} review · ${unmatched} unmatched`,
+  img_count: (shown: number, total: number) =>
+    shown >= total ? `${total} images` : `${shown} of ${total} images`,
+  img_blind:
+    'This service cannot see the blob tree, so every image reports as missing and there are no size figures. That means "we did not look", not "they are gone".',
 
   bp_title: 'Book details',
   bp_library: 'Library',

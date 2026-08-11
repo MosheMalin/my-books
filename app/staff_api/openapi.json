@@ -231,7 +231,7 @@
             "type": "integer"
           },
           "present": {
-            "description": "The bytes are on disk. False is a real finding — a photograph the household can no longer see — not a blank cell.",
+            "description": "The bytes are on disk. False is a real finding — a photograph the household can no longer see — not a blank cell. ⚠ Only when `blobs_visible`; otherwise it means nobody looked.",
             "title": "Present",
             "type": "boolean"
           },
@@ -285,6 +285,11 @@
       },
       "ImagePageDTO": {
         "properties": {
+          "blobs_visible": {
+            "description": "⚠ Read this BEFORE `present`. When false, the service cannot see the blob tree at all (the database and the photographs may live on different machines), so every row reports `present: false` and zero bytes — which is 'we did not look', not 'they are gone'. A console that conflated the two would announce that every photograph in every tenant was lost, and hide a real loss among the noise.",
+            "title": "Blobs Visible",
+            "type": "boolean"
+          },
           "items": {
             "items": {
               "$ref": "#/components/schemas/ImageDTO"
@@ -309,7 +314,8 @@
           "items",
           "total",
           "offset",
-          "limit"
+          "limit",
+          "blobs_visible"
         ],
         "title": "ImagePageDTO",
         "type": "object"
@@ -474,6 +480,11 @@
             "title": "Auto",
             "type": "integer"
           },
+          "blobs_visible": {
+            "description": "This process can see the blob tree. When false the two figures above are zero because nobody looked, not because nothing is there — and every image reports `present: false` for the same reason.",
+            "title": "Blobs Visible",
+            "type": "boolean"
+          },
           "books": {
             "title": "Books",
             "type": "integer"
@@ -548,6 +559,7 @@
           "manual",
           "image_files",
           "image_bytes",
+          "blobs_visible",
           "authenticated",
           "orphan_libraries"
         ],

@@ -136,7 +136,8 @@ export function bothServices(world: Partial<World> = {}): FakeServer {
     'GET /api/staff/v1/images': (req) => {
       const lib = new URL(req.url, 'http://x').searchParams.get('library_id')
       const items = lib ? w.images.filter((i) => i.library_id === lib) : w.images
-      return { items, total: items.length, offset: 0, limit: 25 }
+      return { items, total: items.length, offset: 0, limit: 25,
+               blobs_visible: true }
     },
     'GET /api/staff/v1/reads': () => [],
     'GET /api/v1/libraries': () => w.mine,
