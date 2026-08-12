@@ -266,7 +266,17 @@ def main(argv: list[str]) -> int:
         enc = sys.stdout.encoding or "utf-8"
         print(out.rstrip().encode(enc, "replace").decode(enc, "replace"))
 
-    print(f"\n{len(checks) - len(failed)}/{len(checks)} checks passed "
+    # ⚠ A SKIP IS NOT A PASS. A worktree without node_modules skips six of
+    # these, and this line used to read "13/13 checks passed" while the
+    # committed TS contract had never been regenerated — which is exactly
+    # how a stale generated artefact landed at P3.7d, with both reviewers
+    # finding it afterwards. A gate that reports green for work it did not
+    # do is worse than one that is slow.
+    skipped = sum(1 for _c, _rc, out, _s in results
+                  if out.startswith("skipped:"))
+    ran = len(checks) - len(failed) - skipped
+    tail = f", {skipped} SKIPPED (not run)" if skipped else ""
+    print(f"\n{ran}/{len(checks) - skipped} checks passed{tail} "
           f"in {time.perf_counter() - started:.1f}s")
     return 1 if failed else 0
 

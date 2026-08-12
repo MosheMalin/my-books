@@ -41,6 +41,9 @@ export interface World {
 
 export const DEFAULT_WORLD: World = {
   overview: makeOverview({
+    // Two customers, two people, two collections — deliberately not all
+    // the same number, so a screen reading the wrong one is visible.
+    accounts: 2, accounts_without_admin: 0,
     users: 2, libraries: 2, memberships: 3, books: 3, copies: 3,
     auto: 1, approved: 1, manual: 1, shelves: 2, captures: 4, reads: 2,
     duplicates: 1, lent_out: 1,

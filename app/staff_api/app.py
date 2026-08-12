@@ -61,6 +61,18 @@ STAFF_TOKEN_ENV = "BOOKSNAP_STAFF_TOKEN"
 class OverviewDTO(BaseModel):
     """System-wide totals. Every figure spans every tenant."""
 
+    accounts: int = Field(description="CUSTOMERS. Distinct from `users` "
+                                      "(people) and `libraries` "
+                                      "(collections) — three counts the "
+                                      "console drew as two until P3.7b.")
+    #: ⚠ No default, deliberately: this is an ALARM, and a missing key
+    #: defaulting to 0 renders "healthy" for "not reported".
+    accounts_without_admin: int = Field(
+        description="Accounts with members but NO admin: nobody can "
+                    "invite, re-role, rename or delete. `new_account` "
+                    "mints the admin in the same call and `NoAdminLeft` "
+                    "refuses the last demotion, so a number here is a bug "
+                    "that already happened.")
     users: int
     libraries: int
     memberships: int
@@ -94,9 +106,12 @@ class OverviewDTO(BaseModel):
                     "anyone who can reach this port can read every tenant.",
     )
     orphan_libraries: list[str] = Field(
-        description="Libraries with no membership at all — nobody can see or "
-                    "administer them. Should always be empty; `new_library` "
-                    "mints an admin membership in the same call to keep it so.",
+        description="Libraries whose OWNING ACCOUNT has no member at all "
+                    "— nobody can see or administer them. Should always be "
+                    "empty; `new_account` mints the admin membership in the "
+                    "same call to keep it so. `new_library` mints nothing: "
+                    "creating a library stopped being a permission event at "
+                    "P3.7b.",
     )
 
 
@@ -105,6 +120,30 @@ class LibraryDTO(BaseModel):
     account_id: str
     label: str
     created_at: str | None = None
+    members: int
+    admins: int
+    books: int
+    copies: int
+    auto: int
+    approved: int
+    manual: int
+    shelves: int
+    captures: int
+    reads: int
+    duplicates: int
+    lent_out: int
+    last_activity: str | None = None
+    image_files: int = 0
+    image_bytes: int = 0
+
+
+class AccountDTO(BaseModel):
+    """One customer, with every figure summed over the libraries it owns."""
+
+    id: str
+    label: str
+    created_at: str | None = None
+    libraries: int
     members: int
     admins: int
     books: int
@@ -339,6 +378,19 @@ def create_app(queries: StaffQueries) -> FastAPI:
              dependencies=guard, summary="Every library in the system")
     def libraries() -> list[LibraryDTO]:
         return [LibraryDTO(**vars(row)) for row in queries.libraries()]
+
+    @app.get("/api/staff/v1/accounts", response_model=list[AccountDTO],
+             dependencies=guard, summary="Every customer in the system")
+    def accounts() -> list[AccountDTO]:
+        """The operator's own word for a tenant, finally naming one.
+
+        Until P3.7b the console rendered a LIBRARY row here and labelled
+        it "account", because a library was the tenant; the id was shown
+        underneath so the mapping stayed visible rather than hidden. This
+        route retires that. A customer owning two collections is one row
+        now, and its numbers are the sum of theirs.
+        """
+        return [AccountDTO(**vars(row)) for row in queries.accounts()]
 
     @app.get("/api/staff/v1/users", response_model=list[UserDTO],
              dependencies=guard, summary="Every user, with their memberships")

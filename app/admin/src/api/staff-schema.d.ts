@@ -4,6 +4,32 @@
  */
 
 export interface paths {
+    "/api/staff/v1/accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Every customer in the system
+         * @description The operator's own word for a tenant, finally naming one.
+         *
+         *     Until P3.7b the console rendered a LIBRARY row here and labelled
+         *     it "account", because a library was the tenant; the id was shown
+         *     underneath so the mapping stayed visible rather than hidden. This
+         *     route retires that. A customer owning two collections is one row
+         *     now, and its numbers are the sum of theirs.
+         */
+        get: operations["accounts_api_staff_v1_accounts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/staff/v1/books": {
         parameters: {
             query?: never;
@@ -181,6 +207,56 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AccountDTO
+         * @description One customer, with every figure summed over the libraries it owns.
+         */
+        AccountDTO: {
+            /** Admins */
+            admins: number;
+            /** Approved */
+            approved: number;
+            /** Auto */
+            auto: number;
+            /** Books */
+            books: number;
+            /** Captures */
+            captures: number;
+            /** Copies */
+            copies: number;
+            /** Created At */
+            created_at?: string | null;
+            /** Duplicates */
+            duplicates: number;
+            /** Id */
+            id: string;
+            /**
+             * Image Bytes
+             * @default 0
+             */
+            image_bytes: number;
+            /**
+             * Image Files
+             * @default 0
+             */
+            image_files: number;
+            /** Label */
+            label: string;
+            /** Last Activity */
+            last_activity?: string | null;
+            /** Lent Out */
+            lent_out: number;
+            /** Libraries */
+            libraries: number;
+            /** Manual */
+            manual: number;
+            /** Members */
+            members: number;
+            /** Reads */
+            reads: number;
+            /** Shelves */
+            shelves: number;
+        };
         /** BookDTO */
         BookDTO: {
             /** Added At */
@@ -367,6 +443,16 @@ export interface components {
          * @description System-wide totals. Every figure spans every tenant.
          */
         OverviewDTO: {
+            /**
+             * Accounts
+             * @description CUSTOMERS. Distinct from `users` (people) and `libraries` (collections) — three counts the console drew as two until P3.7b.
+             */
+            accounts: number;
+            /**
+             * Accounts Without Admin
+             * @description Accounts with members but NO admin: nobody can invite, re-role, rename or delete. `new_account` mints the admin in the same call and `NoAdminLeft` refuses the last demotion, so a number here is a bug that already happened.
+             */
+            accounts_without_admin: number;
             /** Approved */
             approved: number;
             /**
@@ -409,7 +495,7 @@ export interface components {
             memberships: number;
             /**
              * Orphan Libraries
-             * @description Libraries with no membership at all — nobody can see or administer them. Should always be empty; `new_library` mints an admin membership in the same call to keep it so.
+             * @description Libraries whose OWNING ACCOUNT has no member at all — nobody can see or administer them. Should always be empty; `new_account` mints the admin membership in the same call to keep it so. `new_library` mints nothing: creating a library stopped being a permission event at P3.7b.
              */
             orphan_libraries: string[];
             /** Reads */
@@ -534,6 +620,38 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    accounts_api_staff_v1_accounts_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-booksnap-staff"?: string | null;
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountDTO"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     books_api_staff_v1_books_get: {
         parameters: {
             query?: {

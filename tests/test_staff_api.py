@@ -47,7 +47,8 @@ from app.domain.tenancy import (  # noqa: E402
 from app.domain.text import book_key  # noqa: E402
 from app.staff_api.app import STAFF_TOKEN_ENV, create_app  # noqa: E402
 from app.staff_api.queries import (  # noqa: E402
-    SchemaMismatch, StaffQueries, _open, images_sql,
+    SUMMED_OVER_LIBRARIES, AccountRow, SchemaMismatch, StaffQueries, _open,
+    images_sql,
 )
 
 
@@ -262,6 +263,150 @@ def test_a_library_whose_owner_has_no_members_is_reported_as_an_orphan():
                        role=Role.VIEWER))
         assert q.orphan_libraries() == ()
 
+
+
+def test_an_account_row_sums_the_libraries_it_owns():
+    """The row the console has been drawing wrong since revision 4.
+
+    A customer owning two collections was rendered as two customers, because
+    a `LibraryRow` was the closest thing to a tenant the read model had. Now
+    it is one row and its numbers are the sum of theirs — which is the same
+    number as before for the common one-library account, and the correct one
+    for the rest.
+
+    ⚠ The fixture gives `acc-1` a SECOND library on purpose. With one library
+    each, a per-account figure and a per-library figure are the same number,
+    and this whole test would pass against code that never learned the
+    difference.
+    """
+    with _queries() as (q, path):
+        store = SqliteTenancyStore(path)
+        store.save_library(Library(id="lib-a2", account_id="acc-1",
+                                   label="המשרד",
+                                   created_at="2026-02-01T00:00:00Z"))
+        # ⚠ With BOOKS in it. An empty second library makes every sum equal
+        # its first term, and a fold that dropped the rest would pass —
+        # measured, on the first draft of this test.
+        SqliteBookStore(path).save(
+            LibraryRef(id="lib-a2"),
+            new_book(id="b-a2", library_id="lib-a2", copy_id="c-a2",
+                     title="ספר במשרד", author="מחבר", added_at="2026-02-02"),
+        )
+        # ⚠ And a SHELF and a READ in each, with different finish times. Ten
+        # of the twelve summed columns were zero on both sides of the fixture,
+        # so `shelves == 0 + 0` and `last_activity == None == None` read as
+        # gates and were not: replacing each of them with a constant survived
+        # the whole ring, and so did turning the one non-sum reducer
+        # (`max` over last_activity) into a `min` (P3.7d's reviews, both).
+        from app.adapters.sqlite_store import (
+            SqliteReadStore, SqliteShelfStore,
+        )
+        from app.domain import Read, ReadStatus, new_shelf
+
+        shelves = SqliteShelfStore(path)
+        reads = SqliteReadStore(path)
+        for lib, finished in (("lib-a", "2026-04-01T00:00:00Z"),
+                              ("lib-a2", "2026-09-01T00:00:00Z")):
+            ref = LibraryRef(id=lib)
+            shelves.save_shelf(ref, new_shelf(id=f"sh-{lib}", library_id=lib))
+            reads.save_read(ref, Read(
+                id=f"rd-{lib}", library_id=lib, shelf_id=f"sh-{lib}", depth=1,
+                capture_ids=("c",), mode="spines",
+                started_at="2026-03-01T00:00:00Z", finished_at=finished,
+                status=ReadStatus.DONE,
+            ))
+
+        by_lib = {r.id: r for r in q.libraries()}
+        rows = {r.id: r for r in q.accounts()}
+
+        assert set(rows) == {"acc-1", "acc-2"}
+        one = rows["acc-1"]
+        mine = [by_lib["lib-a"], by_lib["lib-a2"]]
+        assert one.libraries == 2, "a customer's collections are counted"
+
+        # Derived from the SAME tuple the fold reads, so a figure added to
+        # `LibraryRow` and forgotten in the fold fails here rather than
+        # quietly reporting zero.
+        for name in SUMMED_OVER_LIBRARIES:
+            expected = sum(getattr(lib, name) for lib in mine)
+            assert getattr(one, name) == expected, name
+        # ⚠ And the tuple itself is complete. The loop above cannot catch a
+        # NAME dropped from it — the field then keeps its default and the sum
+        # of two defaults matches — so the additivity rule is also asserted
+        # structurally: every AccountRow figure that is not identity, not a
+        # count of collections, not per-customer, and not the max, is additive
+        # by definition. A column added to the row and forgotten in the fold
+        # fails here (P3.7d's reviews measured the gap on `image_bytes`, which
+        # is zero in every fixture because these tests carry no blob root).
+        import dataclasses
+        not_summed = {"id", "label", "created_at", "libraries", "members",
+                      "admins", "last_activity"}
+        assert {f.name for f in dataclasses.fields(AccountRow)} - not_summed             == set(SUMMED_OVER_LIBRARIES)
+
+        assert one.books > 0 and one.shelves > 0 and one.reads > 0, (
+            "the fixture stopped exercising the fold: a column that is zero "
+            "on both sides cannot tell a sum from a constant"
+        )
+
+        # People belong to the CUSTOMER, so the count is not multiplied by the
+        # collections — the mistake a naive join makes.
+        assert (one.members, one.admins) == (2, 1)
+        assert (rows["acc-2"].members, rows["acc-2"].admins) == (1, 1)
+
+        # LATEST across the whole customer — a max, the one reducer here that
+        # is not a sum, and the one a `min` would silently pass.
+        assert one.last_activity == "2026-09-01T00:00:00Z"
+
+
+def test_the_overview_separates_customers_from_people_from_collections():
+    """Three counts the console drew as two.
+
+    `accounts` is customers, `users` is people, `libraries` is collections.
+    Until P3.7b the first and the third were the same row, so the dashboard's
+    "accounts" tile rendered `overview.libraries` — right then, and off by
+    however many second collections exist now.
+    """
+    with _queries() as (q, path):
+        store = SqliteTenancyStore(path)
+        store.save_library(
+            Library(id="lib-a2", account_id="acc-1", label="המשרד"))
+        # ⚠ A THIRD person, so all three numbers differ. With 2 accounts and 2
+        # users, counting `accounts` off the `users` table — the exact
+        # substitution this test names in its own docstring — passed
+        # (P3.7d's quality review).
+        store.save_user(User(id="usr-3", display_name="שלישי"))
+        o = q.overview()
+        assert (o["accounts"], o["users"], o["libraries"]) == (2, 3, 3), o
+        assert o["memberships"] == 3
+
+
+def test_an_account_nobody_can_administer_is_reported():
+    """`new_account` mints the admin in the same call and `NoAdminLeft`
+    refuses the last demotion, so this should always be zero — which is
+    exactly why a number here is worth a tile: it is a bug that already
+    happened, and nothing inside the product can see it.
+
+    ⚠ Distinct from an account with no MEMBERS at all (that one shows up as
+    `orphan_libraries`). This is a customer with people in it, none of whom
+    can invite, re-role or rename — the unadministrable state, reachable only
+    by a database edit or a bug."""
+    with _queries() as (q, path):
+        assert q.overview()["accounts_without_admin"] == 0
+        store = SqliteTenancyStore(path)
+        store.save_account(Account(id="acc-stuck", label="תקוע"))
+        store.save_membership(Membership(user_id="usr-2",
+                                         account_id="acc-stuck",
+                                         role=Role.VIEWER))
+        assert q.overview()["accounts_without_admin"] == 1
+        # A member-less account is NOT this state: it has nobody to promote.
+        # ⚠ Nor is it `orphan_libraries` unless it OWNS one — that query reads
+        # FROM libraries. An account with neither members nor libraries shows
+        # up only as an `accounts()` row of zeroes, which is the documented
+        # P4.3 shape and is asserted here so the claim is not just a comment.
+        store.save_account(Account(id="acc-empty"))
+        assert q.overview()["accounts_without_admin"] == 1
+        assert "acc-empty" not in q.orphan_libraries()
+        assert {"acc-empty", "acc-stuck"} <= {r.id for r in q.accounts()}
 
 # --- works: books, aggregated across every tenant ---------------------------
 #
