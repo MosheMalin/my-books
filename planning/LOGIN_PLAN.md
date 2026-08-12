@@ -93,7 +93,13 @@ credentials arrive), `review-migration` BEFORE any commit that adds a schema
 step, snapshot `work/product.db` via SQLite's backup API before every merge
 to `main` (importing `app.main` migrates it; there is no down step).
 
-### P4.0a — fix the migration runner (S/M) — FIRST, before any auth schema
+### ✅ P4.0a — fix the migration runner (S/M) — landed 2026-08-13
+
+One deviation from the text below, argued in `migrations.py`'s docstring and
+pinned by `test_a_failure_late_in_a_fresh_chain_rolls_back_every_earlier_
+step`: ONE transaction wraps the whole pending chain (not per-step) — the
+race is closed by the re-read under the lock, and the single transaction
+means a file is never left between versions.
 
 The three recorded holes, closed in the runner so all future steps inherit
 the guards:

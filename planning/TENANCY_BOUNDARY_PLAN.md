@@ -271,6 +271,15 @@ one of the six.
 
 ## Found on the way, deliberately NOT fixed here
 
+✅ **All three holes below were CLOSED at P4.0a (2026-08-13,
+`planning/LOGIN_PLAN.md`), pinned by `tests/test_migrations.py`.** The
+runner now wraps the whole pending chain in one `BEGIN IMMEDIATE`
+transaction — note NOT the per-step `BEGIN`/`COMMIT` suggested below: the
+race is closed by re-reading `user_version` under the lock, and the single
+transaction buys "at the version it started at or at SCHEMA_VERSION, never
+between". A newer-than-code file raises `SchemaNewerThanCode` at the door.
+The text below stays as the record of the problem.
+
 P3.7a's migration review turned up two pre-existing holes in the migration
 RUNNER. Both are older than this epic, neither is a v13 regression, and both
 change how all thirteen steps behave — which is not a rider on a rename. They

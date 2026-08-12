@@ -96,7 +96,11 @@ next, pausing for the owner only on unsettled decisions.
     real data.
 11. **Never edit a migration step in place** — importing `app.main` migrates
     the real DB (the contract check and pre-commit hook both import it), so
-    "not shipped yet" is usually already false. A fix is a new step.
+    "not shipped yet" is usually already false. A fix is a new step. And a
+    step NEVER manages its own transaction (no BEGIN/COMMIT/executescript):
+    since P4.0a the runner wraps the whole pending chain in one
+    `BEGIN IMMEDIATE`, re-reads the version under the lock, and refuses a
+    newer-than-code file at the door.
 12. **Trust nothing stale.** No `--reload` anywhere: restart servers after
     route changes. `:8757` serves a gitignored build — rebuild `app/web`
     after client changes. Vite's dev server can serve a stale module graph

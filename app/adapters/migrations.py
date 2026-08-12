@@ -9,30 +9,35 @@ Mechanism is SQLite's own ``PRAGMA user_version``: an integer in the file
 header, so there is no bookkeeping table and no chance of the bookkeeping and
 the schema disagreeing. Each step runs once, in order.
 
-⚠ **A step is NOT atomic by default, despite the ``with conn:`` in the
-runner** — and that is true of BOTH kinds, which is the part it is easy to get
-wrong. ``executescript`` issues an implicit COMMIT before it starts and then
-runs in autocommit, so a string step commits as it goes. A callable is no
-safer for DDL: Python's ``sqlite3`` opens an implicit transaction only for
-DML, so ``ALTER``/``CREATE``/``DROP`` inside a callable also run in autocommit
-(measured, P3.7a's data-integrity review — an earlier draft of this very note
-claimed callables were exempt, which is the kind of wrong stated reason that
-stops the next reader adding the guard). Either way a crash mid-step leaves
-the file half-upgraded with ``user_version`` still at the OLD number, the next
-open re-enters the step from the top and raises on whatever already succeeded,
-and the database is then openable only by hand.
+**The runner owns the transaction (P4.0a).** The ENTIRE pending upgrade —
+every not-yet-applied step and its ``PRAGMA user_version`` bump — runs inside
+one explicit ``BEGIN IMMEDIATE`` … ``COMMIT``. Three properties, each closing
+a hole recorded in planning/TENANCY_BOUNDARY_PLAN.md ("Found on the way"):
 
-**What works is an explicit ``BEGIN`` inside a callable step, left OPEN for
-the runner to commit** — see :func:`_v13`. Leaving it open rather than issuing
-your own ``COMMIT`` is the load-bearing half: the runner writes
-``PRAGMA user_version`` after the step returns and inside the same
-``with conn:``, so only an open transaction puts the schema change and the
-version bump in one atomic unit. A step that commits itself can still be
-killed before the version is written, which re-enters the same brick.
+  - **atomic**: a crash anywhere rolls the file back to the version it
+    STARTED at — never half-upgraded at the old number. String steps are
+    split into statements and executed one at a time; ``executescript`` is
+    banned in the runner because it issues an implicit COMMIT before it
+    starts and then autocommits as it goes (measured, P3.7a — and a callable
+    was no safer: Python's ``sqlite3`` opens an implicit transaction for DML
+    only, so bare DDL in a callable also autocommitted);
+  - **exclusive across processes**: ``BEGIN IMMEDIATE`` takes SQLite's write
+    lock BEFORE ``user_version`` is read, so N workers opening a fresh file
+    replay the chain exactly once instead of racing (the recorded
+    ``duplicate column name: lent_out`` failure). The version is re-read
+    under the lock; losers find the winner's number and skip;
+  - **refuses a file NEWER than the code**: :class:`SchemaNewerThanCode`
+    names both versions at the door, instead of skipping quietly and dying
+    later on a raw ``no such table``.
 
-v1–v12 predate this and remain unguarded. Retrofitting them changes how twelve
-shipped steps execute and is its own item, not a rider on a rename (see
-planning/TENANCY_BOUNDARY_PLAN.md).
+One transaction for the whole run, not one per step, on purpose — and for
+ATOMICITY, not for the race: the cross-process race is closed by the re-read
+under the lock (a per-step variant that re-reads per step would be equally
+race-free, measured at P4.0a's review). What the single transaction buys is
+that a file is only ever at the version it STARTED at or at
+``SCHEMA_VERSION``, never between — a crash during a fresh clone's first
+open cannot leave a half-built schema for someone to debug. The chain is
+short and a household database is small; nothing needs incremental progress.
 
 Rules for adding a step:
   - APPEND, never edit a shipped one. An edited step has already run on the
@@ -42,15 +47,79 @@ Rules for adding a step:
     (and shouldn't have it: it would hide a real ordering bug);
   - a step is SQL text OR a callable taking the connection. Reach for a
     callable only when the data being written is DERIVED by a rule that lives
-    in the domain — restating that rule in SQL is how the two copies drift.
+    in the domain — restating that rule in SQL is how the two copies drift;
+  - a step NEVER manages the transaction: no ``BEGIN``, no ``COMMIT``, no
+    ``executescript``. The runner provides the transaction; a callable that
+    needs to read before writing simply does so on the open connection
+    (see :func:`_v14`).
 """
 from __future__ import annotations
 
 import hashlib
 import sqlite3
-from typing import Callable
+from typing import Callable, Iterator
 
 Step = Callable[[sqlite3.Connection], None]
+
+
+class SchemaNewerThanCode(RuntimeError):
+    """The database file was written by NEWER code than this checkout.
+
+    Raised at the door, naming both numbers and the file, instead of skipping
+    quietly and dying later with a raw ``no such table`` — rolling back
+    between items is a real action, and the failure should say what happened.
+
+    ⚠ The guard exists from P4.0a on: rolling back to an OLDER checkout still
+    dies the old way, because the guard is not there to fire.
+    """
+
+    def __init__(self, file_version: int, code_version: int,
+                 path: str = "") -> None:
+        where = f" ({path})" if path else ""
+        super().__init__(
+            f"database{where} is at schema v{file_version} but this code "
+            f"stops at v{code_version}: the file was written by newer code. "
+            f"Update the checkout, or restore the backup that matches it."
+        )
+        self.file_version = file_version
+        self.code_version = code_version
+
+
+def _db_path(conn: sqlite3.Connection) -> str:
+    """The main database's file path, for error messages. Never raises —
+    a failure to NAME the file must not outrank the failure being named."""
+    try:
+        for _, name, path in conn.execute("PRAGMA database_list"):
+            if name == "main":
+                return path or "<memory>"
+    except sqlite3.Error:
+        pass
+    return "<unknown>"
+
+
+def _statements(script: str) -> Iterator[str]:
+    """Split a SQL script into complete statements, without ``executescript``.
+
+    ``sqlite3.complete_statement`` does the judging, so a semicolon inside a
+    string literal or a trigger body does not split. Fragments that are only
+    whitespace/``--`` line comments (a script's trailing comment) are dropped
+    — SQLite has nothing to execute in them. A trailing ``/* */`` block
+    comment would be yielded as a fragment, which SQLite executes as a no-op;
+    the shipped steps use only ``--``.
+    """
+    buf = ""
+    for piece in script.split(";"):
+        buf += piece + ";"
+        if sqlite3.complete_statement(buf):
+            stmt = buf.strip()
+            buf = ""
+            if any(line.strip() and not line.strip().startswith("--")
+                   for line in stmt.rstrip(";").splitlines()):
+                yield stmt
+    tail = buf.strip()
+    if tail and any(line.strip() and not line.strip().startswith("--")
+                    for line in tail.splitlines()):
+        yield tail
 
 # --- v1: books, copies, provenance ---------------------------------------
 #
@@ -530,25 +599,20 @@ INSERT INTO libraries (id)
 # called `accounts_by_email` on a table called `users` is exactly the kind of
 # residue that makes the next reader doubt which one is authoritative.
 #
-# ⚠⚠ **A CALLABLE, and the `BEGIN` is the whole reason.** Every other string
-# step in this file is applied by `executescript`, which COMMITS as it goes —
-# so a crash between two of its statements leaves the file half-upgraded with
-# the OLD `user_version`, and the next open re-enters the step and dies on
-# whatever already succeeded. That is survivable for a `CREATE TABLE` step and
-# NOT survivable here: all three partial states of this rename re-enter at
-# `DROP INDEX accounts_by_email` and raise `no such index` — a database with
-# the owner's books in it, openable only by hand, reporting an index when the
-# real state is a half-renamed tenancy schema (measured, P3.7a's data-integrity
-# review).
+# ⚠⚠ **A CALLABLE, and atomicity was the whole reason.** When this step
+# shipped (P3.7a) the runner applied string steps with `executescript`, which
+# COMMITS as it goes — and a crash between two statements of this rename
+# would have left a file that re-enters at `DROP INDEX accounts_by_email` and
+# raises `no such index`: the owner's books, openable only by hand (measured,
+# P3.7a's data-integrity review). So it became a callable holding its own
+# explicit `BEGIN`, left OPEN for the runner to commit together with the
+# `PRAGMA user_version` bump.
 #
-# So this step opens its own transaction and does NOT close it: the runner's
-# `with conn:` commits on success — covering the `PRAGMA user_version` it
-# writes after this returns, which is the half that a step-local COMMIT would
-# leave outside — and rolls the whole thing back on any exception.
-# `conn.execute` per statement, never `executescript`, which would commit the
-# open transaction before running a line.
+# Since P4.0a the RUNNER provides that transaction for every step, so the
+# `BEGIN` is gone — a step never manages the transaction (module rule). The
+# schema statements are byte-identical to what shipped; only the transaction
+# scaffolding, which the runner made dead, was removed.
 def _v13(conn: sqlite3.Connection) -> None:
-    conn.execute("BEGIN")
     conn.execute("DROP INDEX accounts_by_email")
     conn.execute("ALTER TABLE accounts RENAME TO users")
     conn.execute("ALTER TABLE memberships RENAME COLUMN account_id TO user_id")
@@ -594,12 +658,10 @@ def _v13(conn: sqlite3.Connection) -> None:
 # this on a copy of a database produces the same ids as the original — which
 # is what makes a migration debuggable after the fact.
 #
-# Callable, with its own BEGIN, for the reason in the module docstring: this
-# is a table rebuild with a derived backfill, and a partial application would
-# leave the tenancy tables in a state no later open could walk through.
+# Callable because the backfill is DERIVED (the identical-member-set rule
+# below), which SQL restating would drift from. No transaction scaffolding —
+# the runner owns the transaction since P4.0a, same as _v13.
 def _v14(conn: sqlite3.Connection) -> None:
-    conn.execute("BEGIN")
-
     # --- who is in which library, before anything moves ------------------
     members_of: dict[str, set[tuple[str, str]]] = {}
     joined_of: dict[tuple[str, str], list[str]] = {}
@@ -790,10 +852,11 @@ def migrate(conn: sqlite3.Connection) -> int:
 
     Safe to call on every connect: already-applied steps are skipped, so this
     is how the store guarantees a usable file without a separate setup command
-    someone can forget to run.
+    someone can forget to run. An up-to-date file takes no lock at all — this
+    runs on every store construction, several times per process.
 
-    ⚠ ``with conn:`` below is a transaction for CALLABLE steps only — see the
-    module note for why a string step commits as it goes.
+    The pending chain runs in ONE ``BEGIN IMMEDIATE`` transaction — atomic,
+    and exclusive across processes; see the module note for the argument.
     """
     # v13 uses ALTER TABLE ... RENAME COLUMN, which is 3.25+. Stated once,
     # here, rather than discovered as a half-applied step on an old build:
@@ -805,16 +868,45 @@ def migrate(conn: sqlite3.Connection) -> int:
             f"{sqlite3.sqlite_version}); schema v13 renames a column"
         )
     version = current_version(conn)
-    for target, step in MIGRATIONS:
-        if target <= version:
-            continue
-        with conn:
+    if version == SCHEMA_VERSION:
+        return version
+    if version > SCHEMA_VERSION:
+        raise SchemaNewerThanCode(version, SCHEMA_VERSION, _db_path(conn))
+
+    # The write lock comes BEFORE the re-read: two processes opening a fresh
+    # file both pass the check above, but only one holds the lock, and the
+    # loser re-reads the winner's number and walks straight through the loop.
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+    except sqlite3.OperationalError as exc:
+        # A bare `database is locked` out of a store constructor answers
+        # nothing; say which file and what was being attempted.
+        raise sqlite3.OperationalError(
+            f"could not lock {_db_path(conn)} to migrate it "
+            f"(v{version} -> v{SCHEMA_VERSION}): {exc}; another process may "
+            f"be migrating the same file — retry when it finishes"
+        ) from exc
+    try:
+        version = current_version(conn)
+        if version > SCHEMA_VERSION:
+            raise SchemaNewerThanCode(version, SCHEMA_VERSION, _db_path(conn))
+        for target, step in MIGRATIONS:
+            if target <= version:
+                continue
             if isinstance(step, str):
-                conn.executescript(step)
+                for stmt in _statements(step):
+                    conn.execute(stmt)
             else:
                 step(conn)
             # PRAGMA does not take bound parameters; `target` is an int from
-            # this module's own tuple, never from input.
+            # this module's own tuple, never from input. The bump joins the
+            # step in the same transaction — they land or vanish together.
             conn.execute(f"PRAGMA user_version = {int(target)}")
-        version = target
+            version = target
+        # COMMIT can itself fail (disk full, a WAL checkpoint losing a
+        # race); it belongs inside the try so the rollback still runs.
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
     return version

@@ -2157,25 +2157,28 @@ def test_a_v12_database_renames_its_accounts_to_users_and_keeps_every_grant():
 
 
 def test_a_migration_that_dies_halfway_leaves_the_database_openable():
-    """v13 rolls back whole, so a crash costs an upgrade and not the file.
+    """The tenancy steps roll back whole: a crash costs an upgrade, not the
+    file.
 
-    The failure this exists to prevent is not data loss, it is a BRICK. Every
-    other step in this file applies through `executescript`, which commits as
-    it goes: kill the process between two of v13's four statements without a
-    transaction and the file is left half-renamed with `user_version` still 12
-    — and every subsequent open re-enters the step and dies on `no such index:
-    accounts_by_email`, naming an index while the real state is a half-renamed
-    tenancy schema. The owner's 286 books would be behind a database no code
-    path will open (measured, P3.7a's data-integrity review).
+    The failure this exists to prevent is not data loss, it is a BRICK: kill
+    the process between two of v13's statements without a transaction and the
+    file is left half-renamed with `user_version` still 12 — every subsequent
+    open re-enters the step and dies on `no such index: accounts_by_email`,
+    naming an index while the real state is a half-renamed tenancy schema.
+    The owner's 286 books would be behind a database no code path will open
+    (measured, P3.7a's data-integrity review).
 
-    So `_v13` opens its own transaction and leaves it OPEN for the runner to
-    commit — which is what also covers the `PRAGMA user_version` written after
-    the step returns. All three partial states must therefore be invisible,
-    and the retry must still work.
+    Since P4.0a the RUNNER owns the transaction, so this drives the REAL
+    `migrate()` through the dying connection rather than a hand-rolled
+    simulation of its shape — an earlier version open-coded the runner's
+    BEGIN/rollback and stayed green under three runner mutations that
+    `tests/test_migrations.py` caught (its own ⚠ below, one level up: never
+    re-state the thing you are trying to gate). All partial states must be
+    invisible, and the retry must still work.
     """
     import sqlite3
 
-    from app.adapters.migrations import MIGRATIONS, _v13, _v14
+    from app.adapters.migrations import MIGRATIONS, SCHEMA_VERSION, migrate
 
     class DiesAt:
         """The real connection, until the nth statement — then the crash.
@@ -2198,6 +2201,19 @@ def test_a_migration_that_dies_halfway_leaves_the_database_openable():
                 raise RuntimeError("simulated crash")
             return self._conn.execute(*args, **kwargs)
 
+        # The runner's own transaction management passes through uncounted:
+        # the crash budget is statements, and commit/rollback are the
+        # machinery under test, not the workload.
+        def commit(self):
+            return self._conn.commit()
+
+        def rollback(self):
+            return self._conn.rollback()
+
+        @property
+        def in_transaction(self):
+            return self._conn.in_transaction
+
     def shape(conn):
         return (
             conn.execute("PRAGMA user_version").fetchone()[0],
@@ -2208,14 +2224,16 @@ def test_a_migration_that_dies_halfway_leaves_the_database_openable():
             [r[1] for r in conn.execute("PRAGMA table_info(libraries)")],
         )
 
-    # EVERY callable step, at every statement boundary. Naming one step was
-    # this test's first version and it was not enough: v14's BEGIN could be
+    # EVERY tenancy step, at every statement boundary. Naming one step was
+    # this test's first version and it was not enough: v14's guard could be
     # deleted with the whole ring green, and v14 is the longer and far more
-    # destructive of the two (found by P3.7b's migration review).
+    # destructive of the two (found by P3.7b's migration review). The counter
+    # includes the runner's own preamble (version reads, the lock) — the
+    # over-reach is deliberate, as below.
     fired: dict[int, int] = {}
-    cases = [(12, _v13, n) for n in range(1, 5)]
-    cases += [(13, _v14, n) for n in range(1, 21)]
-    for upto, step, survive in cases:
+    cases = [(12, n) for n in range(1, 8)]
+    cases += [(13, n) for n in range(1, 25)]
+    for upto, survive in cases:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "half.db"
             conn = sqlite3.connect(str(path))
@@ -2243,24 +2261,22 @@ def test_a_migration_that_dies_halfway_leaves_the_database_openable():
                 conn.commit()
                 before = shape(conn)
 
-                # The real step, inside the real `with conn:` the runner uses,
-                # interrupted partway.
+                # The REAL runner, through the dying connection, interrupted
+                # partway. migrate() must roll the whole pending chain back.
                 dying = DiesAt(conn, survive)
                 try:
-                    with conn:
-                        step(dying)
-                        conn.execute(f"PRAGMA user_version = {upto + 1}")
+                    migrate(dying)
                 except RuntimeError:
                     pass
 
                 if not dying.tripped:
-                    # `survive` ran past the end of this step, so it simply
+                    # `survive` ran past the end of the chain, so it simply
                     # finished — the correct outcome, and not evidence of
                     # anything. The counter deliberately over-reaches rather
                     # than hardcoding a statement count that would silently
                     # stop covering the step the day it grows a line.
                     fired[upto] = fired.get(upto, 0)
-                    assert shape(conn)[0] == upto + 1
+                    assert shape(conn)[0] == SCHEMA_VERSION
                     continue
                 fired[upto] = fired.get(upto, 0) + 1
                 assert shape(conn) == before, (
