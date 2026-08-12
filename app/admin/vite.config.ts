@@ -14,6 +14,15 @@ const UI = fileURLToPath(new URL('../ui/src', import.meta.url))
  * They talk to the SAME product API on :8757; the console is a second client,
  * not a second backend (see planning/ADMIN_CONSOLE_PLAN.md).
  *
+ * ⚠ 5174 is a PREFERENCE, not a requirement: no `strictPort`, matching
+ * `app/web/vite.config.ts`. It carried `strictPort: true` at first, on the
+ * reasoning that a server which silently moves is a server you end up
+ * debugging on the wrong port — and that was wrong here for a concrete
+ * reason: several sessions work this repo at once, and the second one to
+ * start the console got a hard failure instead of a free port. The harness
+ * (`.claude/launch.json`, `autoPort: true`) REPORTS the port it settled on,
+ * which answers the original worry without blocking anybody.
+ *
  * ⚠ `host: true` binds 0.0.0.0, not loopback. The owner administers this from
  * a phone, same as the capture flow — a server only its own machine can reach
  * cannot do the thing it exists for. Note this is an UNAUTHENTICATED tool on
@@ -64,7 +73,6 @@ export default defineConfig({
   },
   server: {
     port: 5174,
-    strictPort: true,
     host: true,
     proxy: PROXY,
     // The dev server must be allowed to read the sibling package it aliases.
@@ -72,7 +80,6 @@ export default defineConfig({
   },
   preview: {
     port: 5174,
-    strictPort: true,
     host: true,
     proxy: PROXY,
   },

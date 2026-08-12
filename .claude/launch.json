@@ -57,11 +57,18 @@
       "autoPort": false
     },
     {
+      "_comment": [
+        "autoPort, like product-web: several sessions work this repo at once,",
+        "and 5174 is a preference rather than a requirement. It was false, and",
+        "the second session to start the console got a hard 'port in use'",
+        "instead of a free port. Needs app/admin/vite.config.ts to carry NO",
+        "strictPort — with it, Vite refuses the move and autoPort cannot help."
+      ],
       "name": "admin-web",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "app/admin", "run", "dev"],
       "port": 5174,
-      "autoPort": false
+      "autoPort": true
     },
     {
       "name": "ui-mock",
