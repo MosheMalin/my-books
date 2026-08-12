@@ -77,7 +77,10 @@ export function ImagePanel({ image, libraryLabel, thumb, blind, onClose }: {
             <span>{formatDateTime(image.captured_at, lang) || t.img_undated}</span>
           </div>
           <div className="kv">
-            <span className="k">{t.th_account}</span>
+            {/* ⚠ `th_library` — the value below is a library label. The
+                photograph belongs to a collection; the customer that owns the
+                collection is a level up, on the accounts screen. */}
+            <span className="k">{t.th_library}</span>
             <span className="rtl-safe">{libraryLabel}</span>
           </div>
           {/* ⚠ "Filed at", not "shelf". The pair below is a placeholder

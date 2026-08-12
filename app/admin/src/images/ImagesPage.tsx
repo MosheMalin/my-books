@@ -105,7 +105,11 @@ export function ImagesPage({ initialLibraryId }: { initialLibraryId: string | un
             <thead>
               <tr>
                 <th>{t.img_taken}</th>
-                <th>{t.th_account}</th>
+                {/* ⚠ `th_library`. The cell holds `labelOf(image.library_id)`
+                    — a COLLECTION, not a customer. It said "account" while a
+                    library was the tenant; since P3.7b an account is a
+                    different record that may own several of these. */}
+                <th>{t.th_library}</th>
                 {/* ⚠ Named "filed at", never "shelf": the column is the
                     binding, and pillar 6 replaces it with a real address. */}
                 <th>{t.img_filed_at}</th>

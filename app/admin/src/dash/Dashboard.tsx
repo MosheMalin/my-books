@@ -1,12 +1,20 @@
 /**
- * System-wide totals, and the same numbers per library.
+ * System-wide totals, and the same numbers per CUSTOMER.
  *
- * ⚠ Every figure now comes from ONE cross-tenant request
- * (`GET /api/staff/v1/overview` + `/libraries`), not from a fan-out over the
+ * ⚠ Every figure comes from ONE cross-tenant request
+ * (`GET /api/staff/v1/overview` + `/accounts`), not from a fan-out over the
  * libraries the operator happens to belong to. That is the difference between
  * an account console and a system one: the earlier version could only ever add
  * up its own memberships and called the result "the system", which was true
  * for exactly one account and quietly wrong for any other.
+ *
+ * ⚠⚠ **The tenant tile read `overview.libraries` until P3.7e** — a count of
+ * COLLECTIONS under a heading that said "accounts". It was true while a
+ * library was the tenant and became a wrong number the moment P3.7b made the
+ * Account a record of its own: the owner's real database is one customer with
+ * two libraries, so the tile said *2 accounts* about a system with one. The
+ * two counts are separate tiles now, and the table below rows by customer,
+ * which is what its "by account" heading always claimed.
  */
 import { formatDate, formatNumber, libraryName } from '@booksnap/ui'
 import { useI18n } from '../lib/i18n'
@@ -19,7 +27,7 @@ import { formatBytes, StatCard } from '../lib/ui'
 
 export function Dashboard() {
   const { t, lang } = useI18n()
-  const { overview, libraries, loading, error, reload } = useSystem()
+  const { overview, accounts, loading, error, reload } = useSystem()
 
   if (loading) return <Loading />
   if (!overview) {
@@ -39,12 +47,14 @@ export function Dashboard() {
       )}
 
       <div className="stats">
-        {/* ⚠ `users` is the PEOPLE count and `libraries` is the account
-            count, because the console renamed the tenant and the wire did
-            not — see `AccountsPage`. Labelled so the two cannot be read as
-            one number reported twice. */}
-        <StatCard label={t.stat_accounts_tenants} value={num(overview.libraries)} />
+        {/* ⚠ THREE different numbers, and the wire has said so since P3.7d:
+            `accounts` are customers, `users` are people, `libraries` are
+            collections. They are routinely unequal — one customer, one
+            person, two libraries is the owner's own database — so a screen
+            showing any of them twice is a screen that cannot be checked. */}
+        <StatCard label={t.stat_accounts_tenants} value={num(overview.accounts)} />
         <StatCard label={t.stat_people} value={num(overview.users)} />
+        <StatCard label={t.th_libraries} value={num(overview.libraries)} />
         <StatCard label={t.stat_memberships} value={num(overview.memberships)} />
         <StatCard label={t.stat_books} value={num(overview.books)} />
         <StatCard label={t.stat_copies} value={num(overview.copies)} />
@@ -71,7 +81,7 @@ export function Dashboard() {
       {!overview.blobs_visible && <p className="note warn">{t.img_blind}</p>}
 
       <h2>{t.dash_per_account}</h2>
-      {libraries.length === 0 ? (
+      {accounts.length === 0 ? (
         <Empty>{t.lib_empty}</Empty>
       ) : (
         <div className="tablewrap">
@@ -80,6 +90,7 @@ export function Dashboard() {
               <tr>
                 <th>{t.th_account}</th>
                 <th className="num">{t.th_users}</th>
+                <th className="num">{t.th_libraries}</th>
                 <th className="num">{t.th_books}</th>
                 <th className="num">{t.stat_unapproved}</th>
                 <th className="num">{t.th_images}</th>
@@ -90,24 +101,25 @@ export function Dashboard() {
               </tr>
             </thead>
             <tbody>
-              {libraries.map((lib) => (
-                <tr key={lib.id}>
+              {accounts.map((account) => (
+                <tr key={account.id}>
                   <td className="rtl-safe">
-                    <a href={href({ name: 'account', id: lib.id })}>
-                      {libraryName(lib.label, t.lib_unnamed)}
+                    <a href={href({ name: 'account', id: account.id })}>
+                      {libraryName(account.label, t.acct_unnamed)}
                     </a>
-                    {/* An account with no members is the one anomaly this
+                    {/* A customer with no members is the one anomaly this
                         table can surface that no household screen can. */}
-                    {lib.members === 0 && <> <span className="badge">!</span></>}
+                    {account.members === 0 && <> <span className="badge">!</span></>}
                   </td>
-                  <td className="num">{num(lib.members)}</td>
-                  <td className="num">{num(lib.books)}</td>
-                  <td className="num">{num(lib.auto)}</td>
-                  <td className="num">{num(lib.captures)}</td>
-                  <td className="num">{formatBytes(lib.image_bytes, lang)}</td>
-                  <td className="num">{num(lib.duplicates)}</td>
-                  <td className="num">{num(lib.lent_out)}</td>
-                  <td>{formatDate(lib.last_activity, lang) || '—'}</td>
+                  <td className="num">{num(account.members)}</td>
+                  <td className="num">{num(account.libraries)}</td>
+                  <td className="num">{num(account.books)}</td>
+                  <td className="num">{num(account.auto)}</td>
+                  <td className="num">{num(account.captures)}</td>
+                  <td className="num">{formatBytes(account.image_bytes, lang)}</td>
+                  <td className="num">{num(account.duplicates)}</td>
+                  <td className="num">{num(account.lent_out)}</td>
+                  <td>{formatDate(account.last_activity, lang) || '—'}</td>
                 </tr>
               ))}
             </tbody>

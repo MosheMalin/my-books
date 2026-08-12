@@ -20,7 +20,8 @@ import { I18nProvider } from '../lib/i18n'
 import { SystemProvider } from '../lib/system'
 import type { BookDTO, LibraryDTO } from '../api/schema'
 import type {
-  StaffBook, StaffImage, StaffLibrary, StaffOverview, StaffUser, StaffWork,
+  StaffAccount, StaffBook, StaffImage, StaffLibrary, StaffOverview, StaffUser,
+  StaffWork,
 } from '../api/staff'
 
 export interface Recorded {
@@ -75,6 +76,26 @@ export function makeLibrary(over: Partial<LibraryDTO> = {}): LibraryDTO {
 // Separate factories from the product ones above, deliberately: the two
 // services return DIFFERENT shapes for what sounds like the same noun, and a
 // shared factory would hide exactly the mismatch these tests exist to catch.
+
+/**
+ * A CUSTOMER, as `/api/staff/v1/accounts` reports one.
+ *
+ * ⚠ A separate factory from `makeStaffLibrary`, and the fixtures below do NOT
+ * derive one from the other. The server folds a customer's figures out of its
+ * libraries' (`queries.accounts()`), and a fake that folded them here would be
+ * a second implementation of that sum — agreeing with itself while the real
+ * one drifts. Both are fixture data, and a test that wants them consistent
+ * writes both numbers down.
+ */
+export function makeStaffAccount(over: Partial<StaffAccount> = {}): StaffAccount {
+  return {
+    id: 'acc-1', label: 'משפחת מלין', created_at: '2026-01-01T00:00:00Z',
+    libraries: 1, members: 1, admins: 1, books: 0, copies: 0, auto: 0,
+    approved: 0, manual: 0, shelves: 0, captures: 0, reads: 0, duplicates: 0,
+    lent_out: 0, last_activity: null, image_files: 0, image_bytes: 0,
+    ...over,
+  }
+}
 
 export function makeStaffLibrary(over: Partial<StaffLibrary> = {}): StaffLibrary {
   return {

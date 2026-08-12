@@ -6,7 +6,7 @@
  *
  * Routes:
  *   #/                      the dashboard
- *   #/accounts              every account (tenant) in the system
+ *   #/accounts              every account (customer) in the system
  *   #/accounts/<id>         …with one open in a drawer over the list
  *   #/books                 every book in the system
  *   #/books?library=<id>    …narrowed to one (a deep link from a library row)
@@ -17,6 +17,14 @@
  * one — they were two names for one entity — and a console that answered a
  * bookmark with the dashboard would teach the operator that their link rotted
  * rather than moved.
+ *
+ * ⚠⚠ **`<id>` became an ACCOUNT id at P3.7e and was a LIBRARY id before it.**
+ * That resolution is deliberately NOT here: an id is opaque, so this module
+ * cannot tell the two apart without asking the server what exists, and a
+ * parser that fetched would stop being a pure function of the hash (it is
+ * unit-tested as one, with no provider in sight). `AccountsPage` resolves
+ * instead — account first, then the account that OWNS the named library — so
+ * an operator's stale bookmark lands on the customer it was about.
  */
 // The `hashchange` subscription is shared (`@booksnap/ui`); the ROUTE TABLE
 // below is deliberately not — a union of both apps' routes would let one link

@@ -1,47 +1,43 @@
 /**
- * The operator's customers — the console's primary list since revision 4.
+ * The operator's customers — one row per **Account**, since P3.7e.
  *
- * ⚠⚠ **"Account" here is the TENANT, and today the tenant record is a
- * `Library`.** This is the one place the console deliberately diverges from the
- * domain's vocabulary, and the reason is the owner's own list for a row:
+ * ⚠⚠ **This screen used to list `Library` rows and call them accounts.** That
+ * was a deliberate, documented gloss (ADMIN_CONSOLE_PLAN revision 4): the
+ * operator's word for the thing they administer was "account", the tenant
+ * record was a `Library`, and the drawer showed the library id under the name
+ * so the mapping stayed visible rather than hidden.
  *
- *   > in the tab users. It should be account. and per each account we can see
- *   > main data: when it was created, who are the admins, how many users, how
- *   > many books, images storage.
+ * The gloss is retired because the domain moved under it. VISION §4.1
+ * **[REVISED 2026-08-11]** made the **Account** the tenancy boundary and a
+ * Library a logical partition inside it; P3.7b made that a real record with a
+ * real table. A customer owning two collections — which is exactly what the
+ * owner's own database holds — was a shape this screen could not draw: it
+ * showed two rows and called them two accounts.
  *
- * A person has no admins and no users. That list describes a customer. So:
+ * So the rows come from `/api/staff/v1/accounts` (customers, with their
+ * libraries' figures summed server-side) and the LIBRARIES live one level
+ * down, inside the drawer. Three consequences, each a decision:
  *
- *   - **the wire keeps `library`** — VISION §4.1 settled twice that an Account
- *     is a person and a Library is the isolation boundary, and that there is
- *     ONE tenancy layer. Renaming the entity would re-decide a settled thing
- *     and break every `library_id` on every row;
- *   - **the console says "account"**, because that is the operator's word for
- *     the thing they administer — VISION §4.2 itself writes "an admin inside
- *     one account's library", and §4.1 records that one library per account is
- *     the default and the normal case;
- *   - **the drawer shows the library id, labelled as such**, so the mapping is
- *     visible rather than hidden.
- *
- * ⚠ **This merged the Libraries and Users tabs**, which were two names for one
- * entity — the incoherence revision 4 exists to fix. The people are a section
- * inside the account, where "how many users" has an answer.
- *
- * ⚠⚠ **A person with no membership would otherwise become invisible.** The
- * Users tab was the only screen that listed people directly, and a
- * tenant-shaped list cannot show somebody who belongs to no tenant. That is a
- * real regression and it is answered rather than accepted: the unaffiliated
- * section below is the mirror of the orphan-library warning (a library with no
- * member ↔ a member with no library).
+ *   - **rename and export left this table.** They act on a library, and a
+ *     library is no longer what a row is. An account row carrying *rename*
+ *     could not say which collection it renamed. They are on the library rows
+ *     in the drawer;
+ *   - **`members`/`admins` are read off the ACCOUNT**, never off a library.
+ *     `LibraryDTO` carries both since P3.7b and both mean *the owning
+ *     account's people* — rendering them per library would show one household
+ *     once per shelf it keeps;
+ *   - **creating a library still lives here**, because `POST /api/v1/libraries`
+ *     creates one under the CALLER's own account and there is no route that
+ *     creates one for somebody else. The form says so.
  *
  * ⚠ Reading spans every tenant; WRITING does not. Rename and export go through
- * the product API, which resolves the operator's own membership — so a row
+ * the product API, which resolves the operator's own membership — so a library
  * outside `mine` shows its numbers and says it is read-only rather than
  * offering a button that would 404.
  */
 import { useState } from 'react'
 
-import { createLibrary, exportUrl, renameLibrary } from '../api/client'
-import type { LibraryDTO } from '../api/schema'
+import { createLibrary } from '../api/client'
 import { formatDate, formatNumber, libraryName } from '@booksnap/ui'
 import { useI18n } from '../lib/i18n'
 import { href, navigate } from '../lib/route'
@@ -95,7 +91,8 @@ function CreateForm({ onCreated }: { onCreated: () => void }) {
       {/* ⚠ Stated, because it is the one thing about this form that is not
           obvious on a SYSTEM console: `POST /api/v1/libraries` creates the
           library under the CALLER's account. There is no route that creates
-          one for somebody else. */}
+          one for somebody else — and since P3.7b creating one grants nobody
+          anything, it inherits the account's standing. */}
       <p className="note" style={{ margin: '0 0 10px' }}>{t.lib_create_note}</p>
       {error && <ErrorBox message={error} />}
       <div className="row">
@@ -111,81 +108,45 @@ function CreateForm({ onCreated }: { onCreated: () => void }) {
   )
 }
 
-/**
- * ⚠ Holds the text being typed and NOT an "am I editing" flag — the page owns
- * that, one row at a time. An earlier version kept both and they disagreed:
- * the page opened the editor while the cell, still `false`, rendered the read
- * view, so rename silently did nothing.
- */
-function RenameCell({ library, onRenamed, onCancel }: {
-  library: LibraryDTO
-  onRenamed: () => void
-  onCancel: () => void
-}) {
-  const { t } = useI18n()
-  const [label, setLabel] = useState(library.label)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | undefined>(undefined)
-
-  const save = async () => {
-    setBusy(true)
-    setError(undefined)
-    try {
-      await renameLibrary(library.id, label)
-      onRenamed()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <div>
-      <input type="text" value={label} autoFocus className="rtl-safe"
-             aria-label={t.lib_name}
-             onChange={(e) => setLabel(e.target.value)} />
-      <div className="row" style={{ marginTop: 6 }}>
-        <button type="button" className="btn small primary"
-                disabled={busy || !label.trim()} onClick={save}>
-          {t.save}
-        </button>
-        <button type="button" className="btn small" onClick={onCancel}>
-          {t.cancel}
-        </button>
-      </div>
-      {error && <ErrorBox message={error} />}
-    </div>
-  )
-}
-
 export function AccountsPage({ openId }: { openId: string | undefined }) {
   const {
-    libraries, users, mine, overview, loading, error, reload, canWrite,
+    accounts, users, overview, loading, error, reload, librariesOf,
+    accountOfLibrary,
   } = useSystem()
   const { t, lang } = useI18n()
-  const [editingId, setEditingId] = useState<string | undefined>(undefined)
 
   if (loading) return <Loading />
-  if (libraries.length === 0 && error) {
+  if (accounts.length === 0 && error) {
     return <ErrorBox message={error} onRetry={reload} />
   }
 
-  const mineById = new Map(mine.map((l) => [l.id, l]))
   const num = (n: number) => formatNumber(n, lang)
-  const open = libraries.find((l) => l.id === openId)
 
-  /** Who administers this account. Derived from the account list the provider
-   *  already holds — the server has no `admin_names` field and does not need
-   *  one; deriving it here keeps membership described in exactly one place. */
+  /**
+   * ⚠⚠ **An operator's bookmark from before P3.7e carries a LIBRARY id.**
+   * `#/accounts/<id>` meant a library until this item and means a customer
+   * now, and `parseHash` cannot tell them apart — an id is opaque, which is
+   * why it is decoded rather than pattern-matched. So the resolution happens
+   * HERE, where the data is: an account id opens that account; a library id
+   * opens the account that OWNS it. Either way the operator lands on the
+   * customer their link was about, which beats a 404 teaching them the link
+   * rotted.
+   */
+  const open = openId
+    ? accounts.find((a) => a.id === openId) ?? accountOfLibrary(openId)
+    : undefined
+
+  /** Who administers this customer. Derived from the user list the provider
+   *  already holds — the server reports an admin COUNT and no names, and
+   *  deriving them here keeps membership described in exactly one place. */
   const adminsOf = (accountId: string) =>
-    users.filter((a) => a.memberships.some(
+    users.filter((u) => u.memberships.some(
       (m) => m.account_id === accountId && m.role === 'admin'))
 
-  // ⚠ The mirror of `orphan_libraries`. A tenant-shaped list cannot show a
-  // person who belongs to no tenant, and the Users tab was the only place they
-  // appeared. Derived, not fetched: the provider already has every account.
-  const unaffiliated = users.filter((a) => a.memberships.length === 0)
+  // ⚠ The mirror of `orphan_libraries`. A customer-shaped list cannot show a
+  // person who belongs to no customer, and the Users tab was the only place
+  // they appeared. Derived, not fetched: the provider already has every user.
+  const unaffiliated = users.filter((u) => u.memberships.length === 0)
 
   return (
     <>
@@ -202,7 +163,7 @@ export function AccountsPage({ openId }: { openId: string | undefined }) {
         <CreateForm onCreated={reload} />
       </div>
 
-      {libraries.length === 0 ? (
+      {accounts.length === 0 ? (
         <Empty>{t.lib_empty}</Empty>
       ) : (
         <div className="tablewrap">
@@ -212,88 +173,57 @@ export function AccountsPage({ openId }: { openId: string | undefined }) {
                 <th>{t.th_account}</th>
                 <th>{t.th_admins}</th>
                 <th className="num">{t.th_users}</th>
+                <th className="num">{t.th_libraries}</th>
                 <th className="num">{t.th_books}</th>
                 <th className="num">{t.th_images}</th>
                 <th className="num">{t.th_storage}</th>
                 <th>{t.th_created}</th>
-                <th>{t.th_actions}</th>
               </tr>
             </thead>
             <tbody>
-              {libraries.map((lib) => {
-                const writable = canWrite(lib.id)
-                const own = mineById.get(lib.id)
-                // By the OWNING account, not the library: people join a
-                // customer, and two libraries of one share every member.
-                const admins = adminsOf(lib.account_id)
+              {accounts.map((account) => {
+                const admins = adminsOf(account.id)
                 return (
-                  <tr key={lib.id}>
+                  <tr key={account.id}>
                     <td className="rtl-safe">
-                      {editingId === lib.id && own ? (
-                        <RenameCell
-                          library={own}
-                          onCancel={() => setEditingId(undefined)}
-                          onRenamed={() => { setEditingId(undefined); reload() }}
-                        />
-                      ) : (
-                        <>
-                          <a href={href({ name: 'account', id: lib.id })}>
-                            {libraryName(lib.label, t.lib_unnamed)}
-                          </a>
-                          {writable && <> <span className="badge role">{t.lib_mine}</span></>}
-                          <div className="mono">{lib.id}</div>
-                        </>
-                      )}
+                      <a href={href({ name: 'account', id: account.id })}>
+                        {libraryName(account.label, t.acct_unnamed)}
+                      </a>
+                      <div className="mono">{account.id}</div>
                     </td>
                     <td className="rtl-safe">
-                      {/* ⚠ An account with no admin is the one anomaly this
+                      {/* ⚠ A customer with no admin is the one anomaly this
                           table can surface that no household screen can:
-                          `new_library` mints an admin membership in the same
-                          call precisely so it cannot happen. */}
+                          `new_account` mints an admin membership in the same
+                          call precisely so it cannot happen, and `NoAdminLeft`
+                          keeps it so. Any row here is a bug that already
+                          happened. */}
                       {admins.length === 0
                         ? <span className="badge warn">{t.acct_no_admin}</span>
-                        : admins.map((a) => (
+                        : admins.map((u) => (
                             // ⚠ Falls back to the ID, not to the word
-                            // "unnamed". Until P4.1 an account has no login and
+                            // "unnamed". Until P4.1 a user has no login and
                             // usually no display name, so a column of
                             // "unnamed" rows identifies nobody — which is
                             // exactly what this column exists to do.
-                            <div key={a.id}>
-                              {a.display_name.trim()
-                                || <span className="mono">{a.id}</span>}
+                            <div key={u.id}>
+                              {u.display_name.trim()
+                                || <span className="mono">{u.id}</span>}
                             </div>
                           ))}
                     </td>
                     <td className="num">
-                      {num(lib.members)}
-                      {lib.members === 0 && <> <span className="badge">!</span></>}
+                      {num(account.members)}
+                      {account.members === 0 && <> <span className="badge">!</span></>}
                     </td>
-                    <td className="num">{num(lib.books)}</td>
-                    <td className="num">{num(lib.captures)}</td>
-                    <td className="num">{formatBytes(lib.image_bytes, lang)}</td>
-                    <td>{formatDate(lib.created_at, lang) || '—'}</td>
-                    <td className="actions">
-                      {writable ? (
-                        <>
-                          <button type="button" className="btn small"
-                                  onClick={() => setEditingId(lib.id)}>
-                            {t.lib_rename}
-                          </button>{' '}
-                          {/* Downloads, so real links: letting the browser
-                              handle Content-Disposition is what makes "Save
-                              as…" work. The library rides in the QUERY string
-                              because an <a href> cannot carry a header. */}
-                          <a className="btn small" href={exportUrl(lib.id, 'csv')}>
-                            {t.lib_export_csv}
-                          </a>{' '}
-                          <a className="btn small" href={exportUrl(lib.id, 'json')}>
-                            {t.lib_export_json}
-                          </a>{' '}
-                        </>
-                      ) : (
-                        <span className="a">{t.lib_readonly}</span>
-                      )}
-                    </td>
+                    {/* ⚠ The number this screen could not previously show. One
+                        customer with two collections was two rows called two
+                        accounts — the shape the owner's own database has. */}
+                    <td className="num">{num(account.libraries)}</td>
+                    <td className="num">{num(account.books)}</td>
+                    <td className="num">{num(account.captures)}</td>
+                    <td className="num">{formatBytes(account.image_bytes, lang)}</td>
+                    <td>{formatDate(account.created_at, lang) || '—'}</td>
                   </tr>
                 )
               })}
@@ -302,8 +232,8 @@ export function AccountsPage({ openId }: { openId: string | undefined }) {
         </div>
       )}
 
-      {/* ⚠ Not a curiosity: until P4.1 an account cannot log in, so a person
-          with no membership is somebody the system knows about and nobody can
+      {/* ⚠ Not a curiosity: until P4.1 a user cannot log in, so a person with
+          no membership is somebody the system knows about and nobody can
           reach. It is also the only way they appear anywhere now that the
           people list is a section inside an account. */}
       {unaffiliated.length > 0 && (
@@ -314,23 +244,26 @@ export function AccountsPage({ openId }: { openId: string | undefined }) {
             <table>
               <thead>
                 <tr>
-                  <th>{t.th_account}</th>
+                  {/* ⚠ `th_user`, not `th_account`. This table lists PEOPLE.
+                      One header string over both was how the console said
+                      "account" over a person and a customer alike. */}
+                  <th>{t.th_user}</th>
                   <th>{t.th_email}</th>
                   <th>{t.th_created}</th>
                 </tr>
               </thead>
               <tbody>
-                {unaffiliated.map((account) => (
-                  <tr key={account.id}>
+                {unaffiliated.map((user) => (
+                  <tr key={user.id}>
                     <td className="rtl-safe">
                       <div className="t">
-                        {account.display_name.trim()
+                        {user.display_name.trim()
                           || <span className="a">{t.users_unnamed}</span>}
                       </div>
-                      <div className="mono">{account.id}</div>
+                      <div className="mono">{user.id}</div>
                     </td>
-                    <td className="mono">{account.email || '—'}</td>
-                    <td>{formatDate(account.created_at, lang) || '—'}</td>
+                    <td className="mono">{user.email || '—'}</td>
+                    <td>{formatDate(user.created_at, lang) || '—'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -342,7 +275,9 @@ export function AccountsPage({ openId }: { openId: string | undefined }) {
       <p className="note" style={{ marginTop: 16 }}>{t.lib_no_delete}</p>
 
       {open && (
-        <AccountDrawer key={open.id} library={open}
+        <AccountDrawer key={open.id} account={open}
+                       libraries={librariesOf(open.id)}
+                       onChanged={reload}
                        onClose={() => navigate({ name: 'accounts' })} />
       )}
     </>

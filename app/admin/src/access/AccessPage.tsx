@@ -30,7 +30,7 @@ import { Empty, ErrorBox, Loading } from '@booksnap/ui'
 
 export function AccessPage() {
   const { t, lang } = useI18n()
-  const { overview, mine, users, loading, error, reload } = useSystem()
+  const { overview, mine, loading, error, reload } = useSystem()
 
   if (loading) return <Loading />
 
@@ -72,14 +72,22 @@ export function AccessPage() {
               {mine.map((lib) => (
                 <tr key={lib.id}>
                   <td className="rtl-safe">
-                    <a href={href({ name: 'account', id: lib.id })}>
+                    {/* ⚠ Links by `account_id`, not by the library's own id.
+                        The drawer behind that route is a CUSTOMER's, and the
+                        operator's membership is held there — one link per
+                        collection all landing on the same account is correct,
+                        because that is precisely what a role covering every
+                        library of an account means. */}
+                    <a href={href({ name: 'account', id: lib.account_id })}>
                       {libraryName(lib.label, t.lib_unnamed)}
                     </a>
                     <div className="mono">{lib.id}</div>
                   </td>
                   {/* REPORTED, never edited: §4.2's matrix is not enforced
                       anywhere yet (P3.2), so a control that changed a role
-                      would be changing a label, not a permission. */}
+                      would be changing a label, not a permission. And the role
+                      is the ACCOUNT's since P3.7b — two libraries of one
+                      customer always show the same badge. */}
                   <td><span className="badge role">{lib.role}</span></td>
                   <td>{formatDate(lib.created_at, lang) || '—'}</td>
                 </tr>
@@ -98,7 +106,13 @@ export function AccessPage() {
           <li>{t.acc_gap_list}</li>
           <li>{t.acc_gap_delete}</li>
         </ul>
-        <p>{t.acc_gap_counts(users.length, overview?.libraries ?? 0)}</p>
+        {/* ⚠ Read off the OVERVIEW, all three, rather than measuring one of
+            them by the length of a list this screen happens to hold. The old
+            call passed `users.length` into a slot labelled "accounts" and
+            `overview.libraries` into one labelled "libraries" — two names for
+            what was then one entity, and since P3.7b they are three. */}
+        <p>{t.acc_gap_counts(overview?.accounts ?? 0, overview?.users ?? 0,
+                             overview?.libraries ?? 0)}</p>
       </div>
 
       <p className="note warn">{t.acc_no_auth}</p>
