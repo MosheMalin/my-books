@@ -127,12 +127,30 @@ def _bootstrap_dev_user(tenancy: SqliteTenancyStore, principal) -> None:
     sign-up.
 
     ⚠ Since P3.7b it mints the ACCOUNT too, because that is now the thing a
-    membership names. On the owner's own database this branch never fires —
+    membership names. On the owner's own database that branch never fires —
     schema v14 derived an account from the existing membership graph — so what
     it really covers is a database with no tenancy rows at all: a fresh clone,
     a test, a `work/` someone deleted. The id is derived from the library id
     rather than random for the same reason v14's is: running this twice
     against the same file must not produce two customers.
+
+    ⚠⚠ **It grants a membership ONLY in the account it just created, and this
+    is the sharp edge of the whole item.** The first version also wrote an
+    ADMIN row whenever the principal had none for an EXISTING library's owner
+    — which, pointed at a library belonging to somebody else's account, made
+    the dev principal an admin of that whole customer, including collections
+    it was never told about. P3.7b's security review demonstrated it: start
+    the server as `bob` on `lib-home` and bob ends up admin of `acc-family`,
+    reaching `lib-shop` too.
+
+    That is worse than the in-memory fallback in ``app/api/policy.py`` it
+    resembles, and the difference is what makes it worth a paragraph: the
+    fallback lives per-request and DELETING the line at P4.1 removes the
+    grant. This wrote a ROW. A login landing on that database would find it
+    already true, with nothing left to delete. A pre-existing account's member
+    list is not the composition root's to edit — if a migrated library's owner
+    has no members, that is an orphan for the operator console to show, not
+    something to adopt silently.
     """
     user = tenancy.get_user(principal.id)
     if user is None:
@@ -141,6 +159,9 @@ def _bootstrap_dev_user(tenancy: SqliteTenancyStore, principal) -> None:
     ref = principal.library
     library = tenancy.get_library(ref.id)
     if library is None:
+        # Nothing here yet: mint the customer, the admin row and the library
+        # together. This is the ONLY branch that writes a membership — see
+        # the ⚠ below for the one that used to and must not.
         account_id = _dev_account_id(ref.id)
         if tenancy.get_account(account_id) is None:
             account, first = new_account(id=account_id, owner=user)
@@ -149,19 +170,8 @@ def _bootstrap_dev_user(tenancy: SqliteTenancyStore, principal) -> None:
         tenancy.save_library(
             Library(id=ref.id, account_id=account_id, label=ref.label)
         )
-        library = tenancy.get_library(ref.id)
     elif not library.label and ref.label:
-        library = replace(library, label=ref.label)
-        tenancy.save_library(library)
-    if library is not None and tenancy.membership(
-        principal.id, library.account_id
-    ) is None:
-        # ADMIN: this is the household's own owner, and §4.2 puts every
-        # capability behind that role. P3.2 gives the role meaning; the
-        # composition root only has to store the true one.
-        tenancy.save_membership(
-            Membership(principal.id, library.account_id, Role.ADMIN)
-        )
+        tenancy.save_library(replace(library, label=ref.label))
 
 
 def _dev_account_id(library_id: str) -> str:

@@ -553,3 +553,47 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"  FAIL  {fn.__name__}: {type(e).__name__}: {e}")
     print(f"\n{passed}/{len(fns)} passed")
+
+
+def test_the_bootstrap_never_joins_an_account_it_did_not_create():
+    """The composition root may mint a customer; it may not add itself to one.
+
+    Point the dev principal at a library belonging to somebody else's account
+    — a `BOOKSNAP_DEV_LIBRARY` typo is enough — and the first version of this
+    wrote an ADMIN row for that whole customer, reaching every collection it
+    owns. Worse than the in-memory fallback in `app/api/policy.py` that it
+    resembles: that one is per-request and deleting the line at P4.1 removes
+    the grant, while this one persisted a ROW a login would land on and find
+    already true (P3.7b's security review demonstrated it).
+    """
+    import tempfile
+
+    from app.domain import (
+        Account, Library, LibraryRef, Membership, Role, User,
+    )
+    from app.adapters.sqlite_store import SqliteTenancyStore
+    from app.main import _bootstrap_dev_user
+
+    class Principal:
+        id = "bob"
+        library = LibraryRef(id="lib-home", label="הבית")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "someone-elses.db"
+        tenancy = SqliteTenancyStore(path)
+        tenancy.save_user(User(id="alice"))
+        tenancy.save_account(Account(id="acc-family", label="Family"))
+        tenancy.save_membership(Membership("alice", "acc-family", Role.ADMIN))
+        for lib in ("lib-home", "lib-shop"):
+            tenancy.save_library(Library(id=lib, account_id="acc-family",
+                                         label=lib))
+
+        _bootstrap_dev_user(tenancy, Principal())
+
+        assert tenancy.membership("bob", "acc-family") is None, (
+            "the composition root joined a customer it did not create"
+        )
+        assert tenancy.list_accounts("bob") == ()
+        # Alice's account is untouched: still one member, still two libraries.
+        assert len(tenancy.list_members("acc-family")) == 1
+        assert len(tenancy.list_libraries("acc-family")) == 2

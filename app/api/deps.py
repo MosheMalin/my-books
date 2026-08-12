@@ -150,11 +150,35 @@ def owner_membership(
     404-never-403 rule is exactly the instruction not to tell them apart on
     the wire. They stay distinguishable INSIDE the server through the store's
     own methods, which is where the operator console reads them.
+
+    ⚠⚠ **Both lookups run on every path, and the wasted query is the point.**
+    The obvious shape — return early when the library is missing — costs ONE
+    store call for a library that does not exist and TWO for one that belongs
+    to a customer you are not in, and the sqlite adapter opens a connection
+    per operation. That is a clean 2× on the whole resolution, and P3.7b's
+    security review turned it into an oracle: 20 real ids of another customer
+    and 20 invented ones, interleaved, 200 samples each — **40/40 classified
+    correctly by response time alone**, with no overlap between the two
+    distributions, while every reply was byte-identical `404 {"detail":"no
+    such library"}`. Sweeping ids then enumerates another account's libraries
+    through a door that answers the same thing to all of them.
+
+    The early return was not there before P3.7b — the old join asked about
+    (user, library) directly and cost one query either way — so this is a
+    regression the boundary move introduced, not an inherited condition. It
+    matters most after P4.1, when any logged-in user of any account can
+    address this endpoint; it is written down now because the fix is one
+    wasted lookup and the diagnosis is not.
     """
     library = tenancy.get_library(library_id)
+    # A real account id when the library exists; the caller's own string when
+    # it does not — either way one membership lookup, of the same shape, that
+    # cannot match anything it should not.
+    account_id = library.account_id if library is not None else library_id
+    membership = tenancy.membership(user_id, account_id)
     if library is None:
         return None, None
-    return library, tenancy.membership(user_id, library.account_id)
+    return library, membership
 
 
 # The remaining ports, same pattern as get_principal: placeholders that FAIL

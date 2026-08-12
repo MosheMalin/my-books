@@ -502,6 +502,89 @@ def test_a_library_goes_under_an_account_you_belong_to_never_your_defaults():
     assert [lib.id for lib in tenancy.list_libraries("acc-foreign")] == \
         [p.library.id], "a library was written into a foreign customer"
 
+
+def test_a_missing_library_and_a_foreign_one_cost_the_same_lookups():
+    """404-never-403 on the TIMING axis, which the wire alone cannot carry.
+
+    Every reply is byte-identical, so the only thing left to distinguish "no
+    such library" from "somebody else's library" is how long the answer took.
+    The obvious resolver — return early when the library is missing — costs
+    one store call for a fictional id and two for a real one belonging to
+    another customer, and the sqlite adapter opens a connection per operation.
+    P3.7b's security review measured that as a clean 2×: 20 foreign ids and 20
+    invented ones, interleaved, 200 samples each, and every single one
+    classified correctly by response time with no overlap. Sweeping ids then
+    enumerates another account's libraries through a door that says the same
+    thing to all of them.
+
+    Counted rather than timed, deliberately: a wall-clock assertion on a
+    4-core laptop under an antivirus is a flake generator, and the count is
+    the property — the timing was only its symptom."""
+    calls: list[str] = []
+
+    class Counting:
+        def __init__(self, inner):
+            self._inner = inner
+
+        def __getattr__(self, name):
+            attr = getattr(self._inner, name)
+            if name not in ("get_library", "membership", "get_account"):
+                return attr
+
+            def counted(*args, **kwargs):
+                calls.append(name)
+                return attr(*args, **kwargs)
+            return counted
+
+    p = StubPrincipal()
+    inner = _tenancy(p)
+    inner.save_account(Account(id=OTHER_ACCOUNT))
+    inner.save_library(Library(id="lib-theirs", account_id=OTHER_ACCOUNT,
+                               label="של מישהו אחר"))
+
+    shapes = {}
+    for name, library_id in (("foreign", "lib-theirs"),
+                             ("fictional", "lib-invented")):
+        calls.clear()
+        with TestClient(_app(principal=p, tenancy=Counting(inner))) as c:
+            r = c.get(f"{API_PREFIX}/meta",
+                      headers={deps.LIBRARY_HEADER: library_id})
+        assert r.status_code == 404 and r.json() == {"detail": "no such library"}
+        shapes[name] = list(calls)
+
+    assert shapes["foreign"] == shapes["fictional"], (
+        "a library that exists but is not yours takes a different number of "
+        f"store lookups than one that does not exist: {shapes}"
+    )
+
+
+def test_a_library_goes_under_the_account_you_are_operating_as():
+    """`_account`'s first branch, pinned where it can actually be wrong.
+
+    A user may belong to several customers (P4.3's invites), and only one of
+    them is the one they are demonstrably operating as: the owner of the
+    library their own principal resolves to. Picking "the first account we
+    happen to list" is a cross-tenant write the moment a second membership
+    exists — and it survived the whole ring until this case (P3.7b's security
+    review, mutation M6)."""
+    p = StubPrincipal()
+    tenancy = MemoryTenancyStore()
+    tenancy.save_user(User(id=p.id))
+    # Two accounts, ADMIN of both. "acc-aaa" sorts first; the principal's own
+    # library belongs to the OTHER one, which is the answer.
+    for account_id in ("acc-aaa", TEST_ACCOUNT):
+        tenancy.save_account(Account(id=account_id))
+        tenancy.save_membership(Membership(p.id, account_id, Role.ADMIN))
+    tenancy.save_library(Library(id=p.library.id, account_id=TEST_ACCOUNT,
+                                 label=p.library.label))
+    with TestClient(_app(principal=p, tenancy=tenancy)) as c:
+        made = c.post(f"{API_PREFIX}/libraries", json={"label": "שנייה"})
+    assert made.status_code == 201, made.text
+    assert made.json()["account_id"] == TEST_ACCOUNT, (
+        "a library landed in a customer the caller was not operating as"
+    )
+    assert tenancy.list_libraries("acc-aaa") == ()
+
 def test_a_library_created_with_a_blank_name_is_refused():
     """§4.3, and the deliberate asymmetry with a shelf (whose label is
     optional because an unnamed shelf is shown by its own photograph).
