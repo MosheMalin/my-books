@@ -10,9 +10,11 @@ runs fighting for four cores (or ten concurrent paid LLM calls).
 Fairness is round-robin ACROSS tenants, FIFO within one: the scheduler keeps
 one deque per tenant and a ring of tenant keys, takes the head job of the
 ring's next non-empty tenant, and sends that tenant to the back of the ring.
-One library submitting a burst therefore waits behind its own work, never
-ahead of another library's single read — the plan's own test case ("two
-concurrent reads in two libraries do not observe each other") plus the
+One CUSTOMER submitting a burst therefore waits behind its own work, never
+ahead of another customer's single read (the key is the owning account since
+P3.7c, so two collections of one household share a turn rather than taking
+two) — the plan's own test case ("two concurrent reads in two libraries do
+not observe each other") plus the
 starvation half.
 
 Still in-process, on purpose. A separate queue PROCESS (or a broker) is a
@@ -165,7 +167,7 @@ class QueuedJobRunner:
     def _next_locked(self) -> str | None:
         """Round-robin: head job of the next non-empty tenant, that tenant to
         the back of the ring. An emptied tenant leaves the ring (and its
-        deque is dropped) so an idle library costs nothing to skip."""
+        deque is dropped) so an idle customer costs nothing to skip."""
         for _ in range(len(self._ring)):
             tenant = self._ring.popleft()
             queue = self._queues.get(tenant)

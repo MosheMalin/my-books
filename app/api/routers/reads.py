@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime, timedelta
-from typing import Sequence
+from typing import Iterator, Sequence
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -39,6 +39,7 @@ from app.api.deps import (
     get_reader,
     get_shelf_store,
     get_tenancy_store,
+    owning_account,
 )
 from app.api.dto import (
     ApplyDiffRequest,
@@ -121,32 +122,51 @@ _RATE_WINDOW = timedelta(hours=1)
 
 def _check_run_rate(
     reads: ReadStore, tenancy: TenancyStore, library: LibraryRef,
-    clock: Clock,
+    account_id: str, clock: Clock,
 ) -> None:
     """429 when this ACCOUNT already started the cap's worth of reads in
     the rolling window, across every library it owns.
 
     Counts EVERY status, deliberately: a retry loop's reads mostly fail, and
-    failures cost the engine work the cap exists to protect. The honest
-    O(reads-in-the-account) scan is the same trade the diff endpoints make
-    with `_FULL_LIBRARY_SCAN_LIMIT` — measure before optimising a route a
-    human presses a few times an hour, and a customer with enough libraries
-    to make this scan matter has a bigger problem than this loop.
+    failures cost the engine work the cap exists to protect.
+
+    ⚠ **The scan is UNBOUNDED and this is not the trade the diff endpoints
+    make.** `_FULL_LIBRARY_SCAN_LIMIT` is an explicit ceiling passed to
+    `books.list`; there is no ceiling here, and `list_all_reads` hydrates
+    every claim of every read (one `SELECT * FROM claims` each, plus two
+    `json.loads` per claim) to read one field. The driver is therefore
+    TOTAL READS IN THE ACCOUNT, not the number of libraries, and reads
+    accumulate forever because nothing prunes them: measured at 1831ms for
+    two libraries holding 500 reads each — the owner's own shape, a few
+    years on. Today that database holds five.
+
+    The break above bounds the abusive path; the accumulating one is not
+    bounded, and the exit is a `ReadStore.count_reads_since(library, iso)`
+    — one indexed COUNT per library, hydrating nothing — added when the
+    number justifies a port method rather than before (P3.7c's
+    data-integrity review measured all of the above).
     """
     try:
         cutoff = datetime.fromisoformat(clock.now_iso()) - _RATE_WINDOW
     except ValueError:
         return
     recent = 0
-    for read in _reads_of_account(reads, tenancy, library):
-        if not read.started_at:
-            continue
+    for read in _reads_of_account(reads, tenancy, library, account_id):
         try:
             if datetime.fromisoformat(read.started_at) < cutoff:
                 continue
         except (ValueError, TypeError):
             continue
         recent += 1
+        if recent >= RUN_RATE_CAP_PER_HOUR:
+            # ⚠ Stop counting the moment the answer is known. Without
+            # this the REJECTED path pays the complete account-wide scan
+            # — measured at 852ms against 34ms on 20 libraries × 50 reads
+            # — which is 25× the cost, on exactly the runaway-retry-loop
+            # this cap exists to absorb. A guard that amplifies the load
+            # it damps is worse than no guard (P3.7c's data-integrity
+            # review).
+            break
     if recent >= RUN_RATE_CAP_PER_HOUR:
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
@@ -159,7 +179,8 @@ def _check_run_rate(
 
 def _reads_of_account(
     reads: ReadStore, tenancy: TenancyStore, library: LibraryRef,
-):
+    account_id: str,
+) -> Iterator[Read]:
     """Every read of every library the owning account holds.
 
     ⚠ `list_all_reads` is still library-scoped, and stays that way: the
@@ -168,27 +189,25 @@ def _reads_of_account(
     revision refuses. Fanning out HERE keeps the boundary question in the
     api layer, where the account is already known.
 
-    Falls back to the named library alone when its row is missing — the
-    dev-trusted path on a database with no tenancy rows yet. Capping a
-    library we cannot place is better than not capping it.
+    ⚠ `account_id` comes from `deps.owning_account`, which is where the
+    fallback for a library with no row lives — see its own note. When
+    that happens the account id IS the library id, so the list below is
+    empty and the named library is counted directly.
+
+    ⚠ One consequence of the dev-trusted default library, to be deleted
+    with it at P4.1: if `BOOKSNAP_DEV_LIBRARY` names a library owned by an
+    account the principal does not belong to, `current_library` serves it
+    without a membership check and this then counts that account's OTHER
+    libraries — echoing the total back in the 429 text. One integer, only
+    reachable by operator misconfiguration, and named here so P4.1 does
+    not inherit it silently.
     """
-    owner = tenancy.get_library(library.id)
-    if owner is None:
+    siblings = tenancy.list_libraries(account_id)
+    if not siblings:
         yield from reads.list_all_reads(library)
         return
-    for sibling in tenancy.list_libraries(owner.account_id):
+    for sibling in siblings:
         yield from reads.list_all_reads(sibling.ref)
-
-
-def _fairness_key(tenancy: TenancyStore, library: LibraryRef) -> str:
-    """The account whose queue slot this read takes.
-
-    The library id when the row is missing (the dev-trusted path on a
-    database with no tenancy rows): an unplaceable read still needs a key,
-    and its own id is the one that cannot collide with somebody else's.
-    """
-    owner = tenancy.get_library(library.id)
-    return owner.account_id if owner is not None else library.id
 
 
 def _check_mode_is_usable(reader: Reader, mode: str) -> None:
@@ -247,7 +266,10 @@ def start_read(
     settle into ``done``/``stopped``/``failed``.
     """
     shelf = _load_shelf(shelves, library, shelf_id)
-    _check_run_rate(reads, tenancy, library, clock)
+    # Asked ONCE per request and threaded through: the cap and the queue
+    # key are the same question about the same library.
+    account_id = owning_account(tenancy, library)
+    _check_run_rate(reads, tenancy, library, account_id, clock)
     _check_mode_is_usable(reader, body.mode)
     try:
         shelf.check_depth(body.depth)
@@ -284,14 +306,20 @@ def start_read(
     # across tenants", and this is that sentence catching up. Keyed to the
     # library it meant two collections of one household competed as
     # strangers while a customer with ten libraries took ten slots to
-    # another's one. retries stays 0 ON PURPOSE — the job settles its own
+    # another's one.
+    #
+    # ⚠ The trade, measured: a sibling collection's single read now queues
+    # behind the other collection's whole burst instead of alternating with
+    # it. Bounded at ~29 by the shared cap above, so tens of minutes on two
+    # workers — accepted, because the alternative is one customer taking N
+    # turns to another customer's one. retries stays 0 ON PURPOSE — the job settles its own
     # failure (`fail_read` + save), and a runner-level retry would re-run the
     # ENGINE, paying for the same photos twice because the final save
     # hiccuped. See JobRunner.submit's own ⚠.
     jobs.submit(read.id, _job(read, shelf, library, captures, reads, shelves,
                               reader, blobs, books, decisions, duplicates,
                               ids, clock),
-                tenant=_fairness_key(tenancy, library))
+                tenant=account_id)
     return ReadDTO.of(read)
 
 

@@ -155,8 +155,9 @@ NOT on this list. That was always available as a query and never needed a
 tenancy change:
 
 - **one place to attach a customer**: billing, free quota, BYO API key, and
-  §1.2's run-rate cap. That cap is per-LIBRARY today, which means a customer
-  multiplies their own quota by pressing *new library*;
+  §1.2's run-rate cap. That cap was per-LIBRARY, which meant a customer
+  multiplied their own quota by pressing *new library* — closed at P3.7c,
+  along with the job queue's fairness key;
 - **invite once**: a user joins the ACCOUNT and gets what that account owns,
   instead of N membership rows that drift apart;
 - **"the last admin cannot step down" becomes a customer-level rule**, which
