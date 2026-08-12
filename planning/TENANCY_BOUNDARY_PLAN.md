@@ -260,7 +260,14 @@ Per-item one-liners land WITH their items; this is the long-form write-up.
 what six review passes found; `ADMIN_CONSOLE_PLAN.md` revision 5 retires
 revision 4's gloss (and revision 4's own paragraph now points forward, kept
 because it is the evidence that forced the reversal); CLAUDE.md's console trap
-is replaced by what is true, plus five new one-liners the reviews earned.
+is replaced by what is true, plus six new one-liners the reviews earned.
+
+⚠ Those six went in a commit LATER than the one whose message claimed them.
+The scripted edit that was supposed to add them used `
+` against CRLF files,
+matched nothing, and reported success — so P3.7f shipped a message describing
+an edit that had not happened. That is the trap's worst shape and it is now
+one of the six.
 
 ## Found on the way, deliberately NOT fixed here
 
