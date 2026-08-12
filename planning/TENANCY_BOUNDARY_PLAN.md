@@ -190,8 +190,18 @@ that is where the loop belongs.
 - contracts ×4.
 
 **Reviewers**: `review-data-integrity`, `review-security`, `review-quality`.
-**Done**: `tests/test_staff_api.py` counts re-aimed; the route-guard meta-test
-(`:899-953`) still structural and still probing each route's own methods.
+**Done**: ✅ landed. `/accounts` returns customers with their libraries'
+figures summed — folded from `libraries()` rather than computed by a second
+set of grouped queries, so the two screens cannot drift; the overview counts
+accounts / users / libraries as three numbers and adds
+`accounts_without_admin` (a state `new_account` and `NoAdminLeft` make
+unreachable, so any number there is a bug that already happened).
+`orphan_libraries` was re-aimed at the owning account back in P3.7b and
+stays.
+
+⚠ The aggregation fixture gives one account a second library WITH BOOKS IN
+IT. An empty one makes every sum equal its first term, and a fold that
+dropped the rest passed — measured on the first draft.
 
 ### P3.7e — The console stops glossing
 

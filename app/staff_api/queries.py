@@ -269,6 +269,39 @@ class LibraryRow:
 
 
 @dataclass(frozen=True)
+class AccountRow:
+    """One CUSTOMER, with every figure summed across the libraries it owns.
+
+    ⚠ This is the row the console has been drawing since revision 4 while
+    calling a `LibraryRow` an "account". The gloss was right when a library
+    WAS the tenant; since P3.7b it is not, and a customer owning two
+    collections was being drawn as two customers. Every number here is the
+    sum over its libraries — which is the same number as before for the
+    common one-library account, and the correct one for the rest.
+    """
+
+    id: str
+    label: str
+    created_at: str | None
+    libraries: int
+    members: int
+    admins: int
+    books: int
+    copies: int
+    auto: int
+    approved: int
+    manual: int
+    shelves: int
+    captures: int
+    reads: int
+    duplicates: int
+    lent_out: int
+    last_activity: str | None
+    image_files: int = 0
+    image_bytes: int = 0
+
+
+@dataclass(frozen=True)
 class MembershipRow:
     user_id: str
     account_id: str
@@ -459,6 +492,14 @@ class StaffQueries:
                 " GROUP BY rank"
             ).fetchall())
             return {
+                # ⚠ Three different counts that used to be two. `accounts`
+                # is CUSTOMERS, `users` is PEOPLE, `libraries` is
+                # collections — and until P3.7b the console rendered the
+                # third under the first's label because they were the same
+                # thing. They are not, and an operator reading "12
+                # accounts" when it means 12 collections of 4 customers is
+                # reading the wrong business.
+                "accounts": count("SELECT COUNT(*) FROM accounts"),
                 "users": count("SELECT COUNT(*) FROM users"),
                 "libraries": count("SELECT COUNT(*) FROM libraries"),
                 "memberships": count("SELECT COUNT(*) FROM memberships"),
@@ -487,6 +528,18 @@ class StaffQueries:
                 # and "the disk is on another machine" look identical, and
                 # only one of them is a reason to go looking.
                 "blobs_visible": int(self.blobs.visible),
+                # An account with members but NO admin: nobody can invite,
+                # re-role, rename or delete. `new_account` mints the admin
+                # in the same call precisely so this stays zero, and
+                # `NoAdminLeft` refuses the last demotion — so a number
+                # here is a bug that already happened, and only a system
+                # console can see it.
+                "accounts_without_admin": count(
+                    "SELECT COUNT(*) FROM accounts WHERE id IN"
+                    " (SELECT account_id FROM memberships)"
+                    " AND id NOT IN (SELECT account_id FROM memberships"
+                    " WHERE role = 'admin')"
+                ),
             }
 
     # --- libraries --------------------------------------------------------
@@ -569,6 +622,64 @@ class StaffQueries:
                 lent_out=lent.get(lid, 0), last_activity=activity.get(lid),
                 image_files=disk.get(lid, _NO_DISK).files,
                 image_bytes=disk.get(lid, _NO_DISK).bytes,
+            ))
+        return tuple(out)
+
+    # --- accounts ---------------------------------------------------------
+
+    def accounts(self) -> tuple[AccountRow, ...]:
+        """Every customer in the system, with its libraries' figures summed.
+
+        Built by FOLDING :meth:`libraries` rather than by a second set of
+        grouped queries. Two reasons, and the second is the load-bearing one:
+        the per-library numbers are already one grouped pass each (the shape
+        that replaced a correlated subquery per row after `/images` measured
+        13.6s), so folding them costs a dictionary; and a customer's totals
+        that were computed independently of its libraries' totals is exactly
+        the pair that drifts, leaving an operator with two screens that
+        disagree about the same books.
+
+        An account owning no library still appears, with zeroes — the state
+        P4.3's invite flow can produce, and one nothing else would show.
+        """
+        by_account: dict[str, list[LibraryRow]] = {}
+        for row in self.libraries():
+            by_account.setdefault(row.account_id, []).append(row)
+
+        with _open(self.path) as conn:
+            base = conn.execute(
+                "SELECT id, label, created_at FROM accounts"
+                " ORDER BY label, COALESCE(created_at, ''), id"
+            ).fetchall()
+            members = {str(r[0]): int(r[1]) for r in conn.execute(
+                "SELECT account_id, COUNT(*) FROM memberships"
+                " GROUP BY account_id")}
+            admins = {str(r[0]): int(r[1]) for r in conn.execute(
+                "SELECT account_id, COUNT(*) FROM memberships"
+                " WHERE role = 'admin' GROUP BY account_id")}
+
+        out = []
+        for row in base:
+            aid = str(row["id"])
+            libs = by_account.get(aid, [])
+            seen = [lib.last_activity for lib in libs if lib.last_activity]
+            out.append(AccountRow(
+                id=aid, label=row["label"] or "", created_at=row["created_at"],
+                libraries=len(libs),
+                members=members.get(aid, 0), admins=admins.get(aid, 0),
+                books=sum(lib.books for lib in libs),
+                copies=sum(lib.copies for lib in libs),
+                auto=sum(lib.auto for lib in libs),
+                approved=sum(lib.approved for lib in libs),
+                manual=sum(lib.manual for lib in libs),
+                shelves=sum(lib.shelves for lib in libs),
+                captures=sum(lib.captures for lib in libs),
+                reads=sum(lib.reads for lib in libs),
+                duplicates=sum(lib.duplicates for lib in libs),
+                lent_out=sum(lib.lent_out for lib in libs),
+                last_activity=max(seen) if seen else None,
+                image_files=sum(lib.image_files for lib in libs),
+                image_bytes=sum(lib.image_bytes for lib in libs),
             ))
         return tuple(out)
 

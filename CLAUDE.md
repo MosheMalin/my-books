@@ -319,9 +319,10 @@ different world — the product never reads it.
   domain no longer agrees: since P3.7b an Account is a real record that a
   library belongs to. The gloss (revision 4 of ADMIN_CONSOLE_PLAN) was
   right when a library WAS the tenant and is now just behind — P3.7e is
-  where the screens catch up. On the staff wire today: `/users` is people,
-  `LibraryDTO.account_id` names the owner, and `OverviewDTO.users` is the
-  people count.
+  where the screens catch up. The staff wire is already correct: `/accounts`
+  returns CUSTOMERS with their libraries' figures summed, `/users` returns
+  people, `LibraryDTO.account_id` names the owner, and the overview counts
+  `accounts` / `users` / `libraries` as three different numbers.
 - `app/ui` is consumed as source: each client's `postinstall` installs it;
   `check-installed.mjs` + `install.test.ts` guard the `npm ci
   --ignore-scripts` path. One `npm install --prefix <client>` per client.

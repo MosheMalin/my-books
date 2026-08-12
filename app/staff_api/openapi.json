@@ -1,6 +1,122 @@
 {
   "components": {
     "schemas": {
+      "AccountDTO": {
+        "description": "One customer, with every figure summed over the libraries it owns.",
+        "properties": {
+          "admins": {
+            "title": "Admins",
+            "type": "integer"
+          },
+          "approved": {
+            "title": "Approved",
+            "type": "integer"
+          },
+          "auto": {
+            "title": "Auto",
+            "type": "integer"
+          },
+          "books": {
+            "title": "Books",
+            "type": "integer"
+          },
+          "captures": {
+            "title": "Captures",
+            "type": "integer"
+          },
+          "copies": {
+            "title": "Copies",
+            "type": "integer"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "duplicates": {
+            "title": "Duplicates",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "image_bytes": {
+            "default": 0,
+            "title": "Image Bytes",
+            "type": "integer"
+          },
+          "image_files": {
+            "default": 0,
+            "title": "Image Files",
+            "type": "integer"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "last_activity": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Activity"
+          },
+          "lent_out": {
+            "title": "Lent Out",
+            "type": "integer"
+          },
+          "libraries": {
+            "title": "Libraries",
+            "type": "integer"
+          },
+          "manual": {
+            "title": "Manual",
+            "type": "integer"
+          },
+          "members": {
+            "title": "Members",
+            "type": "integer"
+          },
+          "reads": {
+            "title": "Reads",
+            "type": "integer"
+          },
+          "shelves": {
+            "title": "Shelves",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "libraries",
+          "members",
+          "admins",
+          "books",
+          "copies",
+          "auto",
+          "approved",
+          "manual",
+          "shelves",
+          "captures",
+          "reads",
+          "duplicates",
+          "lent_out"
+        ],
+        "title": "AccountDTO",
+        "type": "object"
+      },
       "BookDTO": {
         "properties": {
           "added_at": {
@@ -419,6 +535,15 @@
       "OverviewDTO": {
         "description": "System-wide totals. Every figure spans every tenant.",
         "properties": {
+          "accounts": {
+            "title": "Accounts",
+            "type": "integer"
+          },
+          "accounts_without_admin": {
+            "default": 0,
+            "title": "Accounts Without Admin",
+            "type": "integer"
+          },
           "approved": {
             "title": "Approved",
             "type": "integer"
@@ -501,6 +626,7 @@
           }
         },
         "required": [
+          "accounts",
           "users",
           "libraries",
           "memberships",
@@ -797,6 +923,73 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/staff/v1/accounts": {
+      "get": {
+        "description": "The operator's own word for a tenant, finally naming one.\n\nUntil P3.7b the console rendered a LIBRARY row here and labelled\nit \"account\", because a library was the tenant; the id was shown\nunderneath so the mapping stayed visible rather than hidden. This\nroute retires that. A customer owning two collections is one row\nnow, and its numbers are the sum of theirs.",
+        "operationId": "accounts_api_staff_v1_accounts_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-booksnap-staff",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Booksnap-Staff"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AccountDTO"
+                  },
+                  "title": "Response Accounts Api Staff V1 Accounts Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Every customer in the system"
+      }
+    },
     "/api/staff/v1/books": {
       "get": {
         "operationId": "books_api_staff_v1_books_get",

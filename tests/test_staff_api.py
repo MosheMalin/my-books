@@ -263,6 +263,93 @@ def test_a_library_whose_owner_has_no_members_is_reported_as_an_orphan():
         assert q.orphan_libraries() == ()
 
 
+
+def test_an_account_row_sums_the_libraries_it_owns():
+    """The row the console has been drawing wrong since revision 4.
+
+    A customer owning two collections was rendered as two customers, because
+    a `LibraryRow` was the closest thing to a tenant the read model had. Now
+    it is one row and its numbers are the sum of theirs — which is the same
+    number as before for the common one-library account, and the correct one
+    for the rest.
+
+    ⚠ The fixture gives `acc-1` a SECOND library on purpose. With one library
+    each, a per-account figure and a per-library figure are the same number,
+    and this whole test would pass against code that never learned the
+    difference.
+    """
+    with _queries() as (q, path):
+        store = SqliteTenancyStore(path)
+        store.save_library(Library(id="lib-a2", account_id="acc-1",
+                                   label="המשרד",
+                                   created_at="2026-02-01T00:00:00Z"))
+        # ⚠ With BOOKS in it. An empty second library makes every sum equal
+        # its first term, and a fold that dropped the rest would pass —
+        # measured, on the first draft of this test.
+        SqliteBookStore(path).save(
+            LibraryRef(id="lib-a2"),
+            new_book(id="b-a2", library_id="lib-a2", copy_id="c-a2",
+                     title="ספר במשרד", author="מחבר", added_at="2026-02-02"),
+        )
+        by_lib = {r.id: r for r in q.libraries()}
+        rows = {r.id: r for r in q.accounts()}
+
+        assert set(rows) == {"acc-1", "acc-2"}
+        one = rows["acc-1"]
+        assert one.libraries == 2, "a customer's collections are counted"
+        assert one.books == by_lib["lib-a"].books + by_lib["lib-a2"].books
+        assert one.copies == by_lib["lib-a"].copies + by_lib["lib-a2"].copies
+        assert one.shelves == by_lib["lib-a"].shelves + by_lib["lib-a2"].shelves
+
+        # People belong to the CUSTOMER, so the count is not multiplied by the
+        # collections — the mistake a naive join makes.
+        assert (one.members, one.admins) == (2, 1)
+        assert (rows["acc-2"].members, rows["acc-2"].admins) == (1, 1)
+
+        # Latest activity across the whole customer, not per collection.
+        seen = [by_lib["lib-a"].last_activity, by_lib["lib-a2"].last_activity]
+        assert one.last_activity == max([s for s in seen if s], default=None)
+
+
+def test_the_overview_separates_customers_from_people_from_collections():
+    """Three counts the console drew as two.
+
+    `accounts` is customers, `users` is people, `libraries` is collections.
+    Until P3.7b the first and the third were the same row, so the dashboard's
+    "accounts" tile rendered `overview.libraries` — right then, and off by
+    however many second collections exist now.
+    """
+    with _queries() as (q, path):
+        SqliteTenancyStore(path).save_library(
+            Library(id="lib-a2", account_id="acc-1", label="המשרד"))
+        o = q.overview()
+        assert (o["accounts"], o["users"], o["libraries"]) == (2, 2, 3), o
+        assert o["memberships"] == 3
+
+
+def test_an_account_nobody_can_administer_is_reported():
+    """`new_account` mints the admin in the same call and `NoAdminLeft`
+    refuses the last demotion, so this should always be zero — which is
+    exactly why a number here is worth a tile: it is a bug that already
+    happened, and nothing inside the product can see it.
+
+    ⚠ Distinct from an account with no MEMBERS at all (that one shows up as
+    `orphan_libraries`). This is a customer with people in it, none of whom
+    can invite, re-role or rename — the unadministrable state, reachable only
+    by a database edit or a bug."""
+    with _queries() as (q, path):
+        assert q.overview()["accounts_without_admin"] == 0
+        store = SqliteTenancyStore(path)
+        store.save_account(Account(id="acc-stuck", label="תקוע"))
+        store.save_membership(Membership(user_id="usr-2",
+                                         account_id="acc-stuck",
+                                         role=Role.VIEWER))
+        assert q.overview()["accounts_without_admin"] == 1
+        # A member-less account is NOT this state — it has no one to promote,
+        # and it is the orphan case instead.
+        store.save_account(Account(id="acc-empty"))
+        assert q.overview()["accounts_without_admin"] == 1
+
 # --- works: books, aggregated across every tenant ---------------------------
 #
 # Revision 4 of the console plan: an operator's question about a book is "how
