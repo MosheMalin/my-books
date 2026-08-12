@@ -3741,3 +3741,59 @@ another agent's files underneath it. Do isolated work in a worktree
 tree stays where its owner left it. Landing a branch this way — build the
 commit, merge `--no-ff` in a worktree at `main`, push, remove the worktree —
 never moves this directory at all.
+
+
+## P4.0a — the migration runner owns one transaction (pillar 4 begins)
+
+Pillar 4's first landing is not auth — it is the runner that every auth
+schema step will ride through. The three holes recorded at P3.7
+(TENANCY_BOUNDARY_PLAN, "Found on the way") were closed together, in
+`app/adapters/migrations.py`, before v15 exists to be hurt by them:
+
+- **atomicity**: the whole pending chain — every not-yet-applied step and its
+  `PRAGMA user_version` bump — runs in one explicit `BEGIN IMMEDIATE` …
+  `COMMIT`. String steps are split by `sqlite3.complete_statement` and
+  executed statement-by-statement; `executescript` is banned in the runner
+  (it commits before it starts, then autocommits as it goes). A crash leaves
+  the file at the version it STARTED at — never between;
+- **cross-process exclusion**: the write lock lands BEFORE `user_version` is
+  read, and the version is re-read under it. N test workers opening a fresh
+  worktree's first database replay the chain exactly once; the loser finds
+  the winner's number. The recorded `duplicate column name: lent_out` race
+  reproduces on demand by reverting either half (measured at review:
+  `executescript` restored → 1/6 runs; deferred `BEGIN` → 8/8);
+- **newer-than-code**: `SchemaNewerThanCode` names both versions and the
+  file at the door, instead of a silent skip and a later raw `no such
+  table`. The guard exists from P4.0a on — an older checkout still dies the
+  old way, which the class docstring says.
+
+Decisions worth recording, both corrected by the review pass:
+
+- **one transaction per RUN, not per step — and for atomicity, not the
+  race.** The plan text suggested per-step `BEGIN`/`COMMIT`; a per-step
+  variant that re-reads under each step's lock is equally race-free
+  (measured). What the single transaction buys is that no file is ever at
+  an intermediate version. The first draft of the docstring claimed the
+  race as the reason; review-quality proved that claim false empirically,
+  and the stated reason was fixed before it could teach anyone to delete
+  the guard;
+- **steps never manage transactions, with zero exceptions.** v13/v14's own
+  `BEGIN` became dead the moment the runner owned the transaction; a
+  guarded `_begin()` shim survived one draft and was deleted — dead code
+  that contradicts the rule stated thirty lines above it is exactly the
+  example the next step author copies. Their schema statements are
+  byte-identical to what shipped;
+- **the dies-halfway crash test drives the REAL `migrate()`** through the
+  dying connection. Its first P4.0a form open-coded the runner's
+  transaction shape around the step, and stayed green under three runner
+  mutations — a mirror, not a gate ("never re-state the thing you are
+  trying to gate", the test's own warning, one level up).
+
+Review evidence (review-migration, in its own worktree): a database built at
+EVERY version v0–v13 with real rows migrates clean under the store's exact
+pragmas; the splitter is byte-equivalent to `executescript` across all
+twelve string steps (schema diffed table by table); whole-chain time at the
+owner's real size is 16ms, and a reader during the chain returns in 1ms
+under WAL, so the staff service never blocks. The failure envelope for the
+10s busy timeout starts around a 600× larger chain, and the lock failure now
+names the file and what was happening.

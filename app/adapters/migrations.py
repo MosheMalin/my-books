@@ -30,10 +30,14 @@ a hole recorded in planning/TENANCY_BOUNDARY_PLAN.md ("Found on the way"):
     names both versions at the door, instead of skipping quietly and dying
     later on a raw ``no such table``.
 
-One transaction for the whole run, not one per step, on purpose: per-step
-commits release the write lock between steps, which would reopen the
-cross-process race mid-chain. The chain is short and a household database is
-small; atomicity is worth more than incremental progress here.
+One transaction for the whole run, not one per step, on purpose — and for
+ATOMICITY, not for the race: the cross-process race is closed by the re-read
+under the lock (a per-step variant that re-reads per step would be equally
+race-free, measured at P4.0a's review). What the single transaction buys is
+that a file is only ever at the version it STARTED at or at
+``SCHEMA_VERSION``, never between — a crash during a fresh clone's first
+open cannot leave a half-built schema for someone to debug. The chain is
+short and a household database is small; nothing needs incremental progress.
 
 Rules for adding a step:
   - APPEND, never edit a shipped one. An edited step has already run on the
@@ -61,29 +65,36 @@ Step = Callable[[sqlite3.Connection], None]
 class SchemaNewerThanCode(RuntimeError):
     """The database file was written by NEWER code than this checkout.
 
-    Raised at the door, naming both numbers, instead of skipping quietly and
-    dying later with a raw ``no such table`` — rolling back between items is
-    a real action, and the failure should say what happened.
+    Raised at the door, naming both numbers and the file, instead of skipping
+    quietly and dying later with a raw ``no such table`` — rolling back
+    between items is a real action, and the failure should say what happened.
+
+    ⚠ The guard exists from P4.0a on: rolling back to an OLDER checkout still
+    dies the old way, because the guard is not there to fire.
     """
 
-    def __init__(self, file_version: int, code_version: int) -> None:
+    def __init__(self, file_version: int, code_version: int,
+                 path: str = "") -> None:
+        where = f" ({path})" if path else ""
         super().__init__(
-            f"database is at schema v{file_version} but this code stops at "
-            f"v{code_version}: the file was written by newer code. Update the"
-            f" checkout, or restore the backup that matches it."
+            f"database{where} is at schema v{file_version} but this code "
+            f"stops at v{code_version}: the file was written by newer code. "
+            f"Update the checkout, or restore the backup that matches it."
         )
         self.file_version = file_version
         self.code_version = code_version
 
 
-def _begin(conn: sqlite3.Connection) -> None:
-    """Open a transaction unless the runner already holds one.
-
-    Since P4.0a the runner always does, so inside :func:`migrate` this is a
-    no-op; it keeps a callable step self-guarding if executed outside it.
-    """
-    if not conn.in_transaction:
-        conn.execute("BEGIN")
+def _db_path(conn: sqlite3.Connection) -> str:
+    """The main database's file path, for error messages. Never raises —
+    a failure to NAME the file must not outrank the failure being named."""
+    try:
+        for _, name, path in conn.execute("PRAGMA database_list"):
+            if name == "main":
+                return path or "<memory>"
+    except sqlite3.Error:
+        pass
+    return "<unknown>"
 
 
 def _statements(script: str) -> Iterator[str]:
@@ -91,8 +102,10 @@ def _statements(script: str) -> Iterator[str]:
 
     ``sqlite3.complete_statement`` does the judging, so a semicolon inside a
     string literal or a trigger body does not split. Fragments that are only
-    whitespace/comments (a script's trailing comment) are dropped — SQLite
-    has nothing to execute in them.
+    whitespace/``--`` line comments (a script's trailing comment) are dropped
+    — SQLite has nothing to execute in them. A trailing ``/* */`` block
+    comment would be yielded as a fragment, which SQLite executes as a no-op;
+    the shipped steps use only ``--``.
     """
     buf = ""
     for piece in script.split(";"):
@@ -596,11 +609,10 @@ INSERT INTO libraries (id)
 # `PRAGMA user_version` bump.
 #
 # Since P4.0a the RUNNER provides that transaction for every step, so the
-# scaffolding here is `_begin()` — a no-op under the runner, kept so the step
-# still guards itself if ever executed outside it. The schema statements are
-# byte-identical to what shipped; only the transaction scaffolding moved.
+# `BEGIN` is gone — a step never manages the transaction (module rule). The
+# schema statements are byte-identical to what shipped; only the transaction
+# scaffolding, which the runner made dead, was removed.
 def _v13(conn: sqlite3.Connection) -> None:
-    _begin(conn)
     conn.execute("DROP INDEX accounts_by_email")
     conn.execute("ALTER TABLE accounts RENAME TO users")
     conn.execute("ALTER TABLE memberships RENAME COLUMN account_id TO user_id")
@@ -647,11 +659,9 @@ def _v13(conn: sqlite3.Connection) -> None:
 # is what makes a migration debuggable after the fact.
 #
 # Callable because the backfill is DERIVED (the identical-member-set rule
-# below), which SQL restating would drift from. `_begin()` for the same
-# reason as _v13: the runner owns the transaction since P4.0a.
+# below), which SQL restating would drift from. No transaction scaffolding —
+# the runner owns the transaction since P4.0a, same as _v13.
 def _v14(conn: sqlite3.Connection) -> None:
-    _begin(conn)
-
     # --- who is in which library, before anything moves ------------------
     members_of: dict[str, set[tuple[str, str]]] = {}
     joined_of: dict[tuple[str, str], list[str]] = {}
@@ -861,16 +871,25 @@ def migrate(conn: sqlite3.Connection) -> int:
     if version == SCHEMA_VERSION:
         return version
     if version > SCHEMA_VERSION:
-        raise SchemaNewerThanCode(version, SCHEMA_VERSION)
+        raise SchemaNewerThanCode(version, SCHEMA_VERSION, _db_path(conn))
 
     # The write lock comes BEFORE the re-read: two processes opening a fresh
     # file both pass the check above, but only one holds the lock, and the
     # loser re-reads the winner's number and walks straight through the loop.
-    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+    except sqlite3.OperationalError as exc:
+        # A bare `database is locked` out of a store constructor answers
+        # nothing; say which file and what was being attempted.
+        raise sqlite3.OperationalError(
+            f"could not lock {_db_path(conn)} to migrate it "
+            f"(v{version} -> v{SCHEMA_VERSION}): {exc}; another process may "
+            f"be migrating the same file — retry when it finishes"
+        ) from exc
     try:
         version = current_version(conn)
         if version > SCHEMA_VERSION:
-            raise SchemaNewerThanCode(version, SCHEMA_VERSION)
+            raise SchemaNewerThanCode(version, SCHEMA_VERSION, _db_path(conn))
         for target, step in MIGRATIONS:
             if target <= version:
                 continue
@@ -884,8 +903,10 @@ def migrate(conn: sqlite3.Connection) -> int:
             # step in the same transaction — they land or vanish together.
             conn.execute(f"PRAGMA user_version = {int(target)}")
             version = target
+        # COMMIT can itself fail (disk full, a WAL checkpoint losing a
+        # race); it belongs inside the try so the rollback still runs.
+        conn.commit()
     except BaseException:
         conn.rollback()
         raise
-    conn.commit()
     return version

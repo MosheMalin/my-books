@@ -58,29 +58,66 @@ def test_a_failing_step_rolls_the_file_back_to_the_version_it_started_at():
         "CREATE TABLE p4_canary (id TEXT PRIMARY KEY);\n"
         "INSERT INTO no_such_table VALUES (1);\n"
     )
-    with _fresh_file() as path:
-        conn = sqlite3.connect(str(path))
-        try:
-            assert migrate(conn) == SCHEMA_VERSION
-            with _appended_step(bad):
-                try:
-                    migrate(conn)
-                except sqlite3.OperationalError:
-                    pass
-                else:
-                    raise AssertionError("the broken step did not raise")
-            assert current_version(conn) == SCHEMA_VERSION, (
-                "user_version moved despite the failed step"
-            )
-            canary = conn.execute(
-                "SELECT name FROM sqlite_master WHERE name = 'p4_canary'"
-            ).fetchone()
-            assert canary is None, (
-                "the failed step's first statement survived — the step did "
-                "not roll back as a unit"
-            )
-        finally:
-            conn.close()
+    # Both journal modes: the product always sets WAL (sqlite_store), and a
+    # rollback proven only under the default journal is proven for a file
+    # the owner does not have.
+    for journal in ("delete", "wal"):
+        with _fresh_file() as path:
+            conn = sqlite3.connect(str(path))
+            try:
+                conn.execute(f"PRAGMA journal_mode = {journal}")
+                assert migrate(conn) == SCHEMA_VERSION
+                with _appended_step(bad):
+                    try:
+                        migrate(conn)
+                    except sqlite3.OperationalError:
+                        pass
+                    else:
+                        raise AssertionError("the broken step did not raise")
+                assert current_version(conn) == SCHEMA_VERSION, (
+                    f"user_version moved despite the failed step ({journal})"
+                )
+                canary = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE name = 'p4_canary'"
+                ).fetchone()
+                assert canary is None, (
+                    f"the failed step's first statement survived ({journal}) "
+                    "— the step did not roll back as a unit"
+                )
+            finally:
+                conn.close()
+
+
+def test_a_failure_late_in_a_fresh_chain_rolls_back_every_earlier_step():
+    """The whole-run transaction, pinned. The runner deliberately wraps the
+    ENTIRE pending chain rather than each step (the plan's recorded per-step
+    suggestion): a file is at the version it started at or at SCHEMA_VERSION,
+    never between. A per-step runner would pass the single-step rollback test
+    above and leave a fresh file at v14 here — half-upgraded is exactly the
+    state this refuses to mint."""
+    bad = "INSERT INTO no_such_table VALUES (1);\n"
+    for journal in ("delete", "wal"):
+        with _fresh_file() as path:
+            conn = sqlite3.connect(str(path))
+            try:
+                conn.execute(f"PRAGMA journal_mode = {journal}")
+                with _appended_step(bad):
+                    try:
+                        migrate(conn)
+                    except sqlite3.OperationalError:
+                        pass
+                    else:
+                        raise AssertionError("the broken step did not raise")
+                assert current_version(conn) == 0, (
+                    f"the chain committed partway ({journal})"
+                )
+                assert conn.execute(
+                    "SELECT count(*) FROM sqlite_master WHERE name = 'books'"
+                ).fetchone()[0] == 0, (
+                    f"v1's table survived a chain that failed later ({journal})"
+                )
+            finally:
+                conn.close()
 
 
 def test_a_database_newer_than_the_code_is_refused_naming_both_numbers():
@@ -101,6 +138,25 @@ def test_a_database_newer_than_the_code_is_refused_naming_both_numbers():
                 assert isinstance(e, RuntimeError)  # older callers still catch
             else:
                 raise AssertionError("a newer file was migrated silently")
+
+            # "At the door" is an ordering claim: the refusal comes BEFORE the
+            # write lock. With a writer holding the lock, a guard that locked
+            # first would raise `database is locked` off this 50ms timeout
+            # instead of naming the versions.
+            holder = sqlite3.connect(str(path))
+            impatient = sqlite3.connect(str(path), timeout=0.05)
+            try:
+                holder.execute("BEGIN IMMEDIATE")
+                try:
+                    migrate(impatient)
+                except SchemaNewerThanCode:
+                    pass
+                else:
+                    raise AssertionError("a newer file was migrated silently")
+            finally:
+                holder.rollback()
+                holder.close()
+                impatient.close()
         finally:
             conn.close()
 
@@ -113,7 +169,11 @@ def test_concurrent_first_opens_replay_the_chain_exactly_once():
     without the spawn cost. Pre-P4.0a this failed timing-dependently; the
     barrier maximises the collision."""
     n = 8
-    barrier = threading.Barrier(n)
+    # The timeout is a hang guard, not a race window: if one thread dies
+    # before reaching the barrier (an AV lock on connect — this is the
+    # Windows box), the others must fail loudly rather than block the gate
+    # forever with no output at all.
+    barrier = threading.Barrier(n, timeout=30)
     failures: list[BaseException] = []
 
     def worker(path: Path) -> None:
@@ -125,6 +185,7 @@ def test_concurrent_first_opens_replay_the_chain_exactly_once():
             finally:
                 conn.close()
         except BaseException as e:  # noqa: BLE001 — collected, re-raised below
+            barrier.abort()
             failures.append(e)
 
     with _fresh_file() as path:
@@ -147,7 +208,7 @@ def test_the_statement_splitter_respects_literals_triggers_and_comments():
     semicolon inside a string literal or a trigger body, and must drop a
     trailing comment rather than hand SQLite an empty statement."""
     script = (
-        "-- leading comment stays attached to its statement\n"
+        "-- leading comment; the semicolon in it must not split (V5 has one)\n"
         "CREATE TABLE t (x TEXT);\n"
         "INSERT INTO t VALUES ('a;b');\n"
         "CREATE TRIGGER trg AFTER INSERT ON t BEGIN\n"
