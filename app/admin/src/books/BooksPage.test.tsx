@@ -50,6 +50,9 @@ describe('BooksPage', () => {
     const panel = await screen.findByRole('dialog')
     expect(within(panel).getByText('הבית')).toBeInTheDocument()
     expect(within(panel).getByText('ההורים')).toBeInTheDocument()
+    // …each naming the CUSTOMER that holds it, not only the collection.
+    expect(within(panel).getByText('משפחת מלין')).toBeInTheDocument()
+    expect(within(panel).getByText('משפחת כהן')).toBeInTheDocument()
   })
 
   /**
@@ -76,15 +79,63 @@ describe('BooksPage', () => {
   /** ⚠ A work held `manual` in one house and `auto` in another has no single
    *  status. Showing only the strongest would answer "anything unapproved out
    *  there?" with a confident no. */
-  it('says so when the households disagree about status', async () => {
+  /**
+   * ⚠⚠ **NO STATUS COLUMN** (owner, 2026-08-13): *"in 2 libraries it can be
+   * different status. what to display? simply do not display."* The table used
+   * to show the strongest claim across households plus a "mixed" badge —
+   * `אבא` is exactly that case, held `auto` in one house and `manual` in
+   * another — which answered "is anything unapproved out there?" with a
+   * confident no. §5.1 is a property of one COPY in one library, and that is
+   * the only place it is now shown.
+   */
+  it('shows no status for a work, because a work does not have one', async () => {
     bothServices()
     renderApp(<BooksPage initialLibraryId={undefined} />)
     await screen.findByText('אבא')
 
+    const table = screen.getByRole('table')
+    expect(within(table).queryByRole('columnheader', { name: /סטטוס|Status/ }))
+      .not.toBeInTheDocument()
     const row = screen.getByText('אבא').closest('tr')!
-    expect(within(row).getByText(/מעורב|mixed/)).toBeInTheDocument()
-    expect(within(screen.getByText('בבא').closest('tr')!)
-      .queryByText(/מעורב|mixed/)).not.toBeInTheDocument()
+    for (const state of [/זוהה אוטומטית|^Auto$/, /^אושר$|^Approved$/,
+                         /^ידני$|^Manual$/, /מעורב|mixed/]) {
+      expect(within(row).queryByText(state)).not.toBeInTheDocument()
+    }
+  })
+
+  /**
+   * ⚠⚠ The library filter is grouped by CUSTOMER. A flat list of collection
+   * names — `הבית`, `המשרד`, `ההורים` — makes an operator guess whose is
+   * whose, and since P3.7b one account may own several. `optgroup` because the
+   * grouping is real, not a label prefix.
+   */
+  it('groups the library filter by customer', async () => {
+    bothServices()
+    renderApp(<BooksPage initialLibraryId={undefined} />)
+    await screen.findByText('אבא')
+
+    const picker = screen.getByLabelText(/^ספרייה$|^Library$/)
+    const groups = [...picker.querySelectorAll('optgroup')]
+    expect(groups.map((g) => g.getAttribute('label')))
+      .toEqual(['משפחת מלין', 'משפחת כהן'])
+    // …and acc-1's two collections sit under it, not loose in the list.
+    expect([...groups[0]!.querySelectorAll('option')].map((o) => o.textContent))
+      .toEqual(['הבית', 'המשרד'])
+  })
+
+  /** ⚠ The status FILTER survives the column, and means something the column
+   *  could not: works with AT LEAST ONE copy in that state. Said out loud,
+   *  since the rows no longer show a status to compare it against. */
+  it('explains what the status filter selects, now that no row shows one', async () => {
+    bothServices()
+    const user = userEvent.setup()
+    renderApp(<BooksPage initialLibraryId={undefined} />)
+    await screen.findByText('אבא')
+
+    expect(screen.queryByText(/לפחות עותק אחד|at least one copy/)).not.toBeInTheDocument()
+    await user.selectOptions(screen.getByLabelText(/סטטוס|Status/), 'auto')
+    expect(await screen.findByText(/לפחות עותק אחד|at least one copy/))
+      .toBeInTheDocument()
   })
 
   /**

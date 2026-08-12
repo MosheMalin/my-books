@@ -63,7 +63,7 @@ describe('AccountsPage', () => {
     const rows = within(table).getAllByRole('row').slice(1)  // drop the header
     expect(rows).toHaveLength(2)
     expect(within(table).getByText('משפחת מלין')).toBeInTheDocument()
-    expect(within(table).getByText('ההורים')).toBeInTheDocument()
+    expect(within(table).getByText('משפחת כהן')).toBeInTheDocument()
     // Its two collections are NOT rows of this table.
     expect(within(table).queryByText('הבית')).not.toBeInTheDocument()
     expect(within(table).queryByText('המשרד')).not.toBeInTheDocument()
@@ -76,7 +76,7 @@ describe('AccountsPage', () => {
     renderApp(<AccountsPage openId={undefined} />)
 
     expect(await screen.findByText('משפחת מלין')).toBeInTheDocument()
-    expect(screen.getByText('ההורים')).toBeInTheDocument()
+    expect(screen.getByText('משפחת כהן')).toBeInTheDocument()
   })
 
   /**
@@ -206,7 +206,7 @@ describe('AccountsPage', () => {
       expect(within(panel).getByRole('heading', { name })).toBeInTheDocument()
     }
     // The list is still behind it — that is what makes it a drawer.
-    expect(screen.getByText('ההורים')).toBeInTheDocument()
+    expect(screen.getByText('משפחת כהן')).toBeInTheDocument()
   })
 
   /**

@@ -24,9 +24,7 @@
  * here hand-writes a DTO shape.
  */
 import type {
-  BookDTO,
   BookPageDTO,
-  BookPatch,
   BookSort,
   DuplicateQuestionDTO,
   LibraryDTO,
@@ -189,33 +187,29 @@ export async function countBooks(
   return page.total
 }
 
-export const getBook = (
-  libraryId: string, id: string, opts: CallOptions = {},
-): Promise<BookDTO> =>
-  request('GET', `/api/v1/books/${encodeURIComponent(id)}`, { ...opts, libraryId })
-
-export const patchBook = (
-  libraryId: string, id: string, payload: BookPatch, opts: CallOptions = {},
-): Promise<BookDTO> =>
-  request('PATCH', `/api/v1/books/${encodeURIComponent(id)}`,
-          { ...opts, libraryId }, payload)
-
-/** Raise an `auto` record to `approved` (§5.1). Idempotent, never a
- *  demotion — a `manual` book comes back unchanged. */
-export const approveBook = (
-  libraryId: string, id: string, opts: CallOptions = {},
-): Promise<BookDTO> =>
-  request('POST', `/api/v1/books/${encodeURIComponent(id)}/approve`,
-          { ...opts, libraryId }, undefined)
-
-/** ⚠ Removes every copy AND records a standing rejection at each
- *  (shelf, depth) the book stood at, so the next read of that shelf does not
- *  put it straight back (§5.6). Not a soft hide. */
-export const deleteBook = (
-  libraryId: string, id: string, opts: CallOptions = {},
-): Promise<void> =>
-  request('DELETE', `/api/v1/books/${encodeURIComponent(id)}`,
-          { ...opts, libraryId })
+/**
+ * ⚠⚠ **THERE IS NO WAY TO WRITE A BOOK FROM THIS CONSOLE, ON PURPOSE.**
+ *
+ * `getBook`, `patchBook`, `approveBook` and `deleteBook` lived here until
+ * 2026-08-13. The owner removed the capability, not the buttons:
+ *
+ *   > in the list of libraries — I should not be able to approve it or remove
+ *   > it or edit it. this is not mine to do so.
+ *
+ * Revision 2's rule was "read across tenants, write only where you are a
+ * member", which answered *may this request succeed?*. The rule now is whose
+ * JOB it is: moderating a household's catalogue belongs to that household's
+ * own app, and an operator's membership in one of them is an accident of this
+ * being the owner's machine. A system console with no login and no audit
+ * trail has no business retitling somebody's books.
+ *
+ * Deleted rather than left unused so the absence is STRUCTURAL —
+ * `boundaries.test.ts` fails if a book-mutating route reappears anywhere in
+ * this app. An unused export is an invitation; a missing one is a decision.
+ *
+ * What this client still writes is TENANCY, never CONTENT: `createLibrary`
+ * and `renameLibrary`, both above, both on the accounts screen.
+ */
 
 /**
  * A photograph's thumbnail, from the PRODUCT api.

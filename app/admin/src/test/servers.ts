@@ -87,7 +87,11 @@ export const DEFAULT_WORLD: World = {
                        approved: 1, manual: 1, shelves: 2, captures: 5,
                        image_bytes: 240_000, image_files: 2,
                        last_activity: '2026-02-01T00:00:00Z' }),
-    makeStaffAccount({ id: 'acc-2', label: 'ההורים', libraries: 1,
+    // ⚠ NOT 'ההורים' — that is its LIBRARY's name. Every screen that names a
+    // collection now names its owning customer beside it, so a fixture where
+    // the two are the same string makes every such assertion ambiguous and
+    // hides exactly the pairing under test.
+    makeStaffAccount({ id: 'acc-2', label: 'משפחת כהן', libraries: 1,
                        members: 3, admins: 1, books: 1, copies: 1, manual: 1,
                        shelves: 1, captures: 1,
                        last_activity: '2026-01-20T00:00:00Z' }),

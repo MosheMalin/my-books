@@ -328,6 +328,23 @@ different world — the product never reads it.
 - One correlated subquery per row over a JSON column is a DoS on an
   unauthenticated service: `/images` measured 13.6s for one `limit=200`.
   Grouped CTE pre-pass, 14ms.
+- **The console REPORTS; it does not moderate a catalogue** (owner,
+  2026-08-13). Approve/edit/delete a book are gone, and gone STRUCTURALLY —
+  `app/admin/src/api/client.ts` exports no book write and
+  `boundaries.test.ts` fails if one returns anywhere in the app. Revision 2's
+  "write where you are a member" answered *may this succeed?*; the rule is
+  *whose job is it?*, and they differ exactly where the operator holds a
+  membership. ⚠ The console still writes TENANCY (create/rename a library) —
+  that line is the rule, so the guard is scoped to books.
+- **A work has no status** (owner, 2026-08-13): two libraries can disagree, so
+  the list and the work summary show none. It stays on each household card,
+  where it is one copy in one library. The status FILTER stays too and says
+  what it selects — works with at least one copy in that state.
+- **A library is never named alone** outside its own account's drawer — one
+  `<LibraryName>` prints the collection AND the customer, because a collection
+  name answers neither "whose?" nor "which one?" once an account may own
+  several. Two elements, never one string: `unicode-bidi: plaintext` resolves
+  one direction per paragraph.
 - The admin console's row IS an Account since P3.7e — the revision-4 gloss
   ("account" over a `Library`) is retired, `acct_library_id` deleted, and
   `th_account` split into account/user/library. Its drawer is *account → its

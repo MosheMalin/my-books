@@ -17,12 +17,15 @@ import { useEffect, useRef } from 'react'
 
 import type { StaffImage } from '../api/staff'
 import { useI18n } from '../lib/i18n'
-import { formatBytes } from '../lib/ui'
+import { formatBytes, LibraryName } from '../lib/ui'
 import { formatDateTime, formatNumber } from '@booksnap/ui'
 
-export function ImagePanel({ image, libraryLabel, thumb, blind, onClose }: {
+export function ImagePanel({ image, libraryId, thumb, blind, onClose }: {
   image: StaffImage
-  libraryLabel: string
+  /** ⚠ The ID, not a pre-formatted label: the panel names the collection
+   *  AND the customer that owns it, and only the provider knows the
+   *  second. Passing a string made the caller decide how much to say. */
+  libraryId: string
   /** Undefined when the operator is not a member, or the bytes are gone. */
   thumb: string | undefined
   /** The service cannot see the blob tree at all — so `present: false` here
@@ -77,11 +80,12 @@ export function ImagePanel({ image, libraryLabel, thumb, blind, onClose }: {
             <span>{formatDateTime(image.captured_at, lang) || t.img_undated}</span>
           </div>
           <div className="kv">
-            {/* ⚠ `th_library` — the value below is a library label. The
-                photograph belongs to a collection; the customer that owns the
-                collection is a level up, on the accounts screen. */}
+            {/* ⚠ `th_library`, and the value names the collection AND the
+                customer that owns it. A photograph belongs to a collection;
+                one customer may own several, so the collection alone does not
+                answer "whose picture is this?". */}
             <span className="k">{t.th_library}</span>
-            <span className="rtl-safe">{libraryLabel}</span>
+            <span><LibraryName libraryId={libraryId} /></span>
           </div>
           {/* ⚠ "Filed at", not "shelf". The pair below is a placeholder
               binding (VISION §4.1a) and pillar 6 replaces it with a real
@@ -90,7 +94,7 @@ export function ImagePanel({ image, libraryLabel, thumb, blind, onClose }: {
           <div className="kv">
             <span className="k">{t.img_filed_at}</span>
             <span className="rtl-safe">
-              {image.shelf_label.trim() || t.lib_unnamed}
+              {image.shelf_label.trim() || t.shelf_unnamed}
               {' · '}{t.img_depth_n(image.depth)}
               {' · '}{t.img_order_n(image.order)}
             </span>

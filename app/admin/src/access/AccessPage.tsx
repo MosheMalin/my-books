@@ -21,11 +21,12 @@
  * the truth.
  */
 import { getStaffToken } from '../api/staff'
-import { formatDate, libraryName } from '@booksnap/ui'
+import { formatDate } from '@booksnap/ui'
 import { useI18n } from '../lib/i18n'
 import { href } from '../lib/route'
 import { StaffTokenForm } from '../lib/StaffToken'
 import { useSystem } from '../lib/system'
+import { LibraryName } from '../lib/ui'
 import { Empty, ErrorBox, Loading } from '@booksnap/ui'
 
 export function AccessPage() {
@@ -79,7 +80,7 @@ export function AccessPage() {
                         because that is precisely what a role covering every
                         library of an account means. */}
                     <a href={href({ name: 'account', id: lib.account_id })}>
-                      {libraryName(lib.label, t.lib_unnamed)}
+                      <LibraryName libraryId={lib.id} />
                     </a>
                     <div className="mono">{lib.id}</div>
                   </td>

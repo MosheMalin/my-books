@@ -274,6 +274,12 @@ languages, because the confusion this revision fixes was verbal first.
 
 ## Reading is cross-tenant; writing is not
 
+⚠⚠ **NARROWED by revision 6 (2026-08-13).** What follows was the governing
+rule and is now only half of it: the console no longer moderates a
+household's CATALOGUE at all, member of it or not. It still writes tenancy
+(create/rename a library). The split below described what may SUCCEED; the
+rule now is whose job it is.
+
 The console talks to both services, and the split is the useful one:
 
 - **staff service** — everything the operator can SEE: every account, every
@@ -821,3 +827,116 @@ visibly disagrees, but they are not the same measurement); and `.rtl-safe`
 sits on `<td>` elements whose text lives in child `<div>` blocks, where
 `unicode-bidi` does not inherit — console-wide, and unverified because paint
 was unavailable.
+
+---
+
+# Revision 6 (2026-08-13): the console reports, and a library names its account
+
+Three corrections from the owner, after walking revision 5 against the real
+database. Two of them retire rules this document argued for at length, which is
+the reason to write them down rather than just change the code.
+
+## 1. A library is never named alone
+
+> In admin view, when I see a library: I want to see which account is belong
+> to.
+
+Obvious in hindsight and invisible from inside: every screen said `My library`
+or `lib2` and left the operator to work out whose shelf that was. It was
+tolerable while a library WAS the tenant; since P3.7b an account may own
+several, so a collection name answers neither *whose?* nor *which one?*.
+
+One `<LibraryName>` (`lib/ui.tsx`) prints the collection and the customer,
+used everywhere outside an account's own drawer — the images table and panel,
+the work panel's household cards, the access screen's memberships. The books
+and images library filters are `<optgroup>`ed by customer for the same reason:
+the grouping is real, not a label prefix.
+
+⚠ Two elements, never one interpolated string. `.rtl-safe` is
+`unicode-bidi: plaintext`, which resolves ONE direction per paragraph from its
+first strong character, so `lib2 · משפחת מלין` would lay the Hebrew out in the
+Latin name's direction and put the separator on the wrong side.
+
+## 2. ⚠⚠ The console does not moderate a household's catalogue
+
+> in the list of libraries — I should not be able to approve it or remove it
+> or edit it. this is not mine to do so. I can only see info about it and
+> about the libraries.
+
+**This retires revision 2's read/write split as the governing rule**, and it is
+worth being precise about what was wrong with it. Revision 2 said: read across
+every tenant, write only where the operator is a member — enforced by the
+product API, which 404s anything else. That answers *may this request
+succeed?*. It is a true statement about permissions and the wrong question.
+
+The right question is *whose job is it?* — and the two answers diverge exactly
+where the operator holds a membership, which on the owner's own machine is
+everywhere. A system console with no login and no audit trail retitling
+somebody's books is not made acceptable by the operator happening to be in
+that household's member list. Moderation belongs to the household's own app,
+where the person doing it owns the shelf.
+
+So `approve`, `edit` and `delete` are gone from the work panel, and gone
+**structurally**: `api/client.ts` exports no book write at all, and
+`boundaries.test.ts` fails if a book-mutating product route reappears anywhere
+in the app — including one written straight into a component with `fetch`,
+which is the shortcut a hidden-button rule would never catch. An unused export
+is an invitation; a missing one is a decision.
+
+⚠ **The console still writes TENANCY**: create a library, rename one. That is
+the line — administering a customer's account is this tool's job, editing
+their catalogue is not — and the guard is scoped to books so it cannot creep
+into forbidding the writes that remain.
+
+⚠ The removal is SAID, once, at the foot of the panel. "Absent, not disabled"
+only works if the absence is explained; an operator who used to approve from
+here must learn the capability moved, not wonder whether it failed to render.
+
+## 3. ⚠⚠ A work has no status
+
+> and in the main view - I should not be able to see status. after all, in 2
+> libraries it can be different status. what to display? simply do not
+> display.
+
+Revision 4 introduced the works table with a status column showing the
+strongest §5.1 claim across households, plus a "mixed" badge when they
+disagreed. The reasoning was that an aggregate needs *some* status. The owner's
+correction is that it needs none: §5.1 is a property of one COPY in one
+library, and a single answer for a work held two ways is a fiction — one that
+answers *"is anything out there still unapproved?"* with a confident no.
+
+Removed from the list AND from the work panel's summary, which showed the same
+aggregate one click away. It survives on each household card, where it is one
+copy in one library and therefore true.
+
+⚠ The status FILTER survives, and means something the column could not: works
+with **at least one copy** in that state. That is the real version of the
+question the aggregate was pretending to answer, and the screen now says so —
+necessary once no row shows a status to infer it from.
+
+## What this costs, stated
+
+The console can no longer fix anything it finds. An operator who spots a
+mis-read title in a household they administer must open the household app to
+correct it. That is the intended trade: the alternative is a cross-tenant tool
+that edits catalogues with no login, no audit trail and nobody to explain it
+to. It becomes worth revisiting when P4.1 gives the operator an identity and
+an audit trail gives the household a record — not before.
+
+## Verified live (revision 6)
+
+Against a backup-API copy of the owner's real database (1 account, 2
+libraries, 286 books), served from a worktree so the originals were never
+opened:
+
+- the works table headers are *title · author · libraries · copies · first
+  found* — **no status**; the drawer's summary likewise;
+- the work drawer for a book held by BOTH collections shows two household
+  cards, each reading `My library` / `חשבון ללא שם` with its own `ידני` badge,
+  and its **only** button is *close*;
+- the images list names the customer on every row;
+- the library filter shows one `optgroup` per customer with both collections
+  under it.
+
+⚠ Paint still unverified (fifth session — see revisions 2, 4 and 5): the
+Browser pane does not composite, so these are DOM- and network-level checks.
