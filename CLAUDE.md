@@ -48,10 +48,21 @@ next, pausing for the owner only on unsettled decisions.
 
 ## Rules of engagement
 
-1. **Worktrees for parallel work.** Multiple sessions share this tree; never
-   `git checkout` under them. Isolated work: `git worktree add D:/tmp/<name>
-   <branch>`, commit there, land on `main` with `merge --no-ff`, remove the
-   worktree. The primary tree stays where its owner left it.
+1. **Worktrees for CONCURRENCY, not for every item.** The hazard is a second
+   *session* sharing this checkout, never a second *item*: `git checkout`
+   under one reverts another agent's files. So **decide, don't default** —
+   `git worktree list && git status --porcelain` in the primary tree answers
+   it. Only the primary tree, and clean → **branch in place**
+   (`git switch -c <b>` … `git switch main` … `merge --no-ff`): no second
+   `node_modules`, no second gitignored `work/product.db`. Anything else, or a
+   reviewer fleet, or a schema-version change → `git worktree add D:/tmp/<name>
+   <branch>`, land with `merge --no-ff`, **remove it**. Reviewers get one tree
+   EACH: three sharing one contaminated each other's mutation checks.
+   ⚠ P3.7 took a worktree per item for five sequential items; only c/d ever
+   overlapped. The primary tree stays where its owner left it.
+   **Leftovers rot** — a stale tree is a second copy of the console that looks
+   current. `python tools/worktrees.py` lists them and says which are safe;
+   `--prune` removes exactly those (clean, merged, not current).
 2. **Scratch space is `D:\tmp`, never bare `/tmp`.** Git Bash maps `/tmp` to
    `C:\Users\<u>\AppData\Local\Temp`; the native file tools map it to
    `<drive>:\tmp`. Same name, two directories, silent mismatch — always name
