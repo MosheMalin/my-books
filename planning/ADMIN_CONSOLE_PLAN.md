@@ -487,6 +487,13 @@ The owner's list for a row — *when it was created, who are the admins, how
 many users, how many books, images storage* — describes a **customer**, not a
 person. A person has no admins and no users.
 
+⚠⚠ **RETIRED by revision 5 (2026-08-13) — read this as history.** Everything
+in this subsection was true when written and is not true now: the tenancy
+boundary moved to the **Account** (VISION §4.1 [REVISED 2026-08-11]), P3.7b
+made it a real record, and P3.7e made these screens say so. The paragraph
+below is kept because it is *why* the boundary moved — a plan needing an
+apology for its own vocabulary was the evidence the model was wrong.
+
 ⚠ **So the console's "account" is the tenant, and today the tenant record is a
 `Library`.** This is a naming decision made deliberately, and it is the one
 place this revision diverges from the domain's vocabulary:
@@ -679,3 +686,138 @@ because neither belongs to it:
   books, 2.8s at 70k. Fine forever at this product's scale; the lever, when
   one is needed, is caching `total` or materialising the aggregate, NOT
   rewriting the correlated subqueries (measured at 11% of it).
+
+---
+
+# Revision 5 (2026-08-13): the gloss is retired — an account is an Account
+
+Revision 4 made one naming decision under protest, wrote it down carefully,
+and put the mapping on screen so nobody would be misled:
+
+> ⚠ **So the console's "account" is the tenant, and today the tenant record is
+> a `Library`.** … the drawer shows the **library id** under the account name,
+> labelled as such, so the mapping is visible rather than hidden. Nothing is
+> renamed in storage and the reversal cost is a tab label plus one page.
+
+**That paragraph is now obsolete, and it is also what caused its own
+obsolescence.** VISION §4.1 **[REVISED 2026-08-11]** cites it directly: a plan
+that needs a paragraph explaining that the operator's word for a customer maps
+to a different record than the domain carries is a model that is wrong, not a
+plan that is unclear. The owner moved the tenancy boundary to the **Account**,
+P3.7b made it a real record that a library belongs to, and P3.7e is where
+these screens caught up. The full argument is in `docs/HISTORY.md`, "P3.7 —
+the tenancy boundary moves from Library to Account"; the decomposition is
+`planning/TENANCY_BOUNDARY_PLAN.md`.
+
+The reversal cost was, as predicted, small — but not because the mapping was
+harmless. It was small because it had been *written down*.
+
+## What revision 4 said, and what is true now
+
+| revision 4 | since P3.7e |
+|---|---|
+| the console's "account" is a `Library` record | it is an `Account` — a real row, with its own id, that libraries belong to |
+| the wire keeps `library` | `/api/staff/v1/accounts` returns CUSTOMERS (P3.7d); `LibraryDTO.account_id` names the owner |
+| the drawer shows the library id under the account name, labelled | **`t.acct_library_id` is DELETED, not relabelled.** The mapping is data now: the drawer lists the account's libraries, each row carrying its own id |
+| a row is a tenant, and a tenant is a collection | a row is a customer; its collections are one level down, in the drawer |
+| one library per account is the default and the normal case | still true, and still the guidance — but the console no longer *assumes* it. The owner's own database is one customer with two libraries, and revision 4's screens drew that as two customers |
+
+## The three-way header split was a prerequisite, not a cleanup
+
+`t.th_account` was rendered over **three different entities**: customers (the
+accounts table, the dashboard), people (the unaffiliated list, the drawer's
+members) and libraries (the images table and panel). One string over three
+nouns is precisely the mechanism by which a console keeps saying "account"
+about whatever happens to be in the row. It is `th_account` / `th_user` /
+`th_library` now, and the split had to land *before* the screens could be
+correct — not after them as tidying.
+
+## What P3.7e changed, and the decisions inside it
+
+- **rename and export left the accounts table.** They act on a library, and a
+  row is no longer one; an account row carrying *rename* cannot say which
+  collection it renames. They sit on the library rows in the drawer — **inside
+  the name cell, stacked**, not in a trailing actions column: a drawer is
+  capped at `min(720px, 100%)` and the column version measured 834px, putting
+  rename and both exports outside the box and out of the accessibility tree
+  until the table was scrolled sideways;
+- **`LibraryDTO.members`/`admins` are never rendered on a library row.** Both
+  mean *the owning account's people* since P3.7b, so printing them per
+  collection shows one household once per shelf it keeps. The headcount
+  appears exactly once, on the customer;
+- **`#/accounts/<id>` carries an account id now and carried a library id
+  before.** `parseHash` stays pure — an id is opaque and the parser cannot
+  tell them apart without asking the server — so `AccountsPage` resolves:
+  account first, then the account that OWNS the named library. An operator's
+  stale bookmark lands on the customer it was about; an id naming neither says
+  so rather than opening the list in silence;
+- **the drawer's book/image previews fan out over the account's libraries and
+  merge newest-first.** This is *not* revision 1's retired browser-side merge:
+  that one paged and RANKED a catalogue with `localeCompare`, a different key
+  from the server's normalized one, and the screen had to apologise for the
+  order. This merges ≤5 rows per library on an ISO timestamp. What it cannot
+  do is page, which is why the browse links stay per library;
+- **absent and unknown are different states.** With `/users` failing, revision
+  4's screens rendered every customer as *"no admin"* and every drawer as
+  *"nobody can see or administer this account"* — states `new_account` and
+  `NoAdminLeft` make unreachable — with no error anywhere. The alarms read the
+  account row now, `peopleKnown` separates the two, and the error box is no
+  longer gated on the table being empty.
+
+## Phase 2, unchanged
+
+Member management still needs P4.1's login and P4.3's invite flow; deleting a
+library still needs P3.2's policy and P3.5's blob purge; metering still waits
+on P5.1. And revision 4's two open items are still open: `filename` is uncapped
+on the WRITE path (product-side), and `/works` costs two full group-sorts of
+`books` per request (fine at this scale; the lever is caching `total` or
+materialising the aggregate, NOT rewriting the correlated subqueries — measured
+at 11% of it).
+
+## Verified live (revision 5)
+
+Against a **copy** of the owner's real database and blob tree, taken with
+SQLite's backup API so the live data was never opened (1 account, 1 user, 2
+libraries, 286 books — the figures were checked against the copy before
+anything was believed):
+
+- the Accounts screen shows **ONE row** with **2 libraries, 286 books, 1
+  user** — the shape revision 4's console could not draw. The drawer lists
+  both collections with their own ids (272 books and 14);
+- the dashboard reads **1 account / 1 person / 2 libraries** as three separate
+  tiles;
+- the fan-out is one `/books?library_id=…&limit=5` and one
+  `/images?library_id=…&limit=5` **per library** — four requests, no
+  over-fetch — and the merged previews carry a library column plus an
+  "across every library of this account" sub-line, so a preview dominated by
+  one collection cannot be misread;
+- every export link carries `?library=<id>`; both formats return 200 with
+  per-library filenames;
+- all four routes land correctly: an account id opens its drawer, a **stale
+  library id** opens the owning account's, and `#/libraries` / `#/users` still
+  reach the list;
+- Hebrew mirrors: RTL→LTR moves the drawer `[0,720]`→`[560,1280]`, the header
+  order reverses, and at 375px `document.body.scrollWidth === clientWidth` in
+  both directions while the wide tables scroll inside their own boxes.
+
+⚠ **Paint is UNVERIFIED, for the fourth session running** (see revisions 2 and
+4). Screenshots timed out and synthetic mouse input was not delivered either —
+demonstrated rather than assumed: a real click on the language toggle did
+nothing while the same button responded to a programmatic DOM click. Everything
+above is DOM, `getBoundingClientRect`, network and accessibility-tree level.
+Colours and dark mode are not verified.
+
+## Pre-existing, found while walking, NOT fixed here
+
+Written down so the next reader adds them to an item instead of rediscovering
+them: `StaffTokenForm` renders "a token is required" unconditionally, so an
+authenticated Access page stacks three statements one of which is false;
+`system.tsx` surfaces the raw `"Failed to fetch"` when `t.staff_unreachable`
+exists and names the port; `img_depth_n`'s Hebrew is `שורה N` — literally
+"row N", the noun CLAUDE.md forbids for depth; `img_count`/`books_count` have
+no Hebrew singular ("1 תמונות"); `/overview` reports `image_files` 36 while
+the per-library figures sum to 33 (both format to 21.5 MB today, so nothing
+visibly disagrees, but they are not the same measurement); and `.rtl-safe`
+sits on `<td>` elements whose text lives in child `<div>` blocks, where
+`unicode-bidi` does not inherit — console-wide, and unverified because paint
+was unavailable.

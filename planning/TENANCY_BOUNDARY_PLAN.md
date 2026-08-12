@@ -228,9 +228,21 @@ The console has been saying "account" and meaning a `Library` since revision
   stops being rendered, so table and screens land in one commit.
 
 **Reviewers**: `review-ux` (real browser, `work/product.db` snapshotted
-first), `review-quality`.
-**Done**: admin ring green; the Accounts screen shows one account with two
-libraries against the real database.
+first), `review-quality` — each in its OWN detached worktree; three sharing
+one tree contaminated each other's mutations earlier in this epic.
+**Done**: ✅ landed. The Accounts screen shows the real database's ONE customer
+with TWO libraries; admin ring 61 → 92 tests, 25 mutation checks.
+
+⚠ The reviews found more than the item did. Four rules had NO gate (the
+drawer's member scoping, the images fan-out, the two tenant counts — unpinned
+because the fixture made accounts and people both 2, so the original defect
+survived the test written to catch it — and the preview cap, unexercised
+because the FAKE IGNORED `limit`). Three states made the console report a
+failed request as a customer anomaly: with `/users` down every row read "no
+admin" beside a card saying 2 users. Three UX defects were in the controls
+this item MOVED: an 834px actions column inside a 720px drawer, rename
+undisambiguated for a screen reader, and a rename blanking the app to a
+spinner. Full account in `docs/HISTORY.md`.
 
 ### P3.7f — Write it down
 
@@ -243,6 +255,12 @@ P3.7 row + the ⚠ blocks at `476-495`), `planning/ADMIN_CONSOLE_PLAN.md`
 `planning/UI_PLAN.md:30-31`.
 
 Per-item one-liners land WITH their items; this is the long-form write-up.
+
+**Done**: ✅ landed. `docs/HISTORY.md` carries the argument, the reversal and
+what six review passes found; `ADMIN_CONSOLE_PLAN.md` revision 5 retires
+revision 4's gloss (and revision 4's own paragraph now points forward, kept
+because it is the evidence that forced the reversal); CLAUDE.md's console trap
+is replaced by what is true, plus five new one-liners the reviews earned.
 
 ## Found on the way, deliberately NOT fixed here
 
@@ -264,7 +282,17 @@ problem:
   quietly when `user_version > SCHEMA_VERSION`, so checking out an older build
   against an upgraded file dies later with a raw `no such table` instead of
   naming both numbers. This epic makes that likely rather than theoretical,
-  because rolling back between items is a real action.
+  because rolling back between items is a real action;
+- ⚠ **no cross-PROCESS mutual exclusion** (found at P3.7e). `tests/run_all.py`
+  shards across processes and `work/product.db` is gitignored, so a fresh
+  worktree's FIRST gate run creates the file and N workers each read
+  `user_version 0` and each replay the whole chain. Seen as
+  `sqlite3.OperationalError: duplicate column name: lent_out` — simply the
+  first `ALTER` to lose. It self-heals (the next run finds a migrated file)
+  and it is timing-dependent: one reviewer's first run in a fresh worktree
+  passed 13/13, which is the argument for recording the MECHANISM rather than
+  relying on reproducing it. It compounds with the first hole above — the
+  loser can leave the file half-upgraded at the old `user_version`.
 
 ⚠ **Landing any item of this epic advances the owner's real
 `work/product.db`** the first time the gate or the pre-commit hook runs in the

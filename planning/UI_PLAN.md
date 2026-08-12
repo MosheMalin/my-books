@@ -28,7 +28,13 @@ row in a shelf's read history (`6.8.2026 · +9 added · run 17 · llmpage`, wher
 Settings. That is the whole of §5.5's "reachable but not on the main path".
 
 **Scoping chrome.** A *Library* switcher ("משפחת מלין") sits in the app bar —
-§4.1 makes Library the tenancy boundary and an Account may belong to several.
+it selects which COLLECTION you are looking at. ⚠ It said "§4.1 makes Library
+the tenancy boundary and an Account may belong to several", which stopped
+being true at P3.7b: the boundary is the **Account**, a Library is a logical
+partition inside it, and a person is a `User` who joins the account (not the
+library). The switcher still renders as a plain label until a second library
+genuinely exists, and switching still REMOUNTS the app — both unchanged,
+because `library_id` remains the one enforced physical scope.
 *Place* (Home / Office / Parents') is **not** in the app bar; it's a filter
 inside the Map tab, because it must not scope Books: "do I own X" has to answer
 across every place you keep books. **[owner-confirmed]**

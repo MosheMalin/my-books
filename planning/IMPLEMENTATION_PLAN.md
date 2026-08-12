@@ -472,6 +472,13 @@ the port is what makes that a swap.
 | **P3.4** | **Job queue, no global state** (§1.3): replaces the thread + `_set_job`/`_get_job` singleton. Per-tenant fairness, retry, progress, cooperative stop — today's `should_stop` polling maps straight onto it. Test: two concurrent reads in two libraries do not observe each other. | L |
 | **P3.5** | **Tenant-keyed blob storage** (D1): the disk adapter behind the `BlobStore` port with the `libraries/<library_id>/…` layout, path-from-DB-row rule, orphan reconciler, retention + user purge (§3), hash-based upload idempotency (§12.3 #13). | M |
 | **P3.6** | *Optional, cheap:* **per-library run rate cap** (§1.2) — one number, not a metering system. Guards against a retry loop, not against family. | S |
+| **P3.7** | ✅ **The tenancy boundary moves from Library to ACCOUNT** (VISION §4.1 [REVISED 2026-08-11]). Six items, `planning/TENANCY_BOUNDARY_PLAN.md`: **a** rename the person to `User` (v13); **b** the Account becomes the customer and the boundary (v14, backfill by identical membership set); **c** the rate cap and the job queue's fairness key move to the account; **d** the staff read model reports customers; **e** the console stops glossing; **f** the write-up. `library_id` stays the ONE enforced physical scope — the account is checked at the DOOR, in `deps.py`. | L |
+
+⚠⚠ **SUPERSEDED IN PART by P3.7** (owner, 2026-08-11): the tenant is now the
+**Account**, and a Library is a logical partition inside it. The
+*discriminator* below — whose books, never whose roof — is untouched and still
+governs; what moved is which LEVEL holds the boundary. Read the two ⚠ blocks
+below with that substitution, and VISION §4.1's revision for the argument.
 
 ⚠ **A tenant is an ownership boundary, never a geography** (owner,
 2026-08-10, settling the question P3.1's switcher surfaced — recorded in full
@@ -486,8 +493,10 @@ Library, P4.3's §4.3 onboarding names it — and neither ever offers a second
 during onboarding.
 
 ⚠ **Two "admins", one word — do not conflate them** (owner, 2026-08-10). The
-Admin ROLE this pillar builds (§4.2) is an admin **inside a single account's
-library** — the household's own owner, governing one collection. The **System
+Admin ROLE this pillar builds (§4.2) is an admin **inside a single ACCOUNT**
+— the household's own owner. ⚠ It read "inside a single account's library"
+until P3.7b; a role is held per account now and covers every library that
+account owns. The **System
 Admin console** (`app/admin/`, `app/staff_api/`, `planning/ADMIN_CONSOLE_PLAN.md`)
 is a separate surface for the operator of the whole service, developed in its
 own track; it authorizes on its own axis and never through §4.2's matrix.
