@@ -145,7 +145,9 @@ const HE = {
   books_sort_relevance: 'רלוונטיות',
   books_empty: 'לא נמצאו ספרים',
   books_truncated: 'החיפוש נעצר במגבלת הסריקה של השרת. צמצמו את החיפוש כדי להגיע לשאר.',
-  books_readonly: 'לא ניתן לערוך: אינכם חברים בספרייה הזו. הפעולות זמינות רק בספריות שלכם.',
+  // ⚠ לא "אינכם חברים" אלא "זה לא התפקיד": הקונסולה אינה עורכת קטלוג של אף
+  // לקוח, גם לא של ספרייה שאתם חברים בה.
+  books_readonly: 'הקונסולה מדווחת ואינה עורכת: אישור, עריכה ומחיקה של ספר נעשים באפליקציה של הבית, על ידי מי שהספרייה שלו.',
   books_count: (shown: number, total: number) =>
     shown >= total ? `${total} ספרים` : `${shown} מתוך ${total} ספרים`,
   books_prev: 'הקודם',
@@ -153,7 +155,6 @@ const HE = {
 
   // works — books, aggregated across כל הדיירים
   works_sub: 'שורה אחת לכל ספר, בכל המערכת. הספרייה אינה תכונה של ספר — היא רשימה שלו.',
-  works_mixed: 'סטטוס מעורב',
   works_where: 'איפה הוא נמצא',
   works_gone: 'אף ספרייה אינה מחזיקה את הספר הזה כרגע',
   works_last_added: 'נוסף לאחרונה',
@@ -164,10 +165,12 @@ const HE = {
   works_on_shelves: (n: number) => (n === 1 ? 'על מדף אחד' : `על ${n} מדפים`),
   works_display_title:
     'הכותרת למעלה היא האיות של אחת הספריות — החזק ביותר, ובמקרה של תיקו הוותיק ביותר. לכל ספרייה מופיע האיות שלה למטה.',
-  works_edit_rekeys:
-    'שינוי כותרת או מחבר משנה את זהות הספר, ולכן העותק הזה עשוי לעבור לשורה אחרת ברשימה.',
   works_filter_keeps_spread:
     'הסינון בוחר אילו ספרים מוצגים; מספר הספריות שבשורה נשאר המספר האמיתי.',
+  // ⚠ הסטטוס אינו מוצג ברשימה — לספר במספר ספריות אין סטטוס אחד. הסינון בכל
+  // זאת נשאר, כי הוא שואל שאלה אחרת ואמיתית: "יש בחוץ עותק במצב הזה?"
+  works_status_selects:
+    'הסטטוס אינו תכונה של ספר אלא של עותק בספרייה מסוימת. הסינון בוחר ספרים שיש להם לפחות עותק אחד במצב הזה; הסטטוס עצמו מופיע ליד כל ספרייה בפרטי הספר.',
 
   // images — התמונה היא הישות; המדף הוא שיוך זמני (VISION §4.1a)
   img_title: 'כל התמונות במערכת',
@@ -230,16 +233,8 @@ const HE = {
   // book panel
   bp_title: 'פרטי הספר',
   bp_library: 'ספרייה',
-  bp_status: 'סטטוס',
   bp_copies: 'עותקים',
   bp_unshelved: 'לא משויך למדף',
-  bp_approve: 'אישור',
-  bp_edit: 'עריכת כותרת ומחבר',
-  bp_delete: 'מחיקה מהספרייה',
-  bp_delete_confirm: 'למחוק את הספר מהספרייה? הפעולה מוחקת כל עותק ורושמת דחייה, כך שקריאה הבאה של המדף לא תחזיר אותו.',
-  bp_delete_yes: 'מחיקה',
-  bp_title_label: 'כותרת',
-  bp_author_label: 'מחבר',
 
   // access
   acc_title: 'גישה',
@@ -377,14 +372,13 @@ const EN: Strings = {
   books_sort_relevance: 'Relevance',
   books_empty: 'No books found',
   books_truncated: "The search stopped at the server's scan cap. Narrow it to reach the rest.",
-  books_readonly: 'Not editable: you are not a member of this library. Actions are offered only in your own.',
+  books_readonly: 'The console reports, it does not edit: approving, editing and deleting a book happen in the household app, by whoever owns the library.',
   books_count: (shown: number, total: number) =>
     shown >= total ? `${total} books` : `${shown} of ${total} books`,
   books_prev: 'Previous',
   books_next: 'Next',
 
   works_sub: 'One row per book, across the whole system. A library is not a property of a book — it is a list of them.',
-  works_mixed: 'mixed',
   works_where: 'Where it stands',
   works_gone: 'No library holds this book right now',
   works_last_added: 'Last added',
@@ -395,10 +389,10 @@ const EN: Strings = {
   works_on_shelves: (n: number) => (n === 1 ? 'on 1 shelf' : `on ${n} shelves`),
   works_display_title:
     "The title above is one library's spelling — the strongest claim, oldest first on a tie. Each library's own spelling is shown below.",
-  works_edit_rekeys:
-    "Editing the title or author changes the book's identity, so this copy may move to a different row in the list.",
   works_filter_keeps_spread:
     'A filter selects which books are listed; the library count on a row stays the true one.',
+  works_status_selects:
+    'Status belongs to a copy in one library, not to a book. This filter selects books with at least one copy in that state; the status itself is shown beside each library in the book details.',
 
   img_title: 'Every image in the system',
   img_sub: 'The image is the entity. Filing it at a shelf is a placeholder — the physical map (pillar 6) replaces it.',
@@ -452,17 +446,8 @@ const EN: Strings = {
 
   bp_title: 'Book details',
   bp_library: 'Library',
-  bp_status: 'Status',
   bp_copies: 'Copies',
   bp_unshelved: 'Not on a shelf',
-  bp_approve: 'Approve',
-  bp_edit: 'Edit title and author',
-  bp_delete: 'Delete from library',
-  bp_delete_confirm:
-    'Delete this book from the library? It removes every copy and records a rejection, so the next read of the shelf will not put it back.',
-  bp_delete_yes: 'Delete',
-  bp_title_label: 'Title',
-  bp_author_label: 'Author',
 
   acc_title: 'Access',
   acc_memberships: 'Memberships',

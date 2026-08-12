@@ -33,10 +33,9 @@ import { listImages, type StaffImage } from '../api/staff'
 import { useI18n } from '../lib/i18n'
 import { navigate } from '../lib/route'
 import { useSystem } from '../lib/system'
-import { formatBytes } from '../lib/ui'
+import { formatBytes, LibraryName, LibraryPicker } from '../lib/ui'
 import {
-  Empty, ErrorBox, Loading, formatDate, formatDateTime, formatNumber,
-  libraryName, useAsync, Select,
+  Empty, ErrorBox, Loading, formatDate, formatDateTime, formatNumber, useAsync,
 } from '@booksnap/ui'
 import { ImagePanel } from './ImagePanel'
 
@@ -44,7 +43,7 @@ const PAGE = 25
 
 export function ImagesPage({ initialLibraryId }: { initialLibraryId: string | undefined }) {
   const { t, lang } = useI18n()
-  const { libraries, loading: sysLoading, labelOf, canWrite } = useSystem()
+  const { loading: sysLoading, canWrite } = useSystem()
 
   const [libraryId, setLibraryId] = useState<string | undefined>(initialLibraryId)
   const [page, setPage] = useState(0)
@@ -76,19 +75,10 @@ export function ImagesPage({ initialLibraryId }: { initialLibraryId: string | un
       <p className="sub">{t.img_sub}</p>
 
       <div className="row" style={{ marginBottom: 12 }}>
-        <Select value={libraryId ?? ''} aria-label={t.bp_library}
-                onChange={(e) => {
-                  const next = e.target.value || undefined
-                  setLibraryId(next)
-                  navigate({ name: 'images', libraryId: next })
-                }}>
-          <option value="">{t.books_all_libraries}</option>
-          {libraries.map((lib) => (
-            <option key={lib.id} value={lib.id}>
-              {libraryName(lib.label, t.lib_unnamed)}
-            </option>
-          ))}
-        </Select>
+        <LibraryPicker value={libraryId} onChange={(next) => {
+          setLibraryId(next)
+          navigate({ name: 'images', libraryId: next })
+        }} />
         <button type="button" className="btn small" onClick={result.reload}>
           {t.refresh}
         </button>
@@ -105,10 +95,10 @@ export function ImagesPage({ initialLibraryId }: { initialLibraryId: string | un
             <thead>
               <tr>
                 <th>{t.img_taken}</th>
-                {/* ⚠ `th_library`. The cell holds `labelOf(image.library_id)`
-                    — a COLLECTION, not a customer. It said "account" while a
-                    library was the tenant; since P3.7b an account is a
-                    different record that may own several of these. */}
+                {/* ⚠ `th_library` over a cell that names the collection AND
+                    its owning customer. It said "account" over a library
+                    label while a library WAS the tenant; since P3.7b those are
+                    two records and the cell shows both. */}
                 <th>{t.th_library}</th>
                 {/* ⚠ Named "filed at", never "shelf": the column is the
                     binding, and pillar 6 replaces it with a real address. */}
@@ -132,11 +122,13 @@ export function ImagesPage({ initialLibraryId }: { initialLibraryId: string | un
                       <> <span className="badge warn">{t.img_missing}</span></>
                     )}
                   </td>
+                  {/* ⚠ The collection AND the customer that owns it. A
+                      library name alone does not answer "whose photograph is
+                      this?", which is the question a cross-tenant list is
+                      for — and one account may own several. */}
+                  <td className="a"><LibraryName libraryId={image.library_id} /></td>
                   <td className="rtl-safe a">
-                    {libraryName(labelOf(image.library_id), t.lib_unnamed)}
-                  </td>
-                  <td className="rtl-safe a">
-                    {image.shelf_label.trim() || <span className="a">{t.lib_unnamed}</span>}
+                    {image.shelf_label.trim() || <span className="a">{t.shelf_unnamed}</span>}
                     {' · '}
                     {t.img_depth_n(image.depth)}
                   </td>
@@ -176,7 +168,7 @@ export function ImagesPage({ initialLibraryId }: { initialLibraryId: string | un
 
       {selected && (
         <ImagePanel key={selected.id} image={selected}
-                    libraryLabel={libraryName(labelOf(selected.library_id), t.lib_unnamed)}
+                    libraryId={selected.library_id}
                     // ⚠ The picture, only where the operator is a member. See
                     // the module note: the staff service serves no bytes, so
                     // this URL is the product API's and it answers 404 for a

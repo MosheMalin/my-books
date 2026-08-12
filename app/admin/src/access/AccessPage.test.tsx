@@ -73,8 +73,10 @@ describe('AccessPage', () => {
     bothServices()
     renderApp(<AccessPage />)
 
-    const home = await screen.findByRole('link', { name: 'הבית' })
-    const office = screen.getByRole('link', { name: 'המשרד' })
+    // ⚠ The link's accessible name now carries the collection AND its owning
+    // customer, because a library name alone does not say whose it is.
+    const home = await screen.findByRole('link', { name: /הבית.*משפחת מלין/ })
+    const office = screen.getByRole('link', { name: /המשרד.*משפחת מלין/ })
     expect(home.getAttribute('href')).toBe('#/accounts/acc-1')
     expect(office.getAttribute('href')).toBe('#/accounts/acc-1')
   })

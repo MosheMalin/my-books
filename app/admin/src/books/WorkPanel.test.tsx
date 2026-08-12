@@ -1,13 +1,22 @@
 /**
- * The work drawer: no library at the top, every household below, and the three
- * moderation doors — open only where the operator is a member.
+ * The work drawer: no library at the top, every household below — each naming
+ * the CUSTOMER that holds it — and nothing at all to press.
+ *
+ * ⚠⚠ Eight of this file's tests were about moderation: approve only on the
+ * `auto` rung, the delete confirmation, the write addressed to the copy's own
+ * library, the edit form surviving a 409, the focus effect not stealing the
+ * caret mid-typing. The owner removed the capability on 2026-08-13 — *"this is
+ * not mine to do so"* — so they are gone with it, replaced by tests that the
+ * doors are SHUT and that the client cannot even reach for them. Deleting a
+ * test whose subject no longer exists is right; keeping it green against a
+ * feature nobody has is how a suite starts describing a product that is not
+ * there.
  */
-import { cleanup, screen, waitFor, within } from '@testing-library/react'
-import { userEvent } from '@booksnap/ui/testing/user'
+import { screen, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { WorkPanel } from './WorkPanel'
-import { makeBook, makeStaffWork, renderApp } from '../test/harness'
+import { makeStaffWork, renderApp } from '../test/harness'
 import { bothServices } from '../test/servers'
 import type { FakeServer } from '../test/harness'
 import type { StaffWork } from '../api/staff'
@@ -22,33 +31,25 @@ const card = (library: string): HTMLElement =>
 /** Mount the panel the way the page does — KEYED on the work — so a rerender
  *  with a different work remounts it. */
 function renderWork(work: StaffWork) {
-  const onChanged = vi.fn()
   const result = renderApp(
-    <WorkPanel key={work.key} work={work} onClose={() => {}} onChanged={onChanged} />)
+    <WorkPanel key={work.key} work={work} onClose={() => {}} />)
   return {
-    onChanged,
     rerender: (next: StaffWork) => result.rerender(
-      <WorkPanel key={next.key} work={next} onClose={() => {}} onChanged={onChanged} />),
+      <WorkPanel key={next.key} work={next} onClose={() => {}} />),
   }
 }
 
 function mount(over: Partial<StaffWork> = {}) {
-  const onChanged = vi.fn()
   const work = makeStaffWork({
     key: 'אבא|א', title: 'אבא', author: 'א', libraries: 2, copies: 3,
     mixed: true, status: 'manual', ...over,
   })
-  renderApp(<WorkPanel work={work} onClose={() => {}} onChanged={onChanged} />)
-  return { onChanged }
+  renderApp(<WorkPanel work={work} onClose={() => {}} />)
 }
 
 beforeEach(() => {
   vi.unstubAllGlobals()
   s = bothServices()
-  s.route('PATCH /api/v1/books', (req) =>
-    makeBook({ id: 'b1', ...(req.body as object ?? {}) }))
-  s.route('POST /api/v1/books', () => makeBook({ id: 'b1', status: 'approved' }))
-  s.route('DELETE /api/v1/books', () => new Response(null, { status: 204 }))
 })
 
 describe('WorkPanel', () => {
@@ -59,15 +60,35 @@ describe('WorkPanel', () => {
    */
   it('describes the work by spread and first-found, not by a library', async () => {
     mount()
-    // The summary block, before the per-household list.
     const panel = await screen.findByRole('dialog')
     expect(within(panel).getByText(/^ספריות$|^Libraries$/)).toBeInTheDocument()
     expect(within(panel).getByText(/נמצא לראשונה|First found/)).toBeInTheDocument()
     expect(within(panel).queryByText(/^מדף$|^Shelf$/)).not.toBeInTheDocument()
-    // …and no library either — the half the test's own name promised and did
-    // not gate. Scoped to the dialog and singular: the filter above the table
-    // legitimately carries the same word.
-    expect(within(panel).queryByText(/^ספרייה$|^Library$/)).not.toBeInTheDocument()
+  })
+
+  /**
+   * ⚠⚠ **No status on the aggregate** (owner, 2026-08-13): *"in 2 libraries it
+   * can be different status. what to display? simply do not display."* The
+   * summary showed the strongest claim across households plus a "mixed" badge
+   * — the same fiction the list's status column was, one level in. The
+   * per-household cards still show it, because there it is one copy in one
+   * library and therefore true.
+   */
+  it('shows no status for the work, only for each household copy', async () => {
+    mount()
+    await screen.findByText('הבית')
+    const panel = screen.getByRole('dialog')
+
+    // The summary block is the run of `.kv` rows above the household list.
+    const summaryKeys = [...panel.querySelectorAll('.kv .k')].map((k) => k.textContent)
+    expect(summaryKeys).not.toContain('סטטוס')
+    expect(summaryKeys).not.toContain('Status')
+    expect(within(panel).queryByText(/סטטוס מעורב|mixed/)).not.toBeInTheDocument()
+
+    // …but the copy in one library has one, and shows it.
+    expect(within(card('הבית'))
+      .getByText(/זוהה אוטומטית|^Auto$|^אושר$|^Approved$|^ידני$|^Manual$/))
+      .toBeInTheDocument()
   })
 
   it('lists every household that holds it, with that household\'s own spelling',
@@ -81,155 +102,58 @@ describe('WorkPanel', () => {
   })
 
   /**
-   * ⚠⚠ Reading is cross-tenant; writing is not. The instances came from the
-   * staff service, which spans every tenant; the actions go through the
-   * product API, which resolves the operator's own membership and 404s
-   * otherwise. lib-2 is not in `mine`, so its row offers nothing.
+   * ⚠⚠ **Which CUSTOMER holds each copy**, not just which collection. `הבית`
+   * and `המשרד` are both `משפחת מלין`'s, and a cross-tenant list that names
+   * only the collection leaves the operator guessing whose shelf they are
+   * looking at.
    */
-  it('offers moderation only on the households the operator belongs to', async () => {
+  it('names the customer behind each household copy', async () => {
     mount()
     await screen.findByText('הבית')
-
-    const mine = card('הבית')
-    const theirs = card('ההורים')
-
-    expect(within(mine).getByRole('button', { name: /עריכת כותרת|Edit title/ }))
-      .toBeInTheDocument()
-    expect(within(theirs).queryByRole('button', { name: /עריכת כותרת|Edit title/ }))
-      .not.toBeInTheDocument()
-    expect(within(theirs).getByText(/אינכם חברים|not a member/)).toBeInTheDocument()
+    expect(within(card('הבית')).getByText('משפחת מלין')).toBeInTheDocument()
+    expect(within(card('ההורים')).getByText('משפחת כהן')).toBeInTheDocument()
   })
 
-  /** ⚠ There is no "approve everywhere". The aggregate is a reading device;
-   *  every write is per household. A fan-out whose failure mode is "three
-   *  succeeded, two 404'd" has no honest way to be reported. */
-  it('offers no action on the work as a whole', async () => {
+  /**
+   * ⚠⚠ **THE PANEL MODERATES NOTHING** (owner, 2026-08-13): *"I should not be
+   * able to approve it or remove it or edit it. this is not mine to do so."*
+   * It used to offer all three on any copy in a library the operator belonged
+   * to — and `lib-1` IS one of those, so this fixture is the case that used to
+   * show the buttons.
+   */
+  it('offers no approve, edit or delete on any household copy', async () => {
     mount()
-    const panel = await screen.findByRole('dialog')
     await screen.findByText('הבית')
+    const panel = screen.getByRole('dialog')
 
-    // Every action button lives inside a household card.
-    for (const button of within(panel).getAllByRole('button')) {
-      if (/סגירה|Close/.test(button.textContent ?? '')) continue
-      expect(button.closest('.card')).not.toBeNull()
+    for (const name of [/אישור|Approve/, /עריכת כותרת|Edit title/,
+                        /מחיקה|Delete/, /שמירה|Save/]) {
+      expect(within(panel).queryByRole('button', { name })).not.toBeInTheDocument()
     }
+    // The ONLY button in the whole drawer is close.
+    const buttons = within(panel).getAllByRole('button')
+    expect(buttons).toHaveLength(1)
+    expect(buttons[0]!.textContent).toMatch(/סגירה|Close/)
   })
 
-  /** ⚠ The write is addressed to the household's OWN library, never to "the
-   *  current" one — in a cross-tenant list two adjacent rows belong to
-   *  different tenants and a book id alone cannot address one. */
-  it('writes through the library the copy belongs to', async () => {
-    const user = userEvent.setup()
+  /** ⚠ Absent, and SAID to be absent. An operator who used to approve from
+   *  here must learn the capability moved, not wonder whether it failed to
+   *  render. */
+  it('says where moderation went instead of leaving a silent gap', async () => {
     mount()
     await screen.findByText('הבית')
-
-    const mine = card('הבית')
-    await user.click(within(mine).getByRole('button', { name: /אישור|Approve/ }))
-    await waitFor(() => {
-      expect(s.calls.find((c) => c.url.includes('/approve'))?.library).toBe('lib-1')
-    })
-  })
-
-  /**
-   * ⚠ §5.1's ladder: a confirmed finding is created APPROVED and a hand-typed
-   * book is `manual`, which OUTRANKS it. So *approve* is only ever meaningful
-   * on the `auto` rung.
-   */
-  it('offers approve only for an auto copy', async () => {
-    // The default world holds it `auto` in lib-1 — the house the operator can
-    // write to — so the button is there.
-    mount()
-    await screen.findByText('הבית')
-    expect(within(card('הבית')).getByRole('button', { name: /אישור|Approve/ }))
-      .toBeInTheDocument()
-
-    // Now the same house has vouched for it. `manual` OUTRANKS `approved`
-    // (§5.1), so "approve" would invite confirming what a human already typed.
-    cleanup()
-    s.route('GET /api/staff/v1/works/instances', () => [
-      { id: 'b1', library_id: 'lib-1', title: 'אבא', author: 'א',
-        status: 'manual', copy_count: 1, shelf_count: 0, added_at: null },
-    ])
-    mount()
-    await screen.findByText('הבית')
-    expect(within(card('הבית')).queryByRole('button', { name: /^אישור$|^Approve$/ }))
-      .not.toBeInTheDocument()
-    // …and the other two doors are still open.
-    expect(within(card('הבית')).getByRole('button', { name: /עריכת כותרת|Edit title/ }))
+    expect(screen.getByText(/הקונסולה מדווחת ואינה עורכת|console reports, it does not edit/))
       .toBeInTheDocument()
   })
 
-  /**
-   * ⚠ Deleting is not a soft hide: it removes every copy AND records a
-   * standing rejection at each (shelf, depth) the book stood at, so the next
-   * read of that shelf does not put it back (§5.6).
-   */
-  it('asks before deleting, and only then calls the server', async () => {
-    const user = userEvent.setup()
+  /** ⚠ Structural, not cosmetic: with the client's book-write functions
+   *  deleted there is no code path that could reach them. Nothing the panel
+   *  does may produce a mutating product request. */
+  it('never issues a mutating request to the product API', async () => {
     mount()
     await screen.findByText('הבית')
-    const mine = card('הבית')
-
-    await user.click(within(mine).getByRole('button', { name: /מחיקה מהספרייה|Delete from library/ }))
-    expect(s.calls.filter((c) => c.method === 'DELETE')).toHaveLength(0)
-    expect(within(mine).getByText(/דחייה|rejection/)).toBeInTheDocument()
-
-    await user.click(within(mine).getByRole('button', { name: /^מחיקה$|^Delete$/ }))
-    await waitFor(() => {
-      expect(s.calls.filter((c) => c.method === 'DELETE')).toHaveLength(1)
-    })
-  })
-
-  /**
-   * ⚠ A delete can drop a library from the spread, so the AGGREGATE behind the
-   * panel is stale the moment a write lands. A row still reading "in 2
-   * libraries" would be a lie the operator caused themselves.
-   */
-  it('tells the list to refetch after a write', async () => {
-    const user = userEvent.setup()
-    const { onChanged } = mount()
-    await screen.findByText('הבית')
-
-    const mine = card('הבית')
-    await user.click(within(mine).getByRole('button', { name: /אישור|Approve/ }))
-    await waitFor(() => expect(onChanged).toHaveBeenCalled())
-  })
-
-  /**
-   * ⚠⚠ …and the DRAWER's own summary must follow, which is the half a review
-   * measured as broken: the list behind refetched, the household card vanished
-   * from the panel, and the summary above it still read "2 libraries". The row
-   * is a snapshot and `onChanged` cannot change it, so the summary is derived
-   * from the instances — the thing that IS refetched.
-   */
-  it('does not keep a spread the write just invalidated', async () => {
-    const user = userEvent.setup()
-    let instances = [
-      { id: 'b1', library_id: 'lib-1', title: 'אבא', author: 'א',
-        status: 'auto', copy_count: 1, shelf_count: 0, added_at: null },
-      { id: 'b1b', library_id: 'lib-2', title: 'אבא!', author: 'א',
-        status: 'manual', copy_count: 2, shelf_count: 0, added_at: null },
-    ]
-    s.route('GET /api/staff/v1/works/instances', () => instances)
-    s.route('DELETE /api/v1/books', () => {
-      instances = instances.filter((b) => b.library_id !== 'lib-1')
-      return new Response(null, { status: 204 })
-    })
-
-    mount()
-    await screen.findByText('הבית')
-    const summary = screen.getByText(/^ספריות$|^Libraries$/).closest('.kv') as HTMLElement
-    expect(within(summary).getByText('2')).toBeInTheDocument()
-
-    await user.click(within(card('הבית'))
-      .getByRole('button', { name: /מחיקה מהספרייה|Delete from library/ }))
-    await user.click(within(card('הבית'))
-      .getByRole('button', { name: /^מחיקה$|^Delete$/ }))
-
-    await waitFor(() => {
-      expect(screen.queryByText('הבית')).not.toBeInTheDocument()
-    })
-    expect(within(summary).getByText('1')).toBeInTheDocument()
+    const mutations = s.calls.filter((c) => c.method !== 'GET')
+    expect(mutations).toEqual([])
   })
 
   /**
@@ -261,41 +185,5 @@ describe('WorkPanel', () => {
     // not when the new fetch lands.
     expect(screen.queryByText('הבית')).not.toBeInTheDocument()
     release?.()
-  })
-
-  /** ⚠ The focus/Escape effect must NOT depend on `onClose` — it is a fresh
-   *  closure every parent render, so a depending effect re-runs on every
-   *  commit and pulls focus back to the close button mid-typing. */
-  it('does not steal focus back while a title is being typed', async () => {
-    const user = userEvent.setup()
-    mount()
-    await screen.findByText('הבית')
-
-    const mine = card('הבית')
-    await user.click(within(mine).getByRole('button', { name: /עריכת כותרת|Edit title/ }))
-    const input = screen.getByLabelText(/^כותרת$|^Title$/)
-    await user.clear(input)
-    await user.type(input, 'שלושה')
-
-    expect(input).toHaveFocus()
-    expect(input).toHaveValue('שלושה')
-  })
-
-  it('keeps the form open when a save is refused, so nothing is retyped', async () => {
-    const user = userEvent.setup()
-    s.route('PATCH /api/v1/books', () =>
-      new Response(JSON.stringify({ detail: 'כבר יש ספר כזה' }), { status: 409 }))
-
-    mount()
-    await screen.findByText('הבית')
-    const mine = card('הבית')
-
-    await user.click(within(mine).getByRole('button', { name: /עריכת כותרת|Edit title/ }))
-    await user.clear(screen.getByLabelText(/^כותרת$|^Title$/))
-    await user.type(screen.getByLabelText(/^כותרת$|^Title$/), 'חדש')
-    await user.click(within(mine).getByRole('button', { name: /שמירה|Save/ }))
-
-    expect(await screen.findByText('כבר יש ספר כזה')).toBeInTheDocument()
-    expect(screen.getByLabelText(/^כותרת$|^Title$/)).toHaveValue('חדש')
   })
 })

@@ -31,9 +31,10 @@ import { listWorks, type StaffWork } from '../api/staff'
 import { useI18n, type Strings } from '../lib/i18n'
 import { navigate } from '../lib/route'
 import { useSystem } from '../lib/system'
+import { LibraryPicker } from '../lib/ui'
 import {
-  Empty, ErrorBox, Loading, SortControl, StatusBadge, formatDate,
-  formatNumber, libraryName, useAsync, Select,
+  Empty, ErrorBox, Loading, SortControl, formatDate, formatNumber, useAsync,
+  Select,
 } from '@booksnap/ui'
 import { WorkPanel } from './WorkPanel'
 
@@ -65,7 +66,7 @@ const SORT_OPTIONS = [
 
 export function BooksPage({ initialLibraryId }: { initialLibraryId: string | undefined }) {
   const { t, ui, lang } = useI18n()
-  const { libraries, loading: sysLoading } = useSystem()
+  const { loading: sysLoading } = useSystem()
 
   const [libraryId, setLibraryId] = useState<string | undefined>(initialLibraryId)
   const [typed, setTyped] = useState('')
@@ -112,21 +113,14 @@ export function BooksPage({ initialLibraryId }: { initialLibraryId: string | und
       <p className="sub">{t.works_sub}</p>
 
       <div className="row" style={{ marginBottom: 12 }}>
-        <Select value={libraryId ?? ''} aria-label={t.bp_library}
-                onChange={(e) => {
-                  const next = e.target.value || undefined
-                  setLibraryId(next)
-                  // The route carries the narrowing, so a reload or a shared
-                  // link lands on the same view.
-                  navigate({ name: 'books', libraryId: next })
-                }}>
-          <option value="">{t.books_all_libraries}</option>
-          {libraries.map((lib) => (
-            <option key={lib.id} value={lib.id}>
-              {libraryName(lib.label, t.lib_unnamed)}
-            </option>
-          ))}
-        </Select>
+        {/* Grouped by CUSTOMER — a collection name alone does not say whose
+            shelf it is, and one account may own several. */}
+        <LibraryPicker value={libraryId} onChange={(next) => {
+          setLibraryId(next)
+          // The route carries the narrowing, so a reload or a shared link
+          // lands on the same view.
+          navigate({ name: 'books', libraryId: next })
+        }} />
 
         <input type="search" value={typed} placeholder={t.books_search}
                aria-label={t.books_search} className="rtl-safe"
@@ -167,6 +161,12 @@ export function BooksPage({ initialLibraryId }: { initialLibraryId: string | und
           explaining what a filter does not change was missing for the
           LIBRARY filter — the one revision 4 is actually about. */}
       {(status || libraryId) && <p className="sub">{t.works_filter_keeps_spread}</p>}
+      {/* ⚠ The filter survives the column's removal, and means something the
+          column could not: "works with AT LEAST ONE copy in this state". That
+          is a real question — "is anything out there still unapproved?" — and
+          it is answerable precisely because it does not claim the work HAS a
+          status. Said out loud, since the rows no longer show one. */}
+      {status && <p className="sub">{t.works_status_selects}</p>}
       {searching && <p className="sub">{t.books_sort_ignored}</p>}
       {result.data?.truncated && <p className="note warn">{t.books_truncated}</p>}
 
@@ -181,7 +181,14 @@ export function BooksPage({ initialLibraryId }: { initialLibraryId: string | und
               <tr>
                 <th>{t.th_title}</th>
                 <th>{t.th_author}</th>
-                <th>{t.th_status}</th>
+                {/* ⚠⚠ NO STATUS COLUMN (owner, 2026-08-13): *"in 2 libraries
+                    it can be different status. what to display? simply do not
+                    display."* A work is an aggregate across households and
+                    §5.1 is a property of one COPY in one library, so there is
+                    no honest single answer — showing the strongest would tell
+                    an operator asking "is anything unapproved out there?" a
+                    confident no. The status lives where it is true: on each
+                    household's card in the drawer. */}
                 <th className="num">{t.th_libraries}</th>
                 <th className="num">{t.th_copies}</th>
                 <th>{t.th_first_found}</th>
@@ -198,14 +205,6 @@ export function BooksPage({ initialLibraryId }: { initialLibraryId: string | und
                     </button>
                   </td>
                   <td className="rtl-safe a">{work.author}</td>
-                  <td>
-                    <StatusBadge status={work.status} />
-                    {/* ⚠ A work held `manual` in one house and `auto` in
-                        another has no single status. Showing only the
-                        strongest would answer "anything unapproved out there?"
-                        with a confident no. */}
-                    {work.mixed && <> <span className="badge">{t.works_mixed}</span></>}
-                  </td>
                   <td className="num">
                     {/* The number IS the link — the owner's own sketch. It
                         opens the same drawer the title does, because the list
@@ -246,13 +245,13 @@ export function BooksPage({ initialLibraryId }: { initialLibraryId: string | und
       </div>
 
       {selected && (
-        // ⚠ Keyed on the work, so choosing another row REMOUNTS the panel and
-        // a half-typed edit cannot survive onto a different book. See the
-        // panel's own note for why this is a key rather than an effect.
+        // ⚠ Still keyed on the work: choosing another row REMOUNTS the panel,
+        // so its instance fetch cannot show the previous book's households
+        // while the new one loads. (It used to also reset a half-typed edit —
+        // that editor is gone, but the remount is right for the fetch too.)
         <WorkPanel key={selected.key}
                    work={selected}
-                   onClose={() => setSelected(undefined)}
-                   onChanged={result.reload} />
+                   onClose={() => setSelected(undefined)} />
       )}
     </>
   )

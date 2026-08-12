@@ -102,7 +102,7 @@ describe('Dashboard', () => {
       .getAllByRole('cell').map((c) => c.textContent)
     // account, users, libraries, books, unapproved…
     expect(cells.slice(1, 5)).toEqual(['2', '2', '3', '1'])
-    expect(screen.getByRole('link', { name: 'ההורים' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'משפחת כהן' })).toBeInTheDocument()
     // The libraries themselves are a level down, in the drawer — not rows here.
     expect(screen.queryByRole('link', { name: 'הבית' })).not.toBeInTheDocument()
   })

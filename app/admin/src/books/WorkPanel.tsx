@@ -1,6 +1,5 @@
 /**
- * One WORK — what it is, where it stands, and the three things an operator may
- * do to any one household's copy of it.
+ * One WORK — what it is, and where it stands. **Nothing else.**
  *
  * ⚠⚠ **No library, no shelf, at the top.** That is the owner's instruction for
  * this panel — *"same upon book's info, no library no shelf. maybe number of
@@ -8,55 +7,45 @@
  * work does not HAVE a library. The households appear below, as a list, which
  * is the only place the question "whose copy?" has an answer.
  *
- * ⚠⚠ **Reading is cross-tenant; writing is not**, and this is still the screen
- * where that becomes visible. The instance list came from the staff service,
- * which spans every tenant and never writes. The three actions go through the
- * ordinary product API, which resolves the caller's own membership and answers
- * 404 for anything else (§4.2). So a row for a library the operator does not
- * belong to shows its numbers and says it is read-only, instead of offering
- * buttons that would 404 on click.
+ * ⚠⚠ **THE CONSOLE DOES NOT MODERATE A HOUSEHOLD'S BOOKS** (owner,
+ * 2026-08-13). This panel offered approve, edit and delete on any copy the
+ * operator happened to be a member of, behind revision 2's
+ * read-cross-tenant / write-your-own-memberships split. The owner removed the
+ * capability outright:
  *
- * ⚠⚠ **There is no "approve everywhere".** The aggregate is a reading device;
- * every write is per household, deliberately. A system administrator silently
- * rewriting several households' catalogues in one click is a power this
- * product has no reason to grant before it has a login, an audit trail, or
- * anyone to explain it to — and the fan-out failure mode (three succeed, two
- * 404) has no honest way to be reported.
+ *   > in the list of libraries — I should not be able to approve it or remove
+ *   > it or edit it. this is not mine to do so. I can only see info about it
+ *   > and about the libraries.
  *
- * ⚠ **A half-typed edit must not survive onto a different book.** The reset is
- * done by KEYING — the page keys this panel on the work, and this panel keys
- * each editor on the instance. The effect version was written first and was
- * reproducibly broken; `BookPanel`'s retired note recorded exactly why (a
- * focus effect depending on `onClose` re-ran on every commit and the reset
- * effect compared against the values it was meant to react to).
+ * The old split answered "may this request succeed?"; the rule is now about
+ * WHOSE JOB IT IS. That an operator happens to hold a membership in one
+ * household is an accident of this being the owner's own machine, not a
+ * licence to retitle their books from a system console — and the console has
+ * no login and no audit trail to justify one. Moderation lives in the
+ * household's own app, where the person doing it owns the shelf.
+ *
+ * ⚠ It is ABSENT, not disabled, and absent STRUCTURALLY: `api/client.ts` no
+ * longer exports `approveBook`/`patchBook`/`deleteBook` at all, and
+ * `boundaries.test.ts` fails if they come back. A hidden button is a decision
+ * someone re-reads as an oversight; a missing function is a decision someone
+ * has to argue with.
+ *
+ * ⚠ What the console still writes is TENANCY, never CONTENT: create a library
+ * and rename one, on the accounts screen. That is the line — administering a
+ * customer's account versus editing their catalogue.
  */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 
-import { approveBook, deleteBook, patchBook } from '../api/client'
 import { listWorkInstances, type StaffBook, type StaffWork } from '../api/staff'
 import { useI18n } from '../lib/i18n'
-import { useSystem } from '../lib/system'
+import { LibraryName } from '../lib/ui'
 import {
-  Empty, ErrorBox, Loading, StatusBadge, formatDate, formatNumber,
-  libraryName, useAsync, vouchedFor,
+  Empty, ErrorBox, Loading, StatusBadge, formatDate, formatNumber, useAsync,
 } from '@booksnap/ui'
 
-/** The strongest §5.1 claim in a set. The ladder is `manual` > `approved` >
- *  `auto`, and `@booksnap/ui` owns the ORDER as `vouchedFor`'s two rungs — this
- *  is the third, and it is here rather than shared because only this panel
- *  re-derives an aggregate the server already computed. */
-const LADDER = ['auto', 'approved', 'manual']
-const strongest = (all: string[]): string =>
-  all.reduce((best, one) =>
-    LADDER.indexOf(one) > LADDER.indexOf(best) ? one : best, 'auto')
-
-export function WorkPanel({ work, onClose, onChanged }: {
+export function WorkPanel({ work, onClose }: {
   work: StaffWork
   onClose: () => void
-  /** The aggregate changed underneath — a delete can drop a library from the
-   *  spread, and a row that still said "3" would be a lie the operator caused
-   *  themselves. */
-  onChanged: () => void
 }) {
   const { t, lang } = useI18n()
   const closeRef = useRef<HTMLButtonElement>(null)
@@ -80,37 +69,25 @@ export function WorkPanel({ work, onClose, onChanged }: {
 
   const num = (n: number) => formatNumber(n, lang)
 
-  const afterWrite = () => {
-    instances.reload()
-    onChanged()
-  }
-
   /**
-   * ⚠⚠ **The summary is DERIVED from the instances, not read off the row.**
+   * ⚠ Still DERIVED from the instances rather than read off the row, though
+   * nothing here can change them any more. The reason survives the removal of
+   * the write path: the row is a snapshot taken when the drawer opened, and
+   * the list behind it refetches on its own schedule, so the instances — which
+   * arrive with this panel — are the fresher of the two. The row is the
+   * fallback for the moment before they land. The two agree by construction:
+   * the server derives the aggregate from the same rows.
    *
-   * The row is a snapshot taken when the drawer opened, and `onChanged`
-   * refetches the LIST — which does not touch this component's props, because
-   * `selected` is a captured object and its key has not changed. A review
-   * measured the consequence: delete the operator's copy of a two-library
-   * work, watch its household card disappear from the list below, and the
-   * summary above still reads "2 libraries". That is exactly the lie
-   * `onChanged`'s own docstring claims to prevent, one level up.
-   *
-   * So the instances — which ARE refetched — are the source, and the row is
-   * only the fallback for the moment before they arrive. The two agree by
-   * construction: the server derives the aggregate from the same rows.
+   * ⚠ No `status` and no `mixed`. See the table on the list screen: a work
+   * does not have a status, and the strongest-claim-across-households answer
+   * this used to show was the same fiction one level in.
    */
   const rows = instances.data
   const summary = rows === undefined ? {
     libraries: work.libraries, copies: work.copies,
-    status: work.status, mixed: work.mixed,
   } : {
     libraries: new Set(rows.map((r) => r.library_id)).size,
     copies: rows.reduce((n, r) => n + r.copy_count, 0),
-    // The §5.1 ladder, as the server derives it: the strongest claim any
-    // household makes, and whether they disagree.
-    status: strongest(rows.map((r) => r.status)),
-    mixed: new Set(rows.map((r) => r.status)).size > 1,
   }
 
   return (
@@ -133,13 +110,6 @@ export function WorkPanel({ work, onClose, onChanged }: {
           <div className="kv">
             <span className="k">{t.th_libraries}</span>
             <span>{num(summary.libraries)}</span>
-          </div>
-          <div className="kv">
-            <span className="k">{t.bp_status}</span>
-            <span>
-              <StatusBadge status={summary.status} />
-              {summary.mixed && <> <span className="badge">{t.works_mixed}</span></>}
-            </span>
           </div>
           <div className="kv">
             <span className="k">{t.bp_copies}</span>
@@ -179,84 +149,47 @@ export function WorkPanel({ work, onClose, onChanged }: {
         )}
         {instances.data?.map((instance) => (
           <Instance key={`${instance.library_id}:${instance.id}`}
-                    book={instance} onChanged={afterWrite} />
+                    book={instance} />
         ))}
+
+        {/* ⚠ Said ONCE, at the bottom, rather than on every card — and said
+            at all because "absent, not disabled" only works if the absence is
+            explained. An operator who used to approve a book from here needs
+            to know the capability was removed on purpose and where it went,
+            not wonder whether the buttons failed to render. */}
+        {instances.data && instances.data.length > 0 && (
+          <p className="note" style={{ marginTop: 12 }}>{t.books_readonly}</p>
+        )}
       </aside>
     </>
   )
 }
 
 /**
- * One household's copy, and what may be done to it here.
+ * One household's copy — INFORMATION, and nothing to press.
  *
- * The three actions are doors the product already has (H3 — the console does
- * not grow a fourth way to write a title):
+ * ⚠⚠ It carried approve / edit / delete until 2026-08-13. The owner's rule is
+ * that moderating a household's catalogue is not a system operator's job, so
+ * the card reports and stops: which collection and which CUSTOMER holds it,
+ * that household's own spelling, its §5.1 status, how many copies on how many
+ * shelves, and when it arrived.
  *
- *   - **approve** — idempotent, never a demotion. ⚠ Offered only on the `auto`
- *     rung: a confirmed finding is created APPROVED and a hand-typed book is
- *     `manual`, which OUTRANKS it (§5.1);
- *   - **edit** — `PATCH /books/{id}`, which the domain marks `manual`, because
- *     a human typing a title is a stronger claim than the engine's reading;
- *   - **delete** — ⚠ not a soft hide: it removes every copy AND records a
- *     standing rejection at each (shelf, depth) the book stood at, so the next
- *     read of that shelf does not put it straight back (§5.6). Hence the
- *     confirmation.
+ * ⚠ The status badge STAYS here, and only here. It is the accurate thing: this
+ * is one copy, in one library, in one state. What was removed is the AGGREGATE
+ * — the panel's summary and the list's column — because a work held by two
+ * households in two states has no single status to show.
  *
- * ⚠ An edit here can change the book's KEY — retitling it moves that copy to a
- * different work. So a write always re-fetches rather than patching the list
- * in place: the instance may legitimately no longer belong to the work whose
- * panel is open, and a locally-patched row would keep showing it under the old
- * title forever.
+ * ⚠ Naming the account is the point of the card's heading. `My library` tells
+ * an operator nothing about whose shelf it is, and one customer may own
+ * several collections since P3.7b.
  */
-function Instance({ book, onChanged }: {
-  book: StaffBook
-  onChanged: () => void
-}) {
+function Instance({ book }: { book: StaffBook }) {
   const { t, lang } = useI18n()
-  const { canWrite, labelOf } = useSystem()
-  const writable = canWrite(book.library_id)
-
-  const [editing, setEditing] = useState(false)
-  const [title, setTitle] = useState(book.title)
-  const [author, setAuthor] = useState(book.author)
-  const [confirming, setConfirming] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | undefined>(undefined)
-
-  const run = async (fn: () => Promise<void>) => {
-    setBusy(true)
-    setError(undefined)
-    try {
-      await fn()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const save = () => run(async () => {
-    await patchBook(book.library_id, book.id, { title, author })
-    setEditing(false)
-    onChanged()
-  })
-
-  const approve = () => run(async () => {
-    await approveBook(book.library_id, book.id)
-    onChanged()
-  })
-
-  const remove = () => run(async () => {
-    await deleteBook(book.library_id, book.id)
-    onChanged()
-  })
 
   return (
     <div className="card" style={{ marginBottom: 10 }}>
       <div className="row" style={{ justifyContent: 'space-between' }}>
-        <strong className="rtl-safe">
-          {libraryName(labelOf(book.library_id), t.lib_unnamed)}
-        </strong>
+        <strong><LibraryName libraryId={book.library_id} /></strong>
         <StatusBadge status={book.status} />
       </div>
 
@@ -282,80 +215,6 @@ function Instance({ book, onChanged }: {
         {' · '}
         {formatDate(book.added_at, lang) || '—'}
       </div>
-
-      {error && <div style={{ marginTop: 8 }}><ErrorBox message={error} /></div>}
-
-      {editing && (
-        <div style={{ marginTop: 8 }}>
-          <label className="field">
-            {t.bp_title_label}
-            <input type="text" value={title} className="rtl-safe" autoFocus
-                   onChange={(e) => setTitle(e.target.value)} />
-          </label>
-          <label className="field" style={{ marginTop: 8 }}>
-            {t.bp_author_label}
-            <input type="text" value={author} className="rtl-safe"
-                   onChange={(e) => setAuthor(e.target.value)} />
-          </label>
-          <p className="sub" style={{ margin: '6px 0 0' }}>{t.works_edit_rekeys}</p>
-          <div className="row" style={{ marginTop: 8 }}>
-            <button type="button" className="btn small primary"
-                    disabled={busy || !title.trim()} onClick={save}>
-              {t.save}
-            </button>
-            <button type="button" className="btn small" onClick={() => {
-              setEditing(false)
-              setTitle(book.title)
-              setAuthor(book.author)
-            }}>
-              {t.cancel}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {!writable ? (
-        <p className="note warn" style={{ marginTop: 10 }}>{t.books_readonly}</p>
-      ) : (
-        <>
-          {!editing && (
-            <div className="row" style={{ marginTop: 10 }}>
-              {!vouchedFor(book.status) && (
-                <button type="button" className="btn small primary" disabled={busy}
-                        onClick={approve}>
-                  {t.bp_approve}
-                </button>
-              )}
-              <button type="button" className="btn small" disabled={busy}
-                      onClick={() => setEditing(true)}>
-                {t.bp_edit}
-              </button>
-              {!confirming && (
-                <button type="button" className="btn small"
-                        onClick={() => setConfirming(true)}>
-                  {t.bp_delete}
-                </button>
-              )}
-            </div>
-          )}
-
-          {confirming && (
-            <div className="dangerzone">
-              <p className="rtl-safe">{t.bp_delete_confirm}</p>
-              <div className="row">
-                <button type="button" className="btn small danger" disabled={busy}
-                        onClick={remove}>
-                  {t.bp_delete_yes}
-                </button>
-                <button type="button" className="btn small"
-                        onClick={() => setConfirming(false)}>
-                  {t.cancel}
-                </button>
-              </div>
-            </div>
-          )}
-        </>
-      )}
     </div>
   )
 }
