@@ -102,6 +102,7 @@ class OverviewDTO(BaseModel):
 
 class LibraryDTO(BaseModel):
     id: str
+    account_id: str
     label: str
     created_at: str | None = None
     members: int
@@ -122,7 +123,7 @@ class LibraryDTO(BaseModel):
 
 
 class MembershipDTO(BaseModel):
-    library_id: str
+    account_id: str
     role: str
     joined_at: str | None = None
 
@@ -358,7 +359,7 @@ def create_app(queries: StaffQueries) -> FastAPI:
                 id=row.id, display_name=row.display_name, email=row.email,
                 created_at=row.created_at,
                 memberships=[
-                    MembershipDTO(library_id=m.library_id, role=m.role,
+                    MembershipDTO(account_id=m.account_id, role=m.role,
                                   joined_at=m.joined_at)
                     for m in row.memberships
                 ],

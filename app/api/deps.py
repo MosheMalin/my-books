@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from fastapi import Depends, HTTPException, Request, status
 
-from app.domain import LibraryRef
+from app.domain import Library, LibraryRef, Membership
 from app.ports import Clock, IdGen, Principal
 from app.ports.blobs import BlobStore
 from app.ports.decisions import DecisionStore
@@ -107,24 +107,54 @@ def current_library(
        a request, so its own library needs no membership row to be legitimate.
        P4.1 replaces the adapter, not this line;
     3. **it names anything else** — resolved through the
-       :class:`TenancyStore`: the user's membership decides, and the
-       library's own row supplies the label.
+       :class:`TenancyStore`: the library names its OWNING ACCOUNT, the
+       caller's membership of that account decides, and the library's own row
+       supplies the label.
 
-    A library that does not exist and a library the caller is not a member of
-    are the SAME answer — **404, never 403** (§4.2). P3.3 makes that a
-    meta-test over every route; here it is the door, and getting it wrong here
-    would leak the existence of other households' libraries from the one place
-    that can see all of them.
+    ⚠ Case 3 is where P3.7b moved the boundary, and it is two lookups rather
+    than one on purpose. Before, a membership named a library and this asked
+    about that pair directly. Now a membership names an ACCOUNT, so the
+    question is *who owns this library, and do you belong to them* — which is
+    the whole of §4.1's revision, in one place, on every request. Nothing
+    else in the product asks it.
+
+    A library that does not exist, one owned by an account the caller does not
+    belong to, and one whose owner does not exist are the SAME answer —
+    **404, never 403** (§4.2). P3.3 makes that a meta-test over every route;
+    here it is the door, and getting it wrong here would leak the existence of
+    other customers' libraries from the one place that can see all of them.
     """
     requested = (request.headers.get(LIBRARY_HEADER)
                  or request.query_params.get(LIBRARY_PARAM))
     if not requested or requested == principal.library.id:
         return principal.library
-    membership = tenancy.membership(principal.id, requested)
-    library = tenancy.get_library(requested) if membership else None
-    if membership is None or library is None:
+    library, membership = owner_membership(tenancy, principal.id, requested)
+    if library is None or membership is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no such library")
     return library.ref
+
+
+def owner_membership(
+    tenancy: TenancyStore, user_id: str, library_id: str,
+) -> tuple[Library | None, Membership | None]:
+    """This user's membership of the account that OWNS ``library_id``.
+
+    Not a FastAPI dependency — a plain function, called by
+    :func:`current_library` above and by ``app.api.policy._role``. Both need
+    the same two facts (does this library exist, and what is your standing
+    with its owner), and writing the join twice is how the resolver and the
+    capability check would eventually disagree about who owns what.
+
+    ``(None, None)`` covers three different miss reasons — no such library, no
+    such owner, no membership — and collapses them deliberately: §4.2's
+    404-never-403 rule is exactly the instruction not to tell them apart on
+    the wire. They stay distinguishable INSIDE the server through the store's
+    own methods, which is where the operator console reads them.
+    """
+    library = tenancy.get_library(library_id)
+    if library is None:
+        return None, None
+    return library, tenancy.membership(user_id, library.account_id)
 
 
 # The remaining ports, same pattern as get_principal: placeholders that FAIL

@@ -37,7 +37,13 @@ from app.adapters.migrations import migrate  # noqa: E402
 from app.adapters.sqlite_store import SqliteBookStore, SqliteTenancyStore  # noqa: E402
 from app.domain import LibraryRef, new_book  # noqa: E402
 from app.domain.book import Status, add_copy  # noqa: E402
-from app.domain.tenancy import Library, Membership, Role, User  # noqa: E402
+from app.domain.tenancy import (  # noqa: E402
+    Account,
+    Library,
+    Membership,
+    Role,
+    User,
+)
 from app.domain.text import book_key  # noqa: E402
 from app.staff_api.app import STAFF_TOKEN_ENV, create_app  # noqa: E402
 from app.staff_api.queries import (  # noqa: E402
@@ -60,15 +66,24 @@ def _seed(path: Path) -> None:
                                  created_at="2026-01-01T00:00:00Z"))
     tenancy.save_user(User(id="usr-2", display_name="שותף",
                                  created_at="2026-01-02T00:00:00Z"))
-    for lib_id, label in (("lib-a", "הבית"), ("lib-b", "החנות")):
-        tenancy.save_library(Library(id=lib_id, label=label,
+    # TWO customers, deliberately with different member sets: acc-1 has a
+    # second person in it, acc-2 does not. A fixture where both accounts
+    # looked identical could not tell a per-account count from a per-
+    # library one, which is exactly what the library rows report.
+    for acc_id, label in (("acc-1", "Malin"), ("acc-2", "Shop")):
+        tenancy.save_account(Account(id=acc_id, label=label,
                                      created_at="2026-01-01T00:00:00Z"))
-    tenancy.save_membership(Membership(user_id="usr-1", library_id="lib-a",
+    tenancy.save_membership(Membership(user_id="usr-1", account_id="acc-1",
                                        role=Role.ADMIN))
-    tenancy.save_membership(Membership(user_id="usr-1", library_id="lib-b",
+    tenancy.save_membership(Membership(user_id="usr-1", account_id="acc-2",
                                        role=Role.ADMIN))
-    tenancy.save_membership(Membership(user_id="usr-2", library_id="lib-a",
+    tenancy.save_membership(Membership(user_id="usr-2", account_id="acc-1",
                                        role=Role.VIEWER))
+    for lib_id, acc_id, label in (("lib-a", "acc-1", "הבית"),
+                                  ("lib-b", "acc-2", "החנות")):
+        tenancy.save_library(Library(id=lib_id, account_id=acc_id,
+                                     label=label,
+                                     created_at="2026-01-01T00:00:00Z"))
 
     ref_a, ref_b = LibraryRef(id="lib-a"), LibraryRef(id="lib-b")
     books.save(ref_a, new_book(id="b1", library_id="lib-a", copy_id="c1",
@@ -204,10 +219,10 @@ def test_search_crosses_tenants():
 def test_users_report_every_membership_they_hold():
     with _queries() as (q, _):
         by_id = {u.id: u for u in q.users()}
-        assert {(m.library_id, m.role) for m in by_id["usr-1"].memberships} == {
-            ("lib-a", "admin"), ("lib-b", "admin")}
-        assert [(m.library_id, m.role) for m in by_id["usr-2"].memberships] == [
-            ("lib-a", "viewer")]
+        assert {(m.account_id, m.role) for m in by_id["usr-1"].memberships} == {
+            ("acc-1", "admin"), ("acc-2", "admin")}
+        assert [(m.account_id, m.role) for m in by_id["usr-2"].memberships] == [
+            ("acc-1", "viewer")]
 
 
 def test_a_library_row_counts_its_members_and_its_admins():
@@ -218,16 +233,34 @@ def test_a_library_row_counts_its_members_and_its_admins():
         assert rows["lib-b"].books == 1
 
 
-def test_a_library_nobody_belongs_to_is_reported_as_an_orphan():
-    """`new_library` mints an admin membership in the same call precisely so
-    this stays empty. A row here is a library nobody can see or administer,
-    and a system console is the only place it is visible at all."""
+def test_a_library_whose_owner_has_no_members_is_reported_as_an_orphan():
+    """`new_account` mints an admin membership in the same call precisely
+    so this stays empty. A row here is a library nobody can see or
+    administer, and a system console is the only place it is visible.
+
+    ⚠ The question changed shape at P3.7b and kept its meaning: it used to
+    be "no membership names this library", and a membership names an
+    ACCOUNT now, so it is "no membership names this library's owner". The
+    library below is perfectly well-formed — it has an owner, and its owner
+    is the empty customer. That is the state the console must surface,
+    because nothing in the product can reach it.
+    """
     with _queries() as (q, path):
         assert q.orphan_libraries() == ()
-        SqliteTenancyStore(path).save_library(
-            Library(id="lib-lost", label="יתומה", created_at="2026-03-01")
+        store = SqliteTenancyStore(path)
+        store.save_account(Account(id="acc-empty", label="יתומה"))
+        store.save_library(
+            Library(id="lib-lost", account_id="acc-empty", label="יתומה",
+                    created_at="2026-03-01")
         )
         assert q.orphan_libraries() == ("lib-lost",)
+
+        # And it stops being an orphan the moment somebody joins its OWNER,
+        # never by anything done to the library itself.
+        store.save_membership(
+            Membership(user_id="usr-2", account_id="acc-empty",
+                       role=Role.VIEWER))
+        assert q.orphan_libraries() == ()
 
 
 # --- works: books, aggregated across every tenant ---------------------------

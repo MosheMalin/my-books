@@ -58,8 +58,12 @@ from app.ports.blobs import BlobStore
 #: concurrent writer slipped in during the blob copy committed as an orphan
 #: of a deleted library, and a human's recorded "no" stopped suppressing the
 #: book it was about.
+# Every table carrying a `library_id`. ⚠ `memberships` LEFT this list at
+# P3.7b: a membership names an account now, so it has no library_id to move
+# and no orphan to leave behind. Keeping it here would have made the
+# leftover check below raise `no such column` on every merge.
 _LIBRARY_TABLES = ("books", "copies", "shelves", "captures", "reads",
-                   "decisions", "duplicate_questions", "memberships")
+                   "decisions", "duplicate_questions")
 
 
 class MergeRefused(Exception):
@@ -162,10 +166,28 @@ def merge_library(
     conn.row_factory = sqlite3.Row
     try:
         conn.execute("PRAGMA foreign_keys = ON")
+        owners = {}
         for lib, name in ((src_id, "source"), (dst_id, "target")):
-            if conn.execute("SELECT 1 FROM libraries WHERE id = ?",
-                            (lib,)).fetchone() is None:
+            row = conn.execute(
+                "SELECT account_id FROM libraries WHERE id = ?", (lib,)
+            ).fetchone()
+            if row is None:
                 raise MergeRefused(f"no such {name} library: {lib!r}")
+            owners[name] = str(row["account_id"])
+        # ⚠ REFUSED across customers, and not because it is hard. Moving a
+        # library into another account's hands would hand every book, photo
+        # and read in it to people who were never invited — the one thing
+        # §4.1's boundary exists to make impossible, performed by an
+        # operator tool with a --confirm flag. This tool exists to undo a
+        # location that was modelled as a tenant; a location does not change
+        # owner. If a customer genuinely has to hand over a collection, that
+        # is a transfer with its own consent story, not a merge.
+        if owners["source"] != owners["target"]:
+            raise MergeRefused(
+                f"{src_id!r} and {dst_id!r} belong to different accounts "
+                f"({owners['source']!r} and {owners['target']!r}); merging "
+                "them would move a collection between customers (§4.1)"
+            )
         _refuse_if_answered_questions(conn, src_id)
         _refuse_if_collisions_discard_book_fields(conn, src_id, dst_id)
 
@@ -272,10 +294,10 @@ def merge_library(
                 "UPDATE reads SET library_id = ? WHERE library_id = ?",
                 (dst_id, src_id)).rowcount
 
-            # Retire the tenant. Membership first (FK), then the row the
-            # switcher lists.
-            conn.execute("DELETE FROM memberships WHERE library_id = ?",
-                         (src_id,))
+            # Retire the emptied library. Memberships are untouched on
+            # purpose since P3.7b: they belong to the ACCOUNT, which still
+            # owns the target — deleting them here would remove people from
+            # a customer because one of its libraries was tidied away.
             conn.execute("DELETE FROM libraries WHERE id = ?", (src_id,))
 
             # The invariant the whole move exists for: nothing left behind —

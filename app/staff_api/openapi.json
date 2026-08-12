@@ -274,6 +274,10 @@
       },
       "LibraryDTO": {
         "properties": {
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
           "admins": {
             "title": "Admins",
             "type": "integer"
@@ -365,6 +369,7 @@
         },
         "required": [
           "id",
+          "account_id",
           "label",
           "members",
           "admins",
@@ -384,6 +389,10 @@
       },
       "MembershipDTO": {
         "properties": {
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
           "joined_at": {
             "anyOf": [
               {
@@ -395,17 +404,13 @@
             ],
             "title": "Joined At"
           },
-          "library_id": {
-            "title": "Library Id",
-            "type": "string"
-          },
           "role": {
             "title": "Role",
             "type": "string"
           }
         },
         "required": [
-          "library_id",
+          "account_id",
           "role"
         ],
         "title": "MembershipDTO",

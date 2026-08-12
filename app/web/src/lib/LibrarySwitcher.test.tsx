@@ -20,10 +20,13 @@ afterEach(() => {
   document.documentElement.dir = 'rtl'
 })
 
-const HOME = { id: 'lib-test', label: 'משפחת מלין', role: 'admin',
-               created_at: null }
-const OFFICE = { id: 'lib-2', label: 'המשרד', role: 'editor',
-                 created_at: null }
+// ⚠ Two DIFFERENT accounts, which is what makes the roles differ: a role
+// is held per account since P3.7b, so two libraries of one customer
+// always agree and could not exercise the label the menu renders.
+const HOME = { id: 'lib-test', account_id: 'acc-1', label: 'משפחת מלין',
+               role: 'admin', created_at: null }
+const OFFICE = { id: 'lib-2', account_id: 'acc-2', label: 'המשרד',
+                 role: 'editor', created_at: null }
 
 const A_BOOK = book({ id: 'b1', title: 'היער השיכור', author: "ג'ראלד דארל" })
 

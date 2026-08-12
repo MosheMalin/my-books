@@ -23,6 +23,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from app.domain import (
+    Account,
     AmbiguousCopy,
     Book,
     Capability,
@@ -76,6 +77,7 @@ from app.domain import (
     finish_read,
     fires,
     lend,
+    new_account,
     new_book,
     new_capture,
     new_library,
@@ -1750,17 +1752,32 @@ def test_two_copies_on_one_row_record_one_no_not_two():
 # --- tenancy (P3.1, §4.1/§4.2/§4.3) ---------------------------------------
 
 OWNER = User(id="usr-1", display_name="משה")
+ACCOUNT = Account(id="acc-1", label="Malin")
 
 
-def test_creating_a_library_makes_its_creator_an_admin():
-    """A library saved without a membership is invisible to the person who
-    made it (listing is BY USER) and administrable by nobody. Returning
-    both from one call is what makes that state unreachable from a caller
-    that simply forgot the second write."""
-    library, membership = new_library(id="lib-1", label="משפחת מלין", owner=OWNER)
-    assert membership.library_id == library.id
+def test_creating_an_account_makes_its_creator_an_admin():
+    """An account saved without a membership is invisible to the person who
+    made it (listing is BY USER) and administrable by nobody. Returning both
+    from one call is what makes that state unreachable from a caller that
+    simply forgot the second write.
+
+    ⚠ The rule MOVED here at P3.7b. `new_library` used to carry it, because
+    a library was the boundary; now access comes from the account, and a
+    library that minted its own membership would invent a grant the resolver
+    never consults."""
+    account, membership = new_account(id="acc-1", owner=OWNER)
+    assert membership.account_id == account.id
     assert membership.user_id == OWNER.id
     assert membership.role is Role.ADMIN
+
+
+def test_creating_a_library_grants_nobody_anything():
+    """The other half, and the one worth a named test: creating a library is
+    no longer a permission event. It returns a Library and nothing else, so
+    there is no second grant to drift out of step with the account's."""
+    library = new_library(id="lib-1", label="משפחת מלין", account=ACCOUNT)
+    assert library.account_id == ACCOUNT.id
+    assert not isinstance(library, tuple)
 
 
 def test_a_library_is_created_with_a_name():
@@ -1769,8 +1786,10 @@ def test_a_library_is_created_with_a_name():
     photograph — it is a row in the app-bar switcher, and two blank rows are
     two libraries the owner cannot tell apart (§4.3: "create a Library, name
     it")."""
-    _raises(LibraryNeedsAName, new_library, id="lib-1", label="  ", owner=OWNER)
-    _raises(LibraryNeedsAName, rename_library, Library(id="lib-1", label="x"), "")
+    _raises(LibraryNeedsAName, new_library, id="lib-1", label="  ",
+            account=ACCOUNT)
+    _raises(LibraryNeedsAName, rename_library,
+            Library(id="lib-1", account_id="acc-1", label="x"), "")
 
 
 def test_a_backfilled_library_may_be_nameless_even_though_a_new_one_may_not():
@@ -1778,24 +1797,27 @@ def test_a_backfilled_library_may_be_nameless_even_though_a_new_one_may_not():
     the owner's data, and there is no label to recover. So the ENTITY must be
     able to represent one while the CONSTRUCTOR refuses to mint another —
     the same split as `Book`/`new_book`."""
-    assert Library(id="dev-library").label == ""
+    assert Library(id="dev-library", account_id="acc-1").label == ""
 
 
 def test_the_last_admin_cannot_be_demoted_or_removed():
-    """§4.2 gives only an admin "invite/remove members, change roles", so a
-    library whose last admin steps down can never invite anyone, be renamed
-    or be deleted — an unadministrable tenant only a database edit rescues."""
-    members = (Membership("usr-1", "lib-1", Role.ADMIN),
-               Membership("usr-2", "lib-1", Role.EDITOR))
+    """§4.2 gives only an admin "invite/remove members, change roles", so an
+    account whose last admin steps down can never invite anyone, be renamed
+    or be deleted — an unadministrable tenant only a database edit rescues.
+
+    ⚠ Widened at P3.7b rather than moved: it used to protect one library and
+    now protects every library the customer owns."""
+    members = (Membership("usr-1", "acc-1", Role.ADMIN),
+               Membership("usr-2", "acc-1", Role.EDITOR))
     _raises(NoAdminLeft, set_role, members, "usr-1", Role.VIEWER)
     _raises(NoAdminLeft, remove_member, members, "usr-1")
 
 
 def test_an_admin_may_step_down_once_another_admin_exists():
     """The rule is "at least one", not "the first one forever" — otherwise
-    handing the library over to someone else is impossible."""
-    members = (Membership("usr-1", "lib-1", Role.ADMIN),
-               Membership("usr-2", "lib-1", Role.ADMIN))
+    handing the account over to someone else is impossible."""
+    members = (Membership("usr-1", "acc-1", Role.ADMIN),
+               Membership("usr-2", "acc-1", Role.ADMIN))
     left = remove_member(members, "usr-1")
     assert [m.user_id for m in left] == ["usr-2"]
     demoted = set_role(members, "usr-1", Role.VIEWER)
@@ -1806,15 +1828,15 @@ def test_changing_a_role_replaces_it_rather_than_adding_a_second_membership():
     """One membership per (user, library) — the store declares it as a
     composite primary key, and a domain op that appended instead would make
     "what is my role here" ambiguous before the store ever saw it."""
-    members = (Membership("usr-1", "lib-1", Role.ADMIN),
-               Membership("usr-2", "lib-1", Role.VIEWER))
+    members = (Membership("usr-1", "acc-1", Role.ADMIN),
+               Membership("usr-2", "acc-1", Role.VIEWER))
     after = set_role(members, "usr-2", Role.EDITOR)
     assert len(after) == 2
     assert [m.role for m in after] == [Role.ADMIN, Role.EDITOR]
 
 
 def test_acting_on_a_non_member_raises_rather_than_inventing_a_membership():
-    members = (Membership("usr-1", "lib-1", Role.ADMIN),)
+    members = (Membership("usr-1", "acc-1", Role.ADMIN),)
     _raises(UnknownMember, set_role, members, "usr-9", Role.EDITOR)
     _raises(UnknownMember, remove_member, members, "usr-9")
 
@@ -1842,12 +1864,23 @@ def test_a_role_says_who_you_are_and_never_what_you_may_do():
 
 
 def test_a_library_is_not_a_place():
-    """§4.1's own warning: Library is the PERMISSION boundary ("the Malin
-    family collection"); a place you keep books (home, office, parents') is a
-    Place (né PhysicalLibrary) — an address inside it; addresses arrive with the map
-    (plan §1.1). Collapsing the two here is what would make the map's own
-    hierarchy have to reconcile with this one."""
+    """§4.1's own warning: a place you keep books (home, office, parents') is
+    a Place (né PhysicalLibrary) — an address, and addresses arrive with the
+    map (plan §1.1). Collapsing the two here is what would make the map's own
+    hierarchy have to reconcile with this one.
+
+    ⚠ P3.7b makes this guard sharper rather than weaker. A Library stopped
+    being the boundary and became a partition inside an Account — which is
+    exactly the moment "then it may as well be a room" becomes tempting. It
+    may not. So the fields are asserted EXACTLY rather than by exclusion: the
+    banned set below passed unchanged when `account_id` was added, which means
+    it would equally have passed a `room_id`.
+    """
     fields = set(Library.__dataclass_fields__)
+    assert fields == {"id", "account_id", "label", "created_at"}, (
+        f"the tenancy partition grew a field: {sorted(fields)} — if it is an "
+        "address, it belongs to pillar 6's Place"
+    )
     address = {"place", "place_id", "places", "bookcase", "room", "address",
                "col", "level", "geometry"}
     assert not (fields & address), (

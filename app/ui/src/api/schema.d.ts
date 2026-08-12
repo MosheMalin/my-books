@@ -528,7 +528,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Libraries this user belongs to
+         * Libraries this user can reach
          * @description Ordered by the domain's own key, so the switcher never reshuffles.
          *
          *     A user that belongs to nothing gets ``[]``, not an error — a real
@@ -588,10 +588,11 @@ export interface paths {
          * Rename a library
          * @description 404 for a library this user is not a member of — never 403 (§4.2).
          *
-         *     The membership is looked up FIRST and the library second: asking the other
-         *     way round would answer "no such library" for a real library and "not
-         *     found" for a fictional one from two different branches, and only one of
-         *     them stays honest when P3.2 adds roles.
+         *     Resolved through the same :func:`app.api.deps.owner_membership` the door
+         *     uses, so "which account owns this" is answered by one function for the
+         *     whole product. A library that does not exist and one owned by a customer
+         *     the caller has nothing to do with come back from the same branch, which is
+         *     what keeps the two indistinguishable on the wire.
          */
         patch: operations["patch_library_api_v1_libraries__library_id__patch"];
         trace?: never;
@@ -1744,6 +1745,11 @@ export interface components {
          *     ``app/domain/tenancy.py`` for why the two types exist.
          */
         LibraryDTO: {
+            /**
+             * Account Id
+             * @description The customer that owns it (§4.1). On the wire because the role below is held per ACCOUNT, so two libraries sharing one always agree.
+             */
+            account_id: string;
             /** Created At */
             created_at?: string | null;
             /** Id */
@@ -1755,7 +1761,7 @@ export interface components {
             label: string;
             /**
              * Role
-             * @description viewer | editor | admin (§4.2). Stored and reported; what it PERMITS is P3.2.
+             * @description viewer | editor | admin (§4.2) — the caller's role in the OWNING ACCOUNT, so it is the same for every library of one.
              */
             role: string;
         };

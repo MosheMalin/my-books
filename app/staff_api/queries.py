@@ -84,8 +84,9 @@ RANKED_SCAN_CAP = 5000
 #: change is a refusal to serve rather than a silently wrong dashboard.
 REQUIRED_COLUMNS = {
     "users": ("id", "display_name", "email", "created_at"),
-    "libraries": ("id", "label", "created_at"),
-    "memberships": ("user_id", "library_id", "role", "joined_at"),
+    "accounts": ("id", "label", "created_at"),
+    "libraries": ("id", "account_id", "label", "created_at"),
+    "memberships": ("user_id", "account_id", "role", "joined_at"),
     "books": ("id", "library_id", "title", "author", "added_at", "book_key",
               "search_text", "sort_author", "norm_title", "norm_author"),
     "copies": ("id", "book_id", "library_id", "status", "shelf_id", "lent_out"),
@@ -245,6 +246,7 @@ def _open(path: Path) -> Iterator[sqlite3.Connection]:
 @dataclass(frozen=True)
 class LibraryRow:
     id: str
+    account_id: str
     label: str
     created_at: str | None
     members: int
@@ -269,7 +271,7 @@ class LibraryRow:
 @dataclass(frozen=True)
 class MembershipRow:
     user_id: str
-    library_id: str
+    account_id: str
     role: str
     joined_at: str | None
 
@@ -499,18 +501,25 @@ class StaffQueries:
         disk = self.blobs.usage()
         with _open(self.path) as conn:
             base = conn.execute(
-                "SELECT id, label, created_at FROM libraries"
+                "SELECT id, account_id, label, created_at FROM libraries"
                 " ORDER BY label, COALESCE(created_at, ''), id"
             ).fetchall()
 
             def grouped(sql: str) -> dict[str, int]:
                 return {str(r[0]): int(r[1]) for r in conn.execute(sql).fetchall()}
 
+            # ⚠ People reach a library THROUGH its owning account since
+            # P3.7b, so both counts join `libraries` — a member count read
+            # straight off `memberships` would be a count per customer
+            # silently labelled per library, and the two differ exactly when
+            # an account owns more than one.
             members = grouped(
-                "SELECT library_id, COUNT(*) FROM memberships GROUP BY library_id")
+                "SELECT l.id, COUNT(*) FROM libraries l JOIN memberships m"
+                " ON m.account_id = l.account_id GROUP BY l.id")
             admins = grouped(
-                "SELECT library_id, COUNT(*) FROM memberships"
-                " WHERE role = 'admin' GROUP BY library_id")
+                "SELECT l.id, COUNT(*) FROM libraries l JOIN memberships m"
+                " ON m.account_id = l.account_id WHERE m.role = 'admin'"
+                " GROUP BY l.id")
             books = grouped(
                 "SELECT library_id, COUNT(*) FROM books GROUP BY library_id")
             copies = grouped(
@@ -549,7 +558,8 @@ class StaffQueries:
             lid = str(row["id"])
             status = by_status.get(lid, {})
             out.append(LibraryRow(
-                id=lid, label=row["label"] or "", created_at=row["created_at"],
+                id=lid, account_id=str(row["account_id"]),
+                label=row["label"] or "", created_at=row["created_at"],
                 members=members.get(lid, 0), admins=admins.get(lid, 0),
                 books=books.get(lid, 0), copies=copies.get(lid, 0),
                 auto=status.get(0, 0), approved=status.get(1, 0),
@@ -579,14 +589,14 @@ class StaffQueries:
                 " ORDER BY COALESCE(created_at, ''), id"
             ).fetchall()
             memberships = conn.execute(
-                "SELECT user_id, library_id, role, joined_at FROM memberships"
-                " ORDER BY user_id, library_id"
+                "SELECT user_id, account_id, role, joined_at FROM memberships"
+                " ORDER BY user_id, account_id"
             ).fetchall()
 
         held: dict[str, list[MembershipRow]] = {}
         for m in memberships:
             held.setdefault(str(m["user_id"]), []).append(MembershipRow(
-                user_id=str(m["user_id"]), library_id=str(m["library_id"]),
+                user_id=str(m["user_id"]), account_id=str(m["account_id"]),
                 role=str(m["role"]), joined_at=m["joined_at"],
             ))
         return tuple(
@@ -599,17 +609,24 @@ class StaffQueries:
         )
 
     def orphan_libraries(self) -> tuple[str, ...]:
-        """Libraries with no membership at all.
+        """Libraries whose OWNING ACCOUNT has no member at all.
 
-        Not a curiosity: `new_library` mints an admin membership in the same
-        call precisely so this set stays empty, and a row here means a library
-        nobody can administer or even see — exactly the state that rule
-        exists to prevent. A system console is the only place it is visible.
+        Not a curiosity: a library nobody can administer or even see is
+        exactly the state `new_account` exists to prevent, by minting the
+        admin membership in the same call that makes the account. A system
+        console is the only place it is visible.
+
+        ⚠ The question changed shape at P3.7b and kept its meaning. It used to
+        be "no membership names this library"; a membership now names an
+        account, so it is "no membership names this library's owner". Reading
+        it the old way is not possible any more (there is no `library_id` on
+        `memberships`), which is the good kind of breakage — the alternative
+        was a query that still ran and quietly answered a different question.
         """
         with _open(self.path) as conn:
             rows = conn.execute(
-                "SELECT id FROM libraries WHERE id NOT IN"
-                " (SELECT library_id FROM memberships)"
+                "SELECT id FROM libraries WHERE account_id NOT IN"
+                " (SELECT account_id FROM memberships)"
             ).fetchall()
         return tuple(str(r["id"]) for r in rows)
 

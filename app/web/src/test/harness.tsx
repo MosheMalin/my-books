@@ -93,8 +93,8 @@ export function fakeServer(initial: FakeBookRecord[] = []): FakeServer {
     failNextWith: null,
     holdWhen: null,
     openDuplicateIds: new Set(),
-    libraries: [{ id: 'lib-test', label: 'ספרייה', role: 'admin',
-                  created_at: null }],
+    libraries: [{ id: 'lib-test', account_id: 'acc-test', label: 'ספרייה',
+                  role: 'admin', created_at: null }],
     libraryHeaders: [],
     tenantsFor: (part) =>
       server.libraryHeaders.filter((_, i) => server.calls[i]?.includes(part)),
@@ -142,6 +142,9 @@ export function fakeServer(initial: FakeBookRecord[] = []): FakeServer {
       const { label } = JSON.parse(String(init?.body)) as { label: string }
       const made: LibraryDTO = {
         id: `lib-${server.libraries.length + 1}`,
+        // Under the caller's EXISTING account, and carrying the standing
+        // they already had — creating a library grants nothing (§4.1).
+        account_id: 'acc-test',
         label,
         role: 'admin',
         created_at: '2026-08-09T00:00:00+00:00',

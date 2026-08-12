@@ -1222,6 +1222,11 @@
       "LibraryDTO": {
         "description": "One library the caller is a member of, with the role they hold.\n\nA superset of :class:`LibraryRefDTO` rather than a replacement: the REF is\nwhat travels on every request, and the switcher needs the role too. See\n``app/domain/tenancy.py`` for why the two types exist.",
         "properties": {
+          "account_id": {
+            "description": "The customer that owns it (§4.1). On the wire because the role below is held per ACCOUNT, so two libraries sharing one always agree.",
+            "title": "Account Id",
+            "type": "string"
+          },
           "created_at": {
             "anyOf": [
               {
@@ -1243,13 +1248,14 @@
             "type": "string"
           },
           "role": {
-            "description": "viewer | editor | admin (§4.2). Stored and reported; what it PERMITS is P3.2.",
+            "description": "viewer | editor | admin (§4.2) — the caller's role in the OWNING ACCOUNT, so it is the same for every library of one.",
             "title": "Role",
             "type": "string"
           }
         },
         "required": [
           "id",
+          "account_id",
           "label",
           "role"
         ],
@@ -3156,7 +3162,7 @@
             "description": "Successful Response"
           }
         },
-        "summary": "Libraries this user belongs to",
+        "summary": "Libraries this user can reach",
         "tags": [
           "libraries"
         ]
@@ -3204,7 +3210,7 @@
     },
     "/api/v1/libraries/{library_id}": {
       "patch": {
-        "description": "404 for a library this user is not a member of — never 403 (§4.2).\n\nThe membership is looked up FIRST and the library second: asking the other\nway round would answer \"no such library\" for a real library and \"not\nfound\" for a fictional one from two different branches, and only one of\nthem stays honest when P3.2 adds roles.",
+        "description": "404 for a library this user is not a member of — never 403 (§4.2).\n\nResolved through the same :func:`app.api.deps.owner_membership` the door\nuses, so \"which account owns this\" is answered by one function for the\nwhole product. A library that does not exist and one owned by a customer\nthe caller has nothing to do with come back from the same branch, which is\nwhat keeps the two indistinguishable on the wire.",
         "operationId": "patch_library_api_v1_libraries__library_id__patch",
         "parameters": [
           {

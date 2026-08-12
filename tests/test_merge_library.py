@@ -39,6 +39,7 @@ from app.domain import (
     add_copy,
     append_claim,
     finish_read,
+    new_account,
     new_book,
     new_capture,
     new_library,
@@ -71,11 +72,16 @@ class _World:
         self.tenancy = SqliteTenancyStore(self.db)
         owner = User(id="usr-owner")
         self.tenancy.save_user(owner)
+        # Both libraries under ONE account: a merge across customers is
+        # refused outright (§4.1), so the only shape this tool has to handle
+        # is two collections of the same owner.
+        account, membership = new_account(id="acc-owner", owner=owner)
+        self.account = account
+        self.tenancy.save_account(account)
+        self.tenancy.save_membership(membership)
         for ref, label in ((DST, "משפחת מלין"), (SRC, "lib2")):
-            library, membership = new_library(
-                id=ref.id, label=label, owner=owner)
-            self.tenancy.save_library(library)
-            self.tenancy.save_membership(membership)
+            self.tenancy.save_library(
+                new_library(id=ref.id, label=label, account=account))
 
     def seed_source_scan(self):
         """One scan's worth in the source: a shelf, a photographed capture,
@@ -232,10 +238,13 @@ def test_the_source_tenant_is_retired_and_the_target_untouched():
     try:
         _merge(w)
         assert w.tenancy.get_library(SRC.id) is None
-        assert w.tenancy.membership("usr-owner", SRC.id) is None
         assert w.tenancy.get_library(DST.id) is not None
-        assert w.tenancy.membership("usr-owner", DST.id) is not None
-        listed = [lib.id for lib, _ in w.tenancy.list_libraries("usr-owner")]
+        # ⚠ The MEMBERSHIP survives, and that is the P3.7b change: it names
+        # the account, which still owns the target. Deleting it here would
+        # remove a person from a customer because one of its libraries was
+        # tidied away — the merge retires a collection, never a grant.
+        assert w.tenancy.membership("usr-owner", "acc-owner") is not None
+        listed = [lib.id for lib in w.tenancy.list_libraries("acc-owner")]
         assert listed == [DST.id], "the switcher would still offer the ghost"
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
