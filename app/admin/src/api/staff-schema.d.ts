@@ -308,6 +308,8 @@ export interface components {
         };
         /** LibraryDTO */
         LibraryDTO: {
+            /** Account Id */
+            account_id: string;
             /** Admins */
             admins: number;
             /** Approved */
@@ -353,10 +355,10 @@ export interface components {
         };
         /** MembershipDTO */
         MembershipDTO: {
+            /** Account Id */
+            account_id: string;
             /** Joined At */
             joined_at?: string | null;
-            /** Library Id */
-            library_id: string;
             /** Role */
             role: string;
         };

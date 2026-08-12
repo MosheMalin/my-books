@@ -107,8 +107,8 @@ app/
   domain/    entities + rules; pure, no I/O. Imports booksnap.catalog and
              NOTHING else from the core (normalize() must not fork).
   ports/     Protocols: stores, blobs, reader, jobs, decisions, duplicates,
-             tenancy (the ONE user-scoped store — it answers which
-             libraries exist)
+             tenancy (the ONE account-scoped store — it answers who owns
+             which libraries, and whether you belong to them)
   adapters/  sqlite_store (WAL, conn per op), disk_blobs, memory_store,
              migrations (PRAGMA user_version), legacy_import,
              booksnap_reader, queued_jobs, merge_library
@@ -225,14 +225,18 @@ different world — the product never reads it.
   Rooms/sites are Places (pillar 6), never Libraries — splitting one
   collection breaks search/dedup/§5.4 silently. Switcher renders as a label
   until a second library exists.
-- ⚠ **The boundary is MOVING: the tenant becomes the ACCOUNT** (owner,
-  2026-08-11, VISION §4.1's revision) — a Library becomes a logical partition
-  inside one, `library_id` stays the one enforced physical scope, and the
-  account is checked at the door in `deps.current_library`. Landing item by
-  item as P3.7a–f (`planning/TENANCY_BOUNDARY_PLAN.md`). **P3.7a landed the
-  rename only**: the person is now a `User` (`Account` is being freed for the
-  customer, which P3.7b introduces), and until then a Library IS still the
-  tenant everywhere in the code.
+- **Tenant = the ACCOUNT (the customer)** (owner, 2026-08-11, VISION §4.1's
+  revision; landed P3.7b). A Library is a logical partition inside one, a
+  person is a `User`, and a `Membership` is User × Account × Role — so a
+  role covers every library that account owns. `library_id` is still the
+  ONE enforced physical scope on every row (defence in depth INSIDE the
+  boundary, never a second one); the account is checked at the door, by
+  `deps.owner_membership`, which both `current_library` and `policy._role`
+  call. Creating a library grants nobody anything — it inherits the
+  account's standing, and is admin-only because it writes into a customer
+  other people belong to. Same book in two libraries of one account = two
+  Books; merging them is a future operation, and `merge_library` REFUSES
+  across accounts. Still landing: P3.7c–f (`planning/TENANCY_BOUNDARY_PLAN.md`).
 - **Images**: content-addressed (SHA-256), EXIF applied at STORE time,
   untouched bytes when no correction needed; variants carry their own
   extension; blob keys validated, never joined. Real phone JPEGs are MPO.
@@ -309,10 +313,13 @@ different world — the product never reads it.
 - One correlated subquery per row over a JSON column is a DoS on an
   unauthenticated service: `/images` measured 13.6s for one `limit=200`.
   Grouped CTE pre-pass, 14ms.
-- The console's **"account" is the TENANT** (a `Library` record) while the
-  wire and the domain keep `library` — the owner's word for a customer, with
-  the id shown labelled so the mapping is visible. `accounts` on the wire is
-  the PEOPLE count. See planning/ADMIN_CONSOLE_PLAN.md revision 4.
+- The console still renders a LIBRARY row where it says "account", and the
+  domain no longer agrees: since P3.7b an Account is a real record that a
+  library belongs to. The gloss (revision 4 of ADMIN_CONSOLE_PLAN) was
+  right when a library WAS the tenant and is now just behind — P3.7e is
+  where the screens catch up. On the staff wire today: `/users` is people,
+  `LibraryDTO.account_id` names the owner, and `OverviewDTO.users` is the
+  people count.
 - `app/ui` is consumed as source: each client's `postinstall` installs it;
   `check-installed.mjs` + `install.test.ts` guard the `npm ci
   --ignore-scripts` path. One `npm install --prefix <client>` per client.

@@ -47,13 +47,25 @@ def _dry_run(db: Path, src: str, dst: str) -> int:
     conn = sqlite3.connect(str(db))
     conn.row_factory = sqlite3.Row
     try:
+        owners = {}
         for lib, name in ((src, "source"), (dst, "target")):
-            row = conn.execute("SELECT label FROM libraries WHERE id = ?",
-                               (lib,)).fetchone()
+            row = conn.execute(
+                "SELECT account_id, label FROM libraries WHERE id = ?",
+                (lib,)).fetchone()
             if row is None:
                 print(f"no such {name} library: {lib}")
                 return 2
-            print(f"{name}: {lib}  ({row['label'] or 'unnamed'})")
+            owners[name] = str(row["account_id"])
+            print(f"{name}: {lib}  ({row['label'] or 'unnamed'})"
+                  f"  account {row['account_id']}")
+        # Said here as well as in the adapter so a dry run answers the same
+        # question the real one would, rather than printing a plan that the
+        # execute step then refuses (§4.1: a collection does not change owner).
+        if owners["source"] != owners["target"]:
+            print(f"\nREFUSED: different accounts "
+                  f"({owners['source']} vs {owners['target']}) — merging would "
+                  f"move a collection between customers")
+            return 2
         for table in ("books", "shelves", "captures", "reads",
                       "decisions", "duplicate_questions"):
             n = conn.execute(

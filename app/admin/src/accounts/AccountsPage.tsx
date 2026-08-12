@@ -178,9 +178,9 @@ export function AccountsPage({ openId }: { openId: string | undefined }) {
   /** Who administers this account. Derived from the account list the provider
    *  already holds — the server has no `admin_names` field and does not need
    *  one; deriving it here keeps membership described in exactly one place. */
-  const adminsOf = (libraryId: string) =>
+  const adminsOf = (accountId: string) =>
     users.filter((a) => a.memberships.some(
-      (m) => m.library_id === libraryId && m.role === 'admin'))
+      (m) => m.account_id === accountId && m.role === 'admin'))
 
   // ⚠ The mirror of `orphan_libraries`. A tenant-shaped list cannot show a
   // person who belongs to no tenant, and the Users tab was the only place they
@@ -223,7 +223,9 @@ export function AccountsPage({ openId }: { openId: string | undefined }) {
               {libraries.map((lib) => {
                 const writable = canWrite(lib.id)
                 const own = mineById.get(lib.id)
-                const admins = adminsOf(lib.id)
+                // By the OWNING account, not the library: people join a
+                // customer, and two libraries of one share every member.
+                const admins = adminsOf(lib.account_id)
                 return (
                   <tr key={lib.id}>
                     <td className="rtl-safe">

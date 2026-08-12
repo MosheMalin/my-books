@@ -29,6 +29,7 @@ Populate it once with::
 """
 from __future__ import annotations
 
+import hashlib
 import os
 from dataclasses import replace
 from pathlib import Path
@@ -46,7 +47,7 @@ from app.adapters.sqlite_store import (
     SqliteTenancyStore,
 )
 from app.api.app import create_app
-from app.domain import Library, Membership, Role, User
+from app.domain import Library, Membership, Role, User, new_account
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WEB_DIST = REPO_ROOT / "app" / "web" / "dist"
@@ -124,21 +125,73 @@ def _bootstrap_dev_user(tenancy: SqliteTenancyStore, principal) -> None:
     Idempotent, and it never renames a library the owner has named: only a
     blank label is filled in. P4.1 replaces this whole function with a real
     sign-up.
+
+    ⚠ Since P3.7b it mints the ACCOUNT too, because that is now the thing a
+    membership names. On the owner's own database that branch never fires —
+    schema v14 derived an account from the existing membership graph — so what
+    it really covers is a database with no tenancy rows at all: a fresh clone,
+    a test, a `work/` someone deleted. The id is derived from the library id
+    rather than random for the same reason v14's is: running this twice
+    against the same file must not produce two customers.
+
+    ⚠⚠ **It grants a membership ONLY in the account it just created, and this
+    is the sharp edge of the whole item.** The first version also wrote an
+    ADMIN row whenever the principal had none for an EXISTING library's owner
+    — which, pointed at a library belonging to somebody else's account, made
+    the dev principal an admin of that whole customer, including collections
+    it was never told about. P3.7b's security review demonstrated it: start
+    the server as `bob` on `lib-home` and bob ends up admin of `acc-family`,
+    reaching `lib-shop` too.
+
+    That is worse than the in-memory fallback in ``app/api/policy.py`` it
+    resembles, and the difference is what makes it worth a paragraph: the
+    fallback lives per-request and DELETING the line at P4.1 removes the
+    grant. This wrote a ROW. A login landing on that database would find it
+    already true, with nothing left to delete. A pre-existing account's member
+    list is not the composition root's to edit — if a migrated library's owner
+    has no members, that is an orphan for the operator console to show, not
+    something to adopt silently.
     """
     user = tenancy.get_user(principal.id)
     if user is None:
-        tenancy.save_user(User(id=principal.id))
+        user = User(id=principal.id)
+        tenancy.save_user(user)
     ref = principal.library
     library = tenancy.get_library(ref.id)
     if library is None:
-        tenancy.save_library(Library(id=ref.id, label=ref.label))
+        # Nothing here yet: mint the customer, the admin row and the library
+        # together. This is the ONLY branch that writes a membership — see
+        # the ⚠ below for the one that used to and must not.
+        account_id = _dev_account_id(ref.id)
+        if tenancy.get_account(account_id) is None:
+            account, first = new_account(id=account_id, owner=user)
+            tenancy.save_account(account)
+            tenancy.save_membership(first)
+        tenancy.save_library(
+            Library(id=ref.id, account_id=account_id, label=ref.label)
+        )
     elif not library.label and ref.label:
         tenancy.save_library(replace(library, label=ref.label))
-    if tenancy.membership(principal.id, ref.id) is None:
-        # ADMIN: this is the household's own owner, and §4.2 puts every
-        # library-level capability behind that role. P3.2 gives the role
-        # meaning; P3.1 only has to store the true one.
-        tenancy.save_membership(Membership(principal.id, ref.id, Role.ADMIN))
+
+
+def _dev_account_id(library_id: str) -> str:
+    """Derived, never random — see :func:`_bootstrap_dev_user`.
+
+    Mirrors the SHAPE of ``app.adapters.migrations._account_id`` without
+    importing it, deliberately: a migration's ids are frozen history the
+    moment they are written to somebody's file, and a composition root that
+    called into that function would make a future edit there silently rewrite
+    what this one answers.
+
+    ⚠ They do NOT agree by value, and nothing needs them to: the migration
+    length-prefixes its seed and this does not. The two never run on the
+    same file — v14 backfills a database that already has libraries, and
+    this fires only when there are none — so a bootstrapped database and a
+    migrated one simply get different account ids, and neither is wrong.
+    """
+    return hashlib.blake2s(
+        library_id.encode("utf-8"), digest_size=16
+    ).hexdigest()
 
 
 def build() -> object:

@@ -47,6 +47,7 @@ from app.adapters.memory_store import (
 from app.api import deps
 from app.api.app import bind_ports, create_app
 from app.domain import (
+    Account,
     Decision,
     DecisionKind,
     Library,
@@ -60,6 +61,12 @@ from app.domain import (
 )
 from app.ports.reader import ReadAlternative, ReadClaim
 
+TEST_ACCOUNT = "acc-test"
+# ⚠ "zzz" so the account order and the LABEL order disagree. With
+# "acc-other" they coincided, and `GET /libraries`' own re-sort — the one
+# whose comment says it exists so the switcher does not reshuffle — could
+# be deleted with the whole ring green (P3.7b's quality review).
+OTHER_ACCOUNT = "acc-zzz"
 TEST_LIBRARY = LibraryRef(id="lib-test", label="Test library")
 
 
@@ -106,10 +113,11 @@ def _tenancy(principal: StubPrincipal) -> MemoryTenancyStore:
     """
     store = MemoryTenancyStore()
     store.save_user(User(id=principal.id))
+    store.save_account(Account(id=TEST_ACCOUNT))
+    store.save_membership(Membership(principal.id, TEST_ACCOUNT, Role.ADMIN))
     store.save_library(Library(id=principal.library.id,
+                               account_id=TEST_ACCOUNT,
                                label=principal.library.label))
-    store.save_membership(
-        Membership(principal.id, principal.library.id, Role.ADMIN))
     return store
 
 
@@ -316,11 +324,23 @@ def test_meta_follows_the_principal_not_a_global():
 
 def _second_library(principal: StubPrincipal, tenancy: MemoryTenancyStore,
                     *, member: bool = True, library_id: str = "lib-2",
-                    label: str = "Office") -> None:
-    tenancy.save_library(Library(id=library_id, label=label,
+                    label: str = "Office",
+                    account_id: str = OTHER_ACCOUNT) -> None:
+    """A library under a SECOND account, member or not.
+
+    ⚠ A second account, not a second library of the caller's own: since
+    P3.7b a role is held per account, so a library added under TEST_ACCOUNT
+    is one the caller already reaches with the role they already have — which
+    would make `member=False` unable to express "not yours" at all.
+    """
+    if tenancy.get_account(account_id) is None:
+        tenancy.save_account(Account(id=account_id))
+    tenancy.save_library(Library(id=library_id, account_id=account_id,
+                                 label=label,
                                  created_at="2026-08-01T00:00:00+00:00"))
     if member:
-        tenancy.save_membership(Membership(principal.id, library_id, Role.EDITOR))
+        tenancy.save_membership(
+            Membership(principal.id, account_id, Role.EDITOR))
 
 
 def test_the_request_chooses_the_library_not_the_server():
@@ -383,13 +403,21 @@ def test_the_switcher_lists_this_users_libraries_with_their_roles():
     p = StubPrincipal()
     tenancy = _tenancy(p)
     _second_library(p, tenancy)
+    # A THIRD customer, so "not a member" is expressible: lib-2's account
+    # already has this caller in it.
     _second_library(p, tenancy, member=False, library_id="lib-3",
-                    label="Someone else's")
+                    label="Someone else's", account_id="acc-third")
     with TestClient(_app(p, tenancy=tenancy)) as client:
         rows = client.get(f"{API_PREFIX}/libraries").json()
     assert [r["id"] for r in rows] == ["lib-2", "lib-test"]  # by label
     assert {r["id"]: r["role"] for r in rows} == \
         {"lib-2": "editor", "lib-test": "admin"}
+    # ⚠ The role travels per ACCOUNT, so these two rows carry two
+    # different owners. lib-3 is absent because its customer has no member
+    # here — the switcher lists what you can reach, and reachability is
+    # now ownership.
+    assert {r["id"]: r["account_id"] for r in rows} == \
+        {"lib-2": OTHER_ACCOUNT, "lib-test": TEST_ACCOUNT}
 
 
 def test_creating_a_library_makes_the_caller_its_admin_and_it_is_usable_at_once():
@@ -407,8 +435,155 @@ def test_creating_a_library_makes_the_caller_its_admin_and_it_is_usable_at_once(
                               headers={deps.LIBRARY_HEADER: new_id})
     assert resolved.status_code == 200, resolved.text
     assert resolved.json()["library"]["label"] == "משפחת מלין"
-    assert tenancy.membership(p.id, new_id).role is Role.ADMIN
+    # ⚠ NO membership is minted for the library, and that is the P3.7b
+    # rule: it lands under the caller's existing account and inherits the
+    # standing they already had. A grant per library is what was deleted.
+    assert tenancy.membership(p.id, new_id) is None
+    row = tenancy.get_library(new_id)
+    assert row is not None and row.account_id == TEST_ACCOUNT
+    assert tenancy.membership(p.id, TEST_ACCOUNT).role is Role.ADMIN
 
+
+
+def test_only_an_admin_adds_a_library_to_an_account_others_belong_to():
+    """§4.2 over the route that stopped being harmless when the boundary moved.
+
+    Before P3.7b this minted a brand-new tenant with the caller as its admin,
+    so leaving it open touched nobody. It now writes into an EXISTING customer:
+    every member's switcher grows a row, and there is no DELETE to undo it. A
+    viewer appending libraries to the account that pays for them is vandalism
+    the product cannot reverse (P3.7b's data-integrity review reproduced it).
+    """
+    for role in (Role.VIEWER, Role.EDITOR):
+        # The role is held on the account that owns the caller's OWN
+        # default library — the one `_account()` resolves — and somebody
+        # else administers it. This route takes no library header: it is
+        # on the user axis, so the customer is chosen for it.
+        p = StubPrincipal()
+        tenancy = MemoryTenancyStore()
+        tenancy.save_user(User(id=p.id))
+        tenancy.save_user(User(id="usr-admin"))
+        tenancy.save_account(Account(id=TEST_ACCOUNT))
+        tenancy.save_membership(
+            Membership("usr-admin", TEST_ACCOUNT, Role.ADMIN))
+        tenancy.save_membership(Membership(p.id, TEST_ACCOUNT, role))
+        tenancy.save_library(Library(id=p.library.id,
+                                     account_id=TEST_ACCOUNT,
+                                     label=p.library.label))
+        with TestClient(_app(principal=p, tenancy=tenancy)) as c:
+            r = c.post(f"{API_PREFIX}/libraries", json={"label": "שלי"})
+            assert r.status_code == 403, (role, r.status_code, r.text)
+        # …and nothing was appended to the customer paying for it.
+        assert [lib.id for lib in tenancy.list_libraries(TEST_ACCOUNT)] == [
+            p.library.id
+        ]
+
+
+def test_a_library_goes_under_an_account_you_belong_to_never_your_defaults():
+    """`_account`'s first branch reads the principal's OWN default library and
+    uses its owner — which is only legitimate while the caller is a member of
+    that owner. A principal whose default library belongs to a customer they
+    have nothing to do with must NOT get a library written into it; they get a
+    fresh account of their own instead.
+
+    Dev-trusted principals make this unreachable today. It is pinned because
+    it is the one line that decides whether `principal.library` can be used as
+    a lever into somebody else's customer (P3.7b's data-integrity review)."""
+    p = StubPrincipal()
+    tenancy = MemoryTenancyStore()
+    tenancy.save_user(User(id=p.id))
+    tenancy.save_account(Account(id="acc-foreign"))
+    tenancy.save_library(Library(id=p.library.id, account_id="acc-foreign",
+                                 label=p.library.label))
+    with TestClient(_app(principal=p, tenancy=tenancy)) as c:
+        made = c.post(f"{API_PREFIX}/libraries", json={"label": "שלי"})
+    assert made.status_code == 201, made.text
+    assert made.json()["account_id"] != "acc-foreign"
+    assert [lib.id for lib in tenancy.list_libraries("acc-foreign")] == \
+        [p.library.id], "a library was written into a foreign customer"
+
+
+def test_a_missing_library_and_a_foreign_one_cost_the_same_lookups():
+    """404-never-403 on the TIMING axis, which the wire alone cannot carry.
+
+    Every reply is byte-identical, so the only thing left to distinguish "no
+    such library" from "somebody else's library" is how long the answer took.
+    The obvious resolver — return early when the library is missing — costs
+    one store call for a fictional id and two for a real one belonging to
+    another customer, and the sqlite adapter opens a connection per operation.
+    P3.7b's security review measured that as a clean 2×: 20 foreign ids and 20
+    invented ones, interleaved, 200 samples each, and every single one
+    classified correctly by response time with no overlap. Sweeping ids then
+    enumerates another account's libraries through a door that says the same
+    thing to all of them.
+
+    Counted rather than timed, deliberately: a wall-clock assertion on a
+    4-core laptop under an antivirus is a flake generator, and the count is
+    the property — the timing was only its symptom."""
+    calls: list[str] = []
+
+    class Counting:
+        def __init__(self, inner):
+            self._inner = inner
+
+        def __getattr__(self, name):
+            attr = getattr(self._inner, name)
+            if name not in ("get_library", "membership", "get_account"):
+                return attr
+
+            def counted(*args, **kwargs):
+                calls.append(name)
+                return attr(*args, **kwargs)
+            return counted
+
+    p = StubPrincipal()
+    inner = _tenancy(p)
+    inner.save_account(Account(id=OTHER_ACCOUNT))
+    inner.save_library(Library(id="lib-theirs", account_id=OTHER_ACCOUNT,
+                               label="של מישהו אחר"))
+
+    shapes = {}
+    for name, library_id in (("foreign", "lib-theirs"),
+                             ("fictional", "lib-invented")):
+        calls.clear()
+        with TestClient(_app(principal=p, tenancy=Counting(inner))) as c:
+            r = c.get(f"{API_PREFIX}/meta",
+                      headers={deps.LIBRARY_HEADER: library_id})
+        assert r.status_code == 404 and r.json() == {"detail": "no such library"}
+        shapes[name] = list(calls)
+
+    assert shapes["foreign"] == shapes["fictional"], (
+        "a library that exists but is not yours takes a different number of "
+        f"store lookups than one that does not exist: {shapes}"
+    )
+
+
+def test_a_library_goes_under_the_account_you_are_operating_as():
+    """`_account`'s first branch, pinned where it can actually be wrong.
+
+    A user may belong to several customers (P4.3's invites), and only one of
+    them is the one they are demonstrably operating as: the owner of the
+    library their own principal resolves to. Picking "the first account we
+    happen to list" is a cross-tenant write the moment a second membership
+    exists — and it survived the whole ring until this case (P3.7b's security
+    review, mutation M6)."""
+    p = StubPrincipal()
+    tenancy = MemoryTenancyStore()
+    tenancy.save_user(User(id=p.id))
+    # Two accounts, ADMIN of both. "acc-aaa" sorts first; the principal's own
+    # library belongs to the OTHER one, which is the answer.
+    for account_id in ("acc-aaa", TEST_ACCOUNT):
+        tenancy.save_account(Account(id=account_id))
+        tenancy.save_membership(Membership(p.id, account_id, Role.ADMIN))
+    tenancy.save_library(Library(id=p.library.id, account_id=TEST_ACCOUNT,
+                                 label=p.library.label))
+    with TestClient(_app(principal=p, tenancy=tenancy)) as c:
+        made = c.post(f"{API_PREFIX}/libraries", json={"label": "שנייה"})
+    assert made.status_code == 201, made.text
+    assert made.json()["account_id"] == TEST_ACCOUNT, (
+        "a library landed in a customer the caller was not operating as"
+    )
+    assert tenancy.list_libraries("acc-aaa") == ()
 
 def test_a_library_created_with_a_blank_name_is_refused():
     """§4.3, and the deliberate asymmetry with a shelf (whose label is
@@ -965,8 +1140,13 @@ def _viewer_of_second_library(role: Role = Role.VIEWER):
     because the dev-trusted own-library shortcut cannot apply there."""
     p = StubPrincipal()
     tenancy = _tenancy(p)
-    tenancy.save_library(Library(id="lib-2", label="ההורים"))
-    tenancy.save_membership(Membership(p.id, "lib-2", role))
+    # A SECOND account, not a second library of the first: a role is held per
+    # account since P3.7b, so lib-2 under TEST_ACCOUNT would inherit ADMIN and
+    # the matrix would never be exercised.
+    tenancy.save_account(Account(id=OTHER_ACCOUNT))
+    tenancy.save_membership(Membership(p.id, OTHER_ACCOUNT, role))
+    tenancy.save_library(Library(id="lib-2", account_id=OTHER_ACCOUNT,
+                                 label="ההורים"))
     return p, tenancy
 
 
@@ -1015,7 +1195,7 @@ def test_an_editor_captures_but_only_an_admin_deletes_photos():
                          headers=h).status_code == 200
             r = c.delete(f"{API_PREFIX}/images/{key}", headers=h)
             assert r.status_code == 403, "an editor deleted a photo (§4.2)"
-            tenancy.save_membership(Membership(p.id, "lib-2", Role.ADMIN))
+            tenancy.save_membership(Membership(p.id, OTHER_ACCOUNT, Role.ADMIN))
             r = c.delete(f"{API_PREFIX}/images/{key}", headers=h)
             assert r.status_code == 204
 
@@ -1025,11 +1205,12 @@ def test_a_membership_row_on_your_own_library_outranks_the_dev_trusted_fallback(
     when no row exists for the principal's own library. Reordering those two
     branches would silently grant ADMIN to anyone whose own-library row says
     less — invisible today (the bootstrap writes ADMIN) and a landmine the
-    day P4.3 lets an admin demote someone. Pinned by planting a VIEWER row on
-    the principal's OWN library and watching a write refuse."""
+    day P4.3 lets an admin demote someone. Pinned by planting a VIEWER row
+    on the ACCOUNT that owns the principal's own library and watching a
+    write refuse."""
     p = StubPrincipal()
     tenancy = _tenancy(p)   # seeds ADMIN…
-    tenancy.save_membership(Membership(p.id, p.library.id, Role.VIEWER))
+    tenancy.save_membership(Membership(p.id, TEST_ACCOUNT, Role.VIEWER))
     with TestClient(_app(principal=p, tenancy=tenancy)) as c:
         r = c.post(f"{API_PREFIX}/books", json={"title": "ס", "author": ""})
         assert r.status_code == 403, (
@@ -1045,7 +1226,7 @@ def test_renaming_a_library_is_admin_only():
     with TestClient(_app(principal=p, tenancy=tenancy)) as c:
         r = c.patch(f"{API_PREFIX}/libraries/lib-2", json={"label": "חדש"})
         assert r.status_code == 403
-        tenancy.save_membership(Membership(p.id, "lib-2", Role.ADMIN))
+        tenancy.save_membership(Membership(p.id, OTHER_ACCOUNT, Role.ADMIN))
         r = c.patch(f"{API_PREFIX}/libraries/lib-2", json={"label": "חדש"})
         assert r.status_code == 200
         assert r.json()["label"] == "חדש"
@@ -1058,7 +1239,10 @@ def test_a_foreign_library_is_still_404_never_403_now_that_policy_exists():
     policy check must never run for it."""
     p = StubPrincipal()
     tenancy = _tenancy(p)
-    tenancy.save_library(Library(id="lib-other", label="זרים"))  # exists, no membership
+    # Exists, owned by a customer the caller has nothing to do with.
+    tenancy.save_account(Account(id=OTHER_ACCOUNT))
+    tenancy.save_library(Library(id="lib-other", account_id=OTHER_ACCOUNT,
+                                 label="זרים"))
     with TestClient(_app(principal=p, tenancy=tenancy)) as c:
         for lib in ("lib-other", "lib-fictional"):
             r = c.post(f"{API_PREFIX}/books", json={"title": "ס", "author": ""},
@@ -1559,8 +1743,8 @@ def test_two_concurrent_reads_in_two_libraries_do_not_observe_each_other():
 
     p = StubPrincipal()
     tenancy = _tenancy(p)
-    tenancy.save_library(Library(id="lib-2", label="שניה"))
-    tenancy.save_membership(Membership(p.id, "lib-2", Role.ADMIN))
+    tenancy.save_library(Library(id="lib-2", account_id=TEST_ACCOUNT,
+                                 label="שניה"))
 
     release = {TEST_LIBRARY.id: threading.Event(), "lib-2": threading.Event()}
 
@@ -1677,8 +1861,8 @@ def test_the_run_rate_cap_blocks_a_retry_loop_and_only_this_library():
 
     p = StubPrincipal()
     tenancy = _tenancy(p)
-    tenancy.save_library(Library(id="lib-2", label="שניה"))
-    tenancy.save_membership(Membership(p.id, "lib-2", Role.ADMIN))
+    tenancy.save_library(Library(id="lib-2", account_id=TEST_ACCOUNT,
+                                 label="שניה"))
     reads_store = MemoryReadStore()
     with _blobs() as blobs:
         c = TestClient(_app(principal=p, tenancy=tenancy, blobs=blobs,

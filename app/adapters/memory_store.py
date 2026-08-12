@@ -13,6 +13,7 @@ frozen, so there is nothing to defensively copy.
 from __future__ import annotations
 
 from app.domain import (
+    Account,
     Book,
     Capture,
     Decision,
@@ -37,7 +38,7 @@ from app.ports.store import (
     UnknownShelf,
     WrongLibrary,
 )
-from app.ports.tenancy import UnknownLibrary, UnknownUser
+from app.ports.tenancy import UnknownAccount, UnknownUser
 
 
 class MemoryBookStore:
@@ -381,11 +382,12 @@ class MemoryTenancyStore:
 
     ⚠ The one memory store with no ``_by_library`` dict — see the port's own
     ⚠⚠: this is the store that ANSWERS which libraries exist, so scoping it by
-    a library would be circular. Its narrowing key is the user.
+    a library would be circular. Its narrowing key is the account.
     """
 
     def __init__(self) -> None:
         self._users: dict[str, User] = {}
+        self._accounts: dict[str, Account] = {}
         self._libraries: dict[str, Library] = {}
         self._members: dict[tuple[str, str], Membership] = {}
 
@@ -397,39 +399,55 @@ class MemoryTenancyStore:
     def get_user(self, user_id: str) -> User | None:
         return self._users.get(user_id)
 
+    # --- accounts --------------------------------------------------------
+
+    def save_account(self, account: Account) -> None:
+        self._accounts[account.id] = account
+
+    def get_account(self, account_id: str) -> Account | None:
+        return self._accounts.get(account_id)
+
     # --- libraries -------------------------------------------------------
 
     def save_library(self, library: Library) -> None:
+        if library.account_id not in self._accounts:
+            raise UnknownAccount(f"no account {library.account_id!r}")
         self._libraries[library.id] = library
 
     def get_library(self, library_id: str) -> Library | None:
         return self._libraries.get(library_id)
+
+    def list_libraries(self, account_id: str) -> tuple[Library, ...]:
+        rows = [lib for lib in self._libraries.values()
+                if lib.account_id == account_id]
+        rows.sort(key=lambda lib: lib.sort_key)
+        return tuple(rows)
 
     # --- memberships -----------------------------------------------------
 
     def save_membership(self, membership: Membership) -> None:
         if membership.user_id not in self._users:
             raise UnknownUser(f"no user {membership.user_id!r}")
-        if membership.library_id not in self._libraries:
-            raise UnknownLibrary(f"no library {membership.library_id!r}")
-        self._members[(membership.user_id, membership.library_id)] = membership
+        if membership.account_id not in self._accounts:
+            raise UnknownAccount(f"no account {membership.account_id!r}")
+        self._members[(membership.user_id, membership.account_id)] = membership
 
-    def membership(self, user_id: str, library_id: str) -> Membership | None:
-        return self._members.get((user_id, library_id))
+    def membership(self, user_id: str, account_id: str) -> Membership | None:
+        return self._members.get((user_id, account_id))
 
-    def delete_membership(self, user_id: str, library_id: str) -> bool:
-        return self._members.pop((user_id, library_id), None) is not None
+    def delete_membership(self, user_id: str, account_id: str) -> bool:
+        return self._members.pop((user_id, account_id), None) is not None
 
-    def list_libraries(
+    def list_accounts(
         self, user_id: str,
-    ) -> tuple[tuple[Library, Membership], ...]:
-        rows = [(self._libraries[m.library_id], m)
-                for (usr, _lib), m in self._members.items() if usr == user_id]
-        rows.sort(key=lambda pair: pair[0].sort_key)
+    ) -> tuple[tuple[Account, Membership], ...]:
+        rows = [(self._accounts[m.account_id], m)
+                for (usr, _acc), m in self._members.items() if usr == user_id]
+        rows.sort(key=lambda pair: pair[0].id)
         return tuple(rows)
 
-    def list_members(self, library_id: str) -> tuple[Membership, ...]:
-        rows = [m for m in self._members.values() if m.library_id == library_id]
+    def list_members(self, account_id: str) -> tuple[Membership, ...]:
+        rows = [m for m in self._members.values() if m.account_id == account_id]
         rows.sort(key=lambda m: (m.role is not Role.ADMIN, m.user_id))
         return tuple(rows)
 

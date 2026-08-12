@@ -29,6 +29,7 @@ from typing import Iterator
 
 from app.adapters.migrations import migrate
 from app.domain import (
+    Account,
     Alternative,
     Book,
     Capture,
@@ -64,7 +65,7 @@ from app.ports.store import (
     UnknownShelf,
     WrongLibrary,
 )
-from app.ports.tenancy import UnknownLibrary, UnknownUser
+from app.ports.tenancy import UnknownAccount, UnknownUser
 
 _ORDER_BY = {
     BookSort.TITLE: "norm_title {dir}, id {dir}",
@@ -774,16 +775,42 @@ class SqliteTenancyStore(_SqliteStore):
                                (user_id,)).fetchone()
         return _load_user(row) if row else None
 
+    # --- accounts --------------------------------------------------------
+
+    def save_account(self, account: Account) -> None:
+        with self._connect() as conn:
+            with conn:
+                conn.execute(
+                    "INSERT INTO accounts (id, label, created_at)"
+                    " VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET"
+                    " label=excluded.label, created_at=excluded.created_at",
+                    (account.id, account.label, account.created_at),
+                )
+
+    def get_account(self, account_id: str) -> Account | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM accounts WHERE id = ?",
+                               (account_id,)).fetchone()
+        return _load_account(row) if row else None
+
     # --- libraries -------------------------------------------------------
 
     def save_library(self, library: Library) -> None:
         with self._connect() as conn:
+            # Same argument as `save_membership`'s probe below: the FK would
+            # raise sqlite3.IntegrityError, a driver detail the port must not
+            # leak, and the memory store has no FKs at all.
+            if conn.execute("SELECT 1 FROM accounts WHERE id = ?",
+                            (library.account_id,)).fetchone() is None:
+                raise UnknownAccount(f"no account {library.account_id!r}")
             with conn:
                 conn.execute(
-                    "INSERT INTO libraries (id, label, created_at) VALUES (?,?,?)"
-                    " ON CONFLICT(id) DO UPDATE SET label=excluded.label,"
+                    "INSERT INTO libraries (id, account_id, label, created_at)"
+                    " VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET"
+                    " account_id=excluded.account_id, label=excluded.label,"
                     " created_at=excluded.created_at",
-                    (library.id, library.label, library.created_at),
+                    (library.id, library.account_id, library.label,
+                     library.created_at),
                 )
 
     def get_library(self, library_id: str) -> Library | None:
@@ -791,6 +818,19 @@ class SqliteTenancyStore(_SqliteStore):
             row = conn.execute("SELECT * FROM libraries WHERE id = ?",
                                (library_id,)).fetchone()
         return _load_library(row) if row else None
+
+    def list_libraries(self, account_id: str) -> tuple[Library, ...]:
+        # ORDER BY mirrors `Library.sort_key`: named alphabetically, then the
+        # v12-backfilled nameless ones oldest-first, id last so it is total.
+        # COALESCE because created_at is NULL on exactly those rows, and NULL
+        # sorts before '' in SQLite while Python's key makes them equal.
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM libraries WHERE account_id = ?"
+                " ORDER BY TRIM(label), COALESCE(created_at, ''), id",
+                (account_id,),
+            ).fetchall()
+        return tuple(_load_library(r) for r in rows)
 
     # --- memberships -----------------------------------------------------
 
@@ -804,64 +844,59 @@ class SqliteTenancyStore(_SqliteStore):
             if conn.execute("SELECT 1 FROM users WHERE id = ?",
                             (membership.user_id,)).fetchone() is None:
                 raise UnknownUser(f"no user {membership.user_id!r}")
-            if conn.execute("SELECT 1 FROM libraries WHERE id = ?",
-                            (membership.library_id,)).fetchone() is None:
-                raise UnknownLibrary(f"no library {membership.library_id!r}")
+            if conn.execute("SELECT 1 FROM accounts WHERE id = ?",
+                            (membership.account_id,)).fetchone() is None:
+                raise UnknownAccount(f"no account {membership.account_id!r}")
             with conn:
                 conn.execute(
-                    "INSERT INTO memberships (user_id, library_id, role,"
+                    "INSERT INTO memberships (user_id, account_id, role,"
                     " joined_at) VALUES (?,?,?,?)"
-                    " ON CONFLICT(user_id, library_id) DO UPDATE SET"
+                    " ON CONFLICT(user_id, account_id) DO UPDATE SET"
                     " role=excluded.role, joined_at=excluded.joined_at",
-                    (membership.user_id, membership.library_id,
+                    (membership.user_id, membership.account_id,
                      membership.role.value, membership.joined_at),
                 )
 
-    def membership(self, user_id: str, library_id: str) -> Membership | None:
+    def membership(self, user_id: str, account_id: str) -> Membership | None:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM memberships WHERE user_id = ? AND library_id = ?",
-                (user_id, library_id),
+                "SELECT * FROM memberships WHERE user_id = ? AND account_id = ?",
+                (user_id, account_id),
             ).fetchone()
         return _load_membership(row) if row else None
 
-    def delete_membership(self, user_id: str, library_id: str) -> bool:
+    def delete_membership(self, user_id: str, account_id: str) -> bool:
         with self._connect() as conn:
             with conn:
                 cur = conn.execute(
-                    "DELETE FROM memberships WHERE user_id = ? AND library_id = ?",
-                    (user_id, library_id),
+                    "DELETE FROM memberships WHERE user_id = ? AND account_id = ?",
+                    (user_id, account_id),
                 )
             return cur.rowcount > 0
 
-    def list_libraries(
+    def list_accounts(
         self, user_id: str,
-    ) -> tuple[tuple[Library, Membership], ...]:
-        # ORDER BY mirrors `Library.sort_key`: named alphabetically, then the
-        # v12-backfilled nameless ones oldest-first, id last so it is total.
-        # COALESCE because created_at is NULL on exactly those rows, and NULL
-        # sorts before '' in SQLite while Python's key makes them equal.
+    ) -> tuple[tuple[Account, Membership], ...]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT l.*, m.role AS m_role, m.joined_at AS m_joined_at"
-                " FROM memberships m JOIN libraries l ON l.id = m.library_id"
-                " WHERE m.user_id = ?"
-                " ORDER BY TRIM(l.label), COALESCE(l.created_at, ''), l.id",
+                "SELECT a.*, m.role AS m_role, m.joined_at AS m_joined_at"
+                " FROM memberships m JOIN accounts a ON a.id = m.account_id"
+                " WHERE m.user_id = ? ORDER BY a.id",
                 (user_id,),
             ).fetchall()
         return tuple(
-            (_load_library(r),
-             Membership(user_id=user_id, library_id=r["id"],
+            (_load_account(r),
+             Membership(user_id=user_id, account_id=r["id"],
                         role=Role(r["m_role"]), joined_at=r["m_joined_at"]))
             for r in rows
         )
 
-    def list_members(self, library_id: str) -> tuple[Membership, ...]:
+    def list_members(self, account_id: str) -> tuple[Membership, ...]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM memberships WHERE library_id = ?"
+                "SELECT * FROM memberships WHERE account_id = ?"
                 " ORDER BY role <> 'admin', user_id",
-                (library_id,),
+                (account_id,),
             ).fetchall()
         return tuple(_load_membership(r) for r in rows)
 
@@ -871,13 +906,18 @@ def _load_user(row: sqlite3.Row) -> User:
                 email=row["email"], created_at=row["created_at"])
 
 
-def _load_library(row: sqlite3.Row) -> Library:
-    return Library(id=row["id"], label=row["label"],
+def _load_account(row: sqlite3.Row) -> Account:
+    return Account(id=row["id"], label=row["label"],
                    created_at=row["created_at"])
 
 
+def _load_library(row: sqlite3.Row) -> Library:
+    return Library(id=row["id"], account_id=row["account_id"],
+                   label=row["label"], created_at=row["created_at"])
+
+
 def _load_membership(row: sqlite3.Row) -> Membership:
-    return Membership(user_id=row["user_id"], library_id=row["library_id"],
+    return Membership(user_id=row["user_id"], account_id=row["account_id"],
                       role=Role(row["role"]), joined_at=row["joined_at"])
 
 

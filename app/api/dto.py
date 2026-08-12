@@ -76,16 +76,22 @@ class LibraryDTO(BaseModel):
     """
 
     id: str
+    account_id: str = Field(description="The customer that owns it (§4.1). On "
+                                        "the wire because the role below is "
+                                        "held per ACCOUNT, so two libraries "
+                                        "sharing one always agree.")
     label: str = Field(description="Human-readable name; blank only for a "
                                    "library backfilled by schema v12.")
-    role: str = Field(description="viewer | editor | admin (§4.2). Stored and "
-                                  "reported; what it PERMITS is P3.2.")
+    role: str = Field(description="viewer | editor | admin (§4.2) — the "
+                                  "caller's role in the OWNING ACCOUNT, so it "
+                                  "is the same for every library of one.")
     created_at: str | None = None
 
     @classmethod
     def of(cls, library: Library, membership: Membership) -> "LibraryDTO":
-        return cls(id=library.id, label=library.label,
-                   role=membership.role.value, created_at=library.created_at)
+        return cls(id=library.id, account_id=library.account_id,
+                   label=library.label, role=membership.role.value,
+                   created_at=library.created_at)
 
 
 class LibraryCreate(BaseModel):

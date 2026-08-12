@@ -39,6 +39,7 @@ from app.domain import (
     add_copy,
     append_claim,
     finish_read,
+    new_account,
     new_book,
     new_capture,
     new_library,
@@ -71,11 +72,16 @@ class _World:
         self.tenancy = SqliteTenancyStore(self.db)
         owner = User(id="usr-owner")
         self.tenancy.save_user(owner)
+        # Both libraries under ONE account: a merge across customers is
+        # refused outright (§4.1), so the only shape this tool has to handle
+        # is two collections of the same owner.
+        account, membership = new_account(id="acc-owner", owner=owner)
+        self.account = account
+        self.tenancy.save_account(account)
+        self.tenancy.save_membership(membership)
         for ref, label in ((DST, "משפחת מלין"), (SRC, "lib2")):
-            library, membership = new_library(
-                id=ref.id, label=label, owner=owner)
-            self.tenancy.save_library(library)
-            self.tenancy.save_membership(membership)
+            self.tenancy.save_library(
+                new_library(id=ref.id, label=label, account=account))
 
     def seed_source_scan(self):
         """One scan's worth in the source: a shelf, a photographed capture,
@@ -227,15 +233,57 @@ def test_an_unnamed_shelf_gains_the_location_label_and_a_named_one_keeps_its_own
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+
+def test_two_libraries_of_different_customers_are_never_merged():
+    """§4.1's boundary, over the most destructive tool in the product.
+
+    This tool exists to undo a location that was modelled as a tenant before
+    Place existed — and a location does not change owner. Merging across
+    accounts would hand every book, photo and read in one collection to people
+    who were never invited, performed by an operator with a --confirm flag.
+    The guard was enforced by comment only until P3.7b's data-integrity review
+    deleted it and watched the whole ring stay green.
+    """
+    w, tmp = _world()
+    try:
+        # A third library, under a SECOND customer.
+        other, membership = new_account(id="acc-other",
+                                        owner=User(id="usr-other"))
+        w.tenancy.save_user(User(id="usr-other"))
+        w.tenancy.save_account(other)
+        w.tenancy.save_membership(membership)
+        w.tenancy.save_library(
+            new_library(id="lib-theirs", label="שלהם", account=other))
+        w.seed_source_scan()
+        before = w.books.count(SRC)
+
+        try:
+            merge_library(w.db, src_id=SRC.id, dst_id="lib-theirs",
+                          blobs=w.blobs)
+        except MergeRefused as exc:
+            assert "different accounts" in str(exc), exc
+        else:
+            raise AssertionError("a merge across customers was allowed")
+
+        # Untouched on both sides: a refusal writes nothing.
+        assert w.books.count(SRC) == before
+        assert w.tenancy.get_library(SRC.id) is not None
+        assert w.tenancy.get_library("lib-theirs") is not None
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
 def test_the_source_tenant_is_retired_and_the_target_untouched():
     w, tmp = _world()
     try:
         _merge(w)
         assert w.tenancy.get_library(SRC.id) is None
-        assert w.tenancy.membership("usr-owner", SRC.id) is None
         assert w.tenancy.get_library(DST.id) is not None
-        assert w.tenancy.membership("usr-owner", DST.id) is not None
-        listed = [lib.id for lib, _ in w.tenancy.list_libraries("usr-owner")]
+        # ⚠ The MEMBERSHIP survives, and that is the P3.7b change: it names
+        # the account, which still owns the target. Deleting it here would
+        # remove a person from a customer because one of its libraries was
+        # tidied away — the merge retires a collection, never a grant.
+        assert w.tenancy.membership("usr-owner", "acc-owner") is not None
+        listed = [lib.id for lib in w.tenancy.list_libraries("acc-owner")]
         assert listed == [DST.id], "the switcher would still offer the ghost"
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

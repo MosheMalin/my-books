@@ -116,6 +116,7 @@ from app.domain.shelf import (
     rename_shelf,
 )
 from app.domain.tenancy import (
+    Account,
     Library,
     LibraryNeedsAName,
     Membership,
@@ -123,6 +124,7 @@ from app.domain.tenancy import (
     Role,
     UnknownMember,
     User,
+    new_account,
     new_library,
     remove_member,
     rename_library,
@@ -131,6 +133,7 @@ from app.domain.tenancy import (
 from app.domain.text import author_sort_key, book_key, normalize
 
 __all__ = [
+    "Account",
     "Alternative",
     "AmbiguousCopy",
     "Book",
@@ -200,6 +203,7 @@ __all__ = [
     "finish_read",
     "fires",
     "lend",
+    "new_account",
     "new_book",
     "new_capture",
     "new_library",

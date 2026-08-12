@@ -55,7 +55,7 @@ export function AccountDrawer({ library, onClose }: {
 
   const num = (n: number) => formatNumber(n, lang)
   const members = users.flatMap((account) => {
-    const m = account.memberships.find((x) => x.library_id === library.id)
+    const m = account.memberships.find((x) => x.account_id === library.account_id)
     return m ? [{ account, membership: m }] : []
   })
 

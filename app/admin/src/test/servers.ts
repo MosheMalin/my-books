@@ -48,16 +48,17 @@ export const DEFAULT_WORLD: World = {
   libraries: [
     makeStaffLibrary({ id: 'lib-1', label: 'הבית', members: 2, admins: 1,
                        books: 2, auto: 1, approved: 1, shelves: 1, captures: 3 }),
-    makeStaffLibrary({ id: 'lib-2', label: 'ההורים', members: 1, admins: 1,
+    makeStaffLibrary({ id: 'lib-2', account_id: 'acc-2', label: 'ההורים',
+                       members: 1, admins: 1,
                        books: 1, manual: 1, shelves: 1, captures: 1 }),
   ],
   users: [
     makeUser({ id: 'usr-1', display_name: 'משה', memberships: [
-      { library_id: 'lib-1', role: 'admin', joined_at: '2026-01-01' },
+      { account_id: 'acc-1', role: 'admin', joined_at: '2026-01-01' },
     ] }),
     makeUser({ id: 'usr-2', display_name: 'שכן', memberships: [
-      { library_id: 'lib-1', role: 'viewer', joined_at: '2026-01-02' },
-      { library_id: 'lib-2', role: 'admin', joined_at: '2026-01-03' },
+      { account_id: 'acc-1', role: 'viewer', joined_at: '2026-01-02' },
+      { account_id: 'acc-2', role: 'admin', joined_at: '2026-01-03' },
     ] }),
   ],
   // ⚠ The same four books the `instances` map resolves to. They disagreed for

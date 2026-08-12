@@ -46,6 +46,7 @@ Rules for adding a step:
 """
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from typing import Callable
 
@@ -556,6 +557,206 @@ def _v13(conn: sqlite3.Connection) -> None:
         " WHERE email IS NOT NULL"
     )
 
+# --- v14: the account becomes the tenant (P3.7b, §4.1) ---------------------
+#
+# The boundary move. `accounts` (the CUSTOMER, not the person — v13 freed the
+# word), `libraries.account_id`, and `memberships` re-keyed from
+# (user, library) to (user, account). After this, authorization is "is this
+# library owned by an account you belong to", answered once in
+# `app.api.deps.current_library`.
+#
+# ⚠ `library_id` does not move and does not gain a sibling. No other table is
+# touched by this step. A second enforced scope on the data is precisely what
+# §4.1's revision refuses — see `app/domain/tenancy.py`'s ⚠⚠.
+#
+# **The backfill is the judgment call, and it is a GRANT question.** Nothing
+# in a v13 file says which libraries belong to the same customer; the only
+# evidence is the membership graph. Grouping by "same admin" would be the
+# obvious guess and is wrong in a way that cannot be undone: if `lib-X` has
+# members {Alice:admin} and `lib-Y` has {Alice:admin, Bob:editor}, putting
+# them under one account hands Bob a library he was never invited to, because
+# a role is now account-wide. So the rule is the conservative one:
+#
+#   libraries whose member set is IDENTICAL — same users, same roles —
+#   collapse into one account; everything else gets its own.
+#
+# That cannot widen anyone's access, because every library in a group already
+# had exactly those members. On the owner's real data (one person holding
+# admin on both libraries) it produces the intended answer: one account, two
+# libraries — confirmed with the owner before the work started.
+#
+# ⚠ A library with NO memberships is its own account, never grouped with the
+# other orphans. They share an empty member set, so the rule above would
+# collapse unrelated dead libraries into one customer — the one case where
+# "identical members" means "no evidence" rather than "same owner".
+#
+# Account ids are derived from the group rather than random, so re-running
+# this on a copy of a database produces the same ids as the original — which
+# is what makes a migration debuggable after the fact.
+#
+# Callable, with its own BEGIN, for the reason in the module docstring: this
+# is a table rebuild with a derived backfill, and a partial application would
+# leave the tenancy tables in a state no later open could walk through.
+def _v14(conn: sqlite3.Connection) -> None:
+    conn.execute("BEGIN")
+
+    # --- who is in which library, before anything moves ------------------
+    members_of: dict[str, set[tuple[str, str]]] = {}
+    joined_of: dict[tuple[str, str], list[str]] = {}
+    for lib, user, role, joined in conn.execute(
+        "SELECT library_id, user_id, role, joined_at FROM memberships"
+    ):
+        members_of.setdefault(lib, set()).add((user, role))
+        if joined is not None:
+            joined_of.setdefault((lib, user), []).append(joined)
+
+    names = {
+        uid: (name or "")
+        for uid, name in conn.execute("SELECT id, display_name FROM users")
+    }
+
+    # --- group libraries into accounts -----------------------------------
+    groups: dict[frozenset[tuple[str, str]], list[str]] = {}
+    orphans: list[str] = []
+    libraries = [
+        (r[0], r[1], r[2])
+        for r in conn.execute(
+            "SELECT id, label, created_at FROM libraries ORDER BY id"
+        )
+    ]
+    for lib_id, _label, _created in libraries:
+        members = frozenset(members_of.get(lib_id, ()))
+        if not members:
+            orphans.append(lib_id)          # never grouped — see the ⚠ above
+        else:
+            groups.setdefault(members, []).append(lib_id)
+
+    plan: list[tuple[str, frozenset[tuple[str, str]], list[str]]] = []
+    for members, lib_ids in groups.items():
+        plan.append((_account_id(lib_ids), members, sorted(lib_ids)))
+    for lib_id in orphans:
+        plan.append((_account_id([lib_id]), frozenset(), [lib_id]))
+
+    # --- accounts ---------------------------------------------------------
+    conn.execute(
+        "CREATE TABLE accounts ("
+        " id         TEXT PRIMARY KEY,"
+        " label      TEXT NOT NULL DEFAULT '',"
+        " created_at TEXT"
+        ")"
+    )
+    created_at = {lib_id: created for lib_id, _l, created in libraries}
+    for account_id, members, lib_ids in plan:
+        # The account's name is the sole admin's, when there is exactly one
+        # and they have one. Anything else — no admin, several admins, an
+        # unnamed person — stays blank rather than inventing a string of ours
+        # in a Hebrew UI, which is v12's argument for library labels.
+        admins = sorted(u for u, role in members if role == "admin")
+        label = names.get(admins[0], "") if len(admins) == 1 else ""
+        birthdays = sorted(c for c in (created_at[l] for l in lib_ids) if c)
+        conn.execute(
+            "INSERT INTO accounts (id, label, created_at) VALUES (?,?,?)",
+            (account_id, label, birthdays[0] if birthdays else None),
+        )
+
+    owner_of = {lib: acc for acc, _m, libs in plan for lib in libs}
+
+    # --- memberships, re-keyed -------------------------------------------
+    #
+    # Rebuilt rather than altered: the primary key changes, one column is
+    # replaced by another, and its foreign key moves from `libraries` to
+    # `accounts`. Dropped BEFORE `libraries` below, because this is the only
+    # table that references it — every `library_id` elsewhere is a bare TEXT
+    # column with no REFERENCES clause, which the rebuild depends on and
+    # `tests/test_store_contract.py` asserts rather than assumes.
+    conn.execute(
+        "CREATE TABLE memberships_v14 ("
+        " user_id    TEXT NOT NULL REFERENCES users (id)     ON DELETE CASCADE,"
+        " account_id TEXT NOT NULL REFERENCES accounts (id)  ON DELETE CASCADE,"
+        " role       TEXT NOT NULL,"
+        " joined_at  TEXT,"
+        " PRIMARY KEY (user_id, account_id)"
+        ")"
+    )
+    for account_id, members, lib_ids in plan:
+        for user, role in sorted(members):
+            # Earliest sighting wins: the person has belonged to this customer
+            # since the first library they were added to, not the last.
+            dates = sorted(
+                d for lib in lib_ids for d in joined_of.get((lib, user), [])
+            )
+            conn.execute(
+                "INSERT INTO memberships_v14 (user_id, account_id, role,"
+                " joined_at) VALUES (?,?,?,?)",
+                (user, account_id, role, dates[0] if dates else None),
+            )
+    # ⚠ This is the first step that re-INSERTS every membership row, so a
+    # pre-existing row naming a user that does not exist stops being dormant
+    # and becomes `FOREIGN KEY constraint failed` — the whole step rolls back
+    # to v13 and every open afterwards fails the same way, with nothing naming
+    # the offending row. If that ever happens, `PRAGMA foreign_key_check` on
+    # the v13 file names it in one line. (A row naming a missing LIBRARY is
+    # dropped instead of raising: it granted access to something unreachable,
+    # so nobody loses anything.)
+    conn.execute("DROP TABLE memberships")
+    conn.execute("ALTER TABLE memberships_v14 RENAME TO memberships")
+    conn.execute(
+        "CREATE INDEX memberships_of_account ON memberships (account_id, role)"
+    )
+
+    # --- libraries, now owned --------------------------------------------
+    conn.execute(
+        "CREATE TABLE libraries_v14 ("
+        " id         TEXT PRIMARY KEY,"
+        " account_id TEXT NOT NULL REFERENCES accounts (id) ON DELETE CASCADE,"
+        " label      TEXT NOT NULL DEFAULT '',"
+        " created_at TEXT"
+        ")"
+    )
+    for lib_id, label, created in libraries:
+        conn.execute(
+            "INSERT INTO libraries_v14 (id, account_id, label, created_at)"
+            " VALUES (?,?,?,?)",
+            (lib_id, owner_of[lib_id], label, created),
+        )
+    conn.execute("DROP TABLE libraries")
+    conn.execute("ALTER TABLE libraries_v14 RENAME TO libraries")
+    # `list_libraries` is the resolver's neighbour and runs on every switcher
+    # render; it narrows by account and orders by label.
+    conn.execute(
+        "CREATE INDEX libraries_of_account ON libraries (account_id, label, id)"
+    )
+    # ⚠ The two CASCADEs above cover exactly `accounts -> libraries` and
+    # `accounts -> memberships`, and NOTHING below that. Every other
+    # `library_id` is a bare TEXT column with no REFERENCES (which is what
+    # this rebuild depends on), so deleting an account row would drop its
+    # libraries while leaving their books, copies, shelves, captures,
+    # reads, decisions and questions behind as rows no query can reach —
+    # invisible even to `orphan_libraries`, which reads FROM `libraries`.
+    # Nothing in the product deletes an account, and removing a customer
+    # is not a supported operation; do not read the CASCADE as one
+    # (P3.7b's data-integrity review).
+
+
+def _account_id(library_ids: list[str]) -> str:
+    """A stable id for the account a group of libraries collapses into.
+
+    Derived, not random, so the same v13 file always migrates to the same
+    account ids — a migration whose output cannot be reproduced is one that
+    cannot be argued with afterwards. 32 hex characters, matching the shape
+    ``IdGen`` already mints for every other id in the product.
+    """
+    # ⚠ Length-prefixed, not "|"-joined. A library id may itself contain a
+    # pipe (nothing forbids it), so joining would give the group {"a", "b"}
+    # and the group {"a|b"} the same seed — and therefore the same account id.
+    # The collision is loud rather than silent (the PRIMARY KEY refuses the
+    # second INSERT and the whole step rolls back), but the result is a file
+    # the product cannot open at all. One line, free (P3.7b's migration
+    # review).
+    seed = "".join(f"{len(i)}:{i}" for i in sorted(library_ids))
+    return hashlib.blake2s(seed.encode("utf-8"), digest_size=16).hexdigest()
+
+
 # A step is either SQL to execute or a callable to run — both inside the same
 # once-only transaction. Callables exist because a derived column whose rule
 # lives in the domain must be backfilled BY that rule, not by a re-statement
@@ -574,6 +775,7 @@ MIGRATIONS: tuple[tuple[int, str | Step], ...] = (
     (11, _V11),
     (12, _V12),
     (13, _v13),
+    (14, _v14),
 )
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]

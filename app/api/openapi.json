@@ -1222,6 +1222,11 @@
       "LibraryDTO": {
         "description": "One library the caller is a member of, with the role they hold.\n\nA superset of :class:`LibraryRefDTO` rather than a replacement: the REF is\nwhat travels on every request, and the switcher needs the role too. See\n``app/domain/tenancy.py`` for why the two types exist.",
         "properties": {
+          "account_id": {
+            "description": "The customer that owns it (§4.1). On the wire because the role below is held per ACCOUNT, so two libraries sharing one always agree.",
+            "title": "Account Id",
+            "type": "string"
+          },
           "created_at": {
             "anyOf": [
               {
@@ -1243,13 +1248,14 @@
             "type": "string"
           },
           "role": {
-            "description": "viewer | editor | admin (§4.2). Stored and reported; what it PERMITS is P3.2.",
+            "description": "viewer | editor | admin (§4.2) — the caller's role in the OWNING ACCOUNT, so it is the same for every library of one.",
             "title": "Role",
             "type": "string"
           }
         },
         "required": [
           "id",
+          "account_id",
           "label",
           "role"
         ],
@@ -3156,13 +3162,13 @@
             "description": "Successful Response"
           }
         },
-        "summary": "Libraries this user belongs to",
+        "summary": "Libraries this user can reach",
         "tags": [
           "libraries"
         ]
       },
       "post": {
-        "description": "The creator becomes its admin, in the same domain call and the same\ntwo writes — see the module note.\n\n⚠ This route is the DELIBERATE escape hatch for §4.1's settled tenancy\nrule (owner, 2026-08-10): a second Library under one account is legal —\nit is the rare genuinely-separate collection (a shop's stock, a\nclassroom set) — and the ONLY discouragement is client-side, on purpose:\nthe app-bar switcher renders no create action until a second library\nalready exists (`LibrarySwitcher.tsx`). A server-side count cap was\nconsidered and REFUSED: it would block the very cases the decision\nblesses, a quota is a different axis from P3.2's (role × capability)\npolicy data, and the structural half of the rule is already enforced\nwhere it matters — a Library cannot carry a room or a place\n(`test_a_library_is_not_a_place`). Do not \"fix\" this route in either\ndirection without re-reading VISION §4.1.",
+        "description": "Created under the caller's existing account, granting nothing new.\n\n⚠ It inherits the standing the caller already had with that customer.\nUntil P3.7b this route wrote a membership too; `new_library` returning\na Library and nothing else is what P3.7b calls its most load-bearing\ndeletion, and `test_creating_a_library_grants_nobody_anything` pins it.\n\n⚠ This route is the DELIBERATE escape hatch for §4.1's settled tenancy\nrule (owner, 2026-08-10): a second Library under one account is legal —\nit is the rare genuinely-separate collection (a shop's stock, a\nclassroom set) — and the ONLY discouragement is client-side, on purpose:\nthe app-bar switcher renders no create action until a second library\nalready exists (`LibrarySwitcher.tsx`). A server-side count cap was\nconsidered and REFUSED: it would block the very cases the decision\nblesses, a quota is a different axis from P3.2's (role × capability)\npolicy data, and the structural half of the rule is already enforced\nwhere it matters — a Library cannot carry a room or a place\n(`test_a_library_is_not_a_place`). Do not \"fix\" this route in either\ndirection without re-reading VISION §4.1.\n\n⚠⚠ **Admin-only, and P3.7b is what made that necessary.** Before the\nboundary moved, this route minted a BRAND-NEW tenant with the caller as\nits admin — it touched nobody else, so leaving it open cost nothing. Now\nit writes into an EXISTING customer that other people belong to: every\nmember's switcher grows a row, the operator's dashboard counts it, and\n(from P3.7c) it draws on that customer's shared run-rate cap. Without this\ncheck a VIEWER — §4.2's \"friend browsing what you own\" — can append\nunlimited libraries to the account paying for it, and nothing in the\nproduct can remove them (DELETE is deliberately absent). Found by P3.7b's\ndata-integrity review, which reproduced exactly that.\n\n`MANAGE_LIBRARY` rather than a new capability: §4.2 has no \"create a\nlibrary\" row, and the closest cell it does have — *rename the library*,\n\"the library's name is the tenant's own identity\" — is the same act one\nstep later. The fresh-account branch of `_account` needs no exemption: it\nhands back an ADMIN membership, so it clears this check by construction.",
         "operationId": "create_library_api_v1_libraries_post",
         "requestBody": {
           "content": {
@@ -3204,7 +3210,7 @@
     },
     "/api/v1/libraries/{library_id}": {
       "patch": {
-        "description": "404 for a library this user is not a member of — never 403 (§4.2).\n\nThe membership is looked up FIRST and the library second: asking the other\nway round would answer \"no such library\" for a real library and \"not\nfound\" for a fictional one from two different branches, and only one of\nthem stays honest when P3.2 adds roles.",
+        "description": "404 for a library this user is not a member of — never 403 (§4.2).\n\nResolved through the same :func:`app.api.deps.owner_membership` the door\nuses, so \"which account owns this\" is answered by one function for the\nwhole product. A library that does not exist and one owned by a customer\nthe caller has nothing to do with come back from the same branch, which is\nwhat keeps the two indistinguishable on the wire.",
         "operationId": "patch_library_api_v1_libraries__library_id__patch",
         "parameters": [
           {
