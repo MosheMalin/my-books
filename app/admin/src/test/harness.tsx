@@ -119,6 +119,7 @@ export function makeStaffImage(over: Partial<StaffImage> = {}): StaffImage {
 
 export function makeOverview(over: Partial<StaffOverview> = {}): StaffOverview {
   return {
+    accounts: 1, accounts_without_admin: 0,
     users: 1, libraries: 1, memberships: 1, books: 0, copies: 0,
     shelves: 0, captures: 0, reads: 0, duplicates: 0, lent_out: 0,
     auto: 0, approved: 0, manual: 0, image_files: 0, image_bytes: 0,

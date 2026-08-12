@@ -61,12 +61,18 @@ STAFF_TOKEN_ENV = "BOOKSNAP_STAFF_TOKEN"
 class OverviewDTO(BaseModel):
     """System-wide totals. Every figure spans every tenant."""
 
-    #: CUSTOMERS. Distinct from `users` (people) and `libraries`
-    #: (collections) — three counts the console drew as two until P3.7b.
-    accounts: int
-    #: Accounts with members but no admin: nobody can invite, re-role or
-    #: rename. Should always be zero; a number here already happened.
-    accounts_without_admin: int = 0
+    accounts: int = Field(description="CUSTOMERS. Distinct from `users` "
+                                      "(people) and `libraries` "
+                                      "(collections) — three counts the "
+                                      "console drew as two until P3.7b.")
+    #: ⚠ No default, deliberately: this is an ALARM, and a missing key
+    #: defaulting to 0 renders "healthy" for "not reported".
+    accounts_without_admin: int = Field(
+        description="Accounts with members but NO admin: nobody can "
+                    "invite, re-role, rename or delete. `new_account` "
+                    "mints the admin in the same call and `NoAdminLeft` "
+                    "refuses the last demotion, so a number here is a bug "
+                    "that already happened.")
     users: int
     libraries: int
     memberships: int
@@ -100,9 +106,12 @@ class OverviewDTO(BaseModel):
                     "anyone who can reach this port can read every tenant.",
     )
     orphan_libraries: list[str] = Field(
-        description="Libraries with no membership at all — nobody can see or "
-                    "administer them. Should always be empty; `new_library` "
-                    "mints an admin membership in the same call to keep it so.",
+        description="Libraries whose OWNING ACCOUNT has no member at all "
+                    "— nobody can see or administer them. Should always be "
+                    "empty; `new_account` mints the admin membership in the "
+                    "same call to keep it so. `new_library` mints nothing: "
+                    "creating a library stopped being a permission event at "
+                    "P3.7b.",
     )
 
 

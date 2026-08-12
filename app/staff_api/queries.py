@@ -268,6 +268,17 @@ class LibraryRow:
     image_bytes: int = 0
 
 
+#: The figures of an account that are the SUM of its libraries' — the
+#: additivity rule, declared rather than transcribed into a fold.
+#: Deliberately excludes `members`/`admins` (per customer, not per
+#: collection) and `last_activity` (a max).
+SUMMED_OVER_LIBRARIES = (
+    "books", "copies", "auto", "approved", "manual", "shelves",
+    "captures", "reads", "duplicates", "lent_out", "image_files",
+    "image_bytes",
+)
+
+
 @dataclass(frozen=True)
 class AccountRow:
     """One CUSTOMER, with every figure summed across the libraries it owns.
@@ -631,7 +642,14 @@ class StaffQueries:
         """Every customer in the system, with its libraries' figures summed.
 
         Built by FOLDING :meth:`libraries` rather than by a second set of
-        grouped queries. Two reasons, and the second is the load-bearing one:
+        grouped queries. The decisive reason is one neither screen shows:
+        ``image_files``/``image_bytes`` come from `BlobTree.usage`, which
+        is keyed by LIBRARY id because blob directories are per-library and
+        P3.7a decided the paths are not moving — there is no per-account
+        disk figure to GROUP BY. Two of the twelve therefore CANNOT be
+        computed independently, and once two are folded and ten are
+        queried you have manufactured exactly the disagreement below.
+        Two further reasons:
         the per-library numbers are already one grouped pass each (the shape
         that replaced a correlated subquery per row after `/images` measured
         13.6s), so folding them costs a dictionary; and a customer's totals
@@ -642,6 +660,14 @@ class StaffQueries:
         An account owning no library still appears, with zeroes — the state
         P4.3's invite flow can produce, and one nothing else would show.
         """
+        # ⚠ Declared once, not written out twelve times. Every one of
+        # these was a hand-typed `sum(lib.X for lib in libs)` line, and
+        # ten of them survived being replaced by a constant — including
+        # an `auto=`/`approved=` swap between two adjacent identical
+        # lines, which is the realistic bug in a fold this shape
+        # (P3.7d's reviews). members/admins are NOT here: people belong
+        # to the customer, so summing them across collections is the
+        # multiplication a naive join makes. last_activity is a max.
         by_account: dict[str, list[LibraryRow]] = {}
         for row in self.libraries():
             by_account.setdefault(row.account_id, []).append(row)
@@ -667,19 +693,9 @@ class StaffQueries:
                 id=aid, label=row["label"] or "", created_at=row["created_at"],
                 libraries=len(libs),
                 members=members.get(aid, 0), admins=admins.get(aid, 0),
-                books=sum(lib.books for lib in libs),
-                copies=sum(lib.copies for lib in libs),
-                auto=sum(lib.auto for lib in libs),
-                approved=sum(lib.approved for lib in libs),
-                manual=sum(lib.manual for lib in libs),
-                shelves=sum(lib.shelves for lib in libs),
-                captures=sum(lib.captures for lib in libs),
-                reads=sum(lib.reads for lib in libs),
-                duplicates=sum(lib.duplicates for lib in libs),
-                lent_out=sum(lib.lent_out for lib in libs),
                 last_activity=max(seen) if seen else None,
-                image_files=sum(lib.image_files for lib in libs),
-                image_bytes=sum(lib.image_bytes for lib in libs),
+                **{name: sum(getattr(lib, name) for lib in libs)
+                   for name in SUMMED_OVER_LIBRARIES},
             ))
         return tuple(out)
 

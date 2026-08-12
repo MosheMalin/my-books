@@ -536,11 +536,12 @@
         "description": "System-wide totals. Every figure spans every tenant.",
         "properties": {
           "accounts": {
+            "description": "CUSTOMERS. Distinct from `users` (people) and `libraries` (collections) — three counts the console drew as two until P3.7b.",
             "title": "Accounts",
             "type": "integer"
           },
           "accounts_without_admin": {
-            "default": 0,
+            "description": "Accounts with members but NO admin: nobody can invite, re-role, rename or delete. `new_account` mints the admin in the same call and `NoAdminLeft` refuses the last demotion, so a number here is a bug that already happened.",
             "title": "Accounts Without Admin",
             "type": "integer"
           },
@@ -605,7 +606,7 @@
             "type": "integer"
           },
           "orphan_libraries": {
-            "description": "Libraries with no membership at all — nobody can see or administer them. Should always be empty; `new_library` mints an admin membership in the same call to keep it so.",
+            "description": "Libraries whose OWNING ACCOUNT has no member at all — nobody can see or administer them. Should always be empty; `new_account` mints the admin membership in the same call to keep it so. `new_library` mints nothing: creating a library stopped being a permission event at P3.7b.",
             "items": {
               "type": "string"
             },
@@ -627,6 +628,7 @@
         },
         "required": [
           "accounts",
+          "accounts_without_admin",
           "users",
           "libraries",
           "memberships",

@@ -199,6 +199,12 @@ unreachable, so any number there is a bug that already happened).
 `orphan_libraries` was re-aimed at the owning account back in P3.7b and
 stays.
 
+⚠ The bullet's second half — *accounts with no library* — was
+deliberately NOT built as a figure. `accounts()` already lists such an
+account as a row of zeroes, which is strictly more useful than a scalar
+tile, and the state it names (a customer created before its first
+collection) is P4.3's normal path rather than an anomaly.
+
 ⚠ The aggregation fixture gives one account a second library WITH BOOKS IN
 IT. An empty one makes every sum equal its first term, and a fold that
 dropped the rest passed — measured on the first draft.
