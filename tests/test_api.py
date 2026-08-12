@@ -1733,12 +1733,19 @@ def _wait_until_settled(client, shelf_id: str, read_id: str, *, timeout: float =
 
 
 def test_two_concurrent_reads_in_two_libraries_do_not_observe_each_other():
-    """P3.4's named test case, over real HTTP: one user, two libraries,
-    one QueuedJobRunner. Each read reports its own library's progress,
-    stopping one leaves the other running, and the tenant key the router
-    hands the runner is the LIBRARY id — the fairness axis — pinned with a
-    spy, because dropping `tenant=` in reads.py would silently collapse
-    every library into one queue and no adapter-ring test could see it."""
+    """P3.4's named test case, over real HTTP: one user, two libraries, one
+    QueuedJobRunner. Each read reports its own library's progress and stopping
+    one leaves the other running — job ISOLATION is per library and stays
+    there, because a read belongs to the shelf it photographed.
+
+    ⚠ The FAIRNESS key is a different axis and moved at P3.7c: the runner
+    round-robins across CUSTOMERS, so two libraries of one account queue under
+    one key and take one turn between them. Keyed to the library, a customer
+    with ten collections took ten slots to another customer's one — which is
+    the opposite of what `JobRunner`'s own docstring has always claimed it
+    does. Pinned with a spy, because dropping `tenant=` in reads.py would
+    silently collapse every customer into one queue and no adapter-ring test
+    could see it."""
     import threading
 
     p = StubPrincipal()
@@ -1804,8 +1811,9 @@ def test_two_concurrent_reads_in_two_libraries_do_not_observe_each_other():
                         json={"depth": 1, "mode": "spines"}).json()["id"]
         read_b = c.post(f"{API_PREFIX}/shelves/{shelf_b}/reads", headers=h2,
                         json={"depth": 1, "mode": "spines"}).json()["id"]
-        assert spy.tenants == [TEST_LIBRARY.id, "lib-2"], (
-            "the runner's fairness key must be the library id (P3.4)"
+        assert spy.tenants == [TEST_ACCOUNT, TEST_ACCOUNT], (
+            "the runner's fairness key must be the OWNING ACCOUNT (P3.7c) — "
+            "two libraries of one customer share a turn, they do not take two"
         )
 
         def poll(shelf, read, headers):
@@ -1852,17 +1860,26 @@ def _seed_reads(store, library: LibraryRef, n: int, started_at: str) -> None:
         ))
 
 
-def test_the_run_rate_cap_blocks_a_retry_loop_and_only_this_library():
+def test_the_run_rate_cap_blocks_a_retry_loop_and_only_this_account():
     """P3.6 (§1.2): one number against a stuck client, never against family.
-    The cap counts a rolling hour PER LIBRARY — a burst in one must not
-    freeze another — and reads older than the window never count, or the cap
-    would turn into a lifetime quota."""
+
+    ⚠ Counted per ACCOUNT since P3.7c, and this case is the reason. Keyed to
+    the library, the cap was one a customer lifted by pressing *new library* —
+    the engine cost it protects does not care which collection the photos were
+    filed under. So a burst in one library now freezes its SIBLING, and must
+    still leave a different customer alone. Reads older than the window never
+    count, or the cap turns into a lifetime quota."""
     from app.api.routers.reads import RUN_RATE_CAP_PER_HOUR
 
     p = StubPrincipal()
     tenancy = _tenancy(p)
+    # A sibling under the SAME customer, and a library of another one.
     tenancy.save_library(Library(id="lib-2", account_id=TEST_ACCOUNT,
                                  label="שניה"))
+    tenancy.save_account(Account(id=OTHER_ACCOUNT))
+    tenancy.save_membership(Membership(p.id, OTHER_ACCOUNT, Role.ADMIN))
+    tenancy.save_library(Library(id="lib-3", account_id=OTHER_ACCOUNT,
+                                 label="אחר"))
     reads_store = MemoryReadStore()
     with _blobs() as blobs:
         c = TestClient(_app(principal=p, tenancy=tenancy, blobs=blobs,
@@ -1876,7 +1893,9 @@ def test_the_run_rate_cap_blocks_a_retry_loop_and_only_this_library():
             return c.post(f"{API_PREFIX}/captures", headers=headers,
                           json={"image_id": key}).json()["shelf"]["id"]
 
+        h3 = {deps.LIBRARY_HEADER: "lib-3"}
         shelf_a, shelf_b = shelf_with_photo({}), shelf_with_photo(h2)
+        shelf_c = shelf_with_photo(h3)
 
         # StubClock's "now" is 12:00; fill the window 30 minutes back.
         _seed_reads(reads_store, TEST_LIBRARY, RUN_RATE_CAP_PER_HOUR,
@@ -1886,11 +1905,19 @@ def test_the_run_rate_cap_blocks_a_retry_loop_and_only_this_library():
         assert r.status_code == 429, r.text
         assert str(RUN_RATE_CAP_PER_HOUR) in r.json()["detail"]
 
-        # The OTHER library is untouched by this library's burst.
+        # The SIBLING library shares the cap: same customer, same budget.
         r2 = c.post(f"{API_PREFIX}/shelves/{shelf_b}/reads", headers=h2,
                     json={"depth": 1, "mode": "spines"})
-        assert r2.status_code == 202, (
-            "one library's retry loop froze another library's read"
+        assert r2.status_code == 429, (
+            "a second library of the same account escaped the cap — which is "
+            "the loophole P3.7c closed: press 'new library', keep looping"
+        )
+
+        # A DIFFERENT customer is untouched by this one's burst.
+        r3 = c.post(f"{API_PREFIX}/shelves/{shelf_c}/reads", headers=h3,
+                    json={"depth": 1, "mode": "spines"})
+        assert r3.status_code == 202, (
+            "one customer's retry loop froze another customer's read"
         )
 
 
