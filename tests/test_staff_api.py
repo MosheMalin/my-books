@@ -962,6 +962,39 @@ def test_a_blob_deleted_mid_page_degrades_one_row_rather_than_the_page():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_the_write_cap_and_the_republish_cap_are_the_same_number():
+    """P4.0b capped `filename` at the port where it enters
+    (`app.ports.blobs.MAX_FILENAME`, enforced by `DiskBlobStore.put`); this
+    service keeps its own read-side copy because it imports nothing from
+    `app`. Two copies of one rule stay one rule only while a test pins them
+    equal — and the read-side cap must still WORK, because sidecars written
+    before the cap (and whatever import_legacy republishes) carry the long
+    form."""
+    import json as _json
+
+    from app.ports import blobs as product_blobs
+    from app.staff_api import storage as staff_storage
+    from app.staff_api.storage import BlobTree
+
+    assert staff_storage.MAX_FILENAME == product_blobs.MAX_FILENAME
+
+    tmp = tempfile.mkdtemp(prefix="booksnap-blobs-")
+    try:
+        # A pre-cap sidecar, planted directly: the write path can no longer
+        # produce one, and these files exist on real disks.
+        stem = "ab" * 32
+        d = Path(tmp) / "libraries" / "lib-a" / "blobs" / stem[:2]
+        d.mkdir(parents=True)
+        (d / f"{stem}.jpg").write_bytes(b"x")
+        (d / f"{stem}.json").write_text(_json.dumps(
+            {"filename": "ש" * 100_000, "size": 1,
+             "content_type": "image/jpeg"}), encoding="utf-8")
+        facts = BlobTree(tmp).facts("lib-a", f"{stem}.jpg")
+        assert len(facts.filename) == staff_storage.MAX_FILENAME
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_a_key_that_is_not_a_content_address_resolves_to_nothing():
     """⚠ The key arrives from a database column, and `../` in a path segment is
     how a reader that just joins strings walks out of the blob root. Validated,

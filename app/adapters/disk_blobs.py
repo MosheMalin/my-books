@@ -36,7 +36,13 @@ import time
 from pathlib import Path
 
 from app.domain import LibraryRef
-from app.ports.blobs import Blob, ImageTooLarge, StoredBlob, UnsupportedImage
+from app.ports.blobs import (
+    MAX_FILENAME,
+    Blob,
+    ImageTooLarge,
+    StoredBlob,
+    UnsupportedImage,
+)
 
 # 40MB. A 48MP phone JPEG is ~15MB and a HEIC well under that, so this is
 # "somebody dropped a video in", not a quality ceiling.
@@ -138,6 +144,10 @@ class DiskBlobStore:
             raise ImageTooLarge(
                 f"{len(data)} bytes is over the {MAX_UPLOAD_BYTES} limit"
             )
+        # Truncated, never rejected — the name is display metadata, and the
+        # port states why (MAX_FILENAME). This is the door the sidecar and
+        # every DTO read through, so nothing downstream re-caps.
+        filename = filename[:MAX_FILENAME]
         normalised, content_type, ext, size_px = _normalise(data)
 
         # The digest is of the STORED bytes, not the uploaded ones. Otherwise

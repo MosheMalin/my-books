@@ -66,6 +66,20 @@ class ImageTooLarge(BlobError):
     """
 
 
+#: Longest original filename a store KEEPS (P4.0b). The name is display
+#: metadata for the review screen — never identity (the key is the content
+#: hash) and never trusted for format (decoding decides) — so an implementation
+#: TRUNCATES rather than rejects: a phone's genuine long name should not fail
+#: an upload. The cap exists because nothing else on the write path bounds the
+#: field: a review measured 20 captures with 200,000-character names turning
+#: one staff `GET /images` into 4 MB (~40 MB at limit=200) from an
+#: unauthenticated LAN upload. 200 is lossless for every name a camera or a
+#: human produces, and matches the staff console's read-side cap
+#: (`app/staff_api/storage.py:MAX_FILENAME`, kept separately because that
+#: service imports nothing from `app` — a test pins the two equal).
+MAX_FILENAME = 200
+
+
 @dataclass(frozen=True)
 class Blob:
     """What the store knows about one stored object.
@@ -73,6 +87,9 @@ class Blob:
     ``width``/``height`` are here rather than left to the client because the
     review grid needs an aspect ratio before the bytes arrive, and asking the
     browser to discover it means a reflow on every tile.
+
+    ``filename`` is capped at :data:`MAX_FILENAME` by ``put`` — see the
+    constant for the argument.
     """
 
     key: str

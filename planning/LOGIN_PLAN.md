@@ -121,7 +121,11 @@ reviews it anyway (it changes how every step behaves), plus
 `review-quality`. Done: gate green, the three holes' entries in
 `TENANCY_BOUNDARY_PLAN.md` annotated as closed here.
 
-### P4.0b — cap `filename` at the write port (S)
+### ✅ P4.0b — cap `filename` at the write port (S) — landed 2026-08-13
+
+As specified below: `MAX_FILENAME = 200` on the port, truncation in
+`DiskBlobStore.put`, staff keeps its read-side copy (it imports nothing
+from `app`) with a test pinning the two equal.
 
 Cap at the port where the name enters (`app/api/routers/images.py` +
 `app/adapters/disk_blobs.py`), aligned with the staff console's 200.
