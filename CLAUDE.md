@@ -360,7 +360,8 @@ different world — the product never reads it.
 ` matches nothing and reports success while changing not one
   byte. It bit four times writing P3.7f — including one that shipped a commit
   message describing edits that were never made. Read with universal newlines
-  and write back `newline='
+  and write back `newline='
+
 '`, or use the file tools, which preserve the
   file's endings. (Same family as: edit source through a Python patch FILE,
   never a bash heredoc — heredocs mangle `
