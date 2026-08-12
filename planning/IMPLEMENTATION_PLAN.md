@@ -505,6 +505,11 @@ nothing in the console track should reuse `Role`/`POLICY` for staff.
 
 ### Pillar 4 — Login
 
+Detailed decomposition: [`LOGIN_PLAN.md`](LOGIN_PLAN.md) (DRAFT 2026-08-13,
+awaiting the owner's approval) — it splits P4.1 into a/b/c, adds the P4.0a–c
+pre-work (migration-runner hardening, filename cap, staff-token posture), and
+batches the open questions.
+
 | # | Item | Size |
 |---|---|---|
 | **P4.1** | Sessions + **email magic link** (§3): rate-limited, single-use, expiring. The resolver now reads a real session. | M |
