@@ -334,8 +334,38 @@ different world — the product never reads it.
   `check-installed.mjs` + `install.test.ts` guard the `npm ci
   --ignore-scripts` path. One `npm install --prefix <client>` per client.
 - Two controls announcing the same accessible name collide
-  (`t.edit`/`t.copy_edit`; "split"/"create volumes") — every new per-item
-  action needs its own label.
+  (`t.edit`/`t.copy_edit`; "split"/"create volumes"; the account drawer's five
+  per-library controls) — every new per-item action needs its own label, and
+  "I labelled the links" is not "I labelled the buttons": the pair left
+  colliding included *rename*, the only one that writes.
+- A dead-key guard matching `code.includes('t.' + key)` lets every key that is
+  a PREFIX of another ride on its longer sibling (`acc_account` behind
+  `acc_account_admin`, `lib_export` behind `lib_export_csv`, dead for months).
+  Anchor both ends, skip test files, and gate the detector on a synthetic
+  corpus — against the real table the rule is unobservable once the dead keys
+  are gone, so the loose check passes either way.
+- A drawer is `min(720px, 100%)`: a trailing actions column falls outside it
+  and out of the accessibility tree at `scrollLeft: 0`. Stack per-row actions
+  inside the name cell.
+- **A refresh is not a first load.** Raising `loading` on a reload blanks every
+  screen that answers `if (loading) return <Loading/>` and remounts any open
+  drawer. A test asserting "the screen survived" must wait for the RELOAD to be
+  issued, not for the write — a request is recorded when it is MADE, so the
+  write appears before its own promise resolves.
+- A client fake that ignores `limit` (or any parameter) has decided the screen
+  cannot be wrong about it: the account drawer's per-library cap was
+  unexercised in both directions until the fake honoured it.
+- **The markdown files are CRLF on disk.** A scripted replace whose search
+  string uses `
+` matches nothing and reports success while changing not one
+  byte. It bit four times writing P3.7f — including one that shipped a commit
+  message describing edits that were never made. Read with universal newlines
+  and write back `newline='
+'`, or use the file tools, which preserve the
+  file's endings. (Same family as: edit source through a Python patch FILE,
+  never a bash heredoc — heredocs mangle `
+` and em-dashes, and once left
+  `tools/merge_library.py` unparseable behind a green board.)
 - Author autocomplete returns the owner's spelling, never normalized —
   normalization is for matching only.
 - The match score is out of **130** (`60·tcov_c+25·tcov+15·acov+0.30·sim`);
