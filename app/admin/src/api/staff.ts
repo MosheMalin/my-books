@@ -71,9 +71,31 @@ type Schemas = components['schemas']
 
 /** System totals. `authenticated: false` means the service has no token
  *  configured and anyone who can reach the port reads every tenant — shown on
- *  screen, never swallowed. `orphan_libraries` are libraries with no
- *  membership at all: nobody can see or administer them. */
+ *  screen, never swallowed. `orphan_libraries` are libraries whose OWNING
+ *  ACCOUNT has no member at all: nobody can see or administer them.
+ *  ⚠ It meant "no membership names this library" until P3.7b; a membership
+ *  names an account now, so the question moved up a level with the
+ *  boundary — `app/staff_api/queries.py` says so at length. */
 export type StaffOverview = Schemas['OverviewDTO']
+/**
+ * One CUSTOMER, with every figure summed over the libraries it owns — the
+ * console's primary row since P3.7e.
+ *
+ * ⚠ Until P3.7b this console called a `Library` an "account" and showed the
+ * library id under the name so the mapping stayed visible. That gloss is gone:
+ * an Account is a real record the tenancy boundary sits on (VISION §4.1
+ * [REVISED 2026-08-11]), and a library is a collection inside one. The two are
+ * different rows on this wire and must stay different rows on screen.
+ *
+ * ⚠ `members`/`admins` count PEOPLE OF THE CUSTOMER and are deliberately not
+ * summed over libraries — everyone joins the account, so adding them up per
+ * collection would multiply one household by the number of shelves it keeps.
+ */
+export type StaffAccount = Schemas['AccountDTO']
+/** One collection inside an account. ⚠ Its `members`/`admins` are the OWNING
+ *  ACCOUNT's, which is why no library row renders them: repeating the
+ *  customer's headcount on each of its collections reads as several groups of
+ *  people. They are shown once, on the account. */
 export type StaffLibrary = Schemas['LibraryDTO']
 export type StaffMembership = Schemas['MembershipDTO']
 export type StaffUser = Schemas['UserDTO']
@@ -84,7 +106,9 @@ export type StaffBookPage = Schemas['BookPageDTO']
 export type StaffRead = Schemas['ReadDTO']
 /** One book ACROSS every tenant — the console's unit since revision 4. It has
  *  no `library_id` on purpose: an operator's question about a book is how
- *  widespread it is, and the per-household instances are a second call. */
+ *  widespread it is, and the per-LIBRARY instances are a second call.
+ *  ⚠ Per library, not per household: since P3.7b `libraries: 2` may be two
+ *  collections of ONE customer, which is the normal shape. */
 export type StaffWork = Schemas['WorkDTO']
 export type StaffWorkPage = Schemas['WorkPageDTO']
 export type StaffImage = Schemas['ImageDTO']
@@ -134,6 +158,19 @@ async function get<T>(path: string, opts: StaffOptions, query?: Query): Promise<
 
 export const getOverview = (opts: StaffOptions = {}) =>
   get<StaffOverview>('/overview', opts)
+
+/**
+ * Every customer in the system.
+ *
+ * ⚠ Fetched ALONGSIDE `/libraries` rather than instead of it, and the two are
+ * not substitutable. This one answers "who are my customers and how big are
+ * they"; the other answers "which collections exist", which is what the books
+ * and images filters narrow by and what `labelOf` names. Deriving either from
+ * the other would be a second fold of the same figures in the browser — the
+ * exact drift `queries.accounts()` folds server-side to avoid.
+ */
+export const listAllAccounts = (opts: StaffOptions = {}) =>
+  get<StaffAccount[]>('/accounts', opts)
 
 export const listAllLibraries = (opts: StaffOptions = {}) =>
   get<StaffLibrary[]>('/libraries', opts)

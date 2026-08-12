@@ -242,7 +242,7 @@ td.num, th.num {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-td.actions { white-space: nowrap; }
+
 
 /* --- small pieces ----------------------------------------------------------- */
 

@@ -18,14 +18,72 @@ import { describe, expect, it } from 'vitest'
 
 const SRC = join(__dirname, '..')
 
+/**
+ * Every SCREEN source — the table itself and the tests excluded.
+ *
+ * ⚠ Tests are skipped deliberately. The property is "a key nothing RENDERS",
+ * and a test is not a screen: a key named only by an assertion, or by a bare
+ * `'key'` string in a fixture, would otherwise count as alive and the table
+ * would keep a string no user can reach. Nothing is currently kept alive that
+ * way — audited when the filter went in, so it changes no answer today, which
+ * is exactly when it is cheap to make the check mean what its name says.
+ */
 function sources(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
     const path = join(dir, name)
     if (statSync(path).isDirectory()) return sources(path)
     if (!/\.tsx?$/.test(name) || name === 'i18n.tsx') return []
+    if (/\.test\.tsx?$/.test(name)) return []
     return [readFileSync(path, 'utf8')]
   })
 }
+
+/**
+ * Which of `keys` nothing in `code` renders.
+ *
+ * A key counts as rendered when it is read through `t.` / `ui.` on a screen,
+ * or named as a `keyof Strings` literal by a control's option table (the sort
+ * keys do this).
+ *
+ * ⚠⚠ **ANCHORED AT BOTH ENDS, and that is the whole rule.** This was
+ * `code.includes('t.' + k)`, a bare substring test, so every key that is a
+ * PREFIX of another key passed on its longer sibling's back. Two were dead
+ * that way and this test — whose entire job is finding dead keys — reported
+ * both as rendered: `acc_account` rode on `t.acc_account_admin` from the day
+ * that key was added, and `lib_export` rode on `t.lib_export_csv`. Tightening
+ * the boundary at P3.7e is what surfaced them.
+ *
+ * Extracted from the test below so the boundary itself can be exercised
+ * against a corpus that HAS a shadowed key. Against the real table it cannot
+ * be: once the two dead keys are deleted, loosening the check back to a
+ * substring passes — measured. A rule only observable when it is already
+ * broken is a rule with no gate on it.
+ */
+export function deadKeys(keys: string[], code: string): string[] {
+  const rendered = (k: string) =>
+    new RegExp(`(?:\\bt|\\bui)\\.${k}\\b|'${k}'`).test(code)
+  return keys.filter((k) => !rendered(k))
+}
+
+describe('the dead-key detector', () => {
+  it('does not let a key ride on a longer key that starts with it', () => {
+    // The exact shape that hid `acc_account` behind `acc_account_admin`.
+    expect(deadKeys(['acc_account', 'acc_account_admin'],
+                    'const x = t.acc_account_admin'))
+      .toEqual(['acc_account'])
+  })
+
+  it('counts a key read through t., ui., or a keyof literal', () => {
+    expect(deadKeys(['a', 'b', 'c'], 't.a; ui.b; const s: keyof Strings = \'c\''))
+      .toEqual([])
+  })
+
+  /** ⚠ `t.foo` must not be satisfied by `notT.foo`: the boundary goes on BOTH
+   *  sides, or a member of some other object named the same thing counts. */
+  it('does not count a lookalike on another object', () => {
+    expect(deadKeys(['foo'], 'const x = other.foo')).toEqual(['foo'])
+  })
+})
 
 describe('the string table', () => {
   it('has no key that nothing renders', () => {
@@ -35,13 +93,6 @@ describe('the string table', () => {
     const keys = [...he.matchAll(/^ {2}([a-z_0-9]+):/gm)].map((m) => m[1]!)
     expect(keys.length).toBeGreaterThan(100)
 
-    // Read through `t.` / `ui.` on a screen, or named as a `keyof Strings`
-    // literal by a control's option table (the sort keys do this).
-    const code = sources(SRC).join('\n')
-    const dead = keys.filter((k) =>
-      !code.includes(`t.${k}`) && !code.includes(`ui.${k}`)
-      && !code.includes(`'${k}'`))
-
-    expect(dead).toEqual([])
+    expect(deadKeys(keys, sources(SRC).join('\n'))).toEqual([])
   })
 })

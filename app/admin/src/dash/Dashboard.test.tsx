@@ -30,13 +30,36 @@ describe('Dashboard', () => {
     renderApp(<Dashboard />)
 
     await screen.findByText(/סקירת המערכת|System overview/)
-    expect(statValue(/^ספרים$|^Books$/)).toBe('3')
+    expect(statValue(/^ספרים$|^Books$/)).toBe('4')
     expect(statValue(/^חשבונות$|^Accounts$/)).toBe('2')
 
     // Not one books request per library — the shape it replaced.
     expect(s.calls.filter((c) => c.url.startsWith('/api/v1/books'))).toHaveLength(0)
     expect(s.calls.filter((c) => c.url.startsWith('/api/staff/v1/overview')))
       .toHaveLength(1)
+  })
+
+  /**
+   * ⚠⚠ **The tile read `overview.libraries` until P3.7e.** It was a count of
+   * COLLECTIONS under a heading saying "accounts", which was true only while a
+   * library WAS the tenant; P3.7b made the Account its own record, and the
+   * owner's real database — one customer, two libraries — is precisely the
+   * case that makes the two numbers differ.
+   *
+   * ⚠ The fixture keeps accounts (2), people (4) and libraries (3) PAIRWISE
+   * unequal. The first version had accounts and people BOTH at 2, and a
+   * review measured what that hid: swapping the tile to `overview.users`
+   * passed the entire ring. A comment claiming the numbers are all different
+   * is not the same as their being all different.
+   */
+  it('counts customers, people and collections as three different numbers', async () => {
+    bothServices()
+    renderApp(<Dashboard />)
+    await screen.findByText(/סקירת המערכת|System overview/)
+
+    expect(statValue(/^חשבונות$|^Accounts$/)).toBe('2')
+    expect(statValue(/^אנשים$|^People$/)).toBe('4')
+    expect(statValue(/^ספריות$|^Libraries$/)).toBe('3')
   })
 
   it('counts accounts and memberships, which no product route can answer', async () => {
@@ -64,31 +87,40 @@ describe('Dashboard', () => {
     expect(statValue(/ממתינים לאישור|Awaiting approval/)).toBe('2')
   })
 
-  it('shows every library in the system, with its member count', async () => {
+  /**
+   * ⚠⚠ Rows by CUSTOMER, which is what the "by account" heading always
+   * claimed and what the table only started doing at P3.7e. `משפחת מלין` owns
+   * two collections whose books sum to three; listing libraries would show it
+   * as two separate rows of two and one — two customers where there is one.
+   */
+  it('rows by customer, with the collections each one keeps', async () => {
     bothServices()
     renderApp(<Dashboard />)
 
-    const home = await screen.findByRole('link', { name: 'הבית' })
+    const home = await screen.findByRole('link', { name: 'משפחת מלין' })
     const cells = within(home.closest('tr') as HTMLElement)
       .getAllByRole('cell').map((c) => c.textContent)
-    // library, members, books, unapproved, shelves, photos…
-    expect(cells.slice(1, 4)).toEqual(['2', '2', '1'])
+    // account, users, libraries, books, unapproved…
+    expect(cells.slice(1, 5)).toEqual(['2', '2', '3', '1'])
     expect(screen.getByRole('link', { name: 'ההורים' })).toBeInTheDocument()
+    // The libraries themselves are a level down, in the drawer — not rows here.
+    expect(screen.queryByRole('link', { name: 'הבית' })).not.toBeInTheDocument()
   })
 
   /**
-   * ⚠ A library with no membership is a library nobody can see or administer
-   * — `new_library` mints an admin membership in the same call precisely so
-   * this cannot happen. A system console is the only place it is visible at
-   * all, so it must not be a silent zero in a column.
+   * ⚠ A library whose OWNING ACCOUNT has no member is one nobody can see or
+   * administer — `new_account` mints an admin membership in the same call
+   * precisely so this cannot happen, and `NoAdminLeft` keeps it so. A system
+   * console is the only place it is visible at all, so it must not be a silent
+   * zero in a column.
    */
-  it('warns when a library has no members', async () => {
+  it('warns when a library\'s owning account has no members', async () => {
     bothServices({
       overview: makeOverview({ ...DEFAULT_WORLD.overview,
                                orphan_libraries: ['lib-lost'] }),
     })
     renderApp(<Dashboard />)
-    expect(await screen.findByText(/ללא אף חבר|no members at all/))
+    expect(await screen.findByText(/אין אף חבר|no member at all/))
       .toBeInTheDocument()
   })
 

@@ -48,7 +48,7 @@ const HE = {
   stat_reads: 'קריאות',
   sys_scope: 'כל הנתונים כאן חוצים את כל הדיירים במערכת',
   sys_orphans: (n: number) =>
-    `${n} ספריות ללא אף חבר — איש אינו יכול לראות או לנהל אותן`,
+    `${n} ספריות שלחשבון הבעלים שלהן אין אף חבר — איש אינו יכול לראות או לנהל אותן`,
   staff_unreachable: 'שירות הניהול אינו זמין. ודאו שהוא רץ על פורט 8758.',
   token_title: 'אסימון ניהול',
   token_needed: 'שירות הניהול דורש אסימון. הזינו אותו כדי להמשיך.',
@@ -63,7 +63,16 @@ const HE = {
   // (the first draft did) puts the word "library" over a list of shelf names,
   // on a screen whose whole subject is one library — which reads as a bug in
   // the data rather than in the heading.
+  //
+  // ⚠⚠ THREE headers, not one. Until P3.7e `th_account` sat over three
+  // different entities — customers (the accounts table, the dashboard),
+  // people (the unaffiliated list, the drawer's members) and libraries (the
+  // images table and panel). One string over three nouns is what let the
+  // console keep saying "account" while showing a `Library`, and since P3.7b
+  // an Account is a real record that a library belongs to. Splitting them was
+  // a PREREQUISITE of the screens' rewrite, not a cleanup after it.
   th_account: 'חשבון',
+  th_user: 'משתמש',
   th_email: 'דוא״ל',
   th_users: 'משתמשים',
   th_admins: 'מנהלים',
@@ -73,7 +82,12 @@ const HE = {
   th_books: 'ספרים',
   th_duplicates: 'כפילויות',
   th_lent: 'מושאלים',
+  // ⚠ TWO verbs, because Hebrew agrees with its subject. `ספרייה` is
+  // feminine, `חשבון` is masculine, and this key sat over a library until
+  // P3.7e put a customer under it — the same mistake as `th_account` over
+  // three nouns, one part of speech along.
   th_created: 'נוצרה',
+  th_created_m: 'נוצר',
   th_status: 'סטטוס',
   th_title: 'כותרת',
   th_author: 'מחבר',
@@ -86,7 +100,6 @@ const HE = {
   th_first_found: 'נמצא לראשונה',
   th_images: 'תמונות',
   th_storage: 'אחסון',
-  th_actions: 'פעולות',
 
   // libraries
   lib_mine: 'שלי',
@@ -98,16 +111,23 @@ const HE = {
   lib_create: 'יצירה',
   lib_rename: 'שינוי שם',
   lib_empty: 'אין ספריות',
-  lib_export: 'ייצוא',
   lib_export_csv: 'CSV',
   lib_export_json: 'JSON',
+  // ⚠ שלושת הפעולות שיושבות על שורת ספרייה זקוקות לשם נגיש ייחודי. שתי שורות
+  // שמכריזות "שינוי שם" מתנגשות — והמתנגשת שכותבת היא זו שמשנה שם.
+  lib_rename_of: (name: string) => `שינוי השם של ${name}`,
+  lib_csv_of: (name: string) => `ייצוא ${name} כ-CSV`,
+  lib_json_of: (name: string) => `ייצוא ${name} כ-JSON`,
   lib_id: 'מזהה',
   lib_unnamed: 'ללא שם',
+  // ⚠ מדף ללא שם אינו ספרייה ללא שם. שימוש חוזר ב-lib_unnamed מציב את המילה
+  // "ספרייה" מעל שם מדף, בטבלה שיש בה עמודת ספרייה אמיתית שני תאים משם.
+  shelf_unnamed: 'מדף ללא שם',
   lib_no_delete: 'אין מחיקת ספרייה: המחיקה גוררת כל ספר, מדף, קריאה ותצלום שבתוכה, והשרת אינו מציע אותה.',
 
   // library detail
   ld_never_read: 'לא נקראה',
-  ld_no_members: 'אין חברים — איש אינו יכול לראות את הספרייה הזו',
+  ld_no_members: 'אין חברים — איש אינו יכול לראות את החשבון הזה או לנהל אותו',
 
   // books
   books_title: 'כל הספרים במערכת',
@@ -176,25 +196,36 @@ const HE = {
   img_blind:
     'השירות אינו רואה את ספריית הקבצים, ולכן כל התמונות מדווחות כחסרות ואין נתוני נפח. זה אומר "לא בדקנו", לא "אבד".',
 
-  // accounts — הלקוח של המפעיל. "חשבון" כאן הוא הדייר; ברשומות הוא Library.
+  // accounts — הלקוח של המפעיל, ומאז P3.7b גם רשומה אמיתית שהספרייה שייכת לה.
   acct_title: 'חשבונות',
-  acct_sub: 'כל לקוח במערכת: מי מנהל אותו, כמה משתמשים, כמה ספרים וכמה מקום התמונות תופסות.',
+  acct_sub: 'כל לקוח במערכת: מי מנהל אותו, כמה משתמשים, כמה ספריות הוא מחזיק, כמה ספרים וכמה מקום התמונות תופסות.',
   acct_panel: 'פרטי החשבון',
-  acct_library_id: 'מזהה ספרייה',
+  acct_unnamed: 'חשבון ללא שם',
+  acct_empty: 'אין חשבונות',
+  // ⚠ מזהה שאינו מצביע על כלום. שתיקה מלמדת את המפעיל שהקישור נשבר, וזו בדיוק
+  // ההודעה שהניתוב הזה קיים כדי למנוע.
+  acct_unknown: 'המזהה בקישור אינו מתאים לאף חשבון ואף ספרייה במערכת.',
+  // ⚠ "אין" מול "לא ידוע" — שני מצבים שונים לגמרי. ראו peopleKnown.
+  acct_people_unknown: 'רשימת האנשים אינה זמינה כרגע, ולכן אי אפשר לומר מי מנהל את החשבון הזה.',
+  acct_libs_unknown: 'רשימת הספריות אינה זמינה כרגע.',
   acct_no_admin: 'אין מנהל',
   acct_users: 'משתמשים',
   acct_books: 'ספרים',
   acct_images: 'תמונות',
   acct_joined: 'הצטרף',
-  acct_all_books: (n: number) =>
-    n === 1 ? 'הספר היחיד' : `כל ${n} הספרים`,
-  acct_all_images: (n: number) =>
-    n === 1 ? 'התמונה היחידה' : `כל ${n} התמונות`,
+  // ⚠ הספריות של החשבון — הרשימה שהחליפה את תווית המיפוי `acct_library_id`.
+  // התווית ההיא הסבירה שאנחנו אומרים "חשבון" ומאחסנים Library; היום זה פשוט
+  // לא נכון, והמיפוי הוא נתון: לכל ספרייה שורה משלה עם המזהה שלה.
+  acct_lib_sub: 'האוספים שהחשבון הזה מחזיק. שינוי שם וייצוא הם פעולות על ספרייה, ולכן הם כאן ולא על שורת החשבון.',
+  acct_lib_none: 'החשבון הזה אינו מחזיק אף ספרייה',
+  acct_books_of: (name: string) => `הספרים של ${name}`,
+  acct_images_of: (name: string) => `התמונות של ${name}`,
+  acct_recent: 'נוסף לאחרונה, בכל ספריות החשבון',
   acct_no_member_management:
     'הזמנה, הסרה ושינוי תפקיד אינם קיימים באף אחד משני השירותים — הם מחכים להתחברות (P4.1) ולזרימת ההזמנה (P4.3).',
-  acct_unaffiliated: 'חשבונות ללא שיוך',
+  acct_unaffiliated: 'משתמשים ללא שיוך',
   acct_unaffiliated_why:
-    'אנשים שאינם חברים באף ספרייה. עד שתהיה התחברות איש אינו יכול להגיע אליהם, וזה המקום היחיד שבו הם מופיעים.',
+    'אנשים שאינם חברים באף חשבון. עד שתהיה התחברות איש אינו יכול להגיע אליהם, וזה המקום היחיד שבו הם מופיעים.',
 
   // book panel
   bp_title: 'פרטי הספר',
@@ -212,21 +243,28 @@ const HE = {
 
   // access
   acc_title: 'גישה',
-  acc_account: 'החשבון המחובר',
   acc_memberships: 'חברויות',
   users_unnamed: 'ללא שם',
   acc_system_admin: 'מנהל מערכת',
   acc_account_admin: 'מנהל חשבון',
+  // ⚠ "בתוך ספרייה אחת" היה נכון עד P3.7b וכבר אינו: תפקיד נקבע ברמת החשבון
+  // ומכסה כל ספרייה שהחשבון מחזיק. משפט שמצמצם אותו לספרייה אחת הוא בדיוק
+  // הסוג של נימוק שגוי שגורם לקורא הבא למחוק את השמירה הנכונה.
   acc_two_admins:
-    'יש כאן שני תפקידים שונים. מנהל המערכת — הכלי הזה — רואה את כל הדיירים ואינו חבר באף ספרייה. מנהל חשבון הוא תפקיד בתוך ספרייה אחת, והוא זה שמזמין בני משפחה. השרת עדיין אינו אוכף אף אחד מהם.',
+    'יש כאן שני תפקידים שונים. מנהל המערכת — הכלי הזה — רואה את כל הלקוחות ואינו חבר באף חשבון. מנהל חשבון הוא תפקיד בתוך חשבון אחד, והוא חל על כל הספריות שהחשבון מחזיק; הוא זה שמזמין בני משפחה. השרת עדיין אינו אוכף אף אחד מהם.',
   acc_gap_title: 'מה שאין עדיין',
   acc_gap_intro:
     'ניהול משתמשים אינו קיים בשרת, ולכן אינו מופיע כאן. אלה הפערים, ומה נדרש כדי לסגור אותם:',
-  acc_gap_invite: 'הזמנת משתמש לספרייה — נדרש מנגנון התחברות (P4.1) וזרימת הזמנה (P4.3).',
+  // ⚠ לחשבון, לא לספרייה: מאז P3.7b חברות מצביעה על חשבון, והזמנה אחת נותנת
+  // גישה לכל מה שהחשבון מחזיק. השורה הזו סתרה את הפסקה שמעליה.
+  acc_gap_invite: 'הזמנת משתמש לחשבון — נדרש מנגנון התחברות (P4.1) וזרימת הזמנה (P4.3).',
   acc_gap_roles: 'שינוי תפקיד או הסרת חבר — אין נקודת קצה, וההרשאות עצמן עדיין אינן נאכפות (P3.2).',
-  acc_gap_list: 'חשבון עדיין אינו יכול להתחבר — אין מנגנון התחברות, ולכן כל בקשה מגיעה כאותו חשבון פיתוח (P4.1).',
-  acc_gap_counts: (accounts: number, libraries: number) =>
-    `כרגע: ${accounts} חשבונות, ${libraries} ספריות.`,
+  acc_gap_list: 'משתמש עדיין אינו יכול להתחבר — אין מנגנון התחברות, ולכן כל בקשה מגיעה כאותו משתמש פיתוח (P4.1).',
+  // ⚠ שלושה מספרים שונים. עד P3.7e הראשון היה מספר האנשים בתווית "חשבונות"
+  // והשני מספר הספריות — שני שמות למה שהיה אז ישות אחת. מאז P3.7b אלה שלוש
+  // ישויות, ולכן שלוש ספירות.
+  acc_gap_counts: (accounts: number, users: number, libraries: number) =>
+    `כרגע: ${accounts} חשבונות, ${users} משתמשים, ${libraries} ספריות.`,
   acc_gap_delete: 'מחיקת ספרייה — פעולה חוצת שישה אגרגטים, ממתינה למדיניות (P3.2) ולפינוי קבצים (P3.5).',
   acc_no_auth:
     'אין כאן התחברות. הכלי חשוף לכל מי שנמצא ברשת המקומית, בדיוק כמו שאר המערכת עד פילר 4.',
@@ -268,7 +306,7 @@ const EN: Strings = {
   stat_reads: 'Reads',
   sys_scope: 'Everything here spans every tenant in the system',
   sys_orphans: (n: number) =>
-    `${n} librar${n === 1 ? 'y has' : 'ies have'} no members at all — nobody can see or administer ${n === 1 ? 'it' : 'them'}`,
+    `${n} librar${n === 1 ? 'y' : 'ies'} whose owning account has no member at all — nobody can see or administer ${n === 1 ? 'it' : 'them'}`,
   staff_unreachable: 'The staff service is unreachable. Check that it is running on port 8758.',
   token_title: 'Staff token',
   token_needed: 'The staff service requires a token. Enter it to continue.',
@@ -280,6 +318,7 @@ const EN: Strings = {
   token_ok: 'Token protected',
   th_library: 'Library',
   th_account: 'Account',
+  th_user: 'User',
   th_email: 'Email',
   th_users: 'Users',
   th_admins: 'Admins',
@@ -290,6 +329,7 @@ const EN: Strings = {
   th_duplicates: 'Duplicates',
   th_lent: 'Lent',
   th_created: 'Created',
+  th_created_m: 'Created',
   th_status: 'Status',
   th_title: 'Title',
   th_author: 'Author',
@@ -299,7 +339,6 @@ const EN: Strings = {
   th_first_found: 'First found',
   th_images: 'Images',
   th_storage: 'Storage',
-  th_actions: 'Actions',
 
   lib_mine: 'mine',
   lib_readonly: 'Read-only — you are not a member of this library',
@@ -311,16 +350,19 @@ const EN: Strings = {
   lib_create: 'Create',
   lib_rename: 'Rename',
   lib_empty: 'No libraries',
-  lib_export: 'Export',
   lib_export_csv: 'CSV',
   lib_export_json: 'JSON',
+  lib_rename_of: (name: string) => `Rename ${name}`,
+  lib_csv_of: (name: string) => `Export ${name} as CSV`,
+  lib_json_of: (name: string) => `Export ${name} as JSON`,
   lib_id: 'Id',
   lib_unnamed: 'Unnamed',
+  shelf_unnamed: 'Unnamed shelf',
   lib_no_delete:
     'No library deletion: it would take every book, shelf, read and photo inside it, and the server does not offer it.',
 
   ld_never_read: 'Never read',
-  ld_no_members: 'No members — nobody can see this library',
+  ld_no_members: 'No members — nobody can see or administer this account',
 
   books_title: 'Every book in the system',
   books_all_libraries: 'All libraries',
@@ -385,23 +427,28 @@ const EN: Strings = {
     'This service cannot see the blob tree, so every image reports as missing and there are no size figures. That means "we did not look", not "they are gone".',
 
   acct_title: 'Accounts',
-  acct_sub: 'Every customer in the system: who administers it, how many users, how many books, and how much room the images take.',
+  acct_sub: 'Every customer in the system: who administers it, how many users, how many libraries it keeps, how many books, and how much room the images take.',
   acct_panel: 'Account details',
-  acct_library_id: 'Library id',
+  acct_unnamed: 'Unnamed account',
+  acct_empty: 'No accounts',
+  acct_unknown: 'The id in this link matches no account and no library in the system.',
+  acct_people_unknown: 'The people list is unavailable right now, so who administers this account cannot be said.',
+  acct_libs_unknown: 'The library list is unavailable right now.',
   acct_no_admin: 'no admin',
   acct_users: 'Users',
   acct_books: 'Books',
   acct_images: 'Images',
   acct_joined: 'Joined',
-  acct_all_books: (n: number) =>
-    n === 1 ? 'The one book' : `All ${n} books`,
-  acct_all_images: (n: number) =>
-    n === 1 ? 'The one image' : `All ${n} images`,
+  acct_lib_sub: 'The collections this account keeps. Renaming and exporting act on a library, so they live here rather than on the account row.',
+  acct_lib_none: 'This account keeps no library',
+  acct_books_of: (name: string) => `Books in ${name}`,
+  acct_images_of: (name: string) => `Images in ${name}`,
+  acct_recent: 'Most recently added, across every library of this account',
   acct_no_member_management:
     'Invite, remove and re-role exist in neither service — they wait on the login (P4.1) and the invite flow (P4.3).',
-  acct_unaffiliated: 'Unaffiliated accounts',
+  acct_unaffiliated: 'Unaffiliated users',
   acct_unaffiliated_why:
-    'People who belong to no library. Until there is a login nobody can reach them, and this is the only place they appear.',
+    'People who belong to no account. Until there is a login nobody can reach them, and this is the only place they appear.',
 
   bp_title: 'Book details',
   bp_library: 'Library',
@@ -418,24 +465,23 @@ const EN: Strings = {
   bp_author_label: 'Author',
 
   acc_title: 'Access',
-  acc_account: 'Signed-in account',
   acc_memberships: 'Memberships',
   users_unnamed: 'Unnamed',
   acc_system_admin: 'System admin',
   acc_account_admin: 'Account admin',
   acc_two_admins:
-    'These are two different jobs. The SYSTEM admin — this tool — sees every tenant and is a member of none. An ACCOUNT admin is a role inside one library, and is who invites family members. The server enforces neither yet.',
+    'These are two different jobs. The SYSTEM admin — this tool — sees every customer and is a member of none. An ACCOUNT admin is a role inside one account, and it covers every library that account keeps; they are who invites family members. The server enforces neither yet.',
   acc_gap_title: 'What is not here yet',
   acc_gap_intro:
     'User management does not exist on the server, so it does not appear here. These are the gaps, and what would close each:',
   acc_gap_invite:
-    'Invite a user to a library — needs a login (P4.1) and an invite flow (P4.3).',
+    'Invite a user to an account — needs a login (P4.1) and an invite flow (P4.3).',
   acc_gap_roles:
     'Change a role or remove a member — no endpoint, and roles are not enforced yet (P3.2).',
   acc_gap_list:
-    'An account cannot sign in yet — there is no login, so every request arrives as the same dev account (P4.1).',
-  acc_gap_counts: (accounts: number, libraries: number) =>
-    `Right now: ${accounts} accounts, ${libraries} libraries.`,
+    'A user cannot sign in yet — there is no login, so every request arrives as the same dev user (P4.1).',
+  acc_gap_counts: (accounts: number, users: number, libraries: number) =>
+    `Right now: ${accounts} accounts, ${users} users, ${libraries} libraries.`,
   acc_gap_delete:
     'Delete a library — a cascade across six aggregates, waiting on policy (P3.2) and a blob purge (P3.5).',
   acc_no_auth:
