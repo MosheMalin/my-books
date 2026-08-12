@@ -181,6 +181,29 @@ def owner_membership(
     return library, membership
 
 
+def owning_account(tenancy: TenancyStore, library: LibraryRef) -> str:
+    """Which customer this already-resolved library belongs to.
+
+    The same question :func:`owner_membership` asks, for the callers that
+    do not need a membership back — the rate cap and the job queue's
+    fairness key, both of which only want to know whose budget and whose
+    turn this is. It lives beside its sibling for the reason that one's
+    docstring already gives: writing the join twice is how two parts of
+    the product come to disagree about who owns what, and P3.7c had it
+    written four times before this existed.
+
+    ⚠ Falls back to the library's own id when the row is missing, which
+    is reachable ONLY behind ``policy._role``'s dev-trusted branch — a
+    library that is not the principal's own and has no row is already a
+    404 one dependency earlier. Delete this fallback together with that
+    branch at P4.1. Until then it is the honest answer: an unplaceable
+    read still needs a key, and its own id is the one that cannot
+    collide with somebody else's.
+    """
+    owner = tenancy.get_library(library.id)
+    return owner.account_id if owner is not None else library.id
+
+
 # The remaining ports, same pattern as get_principal: placeholders that FAIL
 # rather than defaulting, replaced per-application in create_app. The api
 # layer names the PORT; app/main.py decides which adapter satisfies it (H1).

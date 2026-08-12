@@ -40,7 +40,7 @@ def _settled(runner: QueuedJobRunner, job_id: str) -> bool:
     return s is not None and s.state != "running"
 
 
-def test_two_reads_in_two_libraries_do_not_observe_each_other():
+def test_two_reads_of_two_customers_do_not_observe_each_other():
     """The plan's own named test case. Two tenants' jobs run concurrently on
     two workers; each keeps its own progress, and stopping one leaves the
     other running and lets it finish as `done`."""
@@ -56,8 +56,8 @@ def test_two_reads_in_two_libraries_do_not_observe_each_other():
                       f"release of {key}")
         return run
 
-    runner.submit("job-a", job("a"), tenant="lib-a")
-    runner.submit("job-b", job("b"), tenant="lib-b")
+    runner.submit("job-a", job("a"), tenant="acc-a")
+    runner.submit("job-b", job("b"), tenant="acc-b")
     _wait_for(started["a"].is_set, "job-a to start")
     _wait_for(started["b"].is_set, "job-b to start")
 
@@ -75,7 +75,7 @@ def test_two_reads_in_two_libraries_do_not_observe_each_other():
     assert runner.status("job-b").state == "done"
 
 
-def test_one_librarys_burst_does_not_starve_anothers_single_read():
+def test_one_customers_burst_does_not_starve_anothers_single_read():
     """Round-robin across tenants, FIFO within one: with a single worker held
     at a gate, tenant A's backlog of two more jobs and tenant B's one job
     drain as A, B, A — B waits behind at most one of A's, never the burst."""
@@ -93,11 +93,11 @@ def test_one_librarys_burst_does_not_starve_anothers_single_read():
                 order.append(name)
         return run
 
-    runner.submit("a1", gated, tenant="lib-a")
+    runner.submit("a1", gated, tenant="acc-a")
     # Everything below queues behind a1 on the one worker.
-    runner.submit("a2", record("a2"), tenant="lib-a")
-    runner.submit("a3", record("a3"), tenant="lib-a")
-    runner.submit("b1", record("b1"), tenant="lib-b")
+    runner.submit("a2", record("a2"), tenant="acc-a")
+    runner.submit("a3", record("a3"), tenant="acc-a")
+    runner.submit("b1", record("b1"), tenant="acc-b")
     gate.set()
     for job in ("a2", "a3", "b1"):
         _wait_for(lambda j=job: _settled(runner, j), f"{job} to settle")
