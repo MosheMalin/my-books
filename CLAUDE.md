@@ -236,7 +236,9 @@ different world — the product never reads it.
   account's standing, and is admin-only because it writes into a customer
   other people belong to. Same book in two libraries of one account = two
   Books; merging them is a future operation, and `merge_library` REFUSES
-  across accounts. Still landing: P3.7c–f (`planning/TENANCY_BOUNDARY_PLAN.md`).
+  across accounts. ✅ P3.7a–f all landed; the long-form record is
+  `docs/HISTORY.md`, "P3.7 — the tenancy boundary moves from Library to
+  Account".
 - **Images**: content-addressed (SHA-256), EXIF applied at STORE time,
   untouched bytes when no correction needed; variants carry their own
   extension; blob keys validated, never joined. Real phone JPEGs are MPO.
@@ -315,14 +317,19 @@ different world — the product never reads it.
 - One correlated subquery per row over a JSON column is a DoS on an
   unauthenticated service: `/images` measured 13.6s for one `limit=200`.
   Grouped CTE pre-pass, 14ms.
-- The console still renders a LIBRARY row where it says "account", and the
-  domain no longer agrees: since P3.7b an Account is a real record that a
-  library belongs to. The gloss (revision 4 of ADMIN_CONSOLE_PLAN) was
-  right when a library WAS the tenant and is now just behind — P3.7e is
-  where the screens catch up. The staff wire is already correct: `/accounts`
-  returns CUSTOMERS with their libraries' figures summed, `/users` returns
-  people, `LibraryDTO.account_id` names the owner, and the overview counts
-  `accounts` / `users` / `libraries` as three different numbers.
+- The admin console's row IS an Account since P3.7e — the revision-4 gloss
+  ("account" over a `Library`) is retired, `acct_library_id` deleted, and
+  `th_account` split into account/user/library. Its drawer is *account → its
+  libraries → users/books/images*; a `#/accounts/<library id>` bookmark
+  resolves to the OWNING account (`parseHash` stays pure — an id is opaque).
+  Never render `LibraryDTO.members`/`admins` on a library row: both mean the
+  owning ACCOUNT's people.
+- **Absent is not unknown.** "No admin" / "no members" are states
+  `new_account` and `NoAdminLeft` make unreachable, so the console renders
+  them in alarm tone — and a failed `/users` produces the identical empty
+  fold. Alarms read the account row (`admins`, `members`, `libraries`);
+  `peopleKnown` says whether the people list arrived. Measured: with `/users`
+  down, every customer read "no admin" beside a card saying 2 users.
 - `app/ui` is consumed as source: each client's `postinstall` installs it;
   `check-installed.mjs` + `install.test.ts` guard the `npm ci
   --ignore-scripts` path. One `npm install --prefix <client>` per client.

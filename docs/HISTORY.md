@@ -3431,6 +3431,243 @@ check slower — the python rings went 19s → 52s — because two of them fan o
 internally; the budget is cores + 2, measured (47s at exactly-cores, 44s at
 +2, 46s at +4: enough slack to cover startup I/O, not enough to thrash).
 
+## ⚠⚠ P3.7 — the tenancy boundary moves from Library to Account (2026-08-11/13)
+
+The decomposition is `planning/TENANCY_BOUNDARY_PLAN.md`; the decision is
+VISION §4.1 **[REVISED 2026-08-11]**. This is the long-form record: the
+argument, the reversal, and what six review passes actually found.
+
+### The reversal, and why a plan document forced it
+
+On 2026-08-10 the owner was asked directly whether there should be two layers
+of tenant. The answer recorded that day was **no**: Library is the isolation
+boundary, Account is a pure identity axis, *"there is ONE tenancy layer, not
+two"*. On 2026-08-11 it was reversed:
+
+> within an account there can be multiple libraries, and multiple users. and
+> it will not be strange if user can see books across all libraries. but user
+> from account A should not be able to [know] anything about account B. So the
+> hard separation is not in library level, but in account level.
+
+What is worth keeping is **how the mistake surfaced**. Not a bug, not a
+failing test — a *plan document that needed a paragraph of apology*.
+`ADMIN_CONSOLE_PLAN.md` revision 4 had to write down that the console says
+"account" and the storage says `Library`, and to put the library id on screen
+under the account name, labelled, so the mapping stayed visible. A design that
+needs a disclaimer explaining that the operator's word maps to a different
+record than the domain carries is a model that is wrong, not a plan that is
+unclear. **The gloss was the bug report.**
+
+### One enforced scope, not two — the objection that was honoured
+
+The 2026-08-10 argument against two layers was concrete: *"every query narrows
+twice, and each of the six aggregates gains a second way to leak."* That
+objection is correct and it is why this work looks the way it does:
+
+- **`library_id` stays the ONE enforced physical scope.** Every store method
+  still leads with a `LibraryRef`, every row keeps its column, every read
+  index still leads with it, blobs keep `libraries/<library_id>/`, and
+  `test_store_contract.py`'s isolation suite passes unchanged. It is not
+  weakened — it is demoted from *the* boundary to defence in depth inside one;
+- **the account boundary is enforced at the DOOR.** `libraries` gained an
+  `account_id`, and `app/api/deps.py:current_library` asks *"is this library
+  owned by an account this user belongs to?"* instead of *"is there a
+  membership row for this (user, library)?"*. One narrowing in SQL, one
+  authorization decision, in the two modules that already own those jobs.
+
+The rule that keeps it honest: **if an item starts adding `account_id` to a
+second table, it has gone wrong.** None did.
+
+### The backfill — the one genuine judgment call
+
+The real database held one person, two libraries, and an ADMIN membership by
+that person on each. "One account per library" is the obvious rule and it is
+**wrong on the only data that exists**: it splits one owner into two customers.
+
+The rule used instead: **libraries whose membership set is IDENTICAL collapse
+into one account.** Group by the exact frozenset of `(user_id, role)`; each
+group becomes one Account; every user in the set gets one account-membership
+with that role. The safety property is that no user gains access to anything
+they could not already reach, because every library in a group had exactly
+that member set. The owner's data produced the right answer: **one account
+owning two libraries.**
+
+### What the reviews found, item by item
+
+Six items, each landed on `main` green before the next, each with its
+reviewers. The pattern from the console epic repeated: **most majors were
+wrong stated REASONS rather than wrong behaviour** — the failure mode that
+makes the next reader delete a guard.
+
+- **P3.7a** (the person becomes a `User`, schema v13). A pure rename, its own
+  item so that P3.7b's diff would be the boundary change and not a 60-file
+  rename. SQLite's `RENAME TO`/`RENAME COLUMN` rewrite the REFERENCES clause,
+  the composite PRIMARY KEY and the secondary index in place — four
+  statements, not the twelve-step table rebuild the docs prescribe. Measured
+  to depend on `legacy_alter_table` being off, not on `foreign_keys`.
+- **P3.7b** (the boundary moves, schema v14). One commit, because the tree is
+  red between any two halves of it. A security review found *a viewer could
+  stock the customer's account*; another found *the door had a stopwatch on
+  it*.
+- **P3.7c** (one customer, one quota). The §1.2 rate cap and the job queue's
+  fairness key moved to the account — a customer had been multiplying their
+  own quota by pressing *new library*. ⚠ Both rules were mutation-checked at
+  the ROUTER, which is where the decision lives; `QueuedJobRunner` is agnostic
+  about what a tenant key means and correctly stayed untouched. The plan's
+  original note naming its line numbers was wrong about that.
+- **P3.7d** (the staff read model reports customers). `/accounts` returns
+  customers with their libraries' figures summed — **folded from
+  `libraries()`** rather than computed by a second set of grouped queries,
+  because `image_files`/`image_bytes` come from the blob tree keyed by LIBRARY
+  and have no per-account figure to GROUP BY. Two of twelve cannot be computed
+  independently, and once two are folded and ten are queried you have
+  manufactured a disagreement between two screens about the same books.
+  ⚠ The aggregation fixture gives one account a second library **with books in
+  it**: an empty one makes every sum equal its first term, and a fold that
+  dropped the rest passed on the first draft.
+- **P3.7e** (the console stops glossing) — below.
+- **P3.7f** — this write-up.
+
+### P3.7e: what a console review is for
+
+The item itself is small to state: rows become customers, the drawer becomes
+*account → its libraries → users/books/images*, `t.acct_library_id` is deleted
+rather than relabelled, and `t.th_account` — which was rendered over **three
+different entities** — splits into account / user / library headers. Splitting
+that string was a *prerequisite*, not a cleanup: one word over three nouns is
+what let the console keep saying "account" about a person and a collection
+alike.
+
+Two reviewers ran, each in its **own detached worktree**. That detail is
+load-bearing: earlier in this epic three reviewers shared one tree and
+contaminated each other's mutations, which makes every "SURVIVES" reading
+worthless. What they found is worth recording as a class:
+
+**Tests that were not gates.** Four rules survived reversal with the whole
+ring green:
+
+- the drawer's member list was not scoped to the open account. Every test
+  opened the one customer where `memberships[0]` and *"the membership naming
+  this account"* coincide. The fixture now gives one person a **different role
+  in each of two customers**, so the wrong fold lists a stranger and badges
+  them wrong;
+- the images preview's fan-out had no gate at all — the books one did, and the
+  commit message claimed the decision for both;
+- ⚠⚠ **the dashboard tile and the access screen's gap line were unpinned
+  against `users`, because the fixture made accounts and people BOTH 2.** So
+  the ORIGINAL defect — customers counted by `users.length` — survived the
+  test written to catch it, under a comment asserting the numbers were
+  "deliberately all different". *A comment claiming a fixture has a property
+  is not the same as the fixture having it.* They are 2 / 4 / 3 now, pairwise;
+- the per-library preview cap was unexercised in both directions, because **the
+  fake ignored `limit` entirely**. A drawer for the owner's 286-book customer
+  would have fetched all 286 with the ring green. A fake that silently drops a
+  parameter has decided the screen cannot be wrong about it.
+
+**A console that fabricates the anomaly it exists to detect.** Measured in a
+real browser, both directions. With `/users` failing and everything else
+healthy, every customer rendered the warn badge *"no admin"* and every drawer
+*"nobody can see or administer this account"* — states `new_account` and
+`NoAdminLeft` make unreachable, which is exactly why they are rendered in
+alarm tone — beside a stat card reading 2 users, **with no error anywhere on
+screen**. The same shape with `/libraries` down. Three causes, all fixed:
+
+- one fact had three sources (`AccountDTO.admins`, a fold over `/users`, and
+  `overview.accounts_without_admin`) and the screen picked the only one that
+  can vanish. The alarm reads the account row now; the NAMES stay a fetch;
+- `peopleKnown` distinguishes *absent* from *unknown*. One `error` string for
+  four independent `allSettled` requests cannot;
+- the error box was gated on `accounts.length === 0`, a guard from when one
+  list fed the whole screen.
+
+**Layout that jsdom cannot see.** The five per-library controls were put in a
+trailing actions column that measured **834px inside a drawer capped at
+`min(720px, 100%)`** — rename and both exports outside the box at
+`scrollLeft: 0`, absent from the accessibility tree until the table was
+scrolled sideways. This item had MOVED them there from a full-width table, so
+it was a regression of its own goal. They stack under the library name now.
+Only two of the five carried a disambiguating `aria-label`, and the duplicated
+ones included **rename — the only control that writes**.
+
+**A refresh is not a first load.** `reload()` raised `loading`, and every
+screen answers `if (loading) return <Loading/>`, so renaming a library from
+inside the drawer blanked the app to a spinner and remounted the drawer
+scrolled back to the top, re-issuing four preview fetches. Caught with a
+`MutationObserver` across a real rename.
+
+⚠ Pinning that last one took three attempts, and the two failures are the
+instructive part: a test that waited on the PATCH asserted against a screen
+the reload had not touched yet (a request is recorded when it is *made*), and
+a held-open handler with an off-by-one flag let the first call through — and
+the first call *was* the reload. **A mutation that survives is as often a weak
+test as a missing rule; the way to tell is to make the mutation and read what
+the test actually observed.**
+
+### Two smaller things worth keeping
+
+**A dead-key guard with a hole in it.** `app/admin/src/lib/i18n.test.ts`
+checked `code.includes('t.' + key)` — a bare substring — so **every key that
+is a PREFIX of another passed on its longer sibling's back**. `acc_account`
+had been dead since `acc_account_admin` was added; `lib_export` since
+`lib_export_csv`. The test whose entire job is finding dead keys reported both
+as rendered. It is anchored at both ends now, and the detector is extracted so
+the boundary has its own gate — because against the real table it cannot have
+one: once the dead keys are deleted, loosening the check back to a substring
+passes (measured). *A rule that is only observable while it is broken has no
+gate.* The scanner also skips test files now: a key named only by an assertion
+is not a key anything renders.
+
+**A client argument resting on a server constant nothing named.** The drawer's
+image preview takes the newest five of a union, which is correct only if each
+per-library page is that library's newest first — and `/images` takes no sort
+parameter, so the client cannot ask. That was the same shape as `MAX_SCORE`
+tracking `match.py`. `test_staff_api.py` pins the ordering now, so changing the
+`ORDER BY` is a decision rather than an accident.
+
+### Found on the way, deliberately NOT fixed — three holes in the migration RUNNER
+
+All three are older than this epic, none is a regression of it, and all three
+change how every schema step behaves — which is not a rider on a rename. Two
+were found by P3.7a's migration review; the third by P3.7e's first gate run in
+a fresh worktree:
+
+1. **a string step is not atomic.** `conn.executescript` commits as it goes, so
+   the runner's `with conn:` wraps nothing. A crash between two statements of
+   one step leaves the file half-upgraded with the OLD `user_version`, and the
+   next open re-enters the step and raises on what already succeeded — a
+   database openable only by hand. `migrations.py`'s docstring now says so (it
+   previously claimed the opposite); the fix is a `BEGIN`/`COMMIT` per script;
+2. **no guard against a database NEWER than the code.** `migrate()` skips
+   quietly when `user_version > SCHEMA_VERSION`, so an older build against an
+   upgraded file dies later with a raw `no such table` instead of naming both
+   numbers. This epic made that likely rather than theoretical, because rolling
+   back between items is a real action;
+3. ⚠ **no cross-PROCESS mutual exclusion.** `tests/run_all.py` shards across
+   processes, and `work/product.db` is gitignored — so in a fresh worktree the
+   first gate run creates the file and N workers each read `user_version 0` and
+   each replay the whole chain. Observed as
+   `sqlite3.OperationalError: duplicate column name: lent_out`, which is
+   simply the first `ALTER` to lose the race. It self-heals (the next run finds
+   a migrated file) and it is timing-dependent — one reviewer's first run in a
+   fresh worktree passed 13/13. That is the argument for writing the mechanism
+   down rather than relying on reproducing it. It compounds with (1): the loser
+   can leave the file half-upgraded at the old `user_version`.
+
+⚠ **Landing any item of this epic advances the owner's real `work/product.db`**
+the first time the gate or the pre-commit hook runs in the primary tree —
+`tools/api_contract.py` imports `app.main`, which migrates — and there is no
+down step. Snapshot through SQLite's backup API before each merge to `main`.
+
+### The scope fence, held
+
+Pillar 4 is not started and nothing here started it: no login, no auth, no
+magic links, no invites, no sign-up, no libraries-per-account cap. Principals
+stay dev-trusted. A user belonging to more than one account is *representable*
+after P3.7b and *unreachable* until P4.3 — the correct state, not an omission.
+Also not built: the merge of two Books that are the same work in two libraries
+of one account (VISION §4.1 records it as the user's escape hatch), and any
+per-library role scope (no dead nullable column).
+
 ## Known constraints / next steps (roughly prioritised, updated 2026-08-06)
 
 1. **Any rules/threshold change goes through `tools/sweep.py` first** (see
