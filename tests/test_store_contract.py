@@ -2302,7 +2302,7 @@ def test_a_v13_database_groups_libraries_into_accounts_by_their_members():
 
     from app.adapters.migrations import MIGRATIONS
 
-    def seed(conn, libraries, memberships):
+    def seed(conn, libraries, memberships, joined=None):
         for version, step in MIGRATIONS:
             if version > 13:
                 break
@@ -2320,8 +2320,9 @@ def test_a_v13_database_groups_libraries_into_accounts_by_their_members():
                          (lib, lib))
         for user, lib, role in memberships:
             conn.execute(
-                "INSERT INTO memberships (user_id, library_id, role, joined_at)"
-                " VALUES (?,?,?,NULL)", (user, lib, role))
+                "INSERT INTO memberships (user_id, library_id, role,"
+                " joined_at) VALUES (?,?,?,?)",
+                (user, lib, role, (joined or {}).get((user, lib))))
         conn.commit()
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -2335,7 +2336,15 @@ def test_a_v13_database_groups_libraries_into_accounts_by_their_members():
                 # lib-dead has nobody at all -> its own account, never pooled
                 # with another orphan.
                 ["lib-1", "lib-2", "lib-a", "lib-b", "lib-dead", "lib-gone",
-                 "lib-r1", "lib-r2"],
+                 "lib-r1", "lib-r2", "lib-two-admins",
+                 # ⚠ A library id containing the character the account
+                 # seed used to join on. {"a", "b"} group together, so
+                 # a "|"-joined seed hashes "a|b" for that group — and
+                 # the same string for the lone library literally named
+                 # "a|b". Two accounts, one id: the PRIMARY KEY refuses
+                 # the second INSERT, v14 rolls back, and the owner is
+                 # left with a v13 file the product cannot upgrade.
+                 "a", "b", "a|b"],
                 [
                     ("alice", "lib-1", "admin"), ("bob", "lib-1", "editor"),
                     ("alice", "lib-2", "admin"), ("bob", "lib-2", "editor"),
@@ -2346,7 +2355,16 @@ def test_a_v13_database_groups_libraries_into_accounts_by_their_members():
                     # or demoting bob depending on which library sorts first.
                     ("alice", "lib-r1", "admin"), ("bob", "lib-r1", "viewer"),
                     ("alice", "lib-r2", "admin"), ("bob", "lib-r2", "editor"),
+                    # Two admins: no single name to take, so no name.
+                    ("alice", "lib-two-admins", "admin"),
+                    ("bob", "lib-two-admins", "admin"),
+                    ("alice", "a", "viewer"), ("alice", "b", "viewer"),
+                    ("bob", "a|b", "viewer"),
                 ],
+                # alice joined lib-2 first; the collapsed membership must
+                # carry THAT date, not lib-1's.
+                {("alice", "lib-1"): "2024-06-01",
+                 ("alice", "lib-2"): "2020-01-01"},
             )
         finally:
             conn.close()
@@ -2355,7 +2373,8 @@ def test_a_v13_database_groups_libraries_into_accounts_by_their_members():
 
         owners = {lib: store.get_library(lib).account_id
                   for lib in ("lib-1", "lib-2", "lib-a", "lib-b",
-                              "lib-dead", "lib-gone", "lib-r1", "lib-r2")}
+                              "lib-dead", "lib-gone", "lib-r1", "lib-r2",
+                              "lib-two-admins", "a", "b", "a|b")}
 
         assert owners["lib-1"] == owners["lib-2"], (
             "identical member sets are one customer"
@@ -2382,7 +2401,8 @@ def test_a_v13_database_groups_libraries_into_accounts_by_their_members():
             lib for lib, account in owners.items()
             if store.membership("bob", account) is not None
         }
-        assert reachable == {"lib-1", "lib-2", "lib-b", "lib-r1", "lib-r2"}
+        assert reachable == {"lib-1", "lib-2", "lib-b", "lib-r1", "lib-r2",
+                             "lib-two-admins", "a|b"}
         assert store.membership("bob", owners["lib-a"]) is None
 
         # Roles survive, and the account keeps exactly one row per person.
@@ -2391,9 +2411,21 @@ def test_a_v13_database_groups_libraries_into_accounts_by_their_members():
         assert len(store.list_members(owners["lib-1"])) == 2
         assert store.list_members(owners["lib-dead"]) == ()
 
-        # An account's name is its sole admin's, or blank — never invented.
+        # An account's name is its SOLE admin's, or blank — never invented
+        # and never one of several. lib-b has two members but one admin;
+        # a group with two admins has no name to choose between them, and
+        # a migration that picked either would be writing a preference.
         assert store.get_account(owners["lib-1"]).label == "ALICE"
         assert store.get_account(owners["lib-dead"]).label == ""
+        assert store.get_account(owners["lib-two-admins"]).label == ""
+
+        # The seed collision above: three distinct accounts, three ids.
+        assert owners["a"] == owners["b"] != owners["a|b"]
+
+        # Earliest sighting wins: you have belonged to this customer since
+        # the first library you were added to, not the last.
+        assert store.membership("alice", owners["lib-1"]).joined_at == \
+            "2020-01-01"
 
         conn = sqlite3.connect(str(path))
         try:

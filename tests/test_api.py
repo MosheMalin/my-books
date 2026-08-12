@@ -62,7 +62,11 @@ from app.domain import (
 from app.ports.reader import ReadAlternative, ReadClaim
 
 TEST_ACCOUNT = "acc-test"
-OTHER_ACCOUNT = "acc-other"
+# ⚠ "zzz" so the account order and the LABEL order disagree. With
+# "acc-other" they coincided, and `GET /libraries`' own re-sort — the one
+# whose comment says it exists so the switcher does not reshuffle — could
+# be deleted with the whole ring green (P3.7b's quality review).
+OTHER_ACCOUNT = "acc-zzz"
 TEST_LIBRARY = LibraryRef(id="lib-test", label="Test library")
 
 
@@ -439,6 +443,64 @@ def test_creating_a_library_makes_the_caller_its_admin_and_it_is_usable_at_once(
     assert row is not None and row.account_id == TEST_ACCOUNT
     assert tenancy.membership(p.id, TEST_ACCOUNT).role is Role.ADMIN
 
+
+
+def test_only_an_admin_adds_a_library_to_an_account_others_belong_to():
+    """§4.2 over the route that stopped being harmless when the boundary moved.
+
+    Before P3.7b this minted a brand-new tenant with the caller as its admin,
+    so leaving it open touched nobody. It now writes into an EXISTING customer:
+    every member's switcher grows a row, and there is no DELETE to undo it. A
+    viewer appending libraries to the account that pays for them is vandalism
+    the product cannot reverse (P3.7b's data-integrity review reproduced it).
+    """
+    for role in (Role.VIEWER, Role.EDITOR):
+        # The role is held on the account that owns the caller's OWN
+        # default library — the one `_account()` resolves — and somebody
+        # else administers it. This route takes no library header: it is
+        # on the user axis, so the customer is chosen for it.
+        p = StubPrincipal()
+        tenancy = MemoryTenancyStore()
+        tenancy.save_user(User(id=p.id))
+        tenancy.save_user(User(id="usr-admin"))
+        tenancy.save_account(Account(id=TEST_ACCOUNT))
+        tenancy.save_membership(
+            Membership("usr-admin", TEST_ACCOUNT, Role.ADMIN))
+        tenancy.save_membership(Membership(p.id, TEST_ACCOUNT, role))
+        tenancy.save_library(Library(id=p.library.id,
+                                     account_id=TEST_ACCOUNT,
+                                     label=p.library.label))
+        with TestClient(_app(principal=p, tenancy=tenancy)) as c:
+            r = c.post(f"{API_PREFIX}/libraries", json={"label": "שלי"})
+            assert r.status_code == 403, (role, r.status_code, r.text)
+        # …and nothing was appended to the customer paying for it.
+        assert [lib.id for lib in tenancy.list_libraries(TEST_ACCOUNT)] == [
+            p.library.id
+        ]
+
+
+def test_a_library_goes_under_an_account_you_belong_to_never_your_defaults():
+    """`_account`'s first branch reads the principal's OWN default library and
+    uses its owner — which is only legitimate while the caller is a member of
+    that owner. A principal whose default library belongs to a customer they
+    have nothing to do with must NOT get a library written into it; they get a
+    fresh account of their own instead.
+
+    Dev-trusted principals make this unreachable today. It is pinned because
+    it is the one line that decides whether `principal.library` can be used as
+    a lever into somebody else's customer (P3.7b's data-integrity review)."""
+    p = StubPrincipal()
+    tenancy = MemoryTenancyStore()
+    tenancy.save_user(User(id=p.id))
+    tenancy.save_account(Account(id="acc-foreign"))
+    tenancy.save_library(Library(id=p.library.id, account_id="acc-foreign",
+                                 label=p.library.label))
+    with TestClient(_app(principal=p, tenancy=tenancy)) as c:
+        made = c.post(f"{API_PREFIX}/libraries", json={"label": "שלי"})
+    assert made.status_code == 201, made.text
+    assert made.json()["account_id"] != "acc-foreign"
+    assert [lib.id for lib in tenancy.list_libraries("acc-foreign")] == \
+        [p.library.id], "a library was written into a foreign customer"
 
 def test_a_library_created_with_a_blank_name_is_refused():
     """§4.3, and the deliberate asymmetry with a shelf (whose label is

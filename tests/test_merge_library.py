@@ -233,6 +233,45 @@ def test_an_unnamed_shelf_gains_the_location_label_and_a_named_one_keeps_its_own
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+
+def test_two_libraries_of_different_customers_are_never_merged():
+    """§4.1's boundary, over the most destructive tool in the product.
+
+    This tool exists to undo a location that was modelled as a tenant before
+    Place existed — and a location does not change owner. Merging across
+    accounts would hand every book, photo and read in one collection to people
+    who were never invited, performed by an operator with a --confirm flag.
+    The guard was enforced by comment only until P3.7b's data-integrity review
+    deleted it and watched the whole ring stay green.
+    """
+    w, tmp = _world()
+    try:
+        # A third library, under a SECOND customer.
+        other, membership = new_account(id="acc-other",
+                                        owner=User(id="usr-other"))
+        w.tenancy.save_user(User(id="usr-other"))
+        w.tenancy.save_account(other)
+        w.tenancy.save_membership(membership)
+        w.tenancy.save_library(
+            new_library(id="lib-theirs", label="שלהם", account=other))
+        w.seed_source_scan()
+        before = w.books.count(SRC)
+
+        try:
+            merge_library(w.db, src_id=SRC.id, dst_id="lib-theirs",
+                          blobs=w.blobs)
+        except MergeRefused as exc:
+            assert "different accounts" in str(exc), exc
+        else:
+            raise AssertionError("a merge across customers was allowed")
+
+        # Untouched on both sides: a refusal writes nothing.
+        assert w.books.count(SRC) == before
+        assert w.tenancy.get_library(SRC.id) is not None
+        assert w.tenancy.get_library("lib-theirs") is not None
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
 def test_the_source_tenant_is_retired_and_the_target_untouched():
     w, tmp = _world()
     try:

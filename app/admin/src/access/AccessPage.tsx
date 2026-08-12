@@ -6,12 +6,13 @@
  *
  *   - **system admin** — this tool. Sees every tenant, is a member of none.
  *     Not a `Role`: `app.domain.tenancy.Role` says who you are *within one
- *     library*, so putting `SYSTEM_ADMIN` in that enum would make every
+ *     account*, so putting `SYSTEM_ADMIN` in that enum would make every
  *     membership row a place someone could grant themselves the world. It is a
  *     property of the operator, carried today by a shared token on a separate
  *     service;
- *   - **account admin** — `Role.ADMIN` on a membership. Scoped to one library,
- *     and the one who invites family members. That job has no UI anywhere yet,
+ *   - **account admin** — `Role.ADMIN` on a membership. Held per ACCOUNT
+ *     since P3.7b, so it covers every library that customer owns, and the
+ *     one who invites family members. That job has no UI anywhere yet,
  *     because the server has no invite route (P4.1's login, P4.3's flow).
  *
  * ⚠ The gaps below are listed rather than mocked up. A greyed-out invite

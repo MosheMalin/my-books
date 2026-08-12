@@ -62,8 +62,7 @@ def _dry_run(db: Path, src: str, dst: str) -> int:
         # question the real one would, rather than printing a plan that the
         # execute step then refuses (§4.1: a collection does not change owner).
         if owners["source"] != owners["target"]:
-            print(f"
-REFUSED: different accounts "
+            print(f"\nREFUSED: different accounts "
                   f"({owners['source']} vs {owners['target']}) — merging would "
                   f"move a collection between customers")
             return 2

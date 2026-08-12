@@ -144,6 +144,18 @@ def _checks(product: bool, web: bool, admin: bool, ui: bool,
         out.append(Check("api contracts",
                          [_python(), "tools/api_contract.py", "--check"],
                          REPO_ROOT))
+        # ⚠ The only gate `tools/` has ever had, and it exists because a
+        # shipped script sat unparseable behind a 12/12 green board. Nothing
+        # in here is imported by a test, and the pre-commit hook routes on
+        # exactly one of these files — so a SyntaxError in the merge CLI is
+        # invisible until an operator runs it, at which point it is the only
+        # way to retire a library (P3.7b's reviews, both of them).
+        # COMPILING, not importing: these scripts have side effects at import
+        # time (anything reaching `app.main` migrates a database) and
+        # byte-compiling has none.
+        out.append(Check("tools compile",
+                         [_python(), "-m", "compileall", "-q", "tools"],
+                         REPO_ROOT))
     if accuracy:
         out.append(Check("accuracy sweep", [_python(), "tools/sweep.py", "--check"],
                          REPO_ROOT))
@@ -245,7 +257,14 @@ def main(argv: list[str]) -> int:
 
     for c, out in failed:
         print(f"\n{'=' * 60}\nFAILED: {c.name}   ({' '.join(c.argv)})\n{'=' * 60}")
-        print(out.rstrip())
+        # ⚠ Through the console's own encoding, replacing what it cannot draw.
+        # A Windows console is cp1255 here, and a failing check whose output
+        # contains anything outside it (openapi-typescript prints ✨, vitest
+        # draws ❯) killed this printer with a UnicodeEncodeError — so the gate
+        # reported a traceback from itself instead of the failure it had just
+        # found, twice in one afternoon.
+        enc = sys.stdout.encoding or "utf-8"
+        print(out.rstrip().encode(enc, "replace").decode(enc, "replace"))
 
     print(f"\n{len(checks) - len(failed)}/{len(checks)} checks passed "
           f"in {time.perf_counter() - started:.1f}s")

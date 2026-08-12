@@ -548,8 +548,12 @@ export interface paths {
         put?: never;
         /**
          * Create a library
-         * @description The creator becomes its admin, in the same domain call and the same
-         *     two writes — see the module note.
+         * @description Created under the caller's existing account, granting nothing new.
+         *
+         *     ⚠ It inherits the standing the caller already had with that customer.
+         *     Until P3.7b this route wrote a membership too; `new_library` returning
+         *     a Library and nothing else is what P3.7b calls its most load-bearing
+         *     deletion, and `test_creating_a_library_grants_nobody_anything` pins it.
          *
          *     ⚠ This route is the DELIBERATE escape hatch for §4.1's settled tenancy
          *     rule (owner, 2026-08-10): a second Library under one account is legal —
@@ -563,6 +567,23 @@ export interface paths {
          *     where it matters — a Library cannot carry a room or a place
          *     (`test_a_library_is_not_a_place`). Do not "fix" this route in either
          *     direction without re-reading VISION §4.1.
+         *
+         *     ⚠⚠ **Admin-only, and P3.7b is what made that necessary.** Before the
+         *     boundary moved, this route minted a BRAND-NEW tenant with the caller as
+         *     its admin — it touched nobody else, so leaving it open cost nothing. Now
+         *     it writes into an EXISTING customer that other people belong to: every
+         *     member's switcher grows a row, the operator's dashboard counts it, and
+         *     (from P3.7c) it draws on that customer's shared run-rate cap. Without this
+         *     check a VIEWER — §4.2's "friend browsing what you own" — can append
+         *     unlimited libraries to the account paying for it, and nothing in the
+         *     product can remove them (DELETE is deliberately absent). Found by P3.7b's
+         *     data-integrity review, which reproduced exactly that.
+         *
+         *     `MANAGE_LIBRARY` rather than a new capability: §4.2 has no "create a
+         *     library" row, and the closest cell it does have — *rename the library*,
+         *     "the library's name is the tenant's own identity" — is the same act one
+         *     step later. The fresh-account branch of `_account` needs no exemption: it
+         *     hands back an ADMIN membership, so it clears this check by construction.
          */
         post: operations["create_library_api_v1_libraries_post"];
         delete?: never;

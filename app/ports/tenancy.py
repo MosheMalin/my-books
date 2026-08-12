@@ -58,10 +58,6 @@ class UnknownAccount(DomainError):
     """
 
 
-class UnknownLibrary(DomainError):
-    """A reference names a library that does not exist."""
-
-
 class TenancyStore(Protocol):
     """Account-scoped, not library-scoped — see the module note."""
 

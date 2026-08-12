@@ -173,11 +173,11 @@ def _dev_account_id(library_id: str) -> str:
     called into that function would make a future edit there silently rewrite
     what this one answers.
 
-    ⚠ They currently agree by VALUE too, for a one-library group — which is
-    the only shape this function is ever asked for. That is a coincidence
-    worth knowing rather than a contract: if either changes, a bootstrapped
-    database and a migrated one simply get different account ids, and neither
-    is wrong.
+    ⚠ They do NOT agree by value, and nothing needs them to: the migration
+    length-prefixes its seed and this does not. The two never run on the
+    same file — v14 backfills a database that already has libraries, and
+    this fires only when there are none — so a bootstrapped database and a
+    migrated one simply get different account ids, and neither is wrong.
     """
     return hashlib.blake2s(
         library_id.encode("utf-8"), digest_size=16

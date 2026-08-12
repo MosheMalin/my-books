@@ -726,6 +726,16 @@ def _v14(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX libraries_of_account ON libraries (account_id, label, id)"
     )
+    # ⚠ The two CASCADEs above cover exactly `accounts -> libraries` and
+    # `accounts -> memberships`, and NOTHING below that. Every other
+    # `library_id` is a bare TEXT column with no REFERENCES (which is what
+    # this rebuild depends on), so deleting an account row would drop its
+    # libraries while leaving their books, copies, shelves, captures,
+    # reads, decisions and questions behind as rows no query can reach —
+    # invisible even to `orphan_libraries`, which reads FROM `libraries`.
+    # Nothing in the product deletes an account, and removing a customer
+    # is not a supported operation; do not read the CASCADE as one
+    # (P3.7b's data-integrity review).
 
 
 def _account_id(library_ids: list[str]) -> str:
