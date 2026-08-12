@@ -12,7 +12,7 @@ handed to the reads router like every other port.
 
 P3.4 made the one implementation a bounded QUEUE
 (``app/adapters/queued_jobs.py``) rather than a thread per job: a fixed pool
-of workers, per-tenant round-robin fairness (one library submitting ten reads
+of workers, per-tenant round-robin fairness (one CUSTOMER submitting ten reads
 must not starve another's one), optional retry, and the same cooperative-stop
 contract ``Pipeline.run`` has always polled. Still in-process — a separate
 queue PROCESS is a deployment decision that belongs with P4.4, and nothing
@@ -75,9 +75,9 @@ class JobRunner(Protocol):
         IS, only that it runs.
 
         ``tenant`` is the fairness key (P3.4): pending jobs are drained
-        round-robin ACROSS tenants, FIFO within one, so one library's burst
+        round-robin ACROSS tenants, FIFO within one, so one customer's burst
         cannot starve another's single read. It is an opaque string to the
-        runner — the reads router passes ``library.id`` — and ``""`` is a
+        runner — the reads router passes the OWNING ACCOUNT's id — and ``""`` is a
         legal tenant of its own (single-user callers and old tests), not a
         special case.
 

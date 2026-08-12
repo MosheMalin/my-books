@@ -243,9 +243,11 @@ different world — the product never reads it.
   HEIC: refuse naming the fix until real need. Blob GC under-deletes on
   purpose (24h age floor, refs from BOTH captures and claims, via
   `list_all_reads`).
-- **Jobs**: bounded pool (2), round-robin across tenants, FIFO within;
+- **Jobs**: bounded pool (2), round-robin across tenants — the ACCOUNT
+  since P3.7c, so two libraries of one customer share a turn — FIFO within;
   reads pass `retries=0` on purpose (a retry re-pays the engine). Rate cap
-  30 reads/hr/library → 429 (a retry-loop guard, not a quota).
+  30 reads/hr/ACCOUNT → 429 (a retry-loop guard, not a quota; per-library
+  was a cap you lifted by pressing *new library*).
 - **Credential preflight lives on the Reader PORT** (409 at the door with
   what to DO), never `os.environ` in a route.
 - **The product must hand the engine the same catalog the baseline measured**

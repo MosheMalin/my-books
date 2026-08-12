@@ -161,8 +161,19 @@ from a v12 snapshot to one account owning two libraries.
   customer stop competing as strangers.
 
 **Reviewers**: `review-data-integrity`, `review-quality`.
-**Done**: `tests/test_jobs.py:43,78` re-aimed at accounts and mutation-checked;
-a 429 test proving two libraries of one account share one cap.
+**Done**: ✅ landed. Both rules mutation-checked at the ROUTER, which is where
+the decision lives — `tests/test_jobs.py` exercises `QueuedJobRunner`, which
+is agnostic about what a tenant key means and correctly stayed untouched; the
+plan's original note naming its line numbers was wrong about that. The two
+cases that moved are `test_the_run_rate_cap_blocks_a_retry_loop_and_only_this_
+account` (a sibling library now shares the cap, a second customer does not)
+and `test_two_concurrent_reads_in_two_libraries_do_not_observe_each_other`
+(the spy now asserts the key is the account).
+
+⚠ Both fan-outs live in the API layer on purpose. `list_all_reads` stays
+library-scoped, because a cross-library store method would be the second
+enforced scope §4.1 refuses; the account is already known at the door, so
+that is where the loop belongs.
 
 ### P3.7d — The staff read model tells the truth
 

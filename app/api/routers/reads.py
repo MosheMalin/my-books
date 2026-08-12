@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime, timedelta
-from typing import Sequence
+from typing import Iterator, Sequence
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -38,6 +38,8 @@ from app.api.deps import (
     get_read_store,
     get_reader,
     get_shelf_store,
+    get_tenancy_store,
+    owning_account,
 )
 from app.api.dto import (
     ApplyDiffRequest,
@@ -80,6 +82,7 @@ from app.ports.duplicates import DuplicateQueue
 from app.ports.jobs import JobHandle, JobRunner
 from app.ports.reader import Reader, ReadRequest
 from app.ports.store import BookStore, ReadStore, ShelfStore
+from app.ports.tenancy import TenancyStore
 from app.reconcile_apply import (
     Answer,
     AnswerKind,
@@ -101,49 +104,110 @@ router = APIRouter(prefix="/shelves/{shelf_id}/reads", tags=["reads"])
 # `EXPORT_MAX` already makes for the export route).
 _FULL_LIBRARY_SCAN_LIMIT = 100_000
 
-# P3.6 (§1.2): the per-library run rate cap — ONE number, not a metering
-# system (that is pillar 5). It guards against a retry loop or a 400-photo
-# burst, never against family: 30 read starts in a rolling hour is more
-# cataloguing than the owner has ever done in a day, and a stuck client
-# re-POSTing hits it in minutes. Env-overridable for the day a real burst is
-# legitimate (a first whole-house scan), read once at startup like every
-# other env knob in this codebase.
+# P3.6 (§1.2): the run rate cap — ONE number, not a metering system (that
+# is pillar 5). It guards against a retry loop or a 400-photo burst, never
+# against family: 30 read starts in a rolling hour is more cataloguing than
+# the owner has ever done in a day, and a stuck client re-POSTing hits it in
+# minutes. Env-overridable for the day a real burst is legitimate (a first
+# whole-house scan), read once at startup like every other env knob here.
+#
+# ⚠ Counted per ACCOUNT since P3.7c, not per library. A cap keyed to the
+# library was a cap a customer lifted by pressing *new library*: the engine
+# cost it protects is the same cost whichever collection the photos were
+# filed under, and the thing being guarded is one customer's ability to
+# spend our inference budget in a loop. The number did not change.
 RUN_RATE_CAP_PER_HOUR = int(os.environ.get("BOOKSNAP_RUN_RATE_CAP", "30"))
 _RATE_WINDOW = timedelta(hours=1)
 
 
-def _check_run_rate(reads: ReadStore, library: LibraryRef, clock: Clock) -> None:
-    """429 when this library already started the cap's worth of reads in the
-    rolling window.
+def _check_run_rate(
+    reads: ReadStore, tenancy: TenancyStore, library: LibraryRef,
+    account_id: str, clock: Clock,
+) -> None:
+    """429 when this ACCOUNT already started the cap's worth of reads in
+    the rolling window, across every library it owns.
 
     Counts EVERY status, deliberately: a retry loop's reads mostly fail, and
-    failures cost the engine work the cap exists to protect. The honest
-    O(reads-in-library) scan is the same trade the diff endpoints make with
-    `_FULL_LIBRARY_SCAN_LIMIT` — measure before optimising a route a human
-    presses a few times an hour.
+    failures cost the engine work the cap exists to protect.
+
+    ⚠ **The scan is UNBOUNDED and this is not the trade the diff endpoints
+    make.** `_FULL_LIBRARY_SCAN_LIMIT` is an explicit ceiling passed to
+    `books.list`; there is no ceiling here, and `list_all_reads` hydrates
+    every claim of every read (one `SELECT * FROM claims` each, plus two
+    `json.loads` per claim) to read one field. The driver is therefore
+    TOTAL READS IN THE ACCOUNT, not the number of libraries, and reads
+    accumulate forever because nothing prunes them: measured at 1831ms for
+    two libraries holding 500 reads each — the owner's own shape, a few
+    years on. Today that database holds five.
+
+    The break above bounds the abusive path; the accumulating one is not
+    bounded, and the exit is a `ReadStore.count_reads_since(library, iso)`
+    — one indexed COUNT per library, hydrating nothing — added when the
+    number justifies a port method rather than before (P3.7c's
+    data-integrity review measured all of the above).
     """
     try:
         cutoff = datetime.fromisoformat(clock.now_iso()) - _RATE_WINDOW
     except ValueError:
         return
     recent = 0
-    for read in reads.list_all_reads(library):
-        if not read.started_at:
-            continue
+    for read in _reads_of_account(reads, tenancy, library, account_id):
         try:
             if datetime.fromisoformat(read.started_at) < cutoff:
                 continue
         except (ValueError, TypeError):
             continue
         recent += 1
+        if recent >= RUN_RATE_CAP_PER_HOUR:
+            # ⚠ Stop counting the moment the answer is known. Without
+            # this the REJECTED path pays the complete account-wide scan
+            # — measured at 852ms against 34ms on 20 libraries × 50 reads
+            # — which is 25× the cost, on exactly the runaway-retry-loop
+            # this cap exists to absorb. A guard that amplifies the load
+            # it damps is worse than no guard (P3.7c's data-integrity
+            # review).
+            break
     if recent >= RUN_RATE_CAP_PER_HOUR:
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
-            f"this library already started {recent} reads in the last hour "
+            f"this account already started {recent} reads in the last hour "
             f"(cap {RUN_RATE_CAP_PER_HOUR} — a guard against a runaway retry "
             "loop, not a quota). Wait a while, or raise BOOKSNAP_RUN_RATE_CAP "
             "and restart if this burst is intentional.",
         )
+
+
+def _reads_of_account(
+    reads: ReadStore, tenancy: TenancyStore, library: LibraryRef,
+    account_id: str,
+) -> Iterator[Read]:
+    """Every read of every library the owning account holds.
+
+    ⚠ `list_all_reads` is still library-scoped, and stays that way: the
+    store's narrowing is the physical scope §4.1 keeps enforced, and a
+    cross-library store method would be the second enforced scope the
+    revision refuses. Fanning out HERE keeps the boundary question in the
+    api layer, where the account is already known.
+
+    ⚠ `account_id` comes from `deps.owning_account`, which is where the
+    fallback for a library with no row lives — see its own note. When
+    that happens the account id IS the library id, so the list below is
+    empty and the named library is counted directly.
+
+    ⚠ One consequence of the dev-trusted default library, to be deleted
+    with it at P4.1: if `BOOKSNAP_DEV_LIBRARY` names a library owned by an
+    account the principal does not belong to, `current_library` serves it
+    without a membership check and this then counts that account's OTHER
+    libraries — echoing the total back in the 429 text. One integer, only
+    reachable by operator misconfiguration, and named here so P4.1 does
+    not inherit it silently.
+    """
+    siblings = tenancy.list_libraries(account_id)
+    if not siblings:
+        yield from reads.list_all_reads(library)
+        return
+    for sibling in siblings:
+        yield from reads.list_all_reads(sibling.ref)
 
 
 def _check_mode_is_usable(reader: Reader, mode: str) -> None:
@@ -185,6 +249,7 @@ def start_read(
     library: LibraryRef = Depends(require(Capability.CAPTURE)),
     shelves: ShelfStore = Depends(get_shelf_store),
     reads: ReadStore = Depends(get_read_store),
+    tenancy: TenancyStore = Depends(get_tenancy_store),
     reader: Reader = Depends(get_reader),
     jobs: JobRunner = Depends(get_job_runner),
     blobs: BlobStore = Depends(get_blob_store),
@@ -201,7 +266,10 @@ def start_read(
     settle into ``done``/``stopped``/``failed``.
     """
     shelf = _load_shelf(shelves, library, shelf_id)
-    _check_run_rate(reads, library, clock)
+    # Asked ONCE per request and threaded through: the cap and the queue
+    # key are the same question about the same library.
+    account_id = owning_account(tenancy, library)
+    _check_run_rate(reads, tenancy, library, account_id, clock)
     _check_mode_is_usable(reader, body.mode)
     try:
         shelf.check_depth(body.depth)
@@ -234,14 +302,24 @@ def start_read(
     reads.save_read(library, read)
 
     # tenant= is the fairness key (P3.4): pending reads drain round-robin
-    # across libraries. retries stays 0 ON PURPOSE — the job settles its own
+    # across CUSTOMERS since P3.7c — the port has always said "round-robin
+    # across tenants", and this is that sentence catching up. Keyed to the
+    # library it meant two collections of one household competed as
+    # strangers while a customer with ten libraries took ten slots to
+    # another's one.
+    #
+    # ⚠ The trade, measured: a sibling collection's single read now queues
+    # behind the other collection's whole burst instead of alternating with
+    # it. Bounded at ~29 by the shared cap above, so tens of minutes on two
+    # workers — accepted, because the alternative is one customer taking N
+    # turns to another customer's one. retries stays 0 ON PURPOSE — the job settles its own
     # failure (`fail_read` + save), and a runner-level retry would re-run the
     # ENGINE, paying for the same photos twice because the final save
     # hiccuped. See JobRunner.submit's own ⚠.
     jobs.submit(read.id, _job(read, shelf, library, captures, reads, shelves,
                               reader, blobs, books, decisions, duplicates,
                               ids, clock),
-                tenant=library.id)
+                tenant=account_id)
     return ReadDTO.of(read)
 
 

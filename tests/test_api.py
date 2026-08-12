@@ -1733,12 +1733,19 @@ def _wait_until_settled(client, shelf_id: str, read_id: str, *, timeout: float =
 
 
 def test_two_concurrent_reads_in_two_libraries_do_not_observe_each_other():
-    """P3.4's named test case, over real HTTP: one user, two libraries,
-    one QueuedJobRunner. Each read reports its own library's progress,
-    stopping one leaves the other running, and the tenant key the router
-    hands the runner is the LIBRARY id — the fairness axis — pinned with a
-    spy, because dropping `tenant=` in reads.py would silently collapse
-    every library into one queue and no adapter-ring test could see it."""
+    """P3.4's named test case, over real HTTP: one user, two libraries, one
+    QueuedJobRunner. Each read reports its own library's progress and stopping
+    one leaves the other running — job ISOLATION is per library and stays
+    there, because a read belongs to the shelf it photographed.
+
+    ⚠ The FAIRNESS key is a different axis and moved at P3.7c: the runner
+    round-robins across CUSTOMERS, so two libraries of one account queue under
+    one key and take one turn between them. Keyed to the library, a customer
+    with ten collections took ten slots to another customer's one — which is
+    the opposite of what `JobRunner`'s own docstring has always claimed it
+    does. Pinned with a spy, because dropping `tenant=` in reads.py would
+    silently collapse every customer into one queue and no adapter-ring test
+    could see it."""
     import threading
 
     p = StubPrincipal()
@@ -1804,8 +1811,9 @@ def test_two_concurrent_reads_in_two_libraries_do_not_observe_each_other():
                         json={"depth": 1, "mode": "spines"}).json()["id"]
         read_b = c.post(f"{API_PREFIX}/shelves/{shelf_b}/reads", headers=h2,
                         json={"depth": 1, "mode": "spines"}).json()["id"]
-        assert spy.tenants == [TEST_LIBRARY.id, "lib-2"], (
-            "the runner's fairness key must be the library id (P3.4)"
+        assert spy.tenants == [TEST_ACCOUNT, TEST_ACCOUNT], (
+            "the runner's fairness key must be the OWNING ACCOUNT (P3.7c) — "
+            "two libraries of one customer share a turn, they do not take two"
         )
 
         def poll(shelf, read, headers):
@@ -1842,27 +1850,174 @@ def test_two_concurrent_reads_in_two_libraries_do_not_observe_each_other():
 
 
 def _seed_reads(store, library: LibraryRef, n: int, started_at: str) -> None:
-    from app.domain import Read
+    """n reads in the window, cycling through EVERY status.
 
+    ⚠ The statuses are the point, not decoration. §1.2's cap "counts every
+    status, deliberately: a retry loop's reads mostly fail, and failures cost
+    the engine work the cap exists to protect" — and while these were all left
+    at the default, skipping failed reads when counting passed the whole ring.
+    That reversal does not weaken the cap, it disables it for precisely the
+    scenario the cap exists for (P3.7c's quality review).
+    """
+    from app.domain import Read, ReadStatus
+
+    every = [ReadStatus.FAILED, ReadStatus.DONE, ReadStatus.STOPPED,
+             ReadStatus.RUNNING]
     base = len(store.list_all_reads(library))
     for i in range(n):
         store.save_read(library, Read(
             id=f"seeded-{base + i}", library_id=library.id, shelf_id="sh-old",
             depth=1, capture_ids=("c",), mode="spines", started_at=started_at,
+            status=every[i % len(every)],
         ))
 
 
-def test_the_run_rate_cap_blocks_a_retry_loop_and_only_this_library():
+
+def test_a_tenancy_hiccup_never_leaves_a_read_running_with_no_worker():
+    """Every store call that can fail happens BEFORE the read is persisted.
+
+    P3.7c put a tenancy lookup in the request, and the first version evaluated
+    it as an argument to `jobs.submit` — i.e. AFTER `save_read`. A transient
+    failure there (sqlite under WAL write contention, which a burst of read
+    starts is exactly how you produce) left a durable `running` read with no
+    worker behind it: `stop` cannot settle it, `diff` 409s forever, the
+    Capture tab spins, and it counts against the account's cap for its hour.
+    The API has no way back from that state (P3.7c's data-integrity review
+    reproduced it).
+
+    So the account is resolved once, at the top, and a failure costs the
+    caller a 500 and nothing else."""
+    class Hiccup:
+        """The real store until the Nth `get_library`, then the disk is busy."""
+
+        def __init__(self, inner, fail_on):
+            self._inner, self._fail_on, self._seen = inner, fail_on, 0
+
+        def __getattr__(self, name):
+            attr = getattr(self._inner, name)
+            if name != "get_library":
+                return attr
+
+            def flaky(*args, **kwargs):
+                self._seen += 1
+                if self._seen >= self._fail_on:
+                    raise RuntimeError("database is locked")
+                return attr(*args, **kwargs)
+            return flaky
+
+    p = StubPrincipal()
+    inner = _tenancy(p)
+    # ⚠ ONE shelf store across every client below. `_app` builds fresh ports
+    # otherwise, and the request would 404 on the shelf before reaching the
+    # lookups this test is about — which is how the first draft passed against
+    # the very arrangement it was written to reject.
+    shelf_store = MemoryShelfStore()
+    reads_store = MemoryReadStore()
+    with _blobs() as blobs:
+        c = TestClient(_app(principal=p, tenancy=inner, blobs=blobs,
+                            shelves=shelf_store, reads=reads_store,
+                            reader=StubReader()))
+        key = c.post(f"{API_PREFIX}/images",
+                     files={"file": ("a.png", _png(), "image/png")}
+                     ).json()["key"]
+        shelf = c.post(f"{API_PREFIX}/captures",
+                       json={"image_id": key}).json()["shelf"]["id"]
+
+    # Every lookup position, not one: which call happens to be the store's
+    # LAST is exactly what a refactor moves, so pinning an index would pin
+    # today's arrangement instead of the property.
+    for fail_on in range(1, 5):
+        # A FRESH store each time: the read of a previous iteration would
+        # otherwise count toward the cap and change what this one exercises.
+        reads_store = MemoryReadStore()
+        before = 0
+        with _blobs() as blobs:
+            c = TestClient(_app(principal=p, tenancy=Hiccup(inner, fail_on),
+                                blobs=blobs, shelves=shelf_store,
+                                reads=reads_store, reader=StubReader()))
+            try:
+                r = c.post(f"{API_PREFIX}/shelves/{shelf}/reads",
+                           json={"depth": 1, "mode": "spines"})
+                status = r.status_code
+            except RuntimeError:
+                status = 500    # TestClient re-raises; a real server 500s
+        after = reads_store.list_all_reads(TEST_LIBRARY)
+        # The property, stated once: a request that did not start a read must
+        # not have left one. 202 means a worker exists; anything else must
+        # leave the store exactly as it was.
+        if status != 202:
+            assert len(after) == before, (
+                f"a lookup failing at position {fail_on} answered {status} and "
+                "left a read with no worker to settle it"
+            )
+
+
+def test_the_cap_stops_counting_once_the_answer_is_known():
+    """The rejected path must not pay the whole account-wide scan.
+
+    A caller already over the cap is the runaway retry loop the cap exists to
+    absorb; scanning every read of every library before saying 429 makes the
+    guard amplify the load it damps — measured at 25× on 20 libraries
+    (P3.7c's data-integrity review). Counted, not timed: how many reads were
+    touched is the property, and a wall-clock assertion here would be a flake
+    generator."""
+    from app.api.routers.reads import RUN_RATE_CAP_PER_HOUR
+
+    fetched: list[str] = []
+
+    class Counting(MemoryReadStore):
+        def list_all_reads(self, library):
+            fetched.append(library.id)
+            return super().list_all_reads(library)
+
+    p = StubPrincipal()
+    tenancy = _tenancy(p)
+    # TWO libraries under the customer: the break is what stops the scan
+    # crossing into the sibling once the answer is already known, and with
+    # one library there is nothing to cross into.
+    tenancy.save_library(Library(id="lib-2", account_id=TEST_ACCOUNT,
+                                 label="שניה"))
+    reads_store = Counting()
+    with _blobs() as blobs:
+        c = TestClient(_app(principal=p, tenancy=tenancy, blobs=blobs,
+                            reads=reads_store, reader=StubReader()))
+        key = c.post(f"{API_PREFIX}/images",
+                     files={"file": ("a.png", _png(), "image/png")}
+                     ).json()["key"]
+        shelf = c.post(f"{API_PREFIX}/captures",
+                       json={"image_id": key}).json()["shelf"]["id"]
+        # Twice the cap in the window, so a full scan would touch 2N.
+        _seed_reads(reads_store, TEST_LIBRARY, RUN_RATE_CAP_PER_HOUR * 2,
+                    "2026-08-07T11:30:00+00:00")
+        fetched.clear()
+        r = c.post(f"{API_PREFIX}/shelves/{shelf}/reads",
+                   json={"depth": 1, "mode": "spines"})
+        assert r.status_code == 429, r.text
+    assert fetched == [TEST_LIBRARY.id], (
+        "the scan crossed into a sibling library after the answer was known: "
+        f"{fetched}"
+    )
+
+def test_the_run_rate_cap_blocks_a_retry_loop_and_only_this_account():
     """P3.6 (§1.2): one number against a stuck client, never against family.
-    The cap counts a rolling hour PER LIBRARY — a burst in one must not
-    freeze another — and reads older than the window never count, or the cap
-    would turn into a lifetime quota."""
+
+    ⚠ Counted per ACCOUNT since P3.7c, and this case is the reason. Keyed to
+    the library, the cap was one a customer lifted by pressing *new library* —
+    the engine cost it protects does not care which collection the photos were
+    filed under. So a burst in one library now freezes its SIBLING, and must
+    still leave a different customer alone. Reads older than the window never
+    count, or the cap turns into a lifetime quota."""
     from app.api.routers.reads import RUN_RATE_CAP_PER_HOUR
 
     p = StubPrincipal()
     tenancy = _tenancy(p)
+    # A sibling under the SAME customer, and a library of another one.
     tenancy.save_library(Library(id="lib-2", account_id=TEST_ACCOUNT,
                                  label="שניה"))
+    tenancy.save_account(Account(id=OTHER_ACCOUNT))
+    tenancy.save_membership(Membership(p.id, OTHER_ACCOUNT, Role.ADMIN))
+    tenancy.save_library(Library(id="lib-3", account_id=OTHER_ACCOUNT,
+                                 label="אחר"))
     reads_store = MemoryReadStore()
     with _blobs() as blobs:
         c = TestClient(_app(principal=p, tenancy=tenancy, blobs=blobs,
@@ -1876,7 +2031,9 @@ def test_the_run_rate_cap_blocks_a_retry_loop_and_only_this_library():
             return c.post(f"{API_PREFIX}/captures", headers=headers,
                           json={"image_id": key}).json()["shelf"]["id"]
 
+        h3 = {deps.LIBRARY_HEADER: "lib-3"}
         shelf_a, shelf_b = shelf_with_photo({}), shelf_with_photo(h2)
+        shelf_c = shelf_with_photo(h3)
 
         # StubClock's "now" is 12:00; fill the window 30 minutes back.
         _seed_reads(reads_store, TEST_LIBRARY, RUN_RATE_CAP_PER_HOUR,
@@ -1886,11 +2043,19 @@ def test_the_run_rate_cap_blocks_a_retry_loop_and_only_this_library():
         assert r.status_code == 429, r.text
         assert str(RUN_RATE_CAP_PER_HOUR) in r.json()["detail"]
 
-        # The OTHER library is untouched by this library's burst.
+        # The SIBLING library shares the cap: same customer, same budget.
         r2 = c.post(f"{API_PREFIX}/shelves/{shelf_b}/reads", headers=h2,
                     json={"depth": 1, "mode": "spines"})
-        assert r2.status_code == 202, (
-            "one library's retry loop froze another library's read"
+        assert r2.status_code == 429, (
+            "a second library of the same account escaped the cap — which is "
+            "the loophole P3.7c closed: press 'new library', keep looping"
+        )
+
+        # A DIFFERENT customer is untouched by this one's burst.
+        r3 = c.post(f"{API_PREFIX}/shelves/{shelf_c}/reads", headers=h3,
+                    json={"depth": 1, "mode": "spines"})
+        assert r3.status_code == 202, (
+            "one customer's retry loop froze another customer's read"
         )
 
 
