@@ -1,7 +1,16 @@
 # Pillar 4 — Login
 
-**Status: DRAFT (2026-08-13), for the owner's approval. No code has been
-written against this plan.** Produced by re-reading the standing decomposition
+**Status: APPROVED (owner, 2026-08-13).** Decisions taken with the approval:
+**P4.0c is DROPPED for now** — "staff token should not fail for the time
+being" (owner); the staff service keeps its honesty-based fail-open model,
+and the deployment posture (P4.4) simply sets the token. All other
+recommendations accepted as given: deployment target VPS + Docker Compose,
+libraries-per-account cap = **5**, mail provider picked at P4.4 behind the
+`Mailer` port, sessions are opaque server-side ids in HttpOnly cookies with
+a **90-day rolling** lifetime. This document is the progress tracker: items
+gain a ✅ as they land on `main`.
+
+Produced by re-reading the standing decomposition
 (`IMPLEMENTATION_PLAN.md` "Pillar 4 — Login", VISION §3 / §4.1 / §4.2 / §4.3 /
 §10 / §11 / §12, `TENANCY_BOUNDARY_PLAN.md` "Found on the way") against a
 code-level audit of what actually landed. Open questions for the owner are
@@ -118,16 +127,11 @@ Tests: an over-long name stores truncated; the staff read model note in
 nothing — but it is the recorded "real fix is unowned" debt, and this pillar
 touches the file anyway.)
 
-### P4.0c — staff token fails CLOSED (S) — pending owner confirmation (§7 Q4)
+### P4.0c — ~~staff token fails CLOSED~~ DROPPED (owner, 2026-08-13)
 
-Today `BOOKSNAP_STAFF_TOKEN` unset serves every tenant to the LAN, mitigated
-only by on-screen honesty. Recommendation: unset ⇒ every request 401 naming
-the env var and what to DO (the credential-preflight precedent — "409 at the
-door with what to do"), with an explicit
-`BOOKSNAP_STAFF_ALLOW_ANON=1` escape for local dev that keeps the current
-on-screen honesty. The current fail-open model was a deliberate decision, so
-this item runs only on the owner's confirmation. Reviewers:
-`review-security`, `review-ux` (the console must explain a 401 honestly).
+"Staff token should not fail for the time being." The fail-open,
+honest-on-screen model stays. P4.4's deployment posture sets the token in
+the deployed environment; the local-dev behaviour is unchanged.
 
 ### P4.1 — sessions + email magic link (L; split a/b/c like P3.7)
 
@@ -265,7 +269,11 @@ in order; P4.3 needs P4.1c (an invite needs a login to accept it); P4.2
 after P4.4 is a recommendation (Apple's domain requirement), not a hard
 edge — Google alone could land earlier if wanted.
 
-## 7. Open questions for the owner (batched — the plan waits on these)
+## 7. Open questions — ANSWERED (owner, 2026-08-13)
+
+Q1 VPS + Docker Compose · Q2 cap = 5 · Q3 provider picked at P4.4, behind
+the port · Q4 staff token stays fail-open (P4.0c dropped) · Q5 90-day
+rolling sessions. The original questions with their reasoning:
 
 1. **Deployment target (§12.3 #10).** The stack is SQLite + disk blobs +
    two FastAPI services + static builds — recommendation: a small VPS with
