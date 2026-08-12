@@ -111,7 +111,7 @@ function CreateForm({ onCreated }: { onCreated: () => void }) {
 export function AccountsPage({ openId }: { openId: string | undefined }) {
   const {
     accounts, users, overview, loading, error, reload, librariesOf,
-    accountOfLibrary,
+    accountOfLibrary, adminsOf, peopleKnown,
   } = useSystem()
   const { t, lang } = useI18n()
 
@@ -136,13 +136,6 @@ export function AccountsPage({ openId }: { openId: string | undefined }) {
     ? accounts.find((a) => a.id === openId) ?? accountOfLibrary(openId)
     : undefined
 
-  /** Who administers this customer. Derived from the user list the provider
-   *  already holds — the server reports an admin COUNT and no names, and
-   *  deriving them here keeps membership described in exactly one place. */
-  const adminsOf = (accountId: string) =>
-    users.filter((u) => u.memberships.some(
-      (m) => m.account_id === accountId && m.role === 'admin'))
-
   // ⚠ The mirror of `orphan_libraries`. A customer-shaped list cannot show a
   // person who belongs to no customer, and the Users tab was the only place
   // they appeared. Derived, not fetched: the provider already has every user.
@@ -153,10 +146,22 @@ export function AccountsPage({ openId }: { openId: string | undefined }) {
       <h1>{t.acct_title}</h1>
       <p className="sub">{t.acct_sub}</p>
 
+      {/* ⚠⚠ Shown whenever ANYTHING failed, not only when the table came back
+          empty. The old guard was `accounts.length === 0 && error`, and since
+          this screen took its people from a SECOND request that can fail on
+          its own, silence there was not neutral: every row rendered "no
+          admin" and every drawer "nobody can administer this account", in
+          warning tone, from a transport error. Measured by rejecting
+          `/users` with `/accounts` healthy. */}
+      {error && <ErrorBox message={error} onRetry={reload} />}
       {overview && !overview.authenticated && <OpenServiceWarning />}
       {overview && overview.orphan_libraries.length > 0 && (
         <p className="note warn">{t.sys_orphans(overview.orphan_libraries.length)}</p>
       )}
+      {!peopleKnown && <p className="note warn">{t.acct_people_unknown}</p>}
+      {/* An id that names neither a customer nor a collection. Saying so beats
+          the silence that teaches an operator their bookmark simply died. */}
+      {openId && !open && <p className="note warn">{t.acct_unknown}</p>}
       <p className="note">{t.acc_two_admins}</p>
 
       <div style={{ marginBottom: 16 }}>
@@ -164,7 +169,11 @@ export function AccountsPage({ openId }: { openId: string | undefined }) {
       </div>
 
       {accounts.length === 0 ? (
-        <Empty>{t.lib_empty}</Empty>
+        // ⚠ "No accounts", not "No libraries". This table holds customers,
+        // and it is the first thing a fresh deployment sees — the one string
+        // whose whole job is naming what the table contains was still the
+        // gloss this item exists to delete.
+        <Empty>{t.acct_empty}</Empty>
       ) : (
         <div className="tablewrap">
           <table>
@@ -177,7 +186,7 @@ export function AccountsPage({ openId }: { openId: string | undefined }) {
                 <th className="num">{t.th_books}</th>
                 <th className="num">{t.th_images}</th>
                 <th className="num">{t.th_storage}</th>
-                <th>{t.th_created}</th>
+                <th>{t.th_created_m}</th>
               </tr>
             </thead>
             <tbody>
@@ -192,14 +201,26 @@ export function AccountsPage({ openId }: { openId: string | undefined }) {
                       <div className="mono">{account.id}</div>
                     </td>
                     <td className="rtl-safe">
-                      {/* ⚠ A customer with no admin is the one anomaly this
+                      {/* ⚠⚠ The ALARM reads `account.admins` — the count on
+                          the row itself — while the NAMES come from `/users`.
+                          Deriving the alarm from the names too gave one fact
+                          three sources (`admins`, the fold over `/users`, and
+                          `overview.accounts_without_admin`) and picked the
+                          only one that can vanish: with `/users` down every
+                          customer was flagged "no admin" beside a stat card
+                          reading 2 users.
+                          A customer with no admin is the one anomaly this
                           table can surface that no household screen can:
                           `new_account` mints an admin membership in the same
                           call precisely so it cannot happen, and `NoAdminLeft`
                           keeps it so. Any row here is a bug that already
-                          happened. */}
-                      {admins.length === 0
+                          happened — which is why it must not be a fetch. */}
+                      {account.admins === 0
                         ? <span className="badge warn">{t.acct_no_admin}</span>
+                        : admins.length === 0
+                        // The count says there are admins and the names did
+                        // not arrive. Report the number, never "nobody".
+                        ? <span className="a">{num(account.admins)}</span>
                         : admins.map((u) => (
                             // ⚠ Falls back to the ID, not to the word
                             // "unnamed". Until P4.1 a user has no login and
@@ -223,6 +244,9 @@ export function AccountsPage({ openId }: { openId: string | undefined }) {
                     <td className="num">{num(account.books)}</td>
                     <td className="num">{num(account.captures)}</td>
                     <td className="num">{formatBytes(account.image_bytes, lang)}</td>
+                    {/* ⚠ The masculine verb: `חשבון` is masculine and
+                        `ספרייה` is feminine, and this column held libraries
+                        until P3.7e. */}
                     <td>{formatDate(account.created_at, lang) || '—'}</td>
                   </tr>
                 )
@@ -249,7 +273,7 @@ export function AccountsPage({ openId }: { openId: string | undefined }) {
                       "account" over a person and a customer alike. */}
                   <th>{t.th_user}</th>
                   <th>{t.th_email}</th>
-                  <th>{t.th_created}</th>
+                  <th>{t.th_created_m}</th>
                 </tr>
               </thead>
               <tbody>
@@ -271,8 +295,6 @@ export function AccountsPage({ openId }: { openId: string | undefined }) {
           </div>
         </>
       )}
-
-      <p className="note" style={{ marginTop: 16 }}>{t.lib_no_delete}</p>
 
       {open && (
         <AccountDrawer key={open.id} account={open}

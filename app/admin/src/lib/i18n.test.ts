@@ -18,11 +18,22 @@ import { describe, expect, it } from 'vitest'
 
 const SRC = join(__dirname, '..')
 
+/**
+ * Every SCREEN source — the table itself and the tests excluded.
+ *
+ * ⚠ Tests are skipped deliberately. The property is "a key nothing RENDERS",
+ * and a test is not a screen: a key named only by an assertion, or by a bare
+ * `'key'` string in a fixture, would otherwise count as alive and the table
+ * would keep a string no user can reach. Nothing is currently kept alive that
+ * way — audited when the filter went in, so it changes no answer today, which
+ * is exactly when it is cheap to make the check mean what its name says.
+ */
 function sources(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
     const path = join(dir, name)
     if (statSync(path).isDirectory()) return sources(path)
     if (!/\.tsx?$/.test(name) || name === 'i18n.tsx') return []
+    if (/\.test\.tsx?$/.test(name)) return []
     return [readFileSync(path, 'utf8')]
   })
 }

@@ -44,9 +44,13 @@ describe('Dashboard', () => {
    * COLLECTIONS under a heading saying "accounts", which was true only while a
    * library WAS the tenant; P3.7b made the Account its own record, and the
    * owner's real database — one customer, two libraries — is precisely the
-   * case that makes the two numbers differ. The fixture keeps accounts (2),
-   * people (2) and libraries (3) all unequal so that reading the wrong field
-   * cannot pass.
+   * case that makes the two numbers differ.
+   *
+   * ⚠ The fixture keeps accounts (2), people (4) and libraries (3) PAIRWISE
+   * unequal. The first version had accounts and people BOTH at 2, and a
+   * review measured what that hid: swapping the tile to `overview.users`
+   * passed the entire ring. A comment claiming the numbers are all different
+   * is not the same as their being all different.
    */
   it('counts customers, people and collections as three different numbers', async () => {
     bothServices()
@@ -54,7 +58,7 @@ describe('Dashboard', () => {
     await screen.findByText(/סקירת המערכת|System overview/)
 
     expect(statValue(/^חשבונות$|^Accounts$/)).toBe('2')
-    expect(statValue(/^אנשים$|^People$/)).toBe('2')
+    expect(statValue(/^אנשים$|^People$/)).toBe('4')
     expect(statValue(/^ספריות$|^Libraries$/)).toBe('3')
   })
 

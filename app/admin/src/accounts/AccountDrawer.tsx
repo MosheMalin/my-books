@@ -33,7 +33,7 @@
  * product has no login, audit trail or consent story to justify it. The
  * aggregate figures describe a collection, not a person.
  */
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { renameLibrary, exportUrl } from '../api/client'
 import { listImages, listAllBooks } from '../api/staff'
@@ -66,7 +66,7 @@ const PREVIEW = 5
  * recorded, and letting "unknown" win a "most recent" list would put the
  * oldest imports at the top of every customer's drawer.
  */
-function newestFirst<T>(rows: T[], at: (row: T) => string | null | undefined): T[] {
+export function newestFirst<T>(rows: T[], at: (row: T) => string | null | undefined): T[] {
   return [...rows].sort((a, b) => {
     const x = at(a) ?? ''
     const y = at(b) ?? ''
@@ -139,8 +139,24 @@ export function AccountDrawer({ account, libraries, onChanged, onClose }: {
   onClose: () => void
 }) {
   const { t, lang } = useI18n()
-  const { users, canWrite } = useSystem()
+  const { canWrite, membersOf, peopleKnown } = useSystem()
   const [editingId, setEditingId] = useState<string | undefined>(undefined)
+
+  // ⚠ Escape closes it, like `WorkPanel` and `ImagePanel`. This drawer carries
+  // `role="dialog"`, so announcing itself as one and then not behaving like
+  // the console's other two is a promise it breaks — and P3.7e made it the
+  // primary surface. Installed ONCE behind a ref: an effect depending on
+  // `onClose` re-runs every commit (a fresh closure each render), which is
+  // exactly how a sibling panel's reset effect was silently defeated.
+  const closeRef = useRef(onClose)
+  closeRef.current = onClose
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeRef.current()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   // ⚠ Keyed by the library IDS, not by the array: `librariesOf` builds a fresh
   // array every render, so an array in the dep list would refetch forever.
@@ -157,6 +173,15 @@ export function AccountDrawer({ account, libraries, onChanged, onClose }: {
     [scope],
   )
   const images = useAsync(
+    // ⚠⚠ `/images` takes NO sort parameter, so unlike the books call above
+    // this one cannot ask for the order it depends on. Taking the newest five
+    // of a union is correct only if each page is that library's newest first,
+    // which is `app/staff_api/queries.py`'s constant `ORDER BY
+    // COALESCE(captured_at,'') DESC, id DESC`. That used to be a client
+    // argument resting on a server constant nothing named — the shape of
+    // `MAX_SCORE` tracking `match.py` — so
+    // `test_staff_api.py:test_images_come_back_newest_first_with_undated_last`
+    // now pins it. Change the ORDER BY and that test says so.
     async (signal) => {
       const pages = await Promise.all(libraries.map((lib) =>
         listImages({ libraryId: lib.id, limit: PREVIEW }, { signal })))
@@ -171,12 +196,9 @@ export function AccountDrawer({ account, libraries, onChanged, onClose }: {
     const lib = libraries.find((l) => l.id === id)
     return libraryName(lib?.label, t.lib_unnamed)
   }
-  // Everyone who belongs to this CUSTOMER. A membership names an account since
-  // P3.7b, so this is one lookup and not a union over its libraries.
-  const members = users.flatMap((user) => {
-    const m = user.memberships.find((x) => x.account_id === account.id)
-    return m ? [{ user, membership: m }] : []
-  })
+  // Everyone who belongs to this CUSTOMER, folded by the provider — one copy
+  // of the rule, shared with the accounts table's admin column.
+  const members = membersOf(account.id)
 
   return (
     <>
@@ -197,7 +219,7 @@ export function AccountDrawer({ account, libraries, onChanged, onClose }: {
             mapping to explain: the libraries below carry their own ids. */}
         <div className="sub mono">{account.id}</div>
         <div className="sub">
-          {t.th_created}: {formatDate(account.created_at, lang) || '—'}
+          {t.th_created_m}: {formatDate(account.created_at, lang) || '—'}
         </div>
 
         <div className="stats" style={{ marginTop: 12 }}>
@@ -216,10 +238,17 @@ export function AccountDrawer({ account, libraries, onChanged, onClose }: {
         <h3>{t.th_libraries}</h3>
         <p className="sub">{t.acct_lib_sub}</p>
         {libraries.length === 0 ? (
-          // A real state, not an anomaly: `/accounts` lists a customer created
-          // before its first collection as a row of zeroes, which is P4.3's
-          // normal onboarding path.
-          <Empty>{t.acct_lib_none}</Empty>
+          // ⚠⚠ TWO different states, and conflating them printed a flat
+          // contradiction: with `/libraries` down the drawer said "this
+          // account keeps no library" three lines under a stat card reading
+          // 2. `account.libraries` comes from the SAME row that opened the
+          // drawer, so it is the one figure that cannot be missing here.
+          // Zero is a real state — `/accounts` lists a customer created
+          // before its first collection as a row of zeroes, P4.3's normal
+          // onboarding path. Silence from a failed request is not.
+          account.libraries === 0
+            ? <Empty>{t.acct_lib_none}</Empty>
+            : <p className="note warn">{t.acct_libs_unknown}</p>
         ) : (
           <div className="tablewrap">
             <table>
@@ -235,7 +264,6 @@ export function AccountDrawer({ account, libraries, onChanged, onClose }: {
                   <th className="num">{t.th_images}</th>
                   <th className="num">{t.th_storage}</th>
                   <th>{t.th_created}</th>
-                  <th>{t.th_actions}</th>
                 </tr>
               </thead>
               <tbody>
@@ -243,6 +271,17 @@ export function AccountDrawer({ account, libraries, onChanged, onClose }: {
                   const writable = canWrite(lib.id)
                   return (
                     <tr key={lib.id}>
+                      {/* ⚠⚠ The actions live INSIDE the name cell, on their
+                          own line, rather than in a trailing column. A drawer
+                          is capped at `min(720px, 100%)` and the six-column
+                          version measured 834px wide, which put rename and
+                          both exports outside the box at `scrollLeft: 0` —
+                          absent from the accessibility tree until the table
+                          was scrolled sideways. That is worse than where they
+                          came from: this item MOVED them here from a
+                          full-width table, so the fix cannot be "scroll to
+                          find them". Stacking under the name is the shape the
+                          rename editor already uses. */}
                       <td className="rtl-safe">
                         {editingId === lib.id && writable ? (
                           <RenameCell
@@ -255,6 +294,44 @@ export function AccountDrawer({ account, libraries, onChanged, onClose }: {
                             {libraryName(lib.label, t.lib_unnamed)}
                             {writable && <> <span className="badge role">{t.lib_mine}</span></>}
                             <div className="mono">{lib.id}</div>
+                            <div className="row" style={{ marginTop: 6 }}>
+                              <a className="btn small"
+                                 aria-label={t.acct_books_of(labelOfLib(lib.id))}
+                                 href={href({ name: 'books', libraryId: lib.id })}>
+                                {t.nav_books}
+                              </a>
+                              <a className="btn small"
+                                 aria-label={t.acct_images_of(labelOfLib(lib.id))}
+                                 href={href({ name: 'images', libraryId: lib.id })}>
+                                {t.nav_images}
+                              </a>
+                              {writable ? (
+                                <>
+                                  <button type="button" className="btn small"
+                                          aria-label={t.lib_rename_of(labelOfLib(lib.id))}
+                                          onClick={() => setEditingId(lib.id)}>
+                                    {t.lib_rename}
+                                  </button>
+                                  {/* Downloads, so real links: letting the
+                                      browser handle Content-Disposition is
+                                      what makes "Save as…" work. The library
+                                      rides in the QUERY string because an
+                                      <a href> cannot carry a header. */}
+                                  <a className="btn small"
+                                     aria-label={t.lib_csv_of(labelOfLib(lib.id))}
+                                     href={exportUrl(lib.id, 'csv')}>
+                                    {t.lib_export_csv}
+                                  </a>
+                                  <a className="btn small"
+                                     aria-label={t.lib_json_of(labelOfLib(lib.id))}
+                                     href={exportUrl(lib.id, 'json')}>
+                                    {t.lib_export_json}
+                                  </a>
+                                </>
+                              ) : (
+                                <span className="a">{t.lib_readonly}</span>
+                              )}
+                            </div>
                           </>
                         )}
                       </td>
@@ -262,44 +339,6 @@ export function AccountDrawer({ account, libraries, onChanged, onClose }: {
                       <td className="num">{num(lib.captures)}</td>
                       <td className="num">{formatBytes(lib.image_bytes, lang)}</td>
                       <td>{formatDate(lib.created_at, lang) || '—'}</td>
-                      <td className="actions">
-                        {/* ⚠ Each link's accessible name carries the library
-                            name. Two rows announcing "Books" would collide,
-                            which this project has already been bitten by
-                            twice (`t.edit`/`t.copy_edit`, "split"/"create
-                            volumes"). */}
-                        <a className="btn small"
-                           aria-label={t.acct_books_of(labelOfLib(lib.id))}
-                           href={href({ name: 'books', libraryId: lib.id })}>
-                          {t.nav_books}
-                        </a>{' '}
-                        <a className="btn small"
-                           aria-label={t.acct_images_of(labelOfLib(lib.id))}
-                           href={href({ name: 'images', libraryId: lib.id })}>
-                          {t.nav_images}
-                        </a>{' '}
-                        {writable ? (
-                          <>
-                            <button type="button" className="btn small"
-                                    onClick={() => setEditingId(lib.id)}>
-                              {t.lib_rename}
-                            </button>{' '}
-                            {/* Downloads, so real links: letting the browser
-                                handle Content-Disposition is what makes "Save
-                                as…" work. The library rides in the QUERY
-                                string because an <a href> cannot carry a
-                                header. */}
-                            <a className="btn small" href={exportUrl(lib.id, 'csv')}>
-                              {t.lib_export_csv}
-                            </a>{' '}
-                            <a className="btn small" href={exportUrl(lib.id, 'json')}>
-                              {t.lib_export_json}
-                            </a>
-                          </>
-                        ) : (
-                          <span className="a">{t.lib_readonly}</span>
-                        )}
-                      </td>
                     </tr>
                   )
                 })}
@@ -308,13 +347,21 @@ export function AccountDrawer({ account, libraries, onChanged, onClose }: {
           </div>
         )}
 
+        {/* ⚠ Follows its subject. This note sat at the bottom of the
+            accounts table, which no longer has a library on it. */}
+        <p className="note">{t.lib_no_delete}</p>
+
         <h3>{t.acct_users}</h3>
         {members.length === 0 ? (
-          // ⚠ Not merely empty: `new_account` mints an admin membership in the
-          // same call precisely so this cannot happen, and `NoAdminLeft` keeps
-          // it so. An account with no member is one nobody can see or
-          // administer — and every library it owns is an orphan.
-          <p className="note warn">{t.ld_no_members}</p>
+          // ⚠⚠ The alarm is gated on `account.members`, not on the fold being
+          // empty. "Nobody can see or administer this account" is a state
+          // `new_account` and `NoAdminLeft` make unreachable, so saying it is
+          // an accusation — and a failed `/users` produces exactly the same
+          // empty fold. One is a bug that already happened; the other is a
+          // request that did not arrive.
+          !peopleKnown && account.members > 0
+            ? <p className="note warn">{t.acct_people_unknown}</p>
+            : <p className="note warn">{t.ld_no_members}</p>
         ) : (
           <div className="tablewrap">
             <table>
@@ -329,7 +376,7 @@ export function AccountDrawer({ account, libraries, onChanged, onClose }: {
                 </tr>
               </thead>
               <tbody>
-                {members.map(({ user, membership }) => (
+                {members.map(({ user, role, joinedAt }) => (
                   <tr key={user.id}>
                     <td className="rtl-safe">
                       {user.display_name.trim()
@@ -340,8 +387,8 @@ export function AccountDrawer({ account, libraries, onChanged, onClose }: {
                         role is held at the ACCOUNT and covers every library
                         it owns. A role restricted to one collection is not
                         expressible, deliberately (VISION §4.1). */}
-                    <td><span className="badge role">{membership.role}</span></td>
-                    <td>{formatDate(membership.joined_at, lang) || '—'}</td>
+                    <td><span className="badge role">{role}</span></td>
+                    <td>{formatDate(joinedAt, lang) || '—'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -411,7 +458,7 @@ export function AccountDrawer({ account, libraries, onChanged, onClose }: {
                     <td>{formatDateTime(image.captured_at, lang) || t.img_undated}</td>
                     <td className="rtl-safe a">{labelOfLib(image.library_id)}</td>
                     <td className="rtl-safe a">
-                      {image.shelf_label.trim() || t.lib_unnamed}
+                      {image.shelf_label.trim() || t.shelf_unnamed}
                       {' · '}{t.img_depth_n(image.depth)}
                     </td>
                     <td className="num">{num(image.findings)}</td>

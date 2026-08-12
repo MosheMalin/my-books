@@ -662,6 +662,7 @@ def test_an_unknown_work_key_is_an_empty_list_not_an_error():
 def _photograph(path: Path, *, capture_id: str = "cap-1",
                 shelf_id: str = "sh-1", library_id: str = "lib-a",
                 depth: int = 1, order: int = 0,
+                captured_at: str = "2026-03-02T10:00:00Z",
                 image_key: str | None = None) -> None:
     """A shelf, and a capture filed on it — through the real stores."""
     from app.adapters.sqlite_store import SqliteShelfStore
@@ -674,7 +675,7 @@ def _photograph(path: Path, *, capture_id: str = "cap-1",
                                       label="מדף", created_at="2026-03-01"))
     shelves.save_capture(ref, Capture(
         id=capture_id, library_id=library_id, shelf_id=shelf_id, depth=depth,
-        order=order, image_id=image_key, captured_at="2026-03-02T10:00:00Z"))
+        order=order, image_id=image_key, captured_at=captured_at))
 
 
 def _a_read_over(path: Path, *, capture_ids: list[str],
@@ -767,6 +768,38 @@ def test_images_narrow_to_one_library_and_otherwise_span_every_tenant():
         assert total == 2
         rows, total = q.images(library_id="lib-b")
         assert total == 1 and rows[0].id == "cap-b"
+
+
+def test_images_come_back_newest_first_with_undated_last():
+    """⚠⚠ A CLIENT depends on this and cannot ask for it.
+
+    `/images` takes no sort parameter, so the admin console's account drawer —
+    which previews each of a customer's libraries and keeps the newest few of
+    the union — is correct only if every page is that library's newest first.
+    Top-N-of-a-union equals the union of the per-source top-Ns only under that
+    assumption; break the order here and the drawer silently shows the wrong
+    photographs with no test failing on either side.
+
+    The same shape as `MAX_SCORE` tracking `match.py`: a client argument
+    resting on a server constant that nothing named. Naming it here is what
+    makes changing the ORDER BY a decision rather than an accident.
+
+    Undated LAST for the same reason the drawer sorts them last: a NULL means
+    the field was never recorded, and letting "unknown" win a most-recent list
+    puts the oldest imports on top.
+    """
+    with _queries() as (q, path):
+        _photograph(path, capture_id="cap-old", shelf_id="sh-1",
+                    captured_at="2026-01-01T00:00:00Z")
+        _photograph(path, capture_id="cap-new", shelf_id="sh-1", order=1,
+                    captured_at="2026-05-01T00:00:00Z")
+        _photograph(path, capture_id="cap-mid", shelf_id="sh-1", order=2,
+                    captured_at="2026-03-01T00:00:00Z")
+        _photograph(path, capture_id="cap-none", shelf_id="sh-1", order=3,
+                    captured_at="")
+        rows, _ = q.images()
+        assert [r.id for r in rows] == [
+            "cap-new", "cap-mid", "cap-old", "cap-none"]
 
 
 def test_the_staff_service_never_serves_image_bytes():

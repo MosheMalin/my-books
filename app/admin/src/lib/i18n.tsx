@@ -82,7 +82,12 @@ const HE = {
   th_books: 'ספרים',
   th_duplicates: 'כפילויות',
   th_lent: 'מושאלים',
+  // ⚠ TWO verbs, because Hebrew agrees with its subject. `ספרייה` is
+  // feminine, `חשבון` is masculine, and this key sat over a library until
+  // P3.7e put a customer under it — the same mistake as `th_account` over
+  // three nouns, one part of speech along.
   th_created: 'נוצרה',
+  th_created_m: 'נוצר',
   th_status: 'סטטוס',
   th_title: 'כותרת',
   th_author: 'מחבר',
@@ -95,7 +100,6 @@ const HE = {
   th_first_found: 'נמצא לראשונה',
   th_images: 'תמונות',
   th_storage: 'אחסון',
-  th_actions: 'פעולות',
 
   // libraries
   lib_mine: 'שלי',
@@ -109,8 +113,16 @@ const HE = {
   lib_empty: 'אין ספריות',
   lib_export_csv: 'CSV',
   lib_export_json: 'JSON',
+  // ⚠ שלושת הפעולות שיושבות על שורת ספרייה זקוקות לשם נגיש ייחודי. שתי שורות
+  // שמכריזות "שינוי שם" מתנגשות — והמתנגשת שכותבת היא זו שמשנה שם.
+  lib_rename_of: (name: string) => `שינוי השם של ${name}`,
+  lib_csv_of: (name: string) => `ייצוא ${name} כ-CSV`,
+  lib_json_of: (name: string) => `ייצוא ${name} כ-JSON`,
   lib_id: 'מזהה',
   lib_unnamed: 'ללא שם',
+  // ⚠ מדף ללא שם אינו ספרייה ללא שם. שימוש חוזר ב-lib_unnamed מציב את המילה
+  // "ספרייה" מעל שם מדף, בטבלה שיש בה עמודת ספרייה אמיתית שני תאים משם.
+  shelf_unnamed: 'מדף ללא שם',
   lib_no_delete: 'אין מחיקת ספרייה: המחיקה גוררת כל ספר, מדף, קריאה ותצלום שבתוכה, והשרת אינו מציע אותה.',
 
   // library detail
@@ -189,6 +201,13 @@ const HE = {
   acct_sub: 'כל לקוח במערכת: מי מנהל אותו, כמה משתמשים, כמה ספריות הוא מחזיק, כמה ספרים וכמה מקום התמונות תופסות.',
   acct_panel: 'פרטי החשבון',
   acct_unnamed: 'חשבון ללא שם',
+  acct_empty: 'אין חשבונות',
+  // ⚠ מזהה שאינו מצביע על כלום. שתיקה מלמדת את המפעיל שהקישור נשבר, וזו בדיוק
+  // ההודעה שהניתוב הזה קיים כדי למנוע.
+  acct_unknown: 'המזהה בקישור אינו מתאים לאף חשבון ואף ספרייה במערכת.',
+  // ⚠ "אין" מול "לא ידוע" — שני מצבים שונים לגמרי. ראו peopleKnown.
+  acct_people_unknown: 'רשימת האנשים אינה זמינה כרגע, ולכן אי אפשר לומר מי מנהל את החשבון הזה.',
+  acct_libs_unknown: 'רשימת הספריות אינה זמינה כרגע.',
   acct_no_admin: 'אין מנהל',
   acct_users: 'משתמשים',
   acct_books: 'ספרים',
@@ -236,7 +255,9 @@ const HE = {
   acc_gap_title: 'מה שאין עדיין',
   acc_gap_intro:
     'ניהול משתמשים אינו קיים בשרת, ולכן אינו מופיע כאן. אלה הפערים, ומה נדרש כדי לסגור אותם:',
-  acc_gap_invite: 'הזמנת משתמש לספרייה — נדרש מנגנון התחברות (P4.1) וזרימת הזמנה (P4.3).',
+  // ⚠ לחשבון, לא לספרייה: מאז P3.7b חברות מצביעה על חשבון, והזמנה אחת נותנת
+  // גישה לכל מה שהחשבון מחזיק. השורה הזו סתרה את הפסקה שמעליה.
+  acc_gap_invite: 'הזמנת משתמש לחשבון — נדרש מנגנון התחברות (P4.1) וזרימת הזמנה (P4.3).',
   acc_gap_roles: 'שינוי תפקיד או הסרת חבר — אין נקודת קצה, וההרשאות עצמן עדיין אינן נאכפות (P3.2).',
   acc_gap_list: 'משתמש עדיין אינו יכול להתחבר — אין מנגנון התחברות, ולכן כל בקשה מגיעה כאותו משתמש פיתוח (P4.1).',
   // ⚠ שלושה מספרים שונים. עד P3.7e הראשון היה מספר האנשים בתווית "חשבונות"
@@ -308,6 +329,7 @@ const EN: Strings = {
   th_duplicates: 'Duplicates',
   th_lent: 'Lent',
   th_created: 'Created',
+  th_created_m: 'Created',
   th_status: 'Status',
   th_title: 'Title',
   th_author: 'Author',
@@ -317,7 +339,6 @@ const EN: Strings = {
   th_first_found: 'First found',
   th_images: 'Images',
   th_storage: 'Storage',
-  th_actions: 'Actions',
 
   lib_mine: 'mine',
   lib_readonly: 'Read-only — you are not a member of this library',
@@ -331,8 +352,12 @@ const EN: Strings = {
   lib_empty: 'No libraries',
   lib_export_csv: 'CSV',
   lib_export_json: 'JSON',
+  lib_rename_of: (name: string) => `Rename ${name}`,
+  lib_csv_of: (name: string) => `Export ${name} as CSV`,
+  lib_json_of: (name: string) => `Export ${name} as JSON`,
   lib_id: 'Id',
   lib_unnamed: 'Unnamed',
+  shelf_unnamed: 'Unnamed shelf',
   lib_no_delete:
     'No library deletion: it would take every book, shelf, read and photo inside it, and the server does not offer it.',
 
@@ -405,6 +430,10 @@ const EN: Strings = {
   acct_sub: 'Every customer in the system: who administers it, how many users, how many libraries it keeps, how many books, and how much room the images take.',
   acct_panel: 'Account details',
   acct_unnamed: 'Unnamed account',
+  acct_empty: 'No accounts',
+  acct_unknown: 'The id in this link matches no account and no library in the system.',
+  acct_people_unknown: 'The people list is unavailable right now, so who administers this account cannot be said.',
+  acct_libs_unknown: 'The library list is unavailable right now.',
   acct_no_admin: 'no admin',
   acct_users: 'Users',
   acct_books: 'Books',
@@ -446,7 +475,7 @@ const EN: Strings = {
   acc_gap_intro:
     'User management does not exist on the server, so it does not appear here. These are the gaps, and what would close each:',
   acc_gap_invite:
-    'Invite a user to a library — needs a login (P4.1) and an invite flow (P4.3).',
+    'Invite a user to an account — needs a login (P4.1) and an invite flow (P4.3).',
   acc_gap_roles:
     'Change a role or remove a member — no endpoint, and roles are not enforced yet (P3.2).',
   acc_gap_list:

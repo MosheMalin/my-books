@@ -14,7 +14,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { AccountsPage } from './AccountsPage'
 import {
-  makeUser, makeLibrary, makeStaffAccount, makeStaffLibrary, renderApp,
+  makeUser, makeLibrary, makeStaffAccount, makeStaffBook, makeStaffLibrary,
+  renderApp,
 } from '../test/harness'
 import { bothServices, DEFAULT_WORLD } from '../test/servers'
 
@@ -104,7 +105,7 @@ describe('AccountsPage', () => {
   it('names the people who belong to no account at all', async () => {
     bothServices({
       users: [...DEFAULT_WORLD.users,
-                 makeUser({ id: 'usr-3', display_name: 'נשכח',
+                 makeUser({ id: 'usr-9', display_name: 'נשכח',
                                memberships: [] })],
     })
     renderApp(<AccountsPage openId={undefined} />)
@@ -121,7 +122,7 @@ describe('AccountsPage', () => {
   it('heads the people table with user, not with account', async () => {
     bothServices({
       users: [...DEFAULT_WORLD.users,
-                 makeUser({ id: 'usr-3', display_name: 'נשכח',
+                 makeUser({ id: 'usr-9', display_name: 'נשכח',
                                memberships: [] })],
     })
     renderApp(<AccountsPage openId={undefined} />)
@@ -176,14 +177,17 @@ describe('AccountsPage', () => {
     })
   })
 
-  it('offers no way to delete an account', async () => {
+  it('offers no way to delete an account or a library', async () => {
     bothServices()
-    renderApp(<AccountsPage openId={undefined} />)
-    await screen.findByText('משפחת מלין')
+    renderApp(<AccountsPage openId="acc-1" />)
+    const panel = await screen.findByRole('dialog')
 
     expect(screen.queryByRole('button', { name: /מחיקה|Delete/ }))
       .not.toBeInTheDocument()
-    expect(screen.getByText(/אין מחיקת ספרייה|No library delete/i))
+    // ⚠ The note followed its subject. It sat under the accounts table until
+    // P3.7e moved the library rows into the drawer, leaving a sentence about
+    // deleting a library on a screen with no library on it.
+    expect(within(panel).getByText(/אין מחיקת ספרייה|No library delete/i))
       .toBeInTheDocument()
   })
 
@@ -226,15 +230,6 @@ describe('AccountsPage', () => {
     expect(within(panel).getByText('lib-3')).toBeInTheDocument()
   })
 
-  /** An id belonging to neither a customer nor a collection opens nothing,
-   *  rather than opening the first row. */
-  it('opens no drawer for an id that names nothing', async () => {
-    bothServices()
-    renderApp(<AccountsPage openId="nope" />)
-    await screen.findByText('משפחת מלין')
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-  })
-
   /**
    * ⚠⚠ The gloss, gone. `t.acct_library_id` used to sit under the account name
    * reading *"library id"* — a label whose whole job was to admit that the
@@ -269,9 +264,54 @@ describe('AccountsPage', () => {
     // passes or fails depending on whether the fetch has resolved. Measured:
     // it passed alone and collided under the full ring.
     const home = within(ours).getByText('lib-1').closest('tr')!
-    expect(within(home).getByRole('button', { name: /שינוי שם|Rename/ }))
+    expect(within(home).getByRole('button', { name: /שינוי השם של הבית|Rename הבית/ }))
       .toBeInTheDocument()
-    expect(within(home).getByRole('link', { name: /^CSV$/ })).toBeInTheDocument()
+    expect(within(home).getByRole('link', { name: /הבית.*CSV|CSV.*הבית/ }))
+      .toBeInTheDocument()
+  })
+
+  /**
+   * ⚠⚠ EVERY per-row control names its library, not just the two links that
+   * got it first. A review measured the gap and found the duplicated
+   * accessible names included *rename* — the only control here that WRITES.
+   * Two buttons both announcing "שינוי שם" leave a screen-reader user unable
+   * to tell which collection they are about to rename, which is the collision
+   * class this project has already been bitten by twice.
+   */
+  it('gives every per-library control an accessible name of its own', async () => {
+    bothServices()
+    renderApp(<AccountsPage openId="acc-1" />)
+    const panel = await screen.findByRole('dialog')
+
+    const names = [...panel.querySelectorAll('button, a')]
+      .map((el) => el.getAttribute('aria-label') ?? el.textContent?.trim())
+      .filter((n): n is string => !!n)
+    const duplicated = names.filter((n, i) => names.indexOf(n) !== i)
+    expect(duplicated).toEqual([])
+  })
+
+  /**
+   * ⚠⚠ A drawer is capped at `min(720px, 100%)`. The first version put the
+   * five per-row controls in a trailing ACTIONS column, which measured 834px
+   * wide and left rename and both exports outside the box at `scrollLeft: 0`
+   * — absent from the accessibility tree until the table was scrolled
+   * sideways. This item MOVED those controls here from a full-width table, so
+   * "scroll to find them" is a regression of its own goal. They stack under
+   * the library name instead, in the same cell.
+   */
+  it('keeps every library control inside the name cell, not a trailing column', async () => {
+    bothServices()
+    renderApp(<AccountsPage openId="acc-1" />)
+    const panel = await screen.findByRole('dialog')
+
+    const libs = within(panel).getByText('lib-1').closest('table')!
+    expect(within(libs).queryByRole('columnheader', { name: /פעולות|Actions/ }))
+      .not.toBeInTheDocument()
+    const nameCell = within(panel).getByText('lib-1').closest('td')!
+    expect(within(nameCell).getByRole('button',
+      { name: /שינוי השם של הבית|Rename הבית/ })).toBeInTheDocument()
+    expect(within(nameCell).getByRole('link', { name: /CSV/ })).toBeInTheDocument()
+    expect(within(nameCell).getByRole('link', { name: /JSON/ })).toBeInTheDocument()
   })
 
   it('says read-only on a library of a customer the operator does not belong to',
@@ -360,6 +400,214 @@ describe('AccountsPage', () => {
     }
     expect(within(panel).getByText(/מחכים להתחברות|wait on the login/))
       .toBeInTheDocument()
+  })
+
+  /**
+   * ⚠⚠ **The member list is scoped to the OPEN account.** A version reaching
+   * for `memberships[0]` instead of the entry naming this customer passed the
+   * whole ring, because the only drawer any test opened was acc-1, where the
+   * right answer and the wrong one coincide. `usr-2` belongs to BOTH
+   * customers with a DIFFERENT role in each — viewer at acc-1, admin at
+   * acc-2 — so opening acc-2 makes the two answers disagree: the wrong fold
+   * lists משה, who belongs only to acc-1, and badges שכן `viewer`.
+   *
+   * A cross-customer people leak, on the screen whose whole premise is that
+   * the customer is not the collection.
+   */
+  it('lists only the people of the OPEN account, with the role they hold there',
+     async () => {
+    bothServices()
+    renderApp(<AccountsPage openId="acc-2" />)
+    const panel = await screen.findByRole('dialog')
+
+    const shachen = within(panel).getByText('usr-2').closest('tr')!
+    expect(within(shachen).getByText('admin')).toBeInTheDocument()
+    expect(within(shachen).queryByText('viewer')).not.toBeInTheDocument()
+    // משה holds no membership at acc-2 and must not appear at all.
+    expect(within(panel).queryByText('משה')).not.toBeInTheDocument()
+    expect(within(panel).queryByText('usr-1')).not.toBeInTheDocument()
+    // …and the two who DO belong here are both listed.
+    expect(within(panel).getByText('סבתא')).toBeInTheDocument()
+    expect(within(panel).getByText('סבא')).toBeInTheDocument()
+  })
+
+  /**
+   * ⚠ The images preview fans out too. The books equivalent was pinned and
+   * this one was not — the fixture was even extended for it (`cap-3` in
+   * `lib-3`, with distinct tier figures so a by-text assertion is
+   * unambiguous) and the test was never written.
+   */
+  it('previews images from every library of the account, newest first', async () => {
+    bothServices()
+    renderApp(<AccountsPage openId="acc-1" />)
+    const panel = await screen.findByRole('dialog')
+
+    // 'ארון' is cap-3's shelf, and cap-3 lives only in the second collection.
+    expect(await within(panel).findByText(/ארון/)).toBeInTheDocument()
+    const images = within(panel).getByText(/ארון/).closest('table')!
+    const first = within(images).getAllByRole('row')[1]!
+    // cap-3 is 2026-02-02, cap-1 is 2026-01-03 — newest first.
+    expect(within(first).getByText(/ארון/)).toBeInTheDocument()
+    expect(within(first).getByText('המשרד')).toBeInTheDocument()
+  })
+
+  /**
+   * ⚠⚠ **A failed people request must not read as a customer anomaly.**
+   * "No admin" and "nobody can administer this account" are states
+   * `new_account` and `NoAdminLeft` make unreachable — the console renders
+   * them in warning tone precisely because any occurrence is a bug that
+   * already happened. Derived from an empty `users` list they are ALSO what a
+   * 500 on `/users` looks like, and the screen said nothing else at all.
+   * Measured: two customers, both flagged, beside a stat card reading 2 users.
+   */
+  it('reports a failed people request as a failure, not as a customer with no admin',
+     async () => {
+    const s = bothServices()
+    s.route('GET /api/staff/v1/users', () =>
+      new Response(JSON.stringify({ detail: 'boom' }), { status: 500 }))
+    renderApp(<AccountsPage openId={undefined} />)
+    await screen.findByText('משפחת מלין')
+
+    // The alarm is NOT raised…
+    expect(screen.queryByText(/אין מנהל|no admin/)).not.toBeInTheDocument()
+    // …the operator is told why the names are missing…
+    expect(screen.getByText(/רשימת האנשים אינה זמינה|people list is unavailable/))
+      .toBeInTheDocument()
+    // …and the failure itself is on screen. ⚠ Both halves matter: the note
+    // explains the gap, the error box says something BROKE. Asserting only
+    // the note let the old `accounts.length === 0 && error` guard survive.
+    expect(screen.getByRole('button', { name: /נסו שוב|Try again/ }))
+      .toBeInTheDocument()
+  })
+
+  /**
+   * ⚠ The mirror of the above, one list along: with `/libraries` down the
+   * drawer said "this account keeps no library" three lines under a stat card
+   * reading 2. Two contradictory sentences, no error.
+   */
+  it('says the library list is unavailable rather than that there are none',
+     async () => {
+    const s = bothServices()
+    s.route('GET /api/staff/v1/libraries', () =>
+      new Response(JSON.stringify({ detail: 'boom' }), { status: 500 }))
+    renderApp(<AccountsPage openId="acc-1" />)
+    const panel = await screen.findByRole('dialog')
+
+    expect(within(panel).queryByText(/אינו מחזיק אף ספרייה|keeps no library/))
+      .not.toBeInTheDocument()
+    expect(within(panel).getByText(/רשימת הספריות אינה זמינה|library list is unavailable/))
+      .toBeInTheDocument()
+  })
+
+  /**
+   * ⚠ The preview is capped per library, and nothing exercised the cap: no
+   * fixture library held more than two books and the fake ignored `limit`
+   * entirely, so a drawer for a 286-book customer would have rendered 286
+   * rows with the ring green.
+   */
+  it('caps the book preview instead of rendering a whole catalogue', async () => {
+    const many = Array.from({ length: 9 }, (_, i) =>
+      makeStaffBook({ id: `bulk-${i}`, library_id: 'lib-1', title: `כרך ${i}`,
+                      added_at: `2026-03-0${i + 1}T00:00:00Z` }))
+    const s = bothServices({ books: [...DEFAULT_WORLD.books, ...many] })
+    renderApp(<AccountsPage openId="acc-1" />)
+    const panel = await screen.findByRole('dialog')
+
+    expect(await within(panel).findByText('כרך 8')).toBeInTheDocument()
+    const books = within(panel).getByText('כרך 8').closest('table')!
+    expect(within(books).getAllByRole('row').slice(1)).toHaveLength(5)
+
+    // ⚠⚠ And the cap is on the REQUEST, not only on what is rendered. The
+    // trailing `.slice()` alone keeps the table five rows long while the
+    // browser downloads the customer's entire catalogue — 286 books for the
+    // owner's own account — so a row count cannot see the defect. Asking for
+    // five IS the behaviour here.
+    const asked = s.calls.filter((c) => c.url.startsWith('/api/staff/v1/books'))
+    expect(asked).not.toHaveLength(0)
+    for (const call of asked) expect(call.url).toContain('limit=5')
+  })
+
+  /** ⚠ An id naming neither a customer nor a collection opens nothing AND
+   *  says so — silence is what teaches an operator their bookmark rotted. */
+  it('says plainly when the id in the link names nothing', async () => {
+    bothServices()
+    renderApp(<AccountsPage openId="nope" />)
+    await screen.findByText('משפחת מלין')
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByText(/אינו מתאים לאף חשבון|matches no account/))
+      .toBeInTheDocument()
+  })
+
+  /**
+   * ⚠⚠ **A refresh is not a first load.** `loading` blanks every screen to a
+   * spinner, so raising it on a reload unmounted the accounts list AND the
+   * open drawer: renaming a library from inside the drawer threw the screen
+   * away and brought it back scrolled to the top, re-issuing all four preview
+   * fetches. Measured in a real browser with a MutationObserver across a
+   * rename — the only two states recorded were "the screen" and "טוען…".
+   */
+  it('keeps the drawer open across a rename instead of blanking to a spinner',
+     async () => {
+    const s = bothServices()
+    s.route('PATCH /api/v1/libraries', () => makeLibrary({ id: 'lib-1' }))
+    const user = userEvent.setup()
+    renderApp(<AccountsPage openId="acc-1" />)
+    const panel = await screen.findByRole('dialog')
+
+    // ⚠ The reload is held OPEN. The screen is only wrong WHILE the refetch
+    // is in flight — let it settle first and the drawer is back, so a test
+    // that only looks afterwards cannot see the blanking at all (measured:
+    // the mutation survived that version).
+    // ⚠ Installed AFTER the first load has already settled (the drawer is on
+    // screen above), so every call this handler sees is a reload and it holds
+    // all of them. An earlier version let the first one through on a flag —
+    // and the first one WAS the reload, so nothing was ever held and the
+    // mutation survived.
+    let release = () => {}
+    const held = new Promise<void>((r) => { release = r })
+    s.route('GET /api/staff/v1/accounts', async () => {
+      await held
+      return DEFAULT_WORLD.accounts
+    })
+
+    await user.click(within(panel).getByRole('button',
+      { name: /שינוי השם של הבית|Rename הבית/ }))
+    await user.click(within(panel).getByRole('button', { name: /^שמירה$|^Save$/ }))
+
+    // ⚠⚠ Wait for the RELOAD to have been issued, not merely for the PATCH.
+    // `s.calls` records a request when it is made, so the PATCH appears
+    // before its own promise resolves — i.e. before `onRenamed` fires the
+    // reload at all. A version that waited on the PATCH asserted against a
+    // screen the refetch had not touched yet and passed under the mutation
+    // too (measured).
+    const accountCalls = () =>
+      s.calls.filter((c) => c.url === '/api/staff/v1/accounts').length
+    const before = accountCalls()
+    await waitFor(() => { expect(accountCalls()).toBeGreaterThan(before) })
+
+    // Mid-refetch — the handler above is still held — the list and the open
+    // drawer are both still on screen.
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    // The list behind it too — by ROLE, since the drawer heading repeats the
+    // customer's name.
+    expect(screen.getByRole('link', { name: 'משפחת מלין' })).toBeInTheDocument()
+    release()
+  })
+
+  /** ⚠ It carries `role="dialog"`, and the console's other two panels close on
+   *  Escape. Announcing itself as a dialog and then not behaving like one is a
+   *  promise broken — and P3.7e made this the primary surface. */
+  it('closes on Escape, like the console’s other panels', async () => {
+    bothServices()
+    const user = userEvent.setup()
+    renderApp(<AccountsPage openId="acc-1" />)
+    await screen.findByRole('dialog')
+
+    await user.keyboard('{Escape}')
+    await waitFor(() => {
+      expect(window.location.hash).toBe('#/accounts')
+    })
   })
 
   /** A customer created before its first collection is a real state — P4.3's

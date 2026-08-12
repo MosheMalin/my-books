@@ -22,15 +22,18 @@ describe('AccessPage', () => {
    * ⚠⚠ **Three numbers, from the overview, all different.** The old call read
    * `users.length` under the label "accounts" and `overview.libraries` under
    * "libraries" — two names for what was then one entity. Since P3.7b they are
-   * three entities, and the fixture keeps 2 / 2 / 3 so that reading the wrong
-   * field cannot pass unnoticed.
+   * three entities, and the fixture keeps 2 / 4 / 3 — pairwise different — so
+   * that reading the wrong field cannot pass unnoticed. ⚠ The first version
+   * used 2 / 2 / 3, and a review measured what that hid: `users.length` was
+   * also 2, so the ORIGINAL defect (customers counted by the length of the
+   * user list) survived both tests.
    */
   it('counts accounts, users and libraries as three different figures', async () => {
     bothServices()
     renderApp(<AccessPage />)
 
     const line = await screen.findByText(/כרגע:|Right now:/)
-    expect(line.textContent).toMatch(/\b2\b.*\b2\b.*\b3\b/)
+    expect(line.textContent).toMatch(/\b2\b.*\b4\b.*\b3\b/)
   })
 
   it('reads those figures from the overview, not from the lists it holds', async () => {

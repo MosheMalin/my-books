@@ -50,6 +50,34 @@ interface SystemState {
   /** The collections one customer owns, in the order the service listed them. */
   librariesOf: (accountId: string) => StaffLibrary[]
   /**
+   * The people who belong to one customer, with the role they hold THERE.
+   *
+   * ⚠ Lives here because two screens fold `users[].memberships` the same way
+   * and one of them had no gate: a version that reached for `memberships[0]`
+   * instead of the entry naming the open account listed a stranger from
+   * another customer and showed them the wrong badge, and the whole ring
+   * passed. One fold, one place, one test.
+   *
+   * ⚠ A membership names an ACCOUNT since P3.7b, so this is a single lookup
+   * and never a union over the account's libraries.
+   */
+  membersOf: (accountId: string) => Array<{ user: StaffUser; role: string;
+                                            joinedAt: string | null }>
+  /** Just the admins of one customer — the same fold, narrowed. */
+  adminsOf: (accountId: string) => StaffUser[]
+  /**
+   * Did the people list actually arrive?
+   *
+   * ⚠⚠ Load-bearing, not diagnostics. "This customer has no admin" and "this
+   * customer has no members" are ANOMALIES the console exists to surface —
+   * `new_account` mints an admin in the same call and `NoAdminLeft` keeps it
+   * so, which is why the screens render them in warning tone. Derived from an
+   * empty `users` list, they are also exactly what a failed `/users` request
+   * looks like. A console that reports a transport failure as a customer
+   * nobody can administer is stating a false reason in an alarming voice.
+   */
+  peopleKnown: boolean
+  /**
    * Which customer owns this library, or `undefined`.
    *
    * ⚠ This is what keeps an operator's old bookmark working. `#/accounts/<id>`
@@ -72,14 +100,23 @@ export function SystemProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | undefined>(undefined)
   const [needsToken, setNeedsToken] = useState(false)
+  const [peopleKnown, setPeopleKnown] = useState(false)
   const [nonce, setNonce] = useState(0)
   const seq = useRef(0)
+  const loaded = useRef(false)
 
   useEffect(() => {
     const id = ++seq.current
     const ctrl = new AbortController()
     const opts = { signal: ctrl.signal }
-    setLoading(true)
+    // ⚠⚠ A REFRESH IS NOT A FIRST LOAD. `loading` blanks every screen to a
+    // spinner (`if (loading) return <Loading/>`), so raising it on a reload
+    // unmounted the accounts list AND the open drawer: renaming a library
+    // from inside the drawer threw the screen away and brought it back
+    // scrolled to the top, with the four preview fetches re-issued. Measured
+    // with a MutationObserver across a real rename. Once anything has
+    // arrived, a reload updates in place.
+    if (!loaded.current) setLoading(true)
     setError(undefined)
 
     // ⚠ `allSettled`, not `all`. The staff service and the product API are two
@@ -97,6 +134,10 @@ export function SystemProvider({ children }: { children: ReactNode }) {
       if (libs.status === 'fulfilled') setLibraries(libs.value)
       if (usrs.status === 'fulfilled') setUsers(usrs.value)
       if (own.status === 'fulfilled') setMine(own.value)
+      // ⚠ Tracked per SOURCE, not folded into `error`. Which list is missing
+      // decides what a screen may say; one boolean for four requests cannot.
+      setPeopleKnown(usrs.status === 'fulfilled')
+      loaded.current = true
 
       const failure = [o, accs, libs, usrs].find((r) => r.status === 'rejected')
       if (failure && failure.status === 'rejected') {
@@ -124,9 +165,17 @@ export function SystemProvider({ children }: { children: ReactNode }) {
     }
     const accountById = new Map(accounts.map((a) => [a.id, a]))
     const ownerOf = new Map(libraries.map((l) => [l.id, l.account_id]))
+    const membersOf = (accountId: string) => users.flatMap((user) => {
+      const m = user.memberships.find((x) => x.account_id === accountId)
+      return m ? [{ user, role: m.role, joinedAt: m.joined_at ?? null }] : []
+    })
     return {
       overview, accounts, libraries, users, mine, loading, error, needsToken,
-      reload,
+      peopleKnown, reload,
+      membersOf,
+      adminsOf: (accountId: string) =>
+        membersOf(accountId).filter((m) => m.role === 'admin')
+          .map((m) => m.user),
       canWrite: (id: string) => writable.has(id),
       // Falls back to the product list, then to the id: a library that exists
       // in one source and not the other still needs a name on screen, and an
@@ -144,7 +193,7 @@ export function SystemProvider({ children }: { children: ReactNode }) {
       },
     }
   }, [overview, accounts, libraries, users, mine, loading, error, needsToken,
-      reload])
+      peopleKnown, reload])
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

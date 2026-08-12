@@ -71,8 +71,11 @@ type Schemas = components['schemas']
 
 /** System totals. `authenticated: false` means the service has no token
  *  configured and anyone who can reach the port reads every tenant — shown on
- *  screen, never swallowed. `orphan_libraries` are libraries with no
- *  membership at all: nobody can see or administer them. */
+ *  screen, never swallowed. `orphan_libraries` are libraries whose OWNING
+ *  ACCOUNT has no member at all: nobody can see or administer them.
+ *  ⚠ It meant "no membership names this library" until P3.7b; a membership
+ *  names an account now, so the question moved up a level with the
+ *  boundary — `app/staff_api/queries.py` says so at length. */
 export type StaffOverview = Schemas['OverviewDTO']
 /**
  * One CUSTOMER, with every figure summed over the libraries it owns — the
@@ -103,7 +106,9 @@ export type StaffBookPage = Schemas['BookPageDTO']
 export type StaffRead = Schemas['ReadDTO']
 /** One book ACROSS every tenant — the console's unit since revision 4. It has
  *  no `library_id` on purpose: an operator's question about a book is how
- *  widespread it is, and the per-household instances are a second call. */
+ *  widespread it is, and the per-LIBRARY instances are a second call.
+ *  ⚠ Per library, not per household: since P3.7b `libraries: 2` may be two
+ *  collections of ONE customer, which is the normal shape. */
 export type StaffWork = Schemas['WorkDTO']
 export type StaffWorkPage = Schemas['WorkPageDTO']
 export type StaffImage = Schemas['ImageDTO']
