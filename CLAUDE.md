@@ -106,6 +106,13 @@ next, pausing for the owner only on unsettled decisions.
     since P4.0a the runner wraps the whole pending chain in one
     `BEGIN IMMEDIATE`, re-reads the version under the lock, and refuses a
     newer-than-code file at the door.
+    ⚠ **Every step needs a v(N-1)→vN test on a REAL old file** — three
+    consecutive reviews (v16, v17, v18) found it missing, and the failure
+    is always the same: fold the new DDL into the previous step and every
+    clone stays green while the one database that matters never gains the
+    table. Copy `test_a_v15_database_gains_the_invites_table…`'s frame:
+    build the chain to N-1, insert real rows, open the store, then assert
+    the version, the rows, `foreign_key_check`, and the INDEX NAMES.
 12. **Trust nothing stale.** No `--reload` anywhere: restart servers after
     route changes. `:8757` serves a gitignored build — rebuild `app/web`
     after client changes. Vite's dev server can serve a stale module graph
