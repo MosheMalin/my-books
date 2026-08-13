@@ -266,6 +266,10 @@ const HE = {
   login_sending: 'שולח…',
   login_sent: 'אם הכתובת יכולה להיכנס לכאן, קישור בדרך אליה. פתחו אותו מהמכשיר הזה.',
   login_link_bad: 'הקישור פג תוקף או שכבר נוצל — בקשו קישור חדש.',
+  login_provider_failed: 'הכניסה דרך הספק לא הושלמה — נסו שוב או בקשו קישור.',
+  login_or: 'או',
+  login_with_google: 'כניסה עם Google',
+  login_with_apple: 'כניסה עם Apple',
   login_sent_log: 'בגרסת הפיתוח אין דואר: הקישור מודפס ביומן השרת, במחשב שמריץ אותו.',
   login_again: 'שליחה שוב',
   login_rate: 'יותר מדי בקשות — נסו שוב בעוד כשעה.',
@@ -529,6 +533,11 @@ const EN: Strings = {
     + 'Open it on this device.',
   login_link_bad: 'That link has expired or was already used — request a '
     + 'new one.',
+  login_provider_failed: 'That sign-in did not complete — try again, or '
+    + 'ask for a link.',
+  login_or: 'or',
+  login_with_google: 'Sign in with Google',
+  login_with_apple: 'Sign in with Apple',
   login_sent_log: 'The dev build has no mail: the link is printed in the '
     + 'server log, on the machine running it.',
   login_again: 'Send again',

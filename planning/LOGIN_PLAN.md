@@ -234,6 +234,26 @@ on the data (number is §7 Q2). Naming the library is part of the flow
 (label mandatory — existing domain rule). Reviewers: `review-security`,
 `review-data-integrity`, `review-ux`.
 
+✅ **P4.2 landed 2026-08-13** (schema v18), last, as the plan
+recommended — Apple needs a real HTTPS domain, which P4.4 settled.
+Authorization-code flow with PKCE (S256), one `IdentityProvider` port with
+Google and Apple adapters over stdlib HTTP. The ID Token's signature is
+deliberately not verified and the reason is written where it can be
+argued with (OIDC Core §3.1.3.7: the token arrives over a TLS connection
+we opened to a pinned endpoint) — every CLAIM is still checked by one
+domain checklist: issuer, audience, nonce, and the verified-email flag
+that stops anyone typing your address into their own provider account.
+Identity links on the verified email, so Google and the magic link land on
+the SAME user. The state is server-side (v18) because Apple's callback is
+a cross-site POST that no SameSite=Lax cookie accompanies, and it is
+single-use — that is the CSRF guard for a route anyone can aim a browser
+at. The login screen offers exactly the configured providers and none
+otherwise. Apple's client secret is a real ES256 JWT signed with
+`cryptography` (already a dependency), verified against its public half in
+a test. **What only the owner can supply:** the Google OAuth client and
+the Apple Services ID + .p8 key — `.env.example` documents both, and with
+neither set the product signs in by link exactly as before.
+
 ### P4.2 — Google + Apple sign-in (M) — recommend landing AFTER P4.4
 
 OIDC code flow for both; identity linked to the User by **verified email**

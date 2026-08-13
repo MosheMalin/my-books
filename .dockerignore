@@ -1,0 +1,20 @@
+# What must never reach the build daemon, let alone a layer (P4.4's
+# security review): the image is clean, but the CONTEXT was shipping the
+# owner's real database and secrets, and a host `node_modules` overlaid
+# the lockfile-pinned one the web stage had just installed.
+.env
+.env.*
+!.env.example
+work/
+.git/
+**/node_modules/
+**/dist/
+tests/
+fixtures/
+samples/
+planning/
+docs/
+.claude/
+*.db
+*.db-wal
+*.db-shm

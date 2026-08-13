@@ -2035,3 +2035,137 @@ def test_an_email_address_has_one_spelling():
     assert normalize_email(" Moshe@Example.COM ") == "moshe@example.com"
     assert normalize_email("a.b+tag@x.co") == "a.b+tag@x.co", (
         "plus-tags and dots are the OWNER's business, not ours to fold")
+
+
+# --- provider sign-in, the checklist (P4.2) --------------------------------
+
+def test_only_a_verified_address_from_the_right_issuer_signs_anyone_in():
+    """Every check an attacker-influenced answer has to survive. The
+    email_verified flag is the load-bearing one: without it, anyone who
+    types your address into a provider account they control is you."""
+    from app.domain.oauth import GOOGLE, OAuthError, identity_from_claims
+
+    good = {"iss": GOOGLE.issuer, "aud": "client-1", "nonce": "n1",
+            "email": "Owner@Example.COM", "email_verified": True,
+            "sub": "sub-1"}
+    who = identity_from_claims(good, GOOGLE, "client-1", "n1")
+    assert who.email == "owner@example.com", "the address was not normalized"
+    assert who.subject == "sub-1" and who.provider == "google"
+
+    # Apple sends the flag as a STRING; both spellings mean verified.
+    assert identity_from_claims({**good, "email_verified": "true"},
+                                GOOGLE, "client-1", "n1").email
+
+    for broken, why in (
+        ({**good, "iss": "https://evil.test"}, "a forged issuer"),
+        ({**good, "aud": "someone-elses-client"}, "another client's token"),
+        ({**good, "aud": ["someone-elses-client"]}, "an audience list"),
+        ({**good, "nonce": "n2"}, "a replayed token from another sign-in"),
+        ({**good, "email_verified": False}, "an unverified address"),
+        ({**good, "email_verified": None}, "a missing verified flag"),
+        ({**good, "email": ""}, "no address at all"),
+        ({**good, "sub": ""}, "no subject"),
+    ):
+        try:
+            identity_from_claims(broken, GOOGLE, "client-1", "n1")
+        except OAuthError:
+            pass
+        else:
+            raise AssertionError(f"{why} was accepted")
+
+    # An empty nonce must never match an absent one.
+    try:
+        identity_from_claims({**good, "nonce": ""}, GOOGLE, "client-1", "")
+    except OAuthError:
+        pass
+    else:
+        raise AssertionError("an empty nonce matched")
+
+
+def test_pkce_is_s256_and_never_plain():
+    """PKCE binds the code to the client that asked. `plain` would put
+    the verifier in the front-channel request — the one part of this flow
+    that travels through the browser and its history."""
+    import base64
+    import hashlib
+
+    from app.domain.oauth import pkce_challenge
+
+    verifier = "a-verifier-that-is-long-enough-to-be-real"
+    expected = base64.urlsafe_b64encode(
+        hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
+    assert pkce_challenge(verifier) == expected
+    assert pkce_challenge(verifier) != verifier
+    assert "=" not in pkce_challenge(verifier)
+
+
+def test_apples_client_secret_is_a_real_es256_jwt():
+    """Apple's client secret is a JWT we SIGN, not a string — and it is
+    verified here against the public half, because a secret that only
+    looks like a JWT fails at Apple's door with a message about the
+    grant, not about the key."""
+    import base64
+    import json
+
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec, utils
+
+    from app.adapters.oidc import AppleProvider
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    pem = key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode()
+
+    provider = AppleProvider(client_id="com.example.booksnap",
+                             team_id="TEAM123", key_id="KEY123",
+                             private_key=pem,
+                             redirect_uri="https://books.example.com/cb")
+    secret = provider._client_secret()
+    header_b64, payload_b64, signature_b64 = secret.split(".")
+
+    def unpad(segment):
+        return base64.urlsafe_b64decode(segment + "=" * (-len(segment) % 4))
+
+    assert json.loads(unpad(header_b64)) == {"alg": "ES256", "kid": "KEY123"}
+    claims = json.loads(unpad(payload_b64))
+    assert claims["iss"] == "TEAM123"
+    assert claims["sub"] == "com.example.booksnap"
+    assert claims["aud"] == "https://appleid.apple.com"
+    assert claims["exp"] > claims["iat"]
+
+    raw = unpad(signature_b64)
+    assert len(raw) == 64, "JOSE wants raw R||S, not the DER OpenSSL emits"
+    der = utils.encode_dss_signature(
+        int.from_bytes(raw[:32], "big"), int.from_bytes(raw[32:], "big"))
+    key.public_key().verify(
+        der, f"{header_b64}.{payload_b64}".encode(),
+        ec.ECDSA(hashes.SHA256()))       # raises if the signature is wrong
+
+
+def test_the_authorize_url_carries_what_the_provider_needs():
+    """The front channel, spelled out — including the response_mode Apple
+    will not release an email without."""
+    from urllib.parse import parse_qs, urlparse
+
+    from app.adapters.oidc import AppleProvider, OidcProvider
+
+    google = OidcProvider(client_id="gid", client_secret="gsecret",
+                          redirect_uri="https://books.example.com/g")
+    url = google.authorize_url(state="st", nonce="no", challenge="ch")
+    query = parse_qs(urlparse(url).query)
+    assert urlparse(url).netloc == "accounts.google.com"
+    assert query["code_challenge_method"] == ["S256"]
+    assert query["response_type"] == ["code"]
+    assert query["state"] == ["st"] and query["nonce"] == ["no"]
+    assert "response_mode" not in query
+    # The secret NEVER travels in the front channel.
+    assert "gsecret" not in url
+
+    apple = AppleProvider(client_id="aid", team_id="t", key_id="k",
+                          private_key="", redirect_uri="https://x/a")
+    assert parse_qs(urlparse(apple.authorize_url(
+        state="s", nonce="n", challenge="c")).query)["response_mode"] == [
+        "form_post"]

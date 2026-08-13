@@ -41,6 +41,7 @@ from app.adapters.queued_jobs import QueuedJobRunner
 from app.adapters.sqlite_store import (
     SqliteAuthStore,
     SqliteInviteStore,
+    SqliteOAuthStateStore,
     SqliteBookStore,
     SqliteDecisionStore,
     SqliteDuplicateQueue,
@@ -125,6 +126,63 @@ def blob_root() -> Path:
     return Path(explicit) if explicit else _work() / "product_blobs"
 
 
+def _identity_providers() -> dict:
+    """Google and Apple, each present only if CONFIGURED.
+
+    Configuration decides, exactly like the mailer: a deployment with no
+    Google client signs in by link, and the login screen asks which
+    buttons exist rather than showing one that cannot work. Apple needs
+    four values because its client secret is a signed JWT, not a string.
+    """
+    from app.adapters.oidc import AppleProvider, OidcProvider
+
+    public = os.environ.get("BOOKSNAP_PUBLIC_URL") or _lan_base_url()
+    providers: dict = {}
+
+    google_id = os.environ.get("BOOKSNAP_GOOGLE_CLIENT_ID", "").strip()
+    if google_id:
+        providers["google"] = OidcProvider(
+            client_id=google_id,
+            client_secret=os.environ.get("BOOKSNAP_GOOGLE_CLIENT_SECRET", ""),
+            redirect_uri=f"{public}/api/v1/auth/oauth/google/callback",
+        )
+
+    apple_id = os.environ.get("BOOKSNAP_APPLE_CLIENT_ID", "").strip()
+    apple_key = os.environ.get("BOOKSNAP_APPLE_PRIVATE_KEY", "").strip()
+    if apple_id and apple_key:
+        providers["apple"] = AppleProvider(
+            client_id=apple_id,
+            team_id=os.environ.get("BOOKSNAP_APPLE_TEAM_ID", ""),
+            key_id=os.environ.get("BOOKSNAP_APPLE_KEY_ID", ""),
+            # A PEM is multi-line and .env is not: the key is stored with
+            # literal backslash-n, and a PEM without real newlines does
+            # not parse.
+            private_key=apple_key.replace("\\n", "\n"),
+            redirect_uri=f"{public}/api/v1/auth/oauth/apple/callback",
+        )
+    return providers
+
+
+def _session_secure() -> bool:
+    """Whether this deployment puts TLS in front.
+
+    Accepts the spellings an operator actually types: a `.env` reading
+    `BOOKSNAP_SESSION_SECURE=true` silently gave a NON-Secure 90-day
+    cookie behind TLS before this (P4.4's security review) — failing open
+    on a typo is the wrong direction for a flag whose whole job is
+    tightening.
+    """
+    raw = os.environ.get("BOOKSNAP_SESSION_SECURE", "").strip().lower()
+    if raw in ("", "0", "false", "no", "off"):
+        return False
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    raise RuntimeError(
+        f"BOOKSNAP_SESSION_SECURE={raw!r} is not a yes or a no; "
+        f"use 1 or 0"
+    )
+
+
 def _mailer():
     """The real mailer when SMTP is configured, the dev one otherwise.
 
@@ -136,6 +194,19 @@ def _mailer():
     host = os.environ.get("BOOKSNAP_SMTP_HOST", "").strip()
     public = os.environ.get("BOOKSNAP_PUBLIC_URL") or _lan_base_url()
     if not host:
+        # ⚠ REFUSE in a deployed posture. ConsoleMailer prints the raw
+        # sign-in link, which is the inversion its own module note says
+        # must never reach production: with no SMTP configured, a public
+        # server would put a live credential in the container log for
+        # anyone who can read it (P4.4's security review). The same flag
+        # that says "TLS is in front" says "this is not a laptop".
+        if _session_secure():
+            raise RuntimeError(
+                "BOOKSNAP_SESSION_SECURE is set but no BOOKSNAP_SMTP_HOST: "
+                "the dev mailer prints sign-in links to the log, which is "
+                "not a thing to do on a deployed server. Configure SMTP "
+                "(see .env.example) or unset BOOKSNAP_SESSION_SECURE."
+            )
         return ConsoleMailer(public)
     return SmtpMailer(
         host=host,
@@ -209,10 +280,12 @@ def build() -> object:
         # login route the link lands on.
         auth_store=SqliteAuthStore(path),
         invite_store=SqliteInviteStore(path),
+        oauth_state_store=SqliteOAuthStateStore(path),
+        identity_providers=_identity_providers(),
         mailer=_mailer(),
         # TLS is in front only when the deployment says so (P4.4's compose
         # file sets it); a Secure cookie on plain HTTP is silently dropped.
-        session_secure=os.environ.get("BOOKSNAP_SESSION_SECURE") == "1",
+        session_secure=_session_secure(),
         clock=SystemClock(),
         id_gen=UuidIdGen(),
         web_dist=WEB_DIST,

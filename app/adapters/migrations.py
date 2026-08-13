@@ -932,6 +932,38 @@ UPDATE invites SET granted_at = consumed_at WHERE consumed_at IS NOT NULL;
 """
 
 
+# --- v18: in-flight OAuth sign-ins (P4.2, VISION §3) -----------------------
+#
+# Google and Apple, authorization-code flow. One row per sign-in ATTEMPT,
+# consumed when the provider redirects back — the single-use state is the
+# CSRF guard for a callback anyone can forge a request to.
+#
+# ⚠ Server-side rather than a cookie, and Apple is the reason: its callback
+# is a cross-site POST (`response_mode=form_post`), which a SameSite=Lax
+# cookie does not accompany. A cookie-carried state would simply be absent
+# exactly when it is checked.
+#
+# Same discipline as v15/v16: what is stored is the HASH of the state, and
+# the row is short-lived (15 minutes) and swept. `verifier` is the PKCE
+# secret, which never leaves the server — the front channel carries only its
+# S256 challenge.
+_V18 = """
+CREATE TABLE oauth_states (
+    state_hash  TEXT PRIMARY KEY,
+    provider    TEXT NOT NULL,
+    nonce       TEXT NOT NULL,
+    verifier    TEXT NOT NULL,
+    next_hash   TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL,
+    expires_at  TEXT NOT NULL,
+    consumed_at TEXT
+);
+
+-- The sweep's query, and the only one that is not by primary key.
+CREATE INDEX oauth_states_by_expiry ON oauth_states (expires_at);
+"""
+
+
 # A step is either SQL to execute or a callable to run — both inside the same
 # once-only transaction. Callables exist because a derived column whose rule
 # lives in the domain must be backfilled BY that rule, not by a re-statement
@@ -954,7 +986,9 @@ MIGRATIONS: tuple[tuple[int, str | Step], ...] = (
     (15, _V15),
     (16, _V16),
     (17, _V17),
+    (18, _V18),
 )
+
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]
 

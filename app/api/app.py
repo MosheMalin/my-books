@@ -19,7 +19,9 @@ from fastapi.staticfiles import StaticFiles
 from app import API_PREFIX, __version__
 from app.api.deps import (
     get_auth_store,
+    get_identity_providers,
     get_invite_store,
+    get_oauth_state_store,
     get_session_secure,
     get_blob_store,
     get_book_store,
@@ -49,6 +51,7 @@ from app.api.routers import (
 from app.ports import Clock, IdGen, Principal
 from app.ports.auth import AuthStore, Mailer
 from app.ports.invites import InviteStore
+from app.ports.oauth import OAuthStateStore
 from app.ports.blobs import BlobStore
 from app.ports.decisions import DecisionStore
 from app.ports.duplicates import DuplicateQueue
@@ -95,6 +98,8 @@ def bind_ports(
     auth_store: AuthStore | None = None,
     mailer: Mailer | None = None,
     invite_store: InviteStore | None = None,
+    oauth_state_store: OAuthStateStore | None = None,
+    identity_providers: dict | None = None,
     session_secure: bool | None = None,
 ) -> None:
     """Point an already-built app's ports at these implementations.
@@ -122,7 +127,9 @@ def bind_ports(
                       (get_reader, reader), (get_job_runner, job_runner),
                       (get_tenancy_store, tenancy_store),
                       (get_auth_store, auth_store), (get_mailer, mailer),
-                      (get_invite_store, invite_store)):
+                      (get_invite_store, invite_store),
+                      (get_oauth_state_store, oauth_state_store),
+                      (get_identity_providers, identity_providers)):
         if impl is not None:
             app.dependency_overrides[dep] = _always(impl)
 
@@ -145,6 +152,8 @@ def create_app(
     auth_store: AuthStore | None = None,
     mailer: Mailer | None = None,
     invite_store: InviteStore | None = None,
+    oauth_state_store: OAuthStateStore | None = None,
+    identity_providers: dict | None = None,
     session_secure: bool | None = None,
     web_dist: Path | None = None,
 ) -> FastAPI:
@@ -203,6 +212,8 @@ def create_app(
         duplicate_queue=duplicate_queue, reader=reader,
         job_runner=job_runner, tenancy_store=tenancy_store,
         auth_store=auth_store, mailer=mailer, invite_store=invite_store,
+        oauth_state_store=oauth_state_store,
+        identity_providers=identity_providers,
         session_secure=session_secure,
     )
 

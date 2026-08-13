@@ -33,9 +33,15 @@ from __future__ import annotations
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi.responses import RedirectResponse
 
 from app.api import deps
-from app.api.dto import LoginLinkRequest, SessionCreate, UserDTO
+from app.api.dto import (
+    LoginLinkRequest,
+    ProvidersDTO,
+    SessionCreate,
+    UserDTO,
+)
 from app.domain import User
 from app.domain.auth import (
     LINK_RATE_PER_EMAIL,
@@ -50,11 +56,19 @@ from app.domain.auth import (
     rate_window_start,
     valid_email_shape,
 )
+from app.domain.oauth import OAuthError, new_state, pkce_challenge
 from app.ports import Clock, IdGen
 from app.ports.auth import AuthStore, Mailer
+from app.ports.oauth import IdentityProvider, OAuthStateStore
 from app.ports.tenancy import EmailTaken, TenancyStore
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+#: Where a refused provider sign-in lands. The client reads it and shows
+#: one sentence — the person clicked a button, so a JSON error page would
+#: be the product answering a human in a language it reserves for
+#: machines.
+OAUTH_FAILED = "#/login?error=provider"
 
 
 def _source_hash(request: Request) -> str:
@@ -200,3 +214,172 @@ def sign_out(
     if raw:
         auth.revoke_session(hash_token(raw), at=clock.now_iso())
     response.delete_cookie(deps.SESSION_COOKIE, path="/")
+
+# --- Google and Apple (P4.2, VISION §3) -----------------------------------
+
+
+def _provider(key: str, providers: dict) -> IdentityProvider:
+    configured = providers.get(key)
+    if configured is None:
+        # Not "unknown provider": whether Apple is configured is a fact
+        # about this deployment, and the client asks `/auth/providers`
+        # rather than guessing.
+        raise HTTPException(status.HTTP_404_NOT_FOUND,
+                            f"{key!r} sign-in is not configured here")
+    return configured
+
+
+@router.get("/providers", response_model=ProvidersDTO,
+            summary="Which sign-in providers are configured")
+def list_providers(
+    providers: dict = Depends(deps.get_identity_providers),
+) -> ProvidersDTO:
+    """So the login screen can offer exactly the buttons that WORK.
+
+    A dangling "Sign in with Apple" on a deployment with no Apple key is
+    the absent-not-disabled rule broken at the first screen anyone sees.
+    """
+    return ProvidersDTO(providers=sorted(providers))
+
+
+@router.get("/oauth/{provider}/start",
+            status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+            summary="Begin a provider sign-in")
+def start_oauth(
+    provider: str,
+    request: Request,
+    next: str = "",
+    auth: AuthStore = Depends(deps.get_auth_store),
+    states: OAuthStateStore = Depends(deps.get_oauth_state_store),
+    providers: dict = Depends(deps.get_identity_providers),
+    clock: Clock = Depends(deps.get_clock),
+) -> RedirectResponse:
+    """Mint the state, the nonce and the PKCE verifier, then redirect.
+
+    All three are `secrets`, never `IdGen`: they are credentials, and the
+    test id generator is reproducible on purpose (the same rule the
+    session token carries).
+    """
+    chosen = _provider(provider, providers)
+    now = clock.now_iso()
+    states.purge_states(before=now)
+
+    state = secrets.token_urlsafe(32)
+    nonce = secrets.token_urlsafe(16)
+    verifier = secrets.token_urlsafe(64)
+    # `next` is a HASH fragment of our own client, never a URL: an open
+    # redirect is the classic hole in exactly this parameter, so nothing
+    # that could name another origin is accepted — and the QUERY is
+    # dropped, because a client that put an invite token there would have
+    # us store a live grant in cleartext (measured at review; the client
+    # no longer sends one, and this is why it could not matter if it did).
+    safe_next = next.split("?")[0] if (
+        next.startswith("#/") and "//" not in next) else ""
+    states.save_state(new_state(state, chosen.key, nonce, verifier, now,
+                                next_hash=safe_next))
+    return RedirectResponse(
+        chosen.authorize_url(state=state, nonce=nonce,
+                             challenge=pkce_challenge(verifier)),
+        status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+    )
+
+
+@router.get("/oauth/{provider}/callback", include_in_schema=False)
+def oauth_callback_get(
+    provider: str,
+    response: Response,
+    code: str = "",
+    state: str = "",
+    auth: AuthStore = Depends(deps.get_auth_store),
+    tenancy: TenancyStore = Depends(deps.get_tenancy_store),
+    states: OAuthStateStore = Depends(deps.get_oauth_state_store),
+    providers: dict = Depends(deps.get_identity_providers),
+    clock: Clock = Depends(deps.get_clock),
+    ids: IdGen = Depends(deps.get_id_gen),
+    secure: bool = Depends(deps.get_session_secure),
+) -> RedirectResponse:
+    """Google's redirect back: a top-level GET."""
+    return _finish_oauth(provider, code, state, response, auth, tenancy,
+                         states, providers, clock, ids, secure)
+
+
+@router.post("/oauth/{provider}/callback", include_in_schema=False)
+async def oauth_callback_post(
+    provider: str,
+    request: Request,
+    response: Response,
+    auth: AuthStore = Depends(deps.get_auth_store),
+    tenancy: TenancyStore = Depends(deps.get_tenancy_store),
+    states: OAuthStateStore = Depends(deps.get_oauth_state_store),
+    providers: dict = Depends(deps.get_identity_providers),
+    clock: Clock = Depends(deps.get_clock),
+    ids: IdGen = Depends(deps.get_id_gen),
+    secure: bool = Depends(deps.get_session_secure),
+) -> RedirectResponse:
+    """Apple's redirect back: a cross-site form POST.
+
+    ⚠ This is the route that decides where the flow's state may live. A
+    cross-site POST carries no SameSite=Lax cookie, so the state is
+    server-side — and the single-use consume below is what makes this
+    unauthenticated POST safe to expose at all.
+    """
+    form = await request.form()
+    return _finish_oauth(provider, str(form.get("code") or ""),
+                         str(form.get("state") or ""), response, auth,
+                         tenancy, states, providers, clock, ids, secure)
+
+
+def _finish_oauth(provider: str, code: str, state: str, response: Response,
+                  auth: AuthStore, tenancy: TenancyStore,
+                  states: OAuthStateStore, providers: dict, clock: Clock,
+                  ids: IdGen, secure: bool) -> RedirectResponse:
+    """One implementation for both response modes.
+
+    Every refusal lands the person back on the login screen with one
+    honest sentence, rather than a JSON error in a browser they arrived
+    at by clicking a button — this is the only route in the product whose
+    caller is a REDIRECT, not the client's own fetch.
+    """
+    chosen = _provider(provider, providers)
+    now = clock.now_iso()
+    in_flight = states.consume_state(hash_token(state), now=now) if state else None
+    if in_flight is None or in_flight.provider != chosen.key or not code:
+        # Replayed, forged, expired, or for a different provider — one
+        # answer, like every other credential refusal here.
+        return RedirectResponse(f"/{OAUTH_FAILED}",
+                                status_code=status.HTTP_303_SEE_OTHER)
+    try:
+        identity = chosen.exchange(code=code, verifier=in_flight.verifier,
+                                   nonce=in_flight.nonce)
+    except OAuthError:
+        return RedirectResponse(f"/{OAUTH_FAILED}",
+                                status_code=status.HTTP_303_SEE_OTHER)
+
+    # THE anchor: a verified address is a verified address, whoever
+    # confirmed it. Signing in with Google to the address that has been
+    # using magic links lands on the SAME user (§4.1 — one person, one
+    # identity), and no second account is minted.
+    user = tenancy.user_by_email(identity.email)
+    if user is None:
+        try:
+            user = User(id=ids.new_id(), email=identity.email, created_at=now)
+            tenancy.save_user(user)
+        except EmailTaken:                       # raced another sign-in
+            user = tenancy.user_by_email(identity.email)
+            if user is None:  # pragma: no cover
+                raise
+
+    session_token = secrets.token_urlsafe(32)
+    auth.save_session(new_session(session_token, user.id, now))
+    landing = RedirectResponse(f"/{in_flight.next_hash or ''}",
+                               status_code=status.HTTP_303_SEE_OTHER)
+    landing.set_cookie(
+        deps.SESSION_COOKIE,
+        session_token,
+        max_age=int(SESSION_LIFETIME.total_seconds()),
+        httponly=True,
+        samesite="lax",
+        secure=secure,
+        path="/",
+    )
+    return landing

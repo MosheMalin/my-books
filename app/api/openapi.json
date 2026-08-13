@@ -1519,6 +1519,24 @@
         "title": "NotSeenEntryDTO",
         "type": "object"
       },
+      "ProvidersDTO": {
+        "description": "Which provider sign-ins this DEPLOYMENT configured (P4.2).\n\nA fact about configuration, not about any caller — so it is safe\nbefore anyone is signed in, and it is what lets the login screen\noffer exactly the buttons that work (absent, not disabled).",
+        "properties": {
+          "providers": {
+            "description": "Subset of ['google', 'apple'] — empty is normal.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Providers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "providers"
+        ],
+        "title": "ProvidersDTO",
+        "type": "object"
+      },
       "ReadCreate": {
         "description": "Start a read of one shelf at one depth.",
         "properties": {
@@ -2090,6 +2108,79 @@
           }
         },
         "summary": "Request Login Link",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/oauth/{provider}/start": {
+      "get": {
+        "description": "Mint the state, the nonce and the PKCE verifier, then redirect.\n\nAll three are `secrets`, never `IdGen`: they are credentials, and the\ntest id generator is reproducible on purpose (the same rule the\nsession token carries).",
+        "operationId": "start_oauth_api_v1_auth_oauth__provider__start_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider",
+            "required": true,
+            "schema": {
+              "title": "Provider",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "next",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Next",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "307": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Begin a provider sign-in",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/providers": {
+      "get": {
+        "description": "So the login screen can offer exactly the buttons that WORK.\n\nA dangling \"Sign in with Apple\" on a deployment with no Apple key is\nthe absent-not-disabled rule broken at the first screen anyone sees.",
+        "operationId": "list_providers_api_v1_auth_providers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProvidersDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Which sign-in providers are configured",
         "tags": [
           "auth"
         ]

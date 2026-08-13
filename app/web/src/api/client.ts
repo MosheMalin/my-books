@@ -185,6 +185,18 @@ export const redeemLoginToken = (token: string, opts?: ApiOptions) =>
 export const signOut = (opts?: ApiOptions) =>
   send('DELETE', '/api/v1/auth/session', undefined, opts) as Promise<void>
 
+/** Which provider buttons this deployment can actually offer (P4.2).
+ *  Empty is the normal state — a household that signs in by link. */
+export const listProviders = (opts?: ApiOptions) =>
+  apiGet('/api/v1/auth/providers', opts)
+
+/** Where the browser GOES to start a provider sign-in. Not a fetch:
+ *  the flow is a redirect the provider must see, and an XHR would
+ *  follow it into an opaque cross-origin response. */
+export const providerStartUrl = (provider: string, next: string): string =>
+  `/api/v1/auth/oauth/${encodeURIComponent(provider)}/start`
+  + `?next=${encodeURIComponent(next)}`
+
 // --- members and invites (P4.3) --------------------------------------------
 //
 // Account-scoped through the same library header every call carries — the

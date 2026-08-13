@@ -3309,3 +3309,102 @@ def test_a_v16_database_gains_granted_at_and_the_backfill_closes_the_hole():
             "a pre-v17 consumed invite is still a re-entry ticket for its "
             "own consumer — the backfill did not close the hole"
         )
+
+
+def test_an_oauth_state_is_consumed_once_and_swept_when_stale():
+    """The CSRF guard's storage, both adapters. A replayed callback must
+    find nothing — that is the entire property the state parameter has."""
+    from app.adapters.memory_store import MemoryOAuthStateStore
+    from app.adapters.sqlite_store import SqliteOAuthStateStore
+    from app.domain.auth import hash_token
+    from app.domain.oauth import new_state
+
+    with tempfile.TemporaryDirectory() as tmp:
+        for store in (MemoryOAuthStateStore(),
+                      SqliteOAuthStateStore(Path(tmp) / "s.db")):
+            state = new_state("tok", "google", "nonce-1", "verifier-1",
+                              "2026-08-13T12:00:00+00:00",
+                              next_hash="#/invite?token=x")
+            store.save_state(state)
+            try:
+                store.save_state(state)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("a duplicate state was re-armed")
+
+            got = store.consume_state(hash_token("tok"),
+                                      now="2026-08-13T12:05:00+00:00")
+            assert got is not None
+            assert got.nonce == "nonce-1" and got.verifier == "verifier-1"
+            assert got.next_hash == "#/invite?token=x"
+            assert store.consume_state(
+                hash_token("tok"), now="2026-08-13T12:06:00+00:00") is None, (
+                f"{type(store).__name__}: a state was consumed twice")
+
+            # Expiry is exclusive, like every other credential here.
+            stale = new_state("old", "google", "n", "v",
+                              "2026-08-13T12:00:00+00:00")
+            store.save_state(stale)
+            assert store.consume_state(hash_token("old"),
+                                       now=stale.expires_at) is None
+            assert store.purge_states(before="2026-08-14T00:00:00+00:00") >= 1
+            assert store.consume_state(hash_token("old"),
+                                       now="2026-08-13T12:05:00+00:00") is None
+
+
+def test_a_v17_database_gains_the_oauth_states_table_and_keeps_its_rows():
+    """v18 on an UPGRADED file — the third time this has been the finding
+    (v16's and v17's reviews both measured that a fresh-only suite lets
+    the repo's own forbidden edit through: fold the DDL into the previous
+    step and every clone stays green while the ONE database that matters
+    never gains the table). Pins the index too."""
+    import sqlite3
+
+    from app.adapters.migrations import MIGRATIONS, SCHEMA_VERSION, current_version
+    from app.adapters.sqlite_store import SqliteOAuthStateStore
+    from app.domain.auth import hash_token
+    from app.domain.oauth import new_state
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "v17.db"
+        conn = sqlite3.connect(str(path))
+        try:
+            for version, step in MIGRATIONS:
+                if version > 17:
+                    break
+                if isinstance(step, str):
+                    conn.executescript(step)
+                else:
+                    step(conn)
+            conn.execute("PRAGMA user_version = 17")
+            conn.execute("INSERT INTO users (id, display_name) VALUES"
+                         " ('u1', 'משה')")
+            conn.execute("INSERT INTO accounts (id, label) VALUES ('acc', '')")
+            conn.execute("INSERT INTO libraries (id, account_id, label)"
+                         " VALUES ('lib', 'acc', 'הבית')")
+            conn.execute(
+                "INSERT INTO books (id, library_id, title, author, norm_title,"
+                " norm_author, book_key, notes, search_text, sort_author)"
+                " VALUES ('b1','lib','ספר','','ספר','','k','','ספר','')")
+            conn.commit()
+        finally:
+            conn.close()
+
+        store = SqliteOAuthStateStore(path)      # migrates 17 -> 18
+        check = sqlite3.connect(str(path))
+        try:
+            assert current_version(check) == SCHEMA_VERSION
+            assert check.execute("SELECT count(*) FROM books").fetchone()[0] == 1
+            assert check.execute("PRAGMA foreign_key_check").fetchall() == []
+            names = {r[0] for r in check.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'")}
+            assert "oauth_states_by_expiry" in names, "v18's index is gone"
+        finally:
+            check.close()
+
+        # …and the store works on the UPGRADED file.
+        store.save_state(new_state("tok", "google", "n", "v",
+                                   "2026-08-13T12:00:00+00:00"))
+        assert store.consume_state(hash_token("tok"),
+                                   now="2026-08-13T12:05:00+00:00") is not None

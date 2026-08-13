@@ -1090,3 +1090,16 @@
 .acctmenu-list button:hover {
   background: var(--accent-soft);
 }
+
+/* the provider buttons (P4.2) — links, not buttons: the flow is a
+   navigation the provider must see. `.btn` styles a button element, so
+   the anchor needs the two properties an <a> does not inherit. */
+.login .btn {
+  display: block;
+  text-align: center;
+  text-decoration: none;
+}
+.loginor {
+  text-align: center;
+  margin: 2px 0;
+}

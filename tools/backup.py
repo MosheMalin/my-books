@@ -36,6 +36,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import sqlite3
 import sys
@@ -47,6 +48,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 #: Bumped when the layout of a backup directory changes. `restore.py`
 #: refuses a format it does not know rather than guessing.
 BACKUP_FORMAT = 1
+
+#: What a backup directory is named. Anything else in the backup root is
+#: somebody's notes, and must not be mistaken for the newest backup.
+_STAMP = re.compile(r"\d{8}T\d{6}Z")
 
 
 def _work() -> Path:
@@ -89,10 +94,22 @@ def _copy_database(src: Path, dst: Path) -> dict:
 
     conn = sqlite3.connect(str(dst))
     try:
+        # The tables whose CONTENTS cannot be re-derived. `invites` is
+        # here despite being a credential: an OPEN invite is a standing
+        # 7-day grant somebody is waiting on, and a restore that silently
+        # dropped it is a relative who cannot join.
+        #
+        # Deliberately absent: `sessions`, `login_tokens` and
+        # `oauth_states` — all three are minutes-to-hours credentials
+        # whose loss costs one fresh sign-in, and a 15-minute row would
+        # legitimately differ between the backup and the drill, turning
+        # every restore into a false alarm. They are still COPIED (the
+        # whole file is); they are simply not numbers to compare.
         counts = {}
         for table in ("books", "copies", "provenance", "shelves", "captures",
                       "reads", "claims", "decisions", "duplicate_questions",
-                      "users", "accounts", "memberships", "libraries"):
+                      "users", "accounts", "memberships", "libraries",
+                      "invites"):
             try:
                 counts[table] = conn.execute(
                     f"SELECT count(*) FROM {table}").fetchone()[0]
@@ -158,6 +175,29 @@ def run(db: Path, blobs: Path, out: Path, *, stamp: str | None = None) -> Path:
     return target
 
 
+def complete_backups(out: Path) -> list[Path]:
+    """Every restorable backup under ``out``, OLDEST FIRST.
+
+    Ordered by the manifest's own ``taken_at``, and only directories whose
+    NAME is a timestamp: sorting by name let a directory called
+    `the-operators-notes` (with any manifest.json in it) read as newest
+    and take both real backups with it when pruning (measured, P4.4's
+    security review). One definition of "newest", here, so `prune` and
+    `restore.py --drill` cannot disagree.
+    """
+    found = []
+    for path in out.glob("*"):
+        manifest = path / "manifest.json"
+        if not (manifest.is_file() and _STAMP.fullmatch(path.name)):
+            continue
+        try:
+            taken = json.loads(manifest.read_text(encoding="utf-8"))["taken_at"]
+        except (OSError, ValueError, KeyError):
+            continue
+        found.append((taken, path))
+    return [path for _taken, path in sorted(found)]
+
+
 def prune(out: Path, keep: int) -> list[Path]:
     """Drop the oldest COMPLETE backups beyond ``keep``. Returns what went.
 
@@ -167,8 +207,7 @@ def prune(out: Path, keep: int) -> list[Path]:
     nightly run copies the whole blob tree, so without this the backups
     fill the very volume holding the database they protect.
     """
-    complete = sorted(p for p in out.glob("*")
-                      if (p / "manifest.json").exists())
+    complete = complete_backups(out)
     doomed = complete[:-keep] if keep > 0 else []
     for old in doomed:
         shutil.rmtree(old)
