@@ -4057,3 +4057,50 @@ v16 and at v17, so v18's was written before the review rather than after
 it. The mutations that make it worth having are the same each time —
 folding the new DDL into the previous step, and deleting the index — and
 both die with a named test now.
+
+
+### P4.2's follow-up: single-use is not browser-binding (v19)
+
+The post-landing security review found what the module note had asserted
+away. `app/domain/oauth.py` said: *"the thing an attacker CAN supply is
+the redirect back, which is why the state below is single-use and
+server-side."* Those are the two properties that specifically do not
+address fixation, and the review demonstrated it end to end:
+
+1. the attacker starts a flow in their own browser, signs in as
+   themselves, and keeps `code` + `state` WITHOUT hitting our callback;
+2. they send the victim that finished callback URL — an `<img>`, a link,
+   a 302; the GET callback is unauthenticated and takes no cookie;
+3. the victim's browser receives `booksnap_session` for the ATTACKER's
+   user. Everything they photograph next lands in the attacker's library.
+
+And the chain that made it worse than misdirected data: a victim with a
+pending invite has it spent against that session by `InviteGate`, so the
+attacker ends up with a real `Membership` row in the victim's account —
+`Membership('u-attacker', 'acc-test', Role.EDITOR)`, measured.
+
+v19 adds `binding_hash`: a secret handed to the STARTING browser as a
+short-lived cookie, its hash on the state row, required to match at the
+callback and failing closed when absent (which is what every pre-v19 row
+is). Apple's cross-site POST needs `SameSite=None; Secure` — available
+precisely because Apple refuses a non-HTTPS redirect URI in the first
+place, so the two constraints are one constraint. Google's top-level GET
+takes the tighter `Lax`.
+
+**Why the existing test could not see it:** it drove `/start` and the
+callback through ONE `TestClient`, which carries the cookie for both
+halves. Its name said "single-use and ours" and it only ever tested the
+first half. The regression test uses two clients, and the attack is
+written out in it.
+
+Four smaller things from the same pass, each a case of a rule stated in
+one file and enforced in another: `exp` was checked in the adapter while
+the port's contract said the domain function IS the checklist (so a
+provider written to the stated contract accepted a stale token); urllib's
+default opener follows redirects, so "a TLS connection to a PINNED
+endpoint" was pinned for one hop only — and the nonce that would have
+caught the difference is not secret, it travels in the front channel; the
+provider's email skipped `valid_email_shape`, which the magic-link door
+applies to the same column; and a rotated-away Apple key answered 500
+instead of the login screen, because the secret was built outside the
+try.

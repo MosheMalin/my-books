@@ -48,6 +48,11 @@ LIBRARY_HEADER = "X-Booksnap-Library"
 #: the raw token; the database only ever holds its hash.
 SESSION_COOKIE = "booksnap_session"
 
+#: The per-flow cookie that binds an OAuth state to the browser that
+#: started it (P4.2's security review). Short-lived, single-flow, and
+#: carrying nothing but a random value whose hash sits on the state row.
+OAUTH_COOKIE = "booksnap_oauth"
+
 
 def get_session_secure() -> bool:
     """Whether the session cookie carries ``Secure`` (P4.4).

@@ -1191,10 +1191,12 @@ class SqliteOAuthStateStore(_SqliteStore):
                     conn.execute(
                         "INSERT INTO oauth_states (state_hash, provider,"
                         " nonce, verifier, next_hash, created_at,"
-                        " expires_at, consumed_at) VALUES (?,?,?,?,?,?,?,?)",
+                        " expires_at, consumed_at, binding_hash)"
+                        " VALUES (?,?,?,?,?,?,?,?,?)",
                         (state.state_hash, state.provider, state.nonce,
                          state.verifier, state.next_hash, state.created_at,
-                         state.expires_at, state.consumed_at),
+                         state.expires_at, state.consumed_at,
+                         state.binding_hash),
                     )
             except sqlite3.IntegrityError as exc:
                 raise ValueError(
@@ -1247,7 +1249,8 @@ def _load_state(row: sqlite3.Row) -> OAuthState:
                       next_hash=row["next_hash"],
                       created_at=row["created_at"],
                       expires_at=row["expires_at"],
-                      consumed_at=row["consumed_at"])
+                      consumed_at=row["consumed_at"],
+                      binding_hash=row["binding_hash"])
 
 
 class SqliteInviteStore(_SqliteStore):

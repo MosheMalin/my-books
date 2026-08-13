@@ -254,6 +254,19 @@ a test. **What only the owner can supply:** the Google OAuth client and
 the Apple Services ID + .p8 key — `.env.example` documents both, and with
 neither set the product signs in by link exactly as before.
 
+⚠ **P4.2 follow-up, 2026-08-13 (schema v19):** the post-landing security
+review found a login-CSRF/fixation hole — the OAuth state was single-use
+and server-side but not tied to the browser that began the flow, so a
+victim could be handed a finished callback and signed into the
+ATTACKER's account, with a pending invite then handing the attacker a
+standing membership. Fixed with a per-flow binding cookie whose hash sits
+on the state row (`SameSite=None; Secure` for Apple's cross-site POST,
+`Lax` for Google), failing closed for any unbound row. Also folded: `exp`
+moved into the domain's one checklist, the token endpoint refuses
+redirects off itself, the provider's email goes through the same shape
+check as the magic link's, a bad Apple key answers the login screen
+rather than a 500, and `next` is capped.
+
 ### P4.2 — Google + Apple sign-in (M) — recommend landing AFTER P4.4
 
 OIDC code flow for both; identity linked to the User by **verified email**

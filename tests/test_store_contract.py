@@ -3408,3 +3408,88 @@ def test_a_v17_database_gains_the_oauth_states_table_and_keeps_its_rows():
                                    "2026-08-13T12:00:00+00:00"))
         assert store.consume_state(hash_token("tok"),
                                    now="2026-08-13T12:05:00+00:00") is not None
+
+
+def test_the_browser_binding_survives_a_round_trip_through_both_stores():
+    """v19's column, and the rule that fails CLOSED: a state with no
+    binding recorded (the shape every pre-v19 row has) belongs to
+    nobody."""
+    from app.adapters.memory_store import MemoryOAuthStateStore
+    from app.adapters.sqlite_store import SqliteOAuthStateStore
+    from app.domain.auth import hash_token
+    from app.domain.oauth import new_state
+
+    with tempfile.TemporaryDirectory() as tmp:
+        for store in (MemoryOAuthStateStore(),
+                      SqliteOAuthStateStore(Path(tmp) / "b.db")):
+            store.save_state(new_state("tok", "google", "n", "v",
+                                       "2026-08-13T12:00:00+00:00",
+                                       binding="the-browsers-secret"))
+            got = store.consume_state(hash_token("tok"),
+                                      now="2026-08-13T12:05:00+00:00")
+            assert got is not None
+            assert got.belongs_to("the-browsers-secret")
+            assert not got.belongs_to("some-other-browser")
+            assert not got.belongs_to(""), "an empty binding matched"
+
+            # Unbound (pre-v19, or a caller that forgot): nobody owns it.
+            store.save_state(new_state("old", "google", "n", "v",
+                                       "2026-08-13T12:00:00+00:00"))
+            unbound = store.consume_state(hash_token("old"),
+                                          now="2026-08-13T12:05:00+00:00")
+            assert not unbound.belongs_to("anything at all")
+
+
+def test_a_v18_database_gains_the_binding_column_and_keeps_its_rows():
+    """v19 on an UPGRADED file — the rule CLAUDE.md now carries."""
+    import sqlite3
+
+    from app.adapters.migrations import MIGRATIONS, SCHEMA_VERSION, current_version
+    from app.adapters.sqlite_store import SqliteOAuthStateStore
+    from app.domain.auth import hash_token
+    from app.domain.oauth import new_state
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "v18.db"
+        conn = sqlite3.connect(str(path))
+        try:
+            for version, step in MIGRATIONS:
+                if version > 18:
+                    break
+                if isinstance(step, str):
+                    conn.executescript(step)
+                else:
+                    step(conn)
+            conn.execute("PRAGMA user_version = 18")
+            conn.execute(
+                "INSERT INTO oauth_states (state_hash, provider, nonce,"
+                " verifier, next_hash, created_at, expires_at) VALUES"
+                " (?, 'google', 'n', 'v', '', '2026-08-13T12:00:00+00:00',"
+                "  '2026-08-13T12:15:00+00:00')",
+                (hash_token("pre-v19"),))
+            conn.commit()
+        finally:
+            conn.close()
+
+        store = SqliteOAuthStateStore(path)      # migrates 18 -> 19
+        check = sqlite3.connect(str(path))
+        try:
+            assert current_version(check) == SCHEMA_VERSION
+            assert "binding_hash" in {
+                r[1] for r in check.execute("PRAGMA table_info(oauth_states)")}
+        finally:
+            check.close()
+
+        # The row that predates the column belongs to no browser, so the
+        # callback refuses it — fail closed, one retry, no fixation.
+        carried = store.consume_state(hash_token("pre-v19"),
+                                      now="2026-08-13T12:05:00+00:00")
+        assert carried is not None and carried.binding_hash == ""
+        assert not carried.belongs_to("whatever the attacker sends")
+
+        store.save_state(new_state("fresh", "google", "n", "v",
+                                   "2026-08-13T12:00:00+00:00",
+                                   binding="mine"))
+        assert store.consume_state(
+            hash_token("fresh"), now="2026-08-13T12:05:00+00:00"
+        ).belongs_to("mine")
