@@ -52,6 +52,13 @@ TOKEN_LIFETIME = timedelta(minutes=15)
 #: §1.2's run-rate cap — a guard against loops and abuse, not a quota.
 LINK_RATE_PER_EMAIL = 5
 LINK_RATE_PER_SOURCE = 15
+#: The wide per-address ceiling: the pair door cannot bound how much
+#: MAIL lands in one inbox (extra sources are free), and with a real
+#: mailer that is an amplifier aimed at a victim from our credentials
+#: (P4.1b's security review measured 100/window). High enough that
+#: recreating P4.1a's lockout costs six coordinated sources instead
+#: of one curl loop.
+LINK_RATE_PER_EMAIL_WIDE = 30
 LINK_RATE_WINDOW = timedelta(hours=1)
 
 

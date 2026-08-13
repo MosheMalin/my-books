@@ -1131,6 +1131,89 @@
         "title": "ImageDTO",
         "type": "object"
       },
+      "InviteAccept": {
+        "description": "Redeem an invite link.",
+        "properties": {
+          "token": {
+            "maxLength": 128,
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "title": "InviteAccept",
+        "type": "object"
+      },
+      "InviteCreate": {
+        "description": "Mint an invite (or set a member's role — the same one field).",
+        "properties": {
+          "role": {
+            "description": "viewer | editor | admin",
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role"
+        ],
+        "title": "InviteCreate",
+        "type": "object"
+      },
+      "InviteDTO": {
+        "description": "An open invite's metadata. ``id`` is the token's hash — enough to\nrevoke, useless to redeem.",
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "expires_at": {
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "role",
+          "created_at",
+          "expires_at"
+        ],
+        "title": "InviteDTO",
+        "type": "object"
+      },
+      "InviteMintedDTO": {
+        "description": "The freshly minted invite, RAW TOKEN INCLUDED — shown exactly once.\n\nThe store holds only the hash, so no later call can reproduce this.\nThe client's job is to put the link where the admin can copy it NOW.",
+        "properties": {
+          "expires_at": {
+            "title": "Expires At",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "role",
+          "expires_at"
+        ],
+        "title": "InviteMintedDTO",
+        "type": "object"
+      },
       "LendRequest": {
         "description": "*\"Lend it out\"*. ``lent_at`` is server time (the ``Clock``, like\n``added_at``), never client-supplied — a borrow date is a fact about when\nthe server recorded the action, not something the caller should be able\nto backdate.",
         "properties": {
@@ -1345,6 +1428,42 @@
         "title": "ManualFindingIn",
         "type": "object"
       },
+      "MemberDTO": {
+        "description": "One person in the account, with the role covering every library it\nowns (§4.1 — a role is held per account).",
+        "properties": {
+          "display_name": {
+            "default": "",
+            "title": "Display Name",
+            "type": "string"
+          },
+          "joined_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Joined At"
+          },
+          "role": {
+            "description": "viewer | editor | admin",
+            "title": "Role",
+            "type": "string"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "role"
+        ],
+        "title": "MemberDTO",
+        "type": "object"
+      },
       "MetaResponse": {
         "description": "Service identity + who is asking + the library resolved for them.",
         "properties": {
@@ -1364,7 +1483,7 @@
           },
           "user": {
             "$ref": "#/components/schemas/UserDTO",
-            "description": "The caller (dev-trusted until P4.1)."
+            "description": "The caller, from the session."
           },
           "version": {
             "description": "Server package version.",
@@ -1830,7 +1949,7 @@
         "type": "string"
       },
       "UserDTO": {
-        "description": "Who the server thinks is asking (§4.1).\n\nDev-trusted until pillar 4: there is no login, so this is whichever\nprincipal the composition root built. It is on the wire now because the\nswitcher's list is *this user's* libraries, and a client that cannot\nname the user cannot explain an empty list.\n\n⚠ Called ``AccountDTO`` until P3.7a. The word \"account\" now belongs to the\nCUSTOMER (VISION §4.1, 2026-08-11) and arrives on the wire at P3.7b —\nreading this field as a tenant is the mistake the rename exists to stop.",
+        "description": "Who the server thinks is asking (§4.1).\n\nThe session's user (P4.1b). On the wire because the switcher's list\nis *this user's* libraries, and a client that cannot name the user\ncannot explain an empty list.\n\n⚠ Called ``AccountDTO`` until P3.7a. The word \"account\" now belongs to the\nCUSTOMER (VISION §4.1, 2026-08-11) and arrives on the wire at P3.7b —\nreading this field as a tenant is the mistake the rename exists to stop.",
         "properties": {
           "display_name": {
             "default": "",
@@ -1839,7 +1958,7 @@
             "type": "string"
           },
           "id": {
-            "description": "Opaque user identifier.",
+            "description": "Opaque user identifier (the session's user since P4.1b).",
             "title": "Id",
             "type": "string"
           }
@@ -3275,7 +3394,7 @@
     },
     "/api/v1/libraries": {
       "get": {
-        "description": "Ordered by the domain's own key, so the switcher never reshuffles.\n\nA user that belongs to nothing gets ``[]``, not an error — a real\nstate (P4.3's sign-up, before the first library) the client has to render.\n\n⚠ **Store data only, with no special case for the principal's own default\nlibrary** — even though :func:`app.api.deps.current_library` serves that\none without consulting the store. Patching it in here would put a second\ncopy of the resolver's dev-trusted rule in a second module, and the day\nthey disagreed the switcher would be missing the very library on screen.\nGuaranteeing the membership row exists is the composition root's job\n(``app.main:_bootstrap_dev_user``), and\n``test_the_library_meta_resolves_is_always_one_the_switcher_lists`` pins\nthe agreement rather than trusting it.",
+        "description": "Ordered by the domain's own key, so the switcher never reshuffles.\n\nA user that belongs to nothing gets ``[]``, not an error — a real\nstate (P4.3's sign-up, before the first library) the client has to render.\n\nStore data only. Since P4.1b the resolver reads the SAME rows this\nlists — the dev-trusted special case died with the dev identity — so\nthe switcher and the resolver cannot disagree by construction;\n``test_the_library_meta_resolves_is_always_one_the_switcher_lists``\nkeeps them pinned anyway.",
         "operationId": "list_libraries_api_v1_libraries_get",
         "responses": {
           "200": {
@@ -3299,7 +3418,7 @@
         ]
       },
       "post": {
-        "description": "Created under the caller's existing account, granting nothing new.\n\n⚠ It inherits the standing the caller already had with that customer.\nUntil P3.7b this route wrote a membership too; `new_library` returning\na Library and nothing else is what P3.7b calls its most load-bearing\ndeletion, and `test_creating_a_library_grants_nobody_anything` pins it.\n\n⚠ This route is the DELIBERATE escape hatch for §4.1's settled tenancy\nrule (owner, 2026-08-10): a second Library under one account is legal —\nit is the rare genuinely-separate collection (a shop's stock, a\nclassroom set) — and the ONLY discouragement is client-side, on purpose:\nthe app-bar switcher renders no create action until a second library\nalready exists (`LibrarySwitcher.tsx`). A server-side count cap was\nconsidered and REFUSED: it would block the very cases the decision\nblesses, a quota is a different axis from P3.2's (role × capability)\npolicy data, and the structural half of the rule is already enforced\nwhere it matters — a Library cannot carry a room or a place\n(`test_a_library_is_not_a_place`). Do not \"fix\" this route in either\ndirection without re-reading VISION §4.1.\n\n⚠⚠ **Admin-only, and P3.7b is what made that necessary.** Before the\nboundary moved, this route minted a BRAND-NEW tenant with the caller as\nits admin — it touched nobody else, so leaving it open cost nothing. Now\nit writes into an EXISTING customer that other people belong to: every\nmember's switcher grows a row, the operator's dashboard counts it, and\n(from P3.7c) it draws on that customer's shared run-rate cap. Without this\ncheck a VIEWER — §4.2's \"friend browsing what you own\" — can append\nunlimited libraries to the account paying for it, and nothing in the\nproduct can remove them (DELETE is deliberately absent). Found by P3.7b's\ndata-integrity review, which reproduced exactly that.\n\n`MANAGE_LIBRARY` rather than a new capability: §4.2 has no \"create a\nlibrary\" row, and the closest cell it does have — *rename the library*,\n\"the library's name is the tenant's own identity\" — is the same act one\nstep later.\n\n**The sign-up act lives here too (P4.1c, §4.3 step 2).** A caller with\nNO account minting their first library mints the account WITH it: an\naccount with no library is a customer with nowhere to put a book, so\nthe two are created together — domain objects first (a blank name\nrefuses before anything is written), rows after. The new account's\nmembership is ADMIN by construction (`new_account`), so the §4.2 check\nis cleared the honest way, and `LIBRARIES_PER_ACCOUNT` never binds a\nfirst library.",
+        "description": "Created under the caller's existing account, granting nothing new.\n\n⚠ It inherits the standing the caller already had with that customer.\nUntil P3.7b this route wrote a membership too; `new_library` returning\na Library and nothing else is what P3.7b calls its most load-bearing\ndeletion, and `test_creating_a_library_grants_nobody_anything` pins it.\n\n⚠ This route is the DELIBERATE escape hatch for §4.1's settled tenancy\nrule (owner, 2026-08-10): a second Library under one account is legal —\nit is the rare genuinely-separate collection (a shop's stock, a\nclassroom set) — and the everyday discouragement is client-side, on\npurpose: the app-bar switcher renders no create action until a second\nlibrary already exists (`LibrarySwitcher.tsx`). The [OPEN] count cap\nCLOSED at P4.1c (owner, 2026-08-13: 5 per account) — a retry-loop and\nabuse guard like §1.2's run-rate cap, set high enough to never block a\nlegitimate separate collection, which is why 5 and not 1. The\nstructural half of the rule stays where it was — a Library cannot\ncarry a room or a place (`test_a_library_is_not_a_place`). Do not\nchange either half without re-reading VISION §4.1.\n\n⚠⚠ **Admin-only, and P3.7b is what made that necessary.** Before the\nboundary moved, this route minted a BRAND-NEW tenant with the caller as\nits admin — it touched nobody else, so leaving it open cost nothing. Now\nit writes into an EXISTING customer that other people belong to: every\nmember's switcher grows a row, the operator's dashboard counts it, and\n(from P3.7c) it draws on that customer's shared run-rate cap. Without this\ncheck a VIEWER — §4.2's \"friend browsing what you own\" — can append\nunlimited libraries to the account paying for it, and nothing in the\nproduct can remove them (DELETE is deliberately absent). Found by P3.7b's\ndata-integrity review, which reproduced exactly that.\n\n`MANAGE_LIBRARY` rather than a new capability: §4.2 has no \"create a\nlibrary\" row, and the closest cell it does have — *rename the library*,\n\"the library's name is the tenant's own identity\" — is the same act one\nstep later.\n\n**The sign-up act lives here too (P4.1c, §4.3 step 2).** A caller with\nNO account minting their first library mints the account WITH it: an\naccount with no library is a customer with nowhere to put a book, so\nthe two are created together — domain objects first (a blank name\nrefuses before anything is written), rows after. The new account's\nmembership is ADMIN by construction (`new_account`), so the §4.2 check\nis cleared the honest way, and `LIBRARIES_PER_ACCOUNT` never binds a\nfirst library.",
         "operationId": "create_library_api_v1_libraries_post",
         "requestBody": {
           "content": {
@@ -3389,6 +3508,269 @@
         "summary": "Rename a library",
         "tags": [
           "libraries"
+        ]
+      }
+    },
+    "/api/v1/members": {
+      "get": {
+        "operationId": "list_members_api_v1_members_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MemberDTO"
+                  },
+                  "title": "Response List Members Api V1 Members Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Who is in this account",
+        "tags": [
+          "members"
+        ]
+      }
+    },
+    "/api/v1/members/invites": {
+      "get": {
+        "operationId": "list_invites_api_v1_members_invites_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/InviteDTO"
+                  },
+                  "title": "Response List Invites Api V1 Members Invites Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Open invites of this account",
+        "tags": [
+          "members"
+        ]
+      },
+      "post": {
+        "description": "The raw token appears HERE and never again — the list below is\nmetadata only, because the store holds the hash. Copy the link now.",
+        "operationId": "create_invite_api_v1_members_invites_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InviteCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InviteMintedDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Mint an invite link",
+        "tags": [
+          "members"
+        ]
+      }
+    },
+    "/api/v1/members/invites/accept": {
+      "post": {
+        "description": "The INVITEE's half — any signed-in user, no admin gate, no header:\nthe account comes from the token. Expired, consumed, revoked and\ninvented are one 404 (which guess was close is not on the wire).\n\nReturns the switcher's new rows for the joined account, so the client\ncan show what just opened up without a second round trip.",
+        "operationId": "accept_invite_api_v1_members_invites_accept_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InviteAccept"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/LibraryDTO"
+                  },
+                  "title": "Response Accept Invite Api V1 Members Invites Accept Post",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Accept an invite",
+        "tags": [
+          "members"
+        ]
+      }
+    },
+    "/api/v1/members/invites/{invite_id}": {
+      "delete": {
+        "description": "404 for an invite this account does not hold — the store narrows by\naccount, so another customer's invite is indistinguishable from none.",
+        "operationId": "revoke_invite_api_v1_members_invites__invite_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "invite_id",
+            "required": true,
+            "schema": {
+              "title": "Invite Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke an invite",
+        "tags": [
+          "members"
+        ]
+      }
+    },
+    "/api/v1/members/{user_id}": {
+      "delete": {
+        "description": "The person leaves, the collection stays (UI_PLAN §5, one level up).\nSince P4.1b removal is EFFECTIVE — their next request answers 404.",
+        "operationId": "delete_member_api_v1_members__user_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove a member",
+        "tags": [
+          "members"
+        ]
+      },
+      "patch": {
+        "description": "The whole member list comes back — \"is there still an admin?\" is a\nfact about the list, and the screen showing one row is showing the\nlist.",
+        "operationId": "patch_member_api_v1_members__user_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InviteCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MemberDTO"
+                  },
+                  "title": "Response Patch Member Api V1 Members  User Id  Patch",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Change a member's role",
+        "tags": [
+          "members"
         ]
       }
     },

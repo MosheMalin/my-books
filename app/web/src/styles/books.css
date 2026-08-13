@@ -1013,3 +1013,80 @@
   margin: 0;
   font-size: var(--fs-lg);
 }
+
+/* ---------------- members panel (P4.3) ---------------- */
+.memberlist, .invitelist {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.memberlist li, .invitelist li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.memberlist li > span:first-child {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.memberlist select, .invitemint select {
+  width: auto;
+}
+.invitemint {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.invitelink {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.invitelist li > span {
+  flex: 1;
+}
+.modalbox > .body > h4 {
+  margin: 14px 0 8px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+/* login sizes: 16px stops iOS Safari's focus zoom; 44px is the minimum
+   real thumb target (UX review minors). */
+.login input, .login .btn {
+  font-size: 16px;
+  min-height: 44px;
+}
+.loginbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.acctmenu {
+  position: relative;
+}
+.acctmenu-list {
+  position: absolute;
+  inset-inline-end: 0;
+  top: 100%;
+  margin-top: 4px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  display: grid;
+  min-width: 160px;
+  z-index: 30;
+}
+.acctmenu-list button {
+  padding: 10px 14px;
+  text-align: start;
+}
+.acctmenu-list button:hover {
+  background: var(--accent-soft);
+}

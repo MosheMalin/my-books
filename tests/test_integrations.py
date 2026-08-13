@@ -556,21 +556,56 @@ if __name__ == "__main__":
 
 
 def test_the_composition_root_writes_no_tenancy_at_all():
-    """P4.1b retired `test_the_bootstrap_never_joins_an_account_it_did_not_
-    create` by deleting its subject: the composition root no longer writes
-    users, accounts or memberships under ANY circumstance — sign-in mints
-    the bare user (the auth router), sign-up mints the account (P4.1c), and
-    the account-hijack the old test pinned (P3.7b's security review) has no
-    code path left to happen in. Asserted structurally, the way the old
-    hazard would return: `app/main.py` acquiring a tenancy write."""
-    import inspect
+    """P4.1b deleted the bootstrap; building the app must not write ONE
+    tenancy row. Asserted behaviourally — `build()` runs against a temp
+    database seeded with somebody else's account, and every table is
+    byte-identical after — because the first version grepped `app/main.py`
+    for verb strings and a one-line `getattr` spelling walked straight
+    past it (P4.1b's quality review, demonstrated)."""
+    import os
+    import sqlite3
+    import tempfile
 
-    import app.main as main
+    from app.adapters.sqlite_store import SqliteTenancyStore
+    from app.domain import Account, Library, Membership, Role, User
 
-    src = inspect.getsource(main)
-    for verb in ("save_user", "save_account", "save_membership",
-                 "save_library"):
-        assert verb not in src, (
-            f"app/main.py calls {verb} — the composition root is writing "
-            f"tenancy again; P4.1b deleted that on purpose"
+    def rows(db):
+        conn = sqlite3.connect(str(db))
+        try:
+            return {
+                table: conn.execute(
+                    f"SELECT * FROM {table} ORDER BY 1").fetchall()
+                for table in ("users", "accounts", "memberships", "libraries")
+            }
+        finally:
+            conn.close()
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db = Path(tmp) / "boot.db"
+        tenancy = SqliteTenancyStore(db)
+        tenancy.save_user(User(id="alice"))
+        tenancy.save_account(Account(id="acc-family", label="Family"))
+        tenancy.save_membership(Membership("alice", "acc-family", Role.ADMIN))
+        tenancy.save_library(Library(id="lib-home", account_id="acc-family",
+                                     label="הבית"))
+        before = rows(db)
+
+        saved = {k: os.environ.get(k) for k in ("BOOKSNAP_DB",
+                                                "BOOKSNAP_BLOBS")}
+        os.environ["BOOKSNAP_DB"] = str(db)
+        os.environ["BOOKSNAP_BLOBS"] = str(Path(tmp) / "blobs")
+        try:
+            import app.main
+
+            app.main.build()
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+        assert rows(db) == before, (
+            "building the app wrote tenancy rows — the composition root "
+            "is minting or joining accounts again (P4.1b deleted that)"
         )

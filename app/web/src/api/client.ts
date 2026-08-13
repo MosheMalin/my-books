@@ -41,7 +41,11 @@ export const SIGNED_OUT_EVENT = 'booksnap:signed-out'
  *  what this returns — a new helper that `throw new ApiError(...)` directly
  *  has quietly opted out of the whole mechanism. */
 function apiError(status: number, path: string, message: string): ApiError {
-  if (status === 401) {
+  // A 401 from a PRE-AUTH route says "this token is stale", never
+  // "your session died" — routing it into the sign-out mechanism threw
+  // a live session onto the login screen (P4.1b's UX review, CRITICAL
+  // 1's second amplifier).
+  if (status === 401 && !path.startsWith('/api/v1/auth/')) {
     globalThis.dispatchEvent(new Event(SIGNED_OUT_EVENT))
   }
   return new ApiError(status, path, message)
@@ -172,13 +176,56 @@ export const getMeta = (opts?: ApiOptions): Promise<Meta> =>
 export type UserDTO = components['schemas']['UserDTO']
 
 export const requestLoginLink = (email: string, opts?: ApiOptions) =>
-  send('POST', '/api/v1/auth/link', { email }, opts) as Promise<{ detail: string }>
+  send('POST', '/api/v1/auth/link', { email },
+       opts) as Promise<{ detail: string; delivery?: string }>
 
 export const redeemLoginToken = (token: string, opts?: ApiOptions) =>
   send('POST', '/api/v1/auth/session', { token }, opts) as Promise<UserDTO>
 
 export const signOut = (opts?: ApiOptions) =>
   send('DELETE', '/api/v1/auth/session', undefined, opts) as Promise<void>
+
+// --- members and invites (P4.3) --------------------------------------------
+//
+// Account-scoped through the same library header every call carries — the
+// server's "operating as" rule reads it. The minted invite's token appears
+// in ONE response and never again; the client's job is to show the link
+// while it exists.
+
+export type MemberDTO = components['schemas']['MemberDTO']
+export type InviteDTO = components['schemas']['InviteDTO']
+export type InviteMintedDTO = components['schemas']['InviteMintedDTO']
+
+export const listMembers = (opts?: ApiOptions): Promise<MemberDTO[]> =>
+  apiGet('/api/v1/members', opts)
+
+export const setMemberRole = (userId: string, role: string, opts?: ApiOptions) =>
+  send('PATCH', `/api/v1/members/${encodeURIComponent(userId)}`, { role },
+       opts) as Promise<MemberDTO[]>
+
+export const removeMember = (userId: string, opts?: ApiOptions) =>
+  send('DELETE', `/api/v1/members/${encodeURIComponent(userId)}`, undefined,
+       opts) as Promise<void>
+
+export const mintInvite = (role: string, opts?: ApiOptions) =>
+  send('POST', '/api/v1/members/invites', { role },
+       opts) as Promise<InviteMintedDTO>
+
+export const listInvites = (opts?: ApiOptions): Promise<InviteDTO[]> =>
+  apiGet('/api/v1/members/invites', opts)
+
+export const revokeInvite = (inviteId: string, opts?: ApiOptions) =>
+  send('DELETE', `/api/v1/members/invites/${encodeURIComponent(inviteId)}`,
+       undefined, opts) as Promise<void>
+
+export const acceptInvite = (token: string, opts?: ApiOptions) =>
+  send('POST', '/api/v1/members/invites/accept', { token },
+       opts) as Promise<LibraryDTO[]>
+
+/** The share-link an admin hands over their own channel. Built client-side:
+ *  the browser knows the origin the invitee must land on. */
+export const inviteLink = (token: string): string =>
+  `${globalThis.location.origin}/#/invite?token=${encodeURIComponent(token)}`
 
 // --- tenancy (P3.1) --------------------------------------------------------
 //

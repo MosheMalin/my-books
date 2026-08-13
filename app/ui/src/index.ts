@@ -17,7 +17,7 @@
 export { createI18n, useUi, type Dir, type I18nBase, type Lang } from './i18n'
 export { UI_STRINGS, type UiStrings } from './strings'
 export { formatDate, formatDateTime, formatNumber, libraryName } from './format'
-export { backOr, navigateHash, useHash } from './hash'
+export { backOr, navigateHash, replaceHash, useHash } from './hash'
 export { useAsync, type AsyncState } from './useAsync'
 export { Select, type SelectProps } from './Select'
 export { SortControl, type SortControlProps, type SortOption } from './SortControl'

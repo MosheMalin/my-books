@@ -16,6 +16,7 @@ import threading
 from dataclasses import replace
 
 from app.domain.auth import LoginToken, Session
+from app.domain.invites import Invite
 from app.domain import (
     Account,
     Book,
@@ -394,6 +395,7 @@ class MemoryTenancyStore:
         self._accounts: dict[str, Account] = {}
         self._libraries: dict[str, Library] = {}
         self._members: dict[tuple[str, str], Membership] = {}
+        self._mint = threading.Lock()
 
     # --- users -----------------------------------------------------------
 
@@ -456,6 +458,19 @@ class MemoryTenancyStore:
 
     def delete_membership(self, user_id: str, account_id: str) -> bool:
         return self._members.pop((user_id, account_id), None) is not None
+
+    def mint_first_account(
+        self, account: Account, membership: Membership, library: Library,
+    ) -> tuple[Account, Membership]:
+        with self._mint:
+            for (user, account_id), held in sorted(self._members.items()):
+                if user == membership.user_id:
+                    return self._accounts[account_id], held
+            self._accounts[account.id] = account
+            self._members[(membership.user_id, membership.account_id)] = \
+                membership
+            self._libraries[library.id] = library
+            return account, membership
 
     def list_accounts(
         self, user_id: str,
@@ -561,6 +576,47 @@ class MemoryAuthStore:
             and (email is None or t.email == email)
             and (source_hash is None or t.source_hash == source_hash)
         )
+
+
+class MemoryInviteStore:
+    """Implements ``app.ports.invites.InviteStore`` (P4.3)."""
+
+    def __init__(self) -> None:
+        self._invites: dict[str, Invite] = {}
+        self._consume = threading.Lock()
+
+    def save_invite(self, invite: Invite) -> None:
+        if invite.token_hash in self._invites:
+            raise ValueError(f"invite {invite.token_hash!r} already stored")
+        self._invites[invite.token_hash] = invite
+
+    def get_invite(self, token_hash: str) -> Invite | None:
+        return self._invites.get(token_hash)
+
+    def list_open_invites(self, account_id: str, *, now: str) -> tuple[Invite, ...]:
+        rows = [i for i in self._invites.values()
+                if i.account_id == account_id and i.live(now)]
+        rows.sort(key=lambda i: (i.created_at, i.token_hash))
+        return tuple(rows)
+
+    def consume_invite(self, token_hash: str, *, by: str, now: str) -> Invite | None:
+        # A real lock, like the login token's — read-check-replace is
+        # several bytecodes and the GIL preempts between them.
+        with self._consume:
+            invite = self._invites.get(token_hash)
+            if invite is None or not invite.live(now):
+                return None
+            consumed = replace(invite, consumed_at=now, consumed_by=by)
+            self._invites[token_hash] = consumed
+            return consumed
+
+    def revoke_invite(self, account_id: str, token_hash: str) -> bool:
+        invite = self._invites.get(token_hash)
+        if invite is None or invite.account_id != account_id \
+                or invite.consumed_at is not None:
+            return False
+        del self._invites[token_hash]
+        return True
 
 
 def _any_copy_out(book: Book) -> bool:

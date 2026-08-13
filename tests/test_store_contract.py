@@ -2926,3 +2926,175 @@ def test_a_session_rewrite_cannot_change_whose_it_is():
             assert got.created_at == "2026-08-13T12:00:00+00:00"
             assert got.expires_at == stolen.expires_at, (
                 "the refresh write stopped moving the expiry")
+
+
+# --- the InviteStore contract (P4.3) --------------------------------------
+
+@contextmanager
+def _invite_stores():
+    from app.adapters.memory_store import MemoryInviteStore
+    from app.adapters.sqlite_store import SqliteInviteStore, SqliteTenancyStore
+    from app.domain import Account, User
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "invites.db"
+        store = SqliteInviteStore(path)
+        tenancy = SqliteTenancyStore(path)
+        tenancy.save_user(User(id="u-admin"))
+        for account_id in ("acc-a", "acc-b"):
+            tenancy.save_account(Account(id=account_id))
+        yield (MemoryInviteStore(), store)
+
+
+def test_an_invite_round_trips_is_consumed_once_and_lists_while_open():
+    import threading
+
+    from app.domain import Role
+    from app.domain.invites import new_invite
+
+    with _invite_stores() as stores:
+        for store in stores:
+            i = new_invite("tok", "acc-a", Role.EDITOR, "u-admin",
+                           "2026-08-13T12:00:00+00:00")
+            store.save_invite(i)
+            assert store.get_invite(i.token_hash) == i
+            assert [x.token_hash for x in store.list_open_invites(
+                "acc-a", now="2026-08-13T13:00:00+00:00")] == [i.token_hash]
+            assert store.list_open_invites(
+                "acc-b", now="2026-08-13T13:00:00+00:00") == ()
+            # Expiry (7 days) is exclusive, like every other credential.
+            assert store.list_open_invites("acc-a", now=i.expires_at) == ()
+            try:
+                store.save_invite(new_invite("tok", "acc-a", Role.VIEWER,
+                                             "u-admin",
+                                             "2026-08-13T12:01:00+00:00"))
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("a duplicate hash was re-armed")
+
+            # Raced accepts: one winner, same shape as the login token.
+            barrier = threading.Barrier(4, timeout=30)
+            wins: list = []
+
+            def worker():
+                barrier.wait()
+                got = store.consume_invite(i.token_hash, by="u-x",
+                                           now="2026-08-13T14:00:00+00:00")
+                if got is not None:
+                    wins.append(got)
+
+            threads = [threading.Thread(target=worker) for _ in range(4)]
+            for th in threads:
+                th.start()
+            for th in threads:
+                th.join()
+            assert len(wins) == 1, f"{type(store).__name__}: {len(wins)}"
+            assert wins[0].consumed_by == "u-x"
+            assert store.list_open_invites(
+                "acc-a", now="2026-08-13T14:30:00+00:00") == ()
+            assert store.consume_invite(
+                i.token_hash, by="u-y",
+                now="2026-08-13T15:00:00+00:00") is None
+
+
+def test_revoking_an_invite_is_scoped_to_its_account():
+    from app.domain import Role
+    from app.domain.invites import new_invite
+
+    with _invite_stores() as stores:
+        for store in stores:
+            i = new_invite("tok", "acc-a", Role.VIEWER, "u-admin",
+                           "2026-08-13T12:00:00+00:00")
+            store.save_invite(i)
+            assert not store.revoke_invite("acc-b", i.token_hash), (
+                "another account revoked a foreign invite")
+            assert store.revoke_invite("acc-a", i.token_hash)
+            assert not store.revoke_invite("acc-a", i.token_hash)
+            assert store.get_invite(i.token_hash) is None
+            # A CONSUMED invite is history, not a door — revoke refuses.
+            spent = new_invite("tok2", "acc-a", Role.VIEWER, "u-admin",
+                               "2026-08-13T12:00:00+00:00")
+            store.save_invite(spent)
+            store.consume_invite(spent.token_hash, by="u-x",
+                                 now="2026-08-13T12:30:00+00:00")
+            assert not store.revoke_invite("acc-a", spent.token_hash)
+            assert store.get_invite(spent.token_hash) is not None
+
+
+def test_a_v15_database_gains_the_invites_table_and_keeps_its_rows():
+    """v16 on an UPGRADED file, not only a fresh one — the owner's file is
+    an upgraded file, and a fresh-only suite is blind to the repo's own
+    forbidden edit: fold v16's DDL into _V15 and every clone stays green
+    while the ONE database that matters never gains the table (measured,
+    P4.3's migration review). Pins the index the admin screen queries
+    through and the two FKs across v13's accounts->users rename."""
+    import sqlite3
+
+    from app.adapters.migrations import MIGRATIONS, SCHEMA_VERSION, current_version
+    from app.adapters.sqlite_store import SqliteInviteStore
+    from app.domain import Role
+    from app.domain.invites import new_invite
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "v15.db"
+        conn = sqlite3.connect(str(path))
+        try:
+            for version, step in MIGRATIONS:
+                if version > 15:
+                    break
+                if isinstance(step, str):
+                    conn.executescript(step)
+                else:
+                    step(conn)
+            conn.execute("PRAGMA user_version = 15")
+            conn.execute("INSERT INTO users (id, display_name, email) VALUES"
+                         " ('dev-owner', 'משה', 'owner@example.com')")
+            conn.execute("INSERT INTO accounts (id, label) VALUES ('acc', '')")
+            conn.execute("INSERT INTO libraries (id, account_id, label) VALUES"
+                         " ('lib', 'acc', 'הבית')")
+            conn.execute("INSERT INTO memberships (user_id, account_id, role)"
+                         " VALUES ('dev-owner', 'acc', 'admin')")
+            conn.execute(
+                "INSERT INTO books (id, library_id, title, author, norm_title,"
+                " norm_author, book_key, notes, search_text, sort_author)"
+                " VALUES ('b1','lib','ספר','','ספר','','k','','ספר','')")
+            conn.commit()
+        finally:
+            conn.close()
+
+        store = SqliteInviteStore(path)          # migrates 15 -> 16 on open
+        check = sqlite3.connect(str(path))
+        try:
+            assert current_version(check) == SCHEMA_VERSION
+            assert check.execute("SELECT count(*) FROM books").fetchone()[0] == 1
+            assert check.execute("PRAGMA foreign_key_check").fetchall() == []
+            names = {r[0] for r in check.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'")}
+            assert "invites_by_account" in names, "v16's index is gone"
+        finally:
+            check.close()
+
+        # The store works on the UPGRADED file, with the rows that were
+        # already there...
+        i = new_invite("tok", "acc", Role.EDITOR, "dev-owner",
+                       "2026-08-13T12:00:00+00:00")
+        store.save_invite(i)
+        assert store.get_invite(i.token_hash) == i
+        assert store.consume_invite(i.token_hash, by="dev-owner",
+                                    now="2026-08-13T13:00:00+00:00") is not None
+
+        # ...and the FOREIGN KEYS are live on it: an invite naming an
+        # account or a creator that does not exist is refused, which is
+        # what proves they survived v13's rename of `accounts` to `users`.
+        for bad in (new_invite("t2", "ghost-account", Role.VIEWER,
+                               "dev-owner", "2026-08-13T12:00:00+00:00"),
+                    new_invite("t3", "acc", Role.VIEWER, "ghost-user",
+                               "2026-08-13T12:00:00+00:00")):
+            try:
+                store.save_invite(bad)
+            except ValueError as exc:
+                assert "unknown account or user" in str(exc), str(exc)
+            else:
+                raise AssertionError(
+                    "an invite naming a nonexistent row was stored")

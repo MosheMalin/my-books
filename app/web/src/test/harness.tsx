@@ -87,6 +87,20 @@ export interface FakeServer {
   validToken: string
   /** Every address `POST /auth/link` was asked to mail, in order. */
   linkRequests: string[]
+  /** How the fake 'mails' the link — 'mail' | 'server-log' (P4.1b). */
+  delivery: string
+  /** Refuse the next link request with this status (429, 422). */
+  linkFailWith: number | null
+  /** The account's people (P4.3). */
+  members: { user_id: string; display_name: string; role: string;
+             joined_at: string | null }[]
+  /** Open invites' metadata; minted tokens are `tok-invite-<n>`. */
+  invites: { id: string; role: string; created_at: string;
+             expires_at: string }[]
+  /** The one invite token `POST /members/invites/accept` accepts. */
+  validInvite: string
+  /** Libraries an accepted invite hands back (absorbed by the app). */
+  invitedLibraries: LibraryDTO[]
   /** The tenant each request matching `part` went out under. Empty if the
    *  request was never made — assert on that separately, or a test that
    *  proves nothing passes. */
@@ -109,6 +123,15 @@ export function fakeServer(initial: FakeBookRecord[] = []): FakeServer {
     signedOut: false,
     validToken: 'tok-valid',
     linkRequests: [],
+    delivery: 'mail',
+    linkFailWith: null,
+    members: [{ user_id: 'p-test', display_name: 'משה', role: 'admin',
+                joined_at: null }],
+    invites: [],
+    validInvite: 'inv-valid',
+    invitedLibraries: [{ id: 'lib-joined', account_id: 'acc-other',
+                         label: 'של ההורים', role: 'editor',
+                         created_at: null }],
     tenantsFor: (part) =>
       server.libraryHeaders.filter((_, i) => server.calls[i]?.includes(part)),
     release: () => {
@@ -142,9 +165,14 @@ export function fakeServer(initial: FakeBookRecord[] = []): FakeServer {
     // what pre-auth means, and the login flow is exactly the thing a
     // signed-out test is exercising.
     if (u.pathname === '/api/v1/auth/link' && method === 'POST') {
+      if (server.linkFailWith) {
+        const status = server.linkFailWith
+        server.linkFailWith = null
+        return respond({ detail: 'too many sign-in links; try again in 60 minutes' }, status)
+      }
       const { email } = JSON.parse(String(init?.body)) as { email: string }
       server.linkRequests.push(email)
-      return respond({ detail: 'sent' }, 202)
+      return respond({ detail: 'sent', delivery: server.delivery }, 202)
     }
     if (u.pathname === '/api/v1/auth/session' && method === 'POST') {
       const { token } = JSON.parse(String(init?.body)) as { token: string }
@@ -158,6 +186,64 @@ export function fakeServer(initial: FakeBookRecord[] = []): FakeServer {
       server.signedOut = true
       return respond(null, 204)
     }
+    // --- members and invites (P4.3) -------------------------------------
+    if (u.pathname === '/api/v1/members/invites/accept' && method === 'POST') {
+      const { token } = JSON.parse(String(init?.body)) as { token: string }
+      if (server.signedOut) {
+        return respond({ detail: 'not signed in' }, 401)
+      }
+      if (token !== server.validInvite) {
+        return respond({ detail: 'that invite is expired, used, or was revoked' }, 404)
+      }
+      server.validInvite = ''   // single-use, like the real store
+      server.libraries.push(...server.invitedLibraries)
+      return respond(server.invitedLibraries)
+    }
+    if (u.pathname === '/api/v1/members/invites' && method === 'POST') {
+      const { role } = JSON.parse(String(init?.body)) as { role: string }
+      const n = server.invites.length + 1
+      server.invites.push({ id: `hash-${n}`, role,
+                            created_at: '2026-08-13T12:00:00+00:00',
+                            expires_at: '2026-08-20T12:00:00+00:00' })
+      return respond({ token: `tok-invite-${n}`, role,
+                       expires_at: '2026-08-20T12:00:00+00:00' }, 201)
+    }
+    if (u.pathname === '/api/v1/members/invites' && method === 'GET') {
+      return respond(server.invites)
+    }
+    if (u.pathname.startsWith('/api/v1/members/invites/') && method === 'DELETE') {
+      const id = decodeURIComponent(u.pathname.split('/').pop() ?? '')
+      const before = server.invites.length
+      server.invites = server.invites.filter((i) => i.id !== id)
+      return before === server.invites.length
+        ? respond({ detail: 'no such invite' }, 404)
+        : respond(null, 204)
+    }
+    if (u.pathname === '/api/v1/members' && method === 'GET') {
+      return respond(server.members)
+    }
+    if (u.pathname.startsWith('/api/v1/members/') && method === 'PATCH') {
+      const id = decodeURIComponent(u.pathname.split('/').pop() ?? '')
+      const { role } = JSON.parse(String(init?.body)) as { role: string }
+      const admins = server.members.filter((m) => m.role === 'admin')
+      if (role !== 'admin' && admins.length === 1
+          && admins[0]!.user_id === id) {
+        return respond({ detail: 'an account keeps at least one admin (§4.2) — promote someone else first' }, 409)
+      }
+      server.members = server.members.map((m) =>
+        m.user_id === id ? { ...m, role } : m)
+      return respond(server.members)
+    }
+    if (u.pathname.startsWith('/api/v1/members/') && method === 'DELETE') {
+      const id = decodeURIComponent(u.pathname.split('/').pop() ?? '')
+      const admins = server.members.filter((m) => m.role === 'admin')
+      if (admins.length === 1 && admins[0]!.user_id === id) {
+        return respond({ detail: 'an account keeps at least one admin (§4.2) — promote someone else first' }, 409)
+      }
+      server.members = server.members.filter((m) => m.user_id !== id)
+      return respond(null, 204)
+    }
+
     // A signed-out server answers 401 to everything else, like the real
     // one: the session principal runs before any route logic.
     if (server.signedOut) {

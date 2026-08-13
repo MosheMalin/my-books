@@ -25,7 +25,7 @@ describe('sign-in (P4.1b)', () => {
     expect(
       await screen.findByRole('form', { name: 'כניסה' }),
     ).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Switch to English' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'חשבון' })).toBeNull()
   })
 
   it('asks for a link and says it may be on its way', async () => {
@@ -44,7 +44,10 @@ describe('sign-in (P4.1b)', () => {
     )
     // The address goes out as typed; normalization is the SERVER's rule
     // (one copy), and the fake recorded what the wire carried.
-    expect(server.linkRequests).toHaveLength(1)
+    // The email INPUT strips surrounding whitespace itself (value
+    // sanitization), so CASE is the assertable half: it must reach
+    // the wire untouched — normalization is the server's rule, once.
+    expect(server.linkRequests).toEqual(['Moshe@Example.COM'])
   })
 
   it('redeems the emailed link and boots the app', async () => {
@@ -55,9 +58,40 @@ describe('sign-in (P4.1b)', () => {
     location.hash = `#/login?token=${server.validToken}`
     renderApp(<App />)
     expect(
-      await screen.findByRole('button', { name: 'Switch to English' }),
+      await screen.findByRole('button', { name: 'חשבון' }),
     ).toBeInTheDocument()
     expect(location.hash).toBe('#/library')
+  })
+
+  it('says where the link actually is when the mailer is the server log', async () => {
+    const server = fakeServer()
+    server.signedOut = true
+    server.delivery = 'server-log'
+    renderApp(<App />)
+    await userEvent.type(await screen.findByLabelText('אימייל'), 'a@b.co')
+    await userEvent.click(screen.getByRole('button', { name: 'שליחת קישור' }))
+    // The dev build has no mail — claiming "check your inbox" while the
+    // link sits in a log the phone cannot read was the UX review's
+    // sharpest finding.
+    await screen.findByText(/ביומן השרת/)
+  })
+
+  it('keeps a send-again button and re-arms on an edited address', async () => {
+    const server = fakeServer()
+    server.signedOut = true
+    renderApp(<App />)
+    const input = await screen.findByLabelText('אימייל')
+    await userEvent.type(input, 'typo@exmaple.com')
+    await userEvent.click(screen.getByRole('button', { name: 'שליחת קישור' }))
+    // The confirmation shows AND the button survives, relabeled — mail is
+    // slow, mail goes to spam, addresses get typo'd (UX MAJOR 4).
+    await screen.findByText(/קישור בדרך/)
+    expect(screen.getByRole('button', { name: 'שליחה שוב' })).toBeEnabled()
+    await userEvent.clear(input)
+    await userEvent.type(input, 'right@example.com')
+    expect(screen.queryByText(/קישור בדרך/)).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: 'שליחת קישור' }))
+    expect(server.linkRequests).toHaveLength(2)
   })
 
   it('shows the one honest sentence when the link is dead', async () => {
@@ -74,8 +108,10 @@ describe('sign-in (P4.1b)', () => {
   it('signs out to the login screen and revokes server-side', async () => {
     const server = fakeServer()
     renderApp(<App />)
-    await screen.findByRole('button', { name: 'Switch to English' })
-    await userEvent.click(screen.getByRole('button', { name: 'התנתקות' }))
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'חשבון' }),
+    )
+    await userEvent.click(screen.getByRole('menuitem', { name: 'התנתקות' }))
 
     expect(
       await screen.findByRole('form', { name: 'כניסה' }),
@@ -91,13 +127,44 @@ describe('sign-in (P4.1b)', () => {
   it('a 401 mid-session replaces the app with the login screen', async () => {
     fakeServer()
     renderApp(<App />)
-    await screen.findByRole('button', { name: 'Switch to English' })
+    await screen.findByRole('button', { name: 'חשבון' })
     // The fetch layer fires this on ANY 401 — the provider's contract is
     // with the event, and the boot test above covers the wire end of it.
     globalThis.dispatchEvent(new Event(SIGNED_OUT_EVENT))
     expect(
       await screen.findByRole('form', { name: 'כניסה' }),
     ).toBeInTheDocument()
+  })
+
+  it('a rate-limited send is refused in the page language, not raw', async () => {
+    const server = fakeServer()
+    server.signedOut = true
+    server.linkFailWith = 429
+    renderApp(<App />)
+    await userEvent.type(await screen.findByLabelText('אימייל'), 'a@b.co')
+    await userEvent.click(screen.getByRole('button', { name: 'שליחת קישור' }))
+    const alert = await screen.findByRole('alert')
+    // Hebrew, not "ApiError: too many..." (UX MAJOR 3).
+    expect(alert).toHaveTextContent('יותר מדי בקשות')
+    expect(alert.textContent).not.toContain('ApiError')
+  })
+
+  it('a fresh sign-in remounts the world below it', async () => {
+    // The epoch key is the rule "signing in boots the tree fresh" — with
+    // it removed, a redeem landing while the app is optimistically 'in'
+    // keeps the previous session's state (quality review, MAJOR 6).
+    const server = fakeServer()
+    renderApp(<App />)
+    await screen.findByRole('button', { name: 'חשבון' })
+    const bootCalls = server.calls.filter((c) =>
+      c.includes('/api/v1/libraries')).length
+
+    location.hash = `#/login?token=${server.validToken}`
+    globalThis.dispatchEvent(new HashChangeEvent('hashchange'))
+    await waitFor(() =>
+      expect(server.calls.filter((c) =>
+        c.includes('/api/v1/libraries')).length).toBeGreaterThan(bootCalls),
+    )
   })
 })
 

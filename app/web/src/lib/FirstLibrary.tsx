@@ -10,6 +10,7 @@
  */
 import { useState, type FormEvent } from 'react'
 
+import { listLibraries } from '../api/client'
 import { useI18n } from './i18n'
 import { useLibrary } from './library'
 
@@ -19,6 +20,8 @@ export function FirstLibrary() {
   const [label, setLabel] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  const { absorb } = useLibrary()
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -30,6 +33,15 @@ export function FirstLibrary() {
       // The provider switches to it and the tabs take over — this screen
       // simply stops being rendered.
     } catch (err) {
+      // Before offering a retry, look: a response lost on the wire may
+      // have COMMITTED, and a blind second press would mint a same-named
+      // twin nothing can delete (P4.1c's review). If a library exists
+      // now, absorbing it unmounts this screen instead.
+      try {
+        absorb(await listLibraries())
+      } catch {
+        /* the refresh failing changes nothing about the error shown */
+      }
       setError(String(err))
       setBusy(false)
     }

@@ -38,6 +38,7 @@ from app.adapters.disk_blobs import DiskBlobStore
 from app.adapters.queued_jobs import QueuedJobRunner
 from app.adapters.memory_store import (
     MemoryAuthStore,
+    MemoryInviteStore,
     MemoryBookStore,
     MemoryDecisionStore,
     MemoryDuplicateQueue,
@@ -89,6 +90,8 @@ class TickClock:
 class StubMailer:
     """Implements app.ports.auth.Mailer by remembering what it was handed —
     the token comes back out of here, the way a person reads it off a mail."""
+
+    delivery = "mail"
 
     def __init__(self) -> None:
         self.sent: list[tuple[str, str]] = []
@@ -181,7 +184,7 @@ def after_each() -> None:
 def _app(principal: StubPrincipal | None = None, store=None, shelves=None,
          blobs=None, reads=None, reader=None, jobs=None, decisions=None,
          duplicates=None, tenancy=None, auth=None, mailer=None, clock=None,
-         principal_provider=None, recycle: bool = True):
+         invites=None, principal_provider=None, recycle: bool = True):
     """Build (or recycle) an app with these ports bound.
 
     :param recycle: pass ``False`` for an app whose per-app state a later test
@@ -203,6 +206,7 @@ def _app(principal: StubPrincipal | None = None, store=None, shelves=None,
         reader=reader,
         job_runner=jobs if jobs is not None else QueuedJobRunner(),
         auth_store=auth if auth is not None else MemoryAuthStore(),
+        invite_store=invites if invites is not None else MemoryInviteStore(),
         mailer=mailer if mailer is not None else StubMailer(),
         clock=clock if clock is not None else StubClock(),
         id_gen=SeqIdGen(),
@@ -386,7 +390,12 @@ def test_the_request_chooses_the_library_not_the_server():
 def test_the_books_a_request_sees_follow_the_library_it_named():
     """The resolver is one function, so proving it on `meta` proves the shape
     — but the failure that matters is a WRITE or a LIST answering from the
-    wrong tenant, so it is asserted on the books route too."""
+    wrong tenant, so it is asserted on the books route too.
+
+    The header-less default is the SWITCHER'S FIRST ROW (the flat sort_key
+    order — "Office" sorts before "Test library"), which is P4.1b's rule:
+    what a bare request resolves is the first thing the menu shows, never
+    a second, unlisted notion of "yours"."""
     p = StubPrincipal()
     tenancy = _tenancy(p)
     _second_library(p, tenancy)
@@ -394,10 +403,15 @@ def test_the_books_a_request_sees_follow_the_library_it_named():
     _seed(store, TEST_LIBRARY, "ספר של הבית")
     _seed(store, LibraryRef("lib-2", "Office"), "ספר של המשרד")
     with TestClient(_app(p, store=store, tenancy=tenancy)) as client:
-        here = client.get(f"{API_PREFIX}/books").json()
+        default = client.get(f"{API_PREFIX}/books").json()
+        named = client.get(f"{API_PREFIX}/books",
+                           headers={deps.LIBRARY_HEADER: "lib-test"}).json()
         there = client.get(f"{API_PREFIX}/books",
                            headers={deps.LIBRARY_HEADER: "lib-2"}).json()
-    assert [b["title"] for b in here["items"]] == ["ספר של הבית"]
+    assert [b["title"] for b in default["items"]] == ["ספר של המשרד"], (
+        "the header-less default is the switcher's first row"
+    )
+    assert [b["title"] for b in named["items"]] == ["ספר של הבית"]
     assert [b["title"] for b in there["items"]] == ["ספר של המשרד"]
 
 
@@ -706,11 +720,14 @@ def test_a_photo_is_reachable_from_an_img_tag_in_a_second_library():
     _second_library(p, tenancy)
     with _blobs() as blobs:
         c = TestClient(_app(p, blobs=blobs, tenancy=tenancy))
+        # Uploaded to lib-test — since P4.1b the header-less default is the
+        # switcher's FIRST row, and "Office" (lib-2) sorts before "Test
+        # library", so lib-test is the one a bare request does NOT reach.
         key = c.post(f"{API_PREFIX}/images",
                      files={"file": ("shelf.png", _png(), "image/png")},
-                     headers={deps.LIBRARY_HEADER: "lib-2"}).json()["key"]
+                     headers={deps.LIBRARY_HEADER: "lib-test"}).json()["key"]
 
-        as_img = c.get(f"{API_PREFIX}/images/{key}/thumb?library=lib-2")
+        as_img = c.get(f"{API_PREFIX}/images/{key}/thumb?library=lib-test")
         assert as_img.status_code == 200, as_img.text
 
         # No reference at all: the DEFAULT library, which never had this
@@ -1159,6 +1176,18 @@ _USER_SCOPED = {
     ("GET", f"{API_PREFIX}/libraries"),
     ("POST", f"{API_PREFIX}/libraries"),
     ("PATCH", f"{API_PREFIX}/libraries/{{library_id}}"),
+    # P4.3: membership is a fact about the ACCOUNT — same axis, same
+    # circularity argument (an invitee has no library to resolve until
+    # they accept). Every one still resolves get_principal, which the
+    # companion test below asserts; the admin gate is _admin_account's
+    # direct MANAGE_MEMBERS consult, pinned over HTTP by its own tests.
+    ("GET", f"{API_PREFIX}/members"),
+    ("PATCH", f"{API_PREFIX}/members/{{user_id}}"),
+    ("DELETE", f"{API_PREFIX}/members/{{user_id}}"),
+    ("POST", f"{API_PREFIX}/members/invites"),
+    ("GET", f"{API_PREFIX}/members/invites"),
+    ("DELETE", f"{API_PREFIX}/members/invites/{{invite_id}}"),
+    ("POST", f"{API_PREFIX}/members/invites/accept"),
 }
 
 # The routes a caller uses to BECOME a principal (P4.1a) — the only ones
@@ -1409,17 +1438,19 @@ def test_library_resolution_has_exactly_one_implementation():
 
 
 def test_the_library_meta_resolves_is_always_one_the_switcher_lists():
-    """The invariant `list_libraries` deliberately does NOT patch over: the
-    resolver serves the principal's default library without a store lookup,
-    and the switcher lists store rows, so a missing membership would show the
-    user a library the switcher says they do not have."""
+    """The user-visible promise: the library on screen appears in the
+    menu. Since P4.1b both sides read the SAME membership rows (the
+    dev-trusted shortcut and the bootstrap that compensated for it are
+    deleted), so agreement holds by construction — the test stays as the
+    gate against the two modules growing different ideas of the caller's
+    world again."""
     with TestClient(_app()) as client:
         current = client.get(f"{API_PREFIX}/meta").json()["library"]["id"]
         listed = [row["id"] for row in
                   client.get(f"{API_PREFIX}/libraries").json()]
     assert current in listed, (
-        f"{current} is resolvable but unlisted — app/main.py's bootstrap is "
-        "what keeps these two in step"
+        f"{current} is resolvable but unlisted — the resolver and the "
+        "switcher have grown different ideas of the caller's world"
     )
 
 
@@ -4547,13 +4578,25 @@ def test_without_a_cookie_every_scoped_route_is_401():
 
 def test_sign_out_ends_the_sessions_access():
     """Logout is not cosmetic: the tombstoned session stops authenticating
-    on the very next request."""
+    on the very next request — asserted by REPLAYING the raw cookie, not
+    by trusting the client to have dropped it. The polite path (the
+    cleared cookie) measured green while the tombstone check was mutated
+    away entirely (P4.1b's quality review, MAJOR 1): TestClient honours
+    Set-Cookie, so the follow-up request carried no cookie and 401'd for
+    the wrong reason."""
     app, _t, mailer, _auth, _clock = _session_world()
     with TestClient(app) as c:
-        _sign_in(c, mailer)
+        r = _sign_in(c, mailer)
+        raw = r.cookies["booksnap_session"]
         assert c.get(f"{API_PREFIX}/libraries").status_code == 200
         assert c.delete(f"{API_PREFIX}/auth/session").status_code == 204
         assert c.get(f"{API_PREFIX}/libraries").status_code == 401
+        replayed = c.get(f"{API_PREFIX}/libraries",
+                         headers={"Cookie": f"booksnap_session={raw}"})
+        assert replayed.status_code == 401, (
+            "a REVOKED session still authenticated when its stolen cookie "
+            "was replayed — the tombstone is not consulted at the door"
+        )
 
 
 def test_an_expired_session_stops_authenticating_and_a_worn_one_rolls():
@@ -4614,8 +4657,6 @@ def test_a_stranger_cannot_lock_the_owner_out_of_sign_in():
     from app.domain.auth import LINK_RATE_PER_EMAIL
 
     mailer = StubMailer()
-    with _blobs() as _unused:  # keep the app-pool shape uniform
-        pass
     attacker_app = _app(mailer=mailer)
     with TestClient(attacker_app, client=("10.0.0.9", 1234)) as attacker:
         for _ in range(LINK_RATE_PER_EMAIL):
@@ -4678,7 +4719,8 @@ def test_the_minted_tokens_are_real_secrets_not_ids():
             assert not token.startswith("id-"), "a token came from IdGen"
         assert link_token != cookie_token
         # And the cookie rides on the whole app, not a sub-path.
-        assert "path=/" in r.headers["set-cookie"].lower()
+        assert "path=/;" in r.headers["set-cookie"].lower().replace("path=/,", "path=/;"), (
+            r.headers["set-cookie"])  # a boundary: path=/api also contains path=/
 
 
 def test_the_stored_source_is_a_hash_of_the_peer_not_the_peer():
@@ -4688,7 +4730,7 @@ def test_the_stored_source_is_a_hash_of_the_peer_not_the_peer():
     peer string, never the peer itself."""
     import re as _re
 
-    from app.domain.auth import hash_token, rate_window_start
+    from app.domain.auth import hash_token
 
     auth = MemoryAuthStore()
     with TestClient(_app(auth=auth)) as c:
@@ -4717,3 +4759,216 @@ def test_sign_out_clears_the_cookie_as_well_as_the_row():
             or "booksnap_session=;" in cleared
             or "Max-Age=0" in cleared or "expires=" in cleared.lower()
         ), f"sign-out left the cookie in place: {cleared!r}"
+
+
+# --- members and invites (P4.3, §4.1 "invite once") -----------------------
+
+def _two_person_world():
+    """One account with an admin; a stranger with their own session. Both
+    apps share every store, like two browsers against one server."""
+    admin = StubPrincipal(pid="p-admin")
+    tenancy = _tenancy(admin)
+    stranger = StubPrincipal(pid="p-stranger",
+                             library=LibraryRef(id="lib-none", label=""))
+    tenancy.save_user(User(id=stranger.id))
+    invites = MemoryInviteStore()
+    clock = TickClock("2026-08-13T12:00:00+00:00")
+    admin_app = _app(principal=admin, tenancy=tenancy, invites=invites,
+                     clock=clock)
+    stranger_app = _app(principal=stranger, tenancy=tenancy, invites=invites,
+                        clock=clock)
+    return admin_app, stranger_app, tenancy, clock
+
+
+def test_an_invite_link_joins_the_account_with_every_library():
+    """§4.1: a user joins the ACCOUNT and gets what it owns — one
+    membership row, every library, at the role the link carries. The raw
+    token appears in the mint response ONCE; the open-invites list is
+    metadata that cannot reproduce it."""
+    admin_app, stranger_app, tenancy, _clock = _two_person_world()
+    with TestClient(admin_app) as admin:
+        minted = admin.post(f"{API_PREFIX}/members/invites",
+                            json={"role": "editor"})
+        assert minted.status_code == 201, minted.text
+        token = minted.json()["token"]
+        assert len(token) >= 40
+
+        listed = admin.get(f"{API_PREFIX}/members/invites").json()
+        assert len(listed) == 1 and listed[0]["role"] == "editor"
+        assert token not in str(listed), "the list leaked the link"
+
+    with TestClient(stranger_app) as stranger:
+        assert stranger.get(f"{API_PREFIX}/libraries").json() == []
+        joined = stranger.post(f"{API_PREFIX}/members/invites/accept",
+                               json={"token": token})
+        assert joined.status_code == 200, joined.text
+        rows = joined.json()
+        assert [r["id"] for r in rows] == ["lib-test"]
+        assert rows[0]["role"] == "editor"
+        # The switcher now lists it, and the matrix binds at editor: reads
+        # and captures yes, member management no.
+        assert [l["id"] for l in
+                stranger.get(f"{API_PREFIX}/libraries").json()] == ["lib-test"]
+        h = {deps.LIBRARY_HEADER: "lib-test"}
+        assert stranger.get(f"{API_PREFIX}/books", headers=h).status_code == 200
+        assert stranger.get(f"{API_PREFIX}/members",
+                            headers=h).status_code == 403
+
+
+def test_an_invite_is_single_use_expiring_and_admin_only():
+    admin_app, stranger_app, tenancy, clock = _two_person_world()
+    with TestClient(admin_app) as admin:
+        token = admin.post(f"{API_PREFIX}/members/invites",
+                           json={"role": "viewer"}).json()["token"]
+        stale = admin.post(f"{API_PREFIX}/members/invites",
+                           json={"role": "viewer"}).json()["token"]
+
+    with TestClient(stranger_app) as stranger:
+        assert stranger.post(f"{API_PREFIX}/members/invites/accept",
+                             json={"token": token}).status_code == 200
+        # Single-use is about USERS, not about presses: the same person
+        # re-opening their own link finishes (or re-finishes) their own
+        # join — consume and grant are two transactions, and a crash
+        # between them used to burn the link with nothing granted and no
+        # retry (P4.3's migration review). The membership is untouched.
+        again = stranger.post(f"{API_PREFIX}/members/invites/accept",
+                              json={"token": token})
+        assert again.status_code == 200
+        assert tenancy.membership("p-stranger", TEST_ACCOUNT).role is Role.VIEWER
+
+        # Anyone ELSE presenting the spent link gets the same 404 as an
+        # invented one — that is the property single-use protects.
+        with TestClient(admin_app) as other:
+            spent = other.post(f"{API_PREFIX}/members/invites/accept",
+                               json={"token": token})
+            invented = other.post(f"{API_PREFIX}/members/invites/accept",
+                                  json={"token": "x" * 43})
+            assert spent.status_code == invented.status_code == 404
+            assert spent.json() == invented.json()
+
+        clock.at = "2026-08-21T12:00:01+00:00"   # past the 7 days
+        assert stranger.post(f"{API_PREFIX}/members/invites/accept",
+                             json={"token": stale}).status_code == 404
+
+    # Minting is §4.2's one row: a viewer in the account may not.
+    with TestClient(stranger_app) as stranger:
+        h = {deps.LIBRARY_HEADER: "lib-test"}
+        r = stranger.post(f"{API_PREFIX}/members/invites",
+                          json={"role": "viewer"}, headers=h)
+        assert r.status_code == 403
+
+
+def test_revoking_an_invite_closes_the_door_and_only_your_own_door():
+    admin_app, stranger_app, tenancy, _clock = _two_person_world()
+    with TestClient(admin_app) as admin:
+        token = admin.post(f"{API_PREFIX}/members/invites",
+                           json={"role": "editor"}).json()["token"]
+        invite_id = admin.get(f"{API_PREFIX}/members/invites").json()[0]["id"]
+
+        # Another customer's admin cannot revoke it — same 404 as none.
+        tenancy.save_account(Account(id=OTHER_ACCOUNT))
+        tenancy.save_membership(
+            Membership("p-admin", OTHER_ACCOUNT, Role.ADMIN))
+        tenancy.save_library(Library(id="lib-other",
+                                     account_id=OTHER_ACCOUNT, label="אחר"))
+        foreign = admin.delete(
+            f"{API_PREFIX}/members/invites/{invite_id}",
+            headers={deps.LIBRARY_HEADER: "lib-other"})
+        assert foreign.status_code == 404
+
+        assert admin.delete(f"{API_PREFIX}/members/invites/{invite_id}",
+                            headers={deps.LIBRARY_HEADER: "lib-test"}
+                            ).status_code == 204
+
+    with TestClient(stranger_app) as stranger:
+        assert stranger.post(f"{API_PREFIX}/members/invites/accept",
+                             json={"token": token}).status_code == 404
+
+
+def test_accepting_while_already_a_member_never_changes_the_role():
+    """A link is never a role change around an admin's explicit set_role —
+    in either direction. The link is spent; the membership is untouched."""
+    admin_app, stranger_app, tenancy, _clock = _two_person_world()
+    with TestClient(admin_app) as admin:
+        token = admin.post(f"{API_PREFIX}/members/invites",
+                           json={"role": "viewer"}).json()["token"]
+        # The ADMIN accepts a viewer invite to their own account.
+        mine = admin.post(f"{API_PREFIX}/members/invites/accept",
+                          json={"token": token})
+        assert mine.status_code == 200
+        assert tenancy.membership("p-admin", TEST_ACCOUNT).role is Role.ADMIN
+
+
+def test_the_last_admin_survives_role_changes_and_removal():
+    """§4.2's customer-level rule over HTTP: NoAdminLeft answers 409 with
+    the remedy, for both the demotion and the removal, until a second
+    admin exists."""
+    admin_app, stranger_app, tenancy, _clock = _two_person_world()
+    tenancy.save_membership(Membership("p-stranger", TEST_ACCOUNT,
+                                       Role.EDITOR))
+    with TestClient(admin_app) as admin:
+        h = {deps.LIBRARY_HEADER: "lib-test"}
+        demote = admin.patch(f"{API_PREFIX}/members/p-admin",
+                             json={"role": "viewer"}, headers=h)
+        remove = admin.delete(f"{API_PREFIX}/members/p-admin", headers=h)
+        assert demote.status_code == remove.status_code == 409
+        assert "admin" in demote.json()["detail"]
+
+        promote = admin.patch(f"{API_PREFIX}/members/p-stranger",
+                              json={"role": "admin"}, headers=h)
+        assert promote.status_code == 200
+        roles = {m["user_id"]: m["role"] for m in promote.json()}
+        assert roles == {"p-admin": "admin", "p-stranger": "admin"}
+
+        # Now stepping down is legal (§4.2: "at least one", not "the
+        # first forever").
+        assert admin.delete(f"{API_PREFIX}/members/p-admin",
+                            headers=h).status_code == 204
+        assert tenancy.membership("p-admin", TEST_ACCOUNT) is None
+
+
+def test_the_mail_link_shape_is_what_the_client_route_parses():
+    """LINK_PATH is a cross-language contract: `console_mailer.py` writes
+    it, `app/web/src/lib/route.ts` parses it, and a rename on either side
+    kills every emailed link with both rings green (P4.1b's quality
+    review). Pinned here by literal; route.ts's own test pins the other
+    side."""
+    from app.adapters.console_mailer import LINK_PATH
+
+    assert LINK_PATH == "/#/login?token="
+
+
+def test_owning_account_raises_for_a_library_with_no_row():
+    """The deleted id-as-account fallback, pinned in the direction it must
+    stay: inventing an account key is how one customer's read bills
+    another's budget. Unreachable through HTTP by construction — which is
+    why it gets a direct unit test instead of a route probe."""
+    from app.domain import LibraryRef
+
+    store = MemoryTenancyStore()
+    try:
+        deps.owning_account(store, LibraryRef(id="ghost", label=""))
+    except LookupError:
+        pass
+    else:
+        raise AssertionError("a missing library row produced an account key")
+
+
+def test_a_link_request_sweeps_expired_tokens():
+    """The retention rule at the DOOR, not only in the store: every link
+    request purges tokens whose expiry fell behind the rate window, or
+    each stranger's typo would keep an address in cleartext forever."""
+    clock = TickClock("2026-08-07T12:00:00+00:00")
+    auth = MemoryAuthStore()
+    mailer = StubMailer()
+    with TestClient(_app(auth=auth, mailer=mailer, clock=clock)) as c:
+        assert c.post(f"{API_PREFIX}/auth/link",
+                      json={"email": "old@example.com"}).status_code == 202
+        assert len(auth._tokens) == 1
+        clock.at = "2026-08-07T14:00:00+00:00"   # far past expiry + window
+        assert c.post(f"{API_PREFIX}/auth/link",
+                      json={"email": "new@example.com"}).status_code == 202
+        held = [t.email for t in auth._tokens.values()]
+        assert held == ["new@example.com"], (
+            f"expired tokens were kept: {held}"
+        )

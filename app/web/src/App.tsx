@@ -14,6 +14,8 @@ import { ShelfPage } from './shelf/ShelfPage'
 import { useAuth } from './lib/auth'
 import { useBooks } from './lib/books'
 import { FirstLibrary } from './lib/FirstLibrary'
+import { InviteGate } from './lib/InviteGate'
+import { MembersPanel } from './lib/MembersPanel'
 import { useI18n } from './lib/i18n'
 import { useLibrary } from './lib/library'
 import { LibrarySwitcher } from './lib/LibrarySwitcher'
@@ -22,10 +24,12 @@ import { bookHash, CAPTURE_HASH, LIBRARY_HASH, useRoute } from './lib/route'
 export function App() {
   const { t, lang, toggleLang } = useI18n()
   const { signOutNow } = useAuth()
-  const { libraries, loading, failed } = useLibrary()
+  const { libraries, loading, failed, current } = useLibrary()
   const books = useBooks()
   const { route, navigate, back } = useRoute()
   const [drawerId, setDrawerId] = useState<string | null>(null)
+  const [membersOpen, setMembersOpen] = useState(false)
+  const [acctOpen, setAcctOpen] = useState(false)
 
   // Promoting the drawer to the full page closes the drawer — otherwise the
   // same surface renders twice, and the focus trap stays over a page the user
@@ -97,17 +101,45 @@ export function App() {
         >
           {t.lang}
         </button>
-        {/* P4.1b: its own accessible name (the collision rule) and no
-            confirmation — sign-out is a state to arrive at, and the login
-            screen it lands on is one click from returning. */}
-        <button
-          type="button"
-          className="langswitch"
-          onClick={signOutNow}
-          aria-label={t.sign_out}
-        >
-          {t.sign_out}
-        </button>
+        {/* ONE account menu, not a row of rare actions: two bare
+            buttons pushed the bar 77px past an iPhone width (UX review,
+            MAJOR 6). Members is admins-only inside it (the server
+            enforces; the client does not dangle a 403 door). Sign-out has
+            no confirm — nothing is lost server-side, and behind a menu an
+            accidental press takes two deliberate taps — but returning
+            DOES cost a fresh link today, which is why it hides here
+            rather than sitting a thumb-width from the language toggle. */}
+        <div className="acctmenu">
+          <button
+            type="button"
+            className="langswitch"
+            aria-haspopup="menu"
+            aria-expanded={acctOpen}
+            aria-label={t.account_menu}
+            onClick={() => setAcctOpen((v) => !v)}
+          >
+            {t.account_menu}
+          </button>
+          {acctOpen && (
+            <div className="acctmenu-list" role="menu">
+              {current?.role === 'admin' && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setAcctOpen(false)
+                    setMembersOpen(true)
+                  }}
+                >
+                  {t.members_open}
+                </button>
+              )}
+              <button type="button" role="menuitem" onClick={signOutNow}>
+                {t.sign_out}
+              </button>
+            </div>
+          )}
+        </div>
       </header>
 
       {/* P4.1c: a signed-in user with NO library names their first one
@@ -130,6 +162,8 @@ export function App() {
       </main>
       )}
 
+      <InviteGate />
+      {membersOpen && <MembersPanel onClose={() => setMembersOpen(false)} />}
       <BookDrawer
         bookId={route.name === 'book' ? null : drawerId}
         onClose={() => setDrawerId(null)}

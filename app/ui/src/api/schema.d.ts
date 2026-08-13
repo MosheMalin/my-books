@@ -593,15 +593,11 @@ export interface paths {
          *     A user that belongs to nothing gets ``[]``, not an error — a real
          *     state (P4.3's sign-up, before the first library) the client has to render.
          *
-         *     ⚠ **Store data only, with no special case for the principal's own default
-         *     library** — even though :func:`app.api.deps.current_library` serves that
-         *     one without consulting the store. Patching it in here would put a second
-         *     copy of the resolver's dev-trusted rule in a second module, and the day
-         *     they disagreed the switcher would be missing the very library on screen.
-         *     Guaranteeing the membership row exists is the composition root's job
-         *     (``app.main:_bootstrap_dev_user``), and
-         *     ``test_the_library_meta_resolves_is_always_one_the_switcher_lists`` pins
-         *     the agreement rather than trusting it.
+         *     Store data only. Since P4.1b the resolver reads the SAME rows this
+         *     lists — the dev-trusted special case died with the dev identity — so
+         *     the switcher and the resolver cannot disagree by construction;
+         *     ``test_the_library_meta_resolves_is_always_one_the_switcher_lists``
+         *     keeps them pinned anyway.
          */
         get: operations["list_libraries_api_v1_libraries_get"];
         put?: never;
@@ -617,15 +613,15 @@ export interface paths {
          *     ⚠ This route is the DELIBERATE escape hatch for §4.1's settled tenancy
          *     rule (owner, 2026-08-10): a second Library under one account is legal —
          *     it is the rare genuinely-separate collection (a shop's stock, a
-         *     classroom set) — and the ONLY discouragement is client-side, on purpose:
-         *     the app-bar switcher renders no create action until a second library
-         *     already exists (`LibrarySwitcher.tsx`). A server-side count cap was
-         *     considered and REFUSED: it would block the very cases the decision
-         *     blesses, a quota is a different axis from P3.2's (role × capability)
-         *     policy data, and the structural half of the rule is already enforced
-         *     where it matters — a Library cannot carry a room or a place
-         *     (`test_a_library_is_not_a_place`). Do not "fix" this route in either
-         *     direction without re-reading VISION §4.1.
+         *     classroom set) — and the everyday discouragement is client-side, on
+         *     purpose: the app-bar switcher renders no create action until a second
+         *     library already exists (`LibrarySwitcher.tsx`). The [OPEN] count cap
+         *     CLOSED at P4.1c (owner, 2026-08-13: 5 per account) — a retry-loop and
+         *     abuse guard like §1.2's run-rate cap, set high enough to never block a
+         *     legitimate separate collection, which is why 5 and not 1. The
+         *     structural half of the rule stays where it was — a Library cannot
+         *     carry a room or a place (`test_a_library_is_not_a_place`). Do not
+         *     change either half without re-reading VISION §4.1.
          *
          *     ⚠⚠ **Admin-only, and P3.7b is what made that necessary.** Before the
          *     boundary moved, this route minted a BRAND-NEW tenant with the caller as
@@ -683,6 +679,118 @@ export interface paths {
          *     what keeps the two indistinguishable on the wire.
          */
         patch: operations["patch_library_api_v1_libraries__library_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Who is in this account */
+        get: operations["list_members_api_v1_members_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/members/invites": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Open invites of this account */
+        get: operations["list_invites_api_v1_members_invites_get"];
+        put?: never;
+        /**
+         * Mint an invite link
+         * @description The raw token appears HERE and never again — the list below is
+         *     metadata only, because the store holds the hash. Copy the link now.
+         */
+        post: operations["create_invite_api_v1_members_invites_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/members/invites/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accept an invite
+         * @description The INVITEE's half — any signed-in user, no admin gate, no header:
+         *     the account comes from the token. Expired, consumed, revoked and
+         *     invented are one 404 (which guess was close is not on the wire).
+         *
+         *     Returns the switcher's new rows for the joined account, so the client
+         *     can show what just opened up without a second round trip.
+         */
+        post: operations["accept_invite_api_v1_members_invites_accept_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/members/invites/{invite_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke an invite
+         * @description 404 for an invite this account does not hold — the store narrows by
+         *     account, so another customer's invite is indistinguishable from none.
+         */
+        delete: operations["revoke_invite_api_v1_members_invites__invite_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/members/{user_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove a member
+         * @description The person leaves, the collection stays (UI_PLAN §5, one level up).
+         *     Since P4.1b removal is EFFECTIVE — their next request answers 404.
+         */
+        delete: operations["delete_member_api_v1_members__user_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Change a member's role
+         * @description The whole member list comes back — "is there still an admin?" is a
+         *     fact about the list, and the screen showing one row is showing the
+         *     list.
+         */
+        patch: operations["patch_member_api_v1_members__user_id__patch"];
         trace?: never;
     };
     "/api/v1/meta": {
@@ -1776,6 +1884,55 @@ export interface components {
             width: number;
         };
         /**
+         * InviteAccept
+         * @description Redeem an invite link.
+         */
+        InviteAccept: {
+            /** Token */
+            token: string;
+        };
+        /**
+         * InviteCreate
+         * @description Mint an invite (or set a member's role — the same one field).
+         */
+        InviteCreate: {
+            /**
+             * Role
+             * @description viewer | editor | admin
+             */
+            role: string;
+        };
+        /**
+         * InviteDTO
+         * @description An open invite's metadata. ``id`` is the token's hash — enough to
+         *     revoke, useless to redeem.
+         */
+        InviteDTO: {
+            /** Created At */
+            created_at: string;
+            /** Expires At */
+            expires_at: string;
+            /** Id */
+            id: string;
+            /** Role */
+            role: string;
+        };
+        /**
+         * InviteMintedDTO
+         * @description The freshly minted invite, RAW TOKEN INCLUDED — shown exactly once.
+         *
+         *     The store holds only the hash, so no later call can reproduce this.
+         *     The client's job is to put the link where the admin can copy it NOW.
+         */
+        InviteMintedDTO: {
+            /** Expires At */
+            expires_at: string;
+            /** Role */
+            role: string;
+            /** Token */
+            token: string;
+        };
+        /**
          * LendRequest
          * @description *"Lend it out"*. ``lent_at`` is server time (the ``Clock``, like
          *     ``added_at``), never client-supplied — a borrow date is a fact about when
@@ -1924,6 +2081,27 @@ export interface components {
             title: string;
         };
         /**
+         * MemberDTO
+         * @description One person in the account, with the role covering every library it
+         *     owns (§4.1 — a role is held per account).
+         */
+        MemberDTO: {
+            /**
+             * Display Name
+             * @default
+             */
+            display_name: string;
+            /** Joined At */
+            joined_at?: string | null;
+            /**
+             * Role
+             * @description viewer | editor | admin
+             */
+            role: string;
+            /** User Id */
+            user_id: string;
+        };
+        /**
          * MetaResponse
          * @description Service identity + who is asking + the library resolved for them.
          */
@@ -1940,7 +2118,7 @@ export interface components {
             app: string;
             /** @description Library resolved for this caller. */
             library: components["schemas"]["LibraryRefDTO"];
-            /** @description The caller (dev-trusted until P4.1). */
+            /** @description The caller, from the session. */
             user: components["schemas"]["UserDTO"];
             /**
              * Version
@@ -2175,10 +2353,9 @@ export interface components {
          * UserDTO
          * @description Who the server thinks is asking (§4.1).
          *
-         *     Dev-trusted until pillar 4: there is no login, so this is whichever
-         *     principal the composition root built. It is on the wire now because the
-         *     switcher's list is *this user's* libraries, and a client that cannot
-         *     name the user cannot explain an empty list.
+         *     The session's user (P4.1b). On the wire because the switcher's list
+         *     is *this user's* libraries, and a client that cannot name the user
+         *     cannot explain an empty list.
          *
          *     ⚠ Called ``AccountDTO`` until P3.7a. The word "account" now belongs to the
          *     CUSTOMER (VISION §4.1, 2026-08-11) and arrives on the wire at P3.7b —
@@ -2193,7 +2370,7 @@ export interface components {
             display_name: string;
             /**
              * Id
-             * @description Opaque user identifier.
+             * @description Opaque user identifier (the session's user since P4.1b).
              */
             id: string;
         };
@@ -3201,6 +3378,205 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LibraryDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_members_api_v1_members_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemberDTO"][];
+                };
+            };
+        };
+    };
+    list_invites_api_v1_members_invites_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InviteDTO"][];
+                };
+            };
+        };
+    };
+    create_invite_api_v1_members_invites_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InviteCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InviteMintedDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    accept_invite_api_v1_members_invites_accept_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InviteAccept"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryDTO"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_invite_api_v1_members_invites__invite_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                invite_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_member_api_v1_members__user_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_member_api_v1_members__user_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InviteCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemberDTO"][];
                 };
             };
             /** @description Validation Error */

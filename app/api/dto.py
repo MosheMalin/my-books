@@ -53,17 +53,17 @@ class LibraryRefDTO(BaseModel):
 class UserDTO(BaseModel):
     """Who the server thinks is asking (§4.1).
 
-    Dev-trusted until pillar 4: there is no login, so this is whichever
-    principal the composition root built. It is on the wire now because the
-    switcher's list is *this user's* libraries, and a client that cannot
-    name the user cannot explain an empty list.
+    The session's user (P4.1b). On the wire because the switcher's list
+    is *this user's* libraries, and a client that cannot name the user
+    cannot explain an empty list.
 
     ⚠ Called ``AccountDTO`` until P3.7a. The word "account" now belongs to the
     CUSTOMER (VISION §4.1, 2026-08-11) and arrives on the wire at P3.7b —
     reading this field as a tenant is the mistake the rename exists to stop.
     """
 
-    id: str = Field(description="Opaque user identifier.")
+    id: str = Field(description="Opaque user identifier (the session's "
+                                "user since P4.1b).")
     display_name: str = Field(default="", description="Shown in the UI, if set.")
 
 
@@ -135,6 +135,50 @@ class SessionCreate(BaseModel):
                        description="The token from the sign-in link, verbatim.")
 
 
+class MemberDTO(BaseModel):
+    """One person in the account, with the role covering every library it
+    owns (§4.1 — a role is held per account)."""
+
+    user_id: str
+    display_name: str = ""
+    role: str = Field(description="viewer | editor | admin")
+    joined_at: str | None = None
+
+
+class InviteCreate(BaseModel):
+    """Mint an invite (or set a member's role — the same one field)."""
+
+    role: str = Field(description="viewer | editor | admin")
+
+
+class InviteMintedDTO(BaseModel):
+    """The freshly minted invite, RAW TOKEN INCLUDED — shown exactly once.
+
+    The store holds only the hash, so no later call can reproduce this.
+    The client's job is to put the link where the admin can copy it NOW.
+    """
+
+    token: str
+    role: str
+    expires_at: str
+
+
+class InviteDTO(BaseModel):
+    """An open invite's metadata. ``id`` is the token's hash — enough to
+    revoke, useless to redeem."""
+
+    id: str
+    role: str
+    created_at: str
+    expires_at: str
+
+
+class InviteAccept(BaseModel):
+    """Redeem an invite link."""
+
+    token: str = Field(max_length=128)
+
+
 class MetaResponse(BaseModel):
     """Service identity + who is asking + the library resolved for them."""
 
@@ -142,7 +186,7 @@ class MetaResponse(BaseModel):
     version: str = Field(description="Server package version.")
     api_version: str = Field(description="API major version, e.g. 'v1'.")
     library: LibraryRefDTO = Field(description="Library resolved for this caller.")
-    user: UserDTO = Field(description="The caller (dev-trusted until P4.1).")
+    user: UserDTO = Field(description="The caller, from the session.")
 
 
 # --- books ---------------------------------------------------------------
