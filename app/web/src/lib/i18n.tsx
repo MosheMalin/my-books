@@ -238,7 +238,10 @@ const HE = {
       admin: 'ניהול',
     } as Record<string, string>,
 
-  // --- sign-in (P4.1b, VISION §3) ---
+  // --- sign-in (P4.1b/P4.1c, VISION §3/§4.3) ---
+  onboard_title: 'הספרייה הראשונה שלך',
+  onboard_intro: 'תנו שם לאוסף — למשל שם המשפחה. מדפים וספרים מצטרפים מיד אחר כך.',
+  onboard_create: 'יצירת הספרייה',
   login_title: 'כניסה',
   login_intro: 'הזינו את כתובת האימייל ונשלח קישור כניסה.',
   login_email: 'אימייל',
@@ -474,7 +477,10 @@ const EN: Strings = {
       admin: 'Admin',
     },
 
-  // --- sign-in (P4.1b, VISION §3) ---
+  // --- sign-in (P4.1b/P4.1c, VISION §3/§4.3) ---
+  onboard_title: 'Your first library',
+  onboard_intro: 'Name the collection — the family name works well. Shelves and books come right after.',
+  onboard_create: 'Create the library',
   login_title: 'Sign in',
   login_intro: 'Enter your email address and we will send a sign-in link.',
   login_email: 'Email',

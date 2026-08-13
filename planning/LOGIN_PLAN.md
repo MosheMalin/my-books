@@ -215,6 +215,15 @@ session-minting helper. Reviewers: `review-security`,
 `review-data-integrity`, `review-quality`, `review-ux` (the login flow is
 user-visible, phone-first, Hebrew/RTL).
 
+✅ **P4.1c landed 2026-08-13.** The sign-up act is `POST /libraries` from a
+caller with no account and no header: account + first library minted
+together, domain objects first (a blank name refuses before any write),
+ADMIN by construction. The cap (5, pinned by number in a test like a
+policy cell) binds existing accounts, never the first library. The client
+gained the first-library screen — a signed-in user with no library names
+their collection instead of seeing tabs that can only 404, and the nav is
+absent (not disabled) until it exists.
+
 **P4.1c — sign-up mints the world (M).** A new email's first login creates
 User + Account + its FIRST Library in one flow (VISION §4.3 steps 1–2: an
 account with no library is a customer with nowhere to put a book — the

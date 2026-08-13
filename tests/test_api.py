@@ -507,14 +507,14 @@ def test_only_an_admin_adds_a_library_to_an_account_others_belong_to():
         ]
 
 
-def test_a_caller_with_no_account_cannot_create_a_library_anywhere():
-    """P4.1b: no account is minted on the way past — that is sign-up's job
-    (P4.1c), and until then a bare user pressing *new library* is refused
-    with the reason, not gifted a customer. And naming a library of an
-    account they do NOT belong to is the same 404 as everywhere else —
-    `_account` resolves through the one `owner_membership` join, so a
-    foreign library cannot be a lever into somebody else's customer
-    (P3.7b's data-integrity review, survived the cutover)."""
+def test_a_bare_users_first_library_mints_their_account_and_nothing_foreign():
+    """P4.1c, §4.3 step 2: sign-up creates the Account AND its first
+    library together — a bare user pressing *create* becomes a customer
+    with somewhere to put a book, ADMIN by construction, and an account
+    with no library stays unreachable from this flow (a blank name refuses
+    BEFORE anything is written). Naming a foreign library in the header is
+    still the same 404 as everywhere else — sign-up is not a lever into
+    somebody else's customer (P3.7b's review, survived two rewrites)."""
     p = StubPrincipal()
     tenancy = MemoryTenancyStore()
     tenancy.save_user(User(id=p.id))
@@ -522,13 +522,52 @@ def test_a_caller_with_no_account_cannot_create_a_library_anywhere():
     tenancy.save_library(Library(id=p.library.id, account_id="acc-foreign",
                                  label=p.library.label))
     with TestClient(_app(principal=p, tenancy=tenancy)) as c:
-        bare = c.post(f"{API_PREFIX}/libraries", json={"label": "שלי"})
-        assert bare.status_code == 403, bare.text
         named = c.post(f"{API_PREFIX}/libraries", json={"label": "שלי"},
                        headers={deps.LIBRARY_HEADER: p.library.id})
         assert named.status_code == 404, named.text
+
+        blank = c.post(f"{API_PREFIX}/libraries", json={"label": "   "})
+        assert blank.status_code == 400
+        assert tenancy.list_accounts(p.id) == (), (
+            "a refused sign-up left an account behind"
+        )
+
+        made = c.post(f"{API_PREFIX}/libraries", json={"label": "שלי"})
+        assert made.status_code == 201, made.text
+        assert made.json()["role"] == "admin"
+        assert made.json()["account_id"] != "acc-foreign"
+        accounts = tenancy.list_accounts(p.id)
+        assert len(accounts) == 1 and accounts[0][1].role is Role.ADMIN
+        assert [lib.label for lib in
+                tenancy.list_libraries(accounts[0][0].id)] == ["שלי"]
     assert [lib.id for lib in tenancy.list_libraries("acc-foreign")] == \
         [p.library.id], "a library was written into a foreign customer"
+
+
+def test_the_library_cap_binds_the_account_and_never_the_first_library():
+    """The [OPEN] closed at P4.1a's approval: 5 per account (owner,
+    2026-08-13), checked at create time on the ACCOUNT — never a second
+    scope on the data. The refusal names the number and is a 403, not a
+    429: this is not a window that reopens."""
+    from app.domain.tenancy import LIBRARIES_PER_ACCOUNT
+
+    # The NUMBER is the owner's decision (2026-08-13), written down twice
+    # like a policy cell: changing it is a one-line edit here and there.
+    # Without this line the loop below scales with the constant and a
+    # drive-by 5 -> 50 sails through green (measured).
+    assert LIBRARIES_PER_ACCOUNT == 5
+
+    p = StubPrincipal()
+    tenancy = _tenancy(p)   # one library exists already
+    with TestClient(_app(principal=p, tenancy=tenancy)) as c:
+        for i in range(LIBRARIES_PER_ACCOUNT - 1):
+            r = c.post(f"{API_PREFIX}/libraries", json={"label": f"ספרייה {i}"})
+            assert r.status_code == 201, (i, r.text)
+        r = c.post(f"{API_PREFIX}/libraries", json={"label": "אחת יותר מדי"})
+        assert r.status_code == 403
+        assert str(LIBRARIES_PER_ACCOUNT) in r.json()["detail"]
+        assert len(tenancy.list_libraries(TEST_ACCOUNT)) == \
+            LIBRARIES_PER_ACCOUNT
 
 
 def test_a_missing_library_and_a_foreign_one_cost_the_same_lookups():

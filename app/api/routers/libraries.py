@@ -54,10 +54,11 @@ from app.domain import (
     Capability,
     Membership,
     allowed,
+    new_account,
     new_library,
     rename_library,
 )
-from app.domain.tenancy import LibraryNeedsAName
+from app.domain.tenancy import LIBRARIES_PER_ACCOUNT, LibraryNeedsAName
 from app.ports import Clock, IdGen, Principal
 from app.ports.tenancy import TenancyStore
 
@@ -66,9 +67,10 @@ router = APIRouter(prefix="/libraries", tags=["libraries"])
 
 def _account(
     request: Request, principal: Principal, tenancy: TenancyStore,
-) -> tuple[Account, Membership]:
+) -> tuple[Account, Membership] | None:
     """The account a new library goes under — the one the caller is
-    OPERATING AS (P4.1b).
+    OPERATING AS (P4.1b) — or ``None`` for the caller who has none, which
+    is `create_library`'s sign-up case (P4.1c), not an error here.
 
     "Which account?" has one answer per request and it is answered in ONE
     place. The rule: the account owning the library the request itself
@@ -79,11 +81,10 @@ def _account(
     guessed at — "the first account we happen to list" was a cross-tenant
     write the moment a second membership existed (P3.7b's review, M6).
 
-    The dev-era branches died with the dev identity: no user row is minted
-    here (the session's user exists by construction), and no account is
-    minted here (that is sign-up's job, P4.1c) — a user with no account
-    cannot create a library, which is §4.1's "creating a library writes
-    into a customer" taken at face value.
+    No user row is minted here (the session's user exists by construction),
+    and no account is minted here — the sign-up branch in `create_library`
+    owns that, so the ONLY route that can mint a customer is the one §4.3
+    names.
     """
     requested = (request.headers.get(deps.LIBRARY_HEADER)
                  or request.query_params.get(deps.LIBRARY_PARAM))
@@ -99,10 +100,7 @@ def _account(
     if len(mine) == 1:
         return mine[0]
     if not mine:
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN,
-            "this user has no account yet — sign-up creates one (§4.3)",
-        )
+        return None
     raise HTTPException(
         status.HTTP_400_BAD_REQUEST,
         "you belong to several accounts; name a library of the one this "
@@ -189,17 +187,56 @@ def create_library(
     library" row, and the closest cell it does have — *rename the library*,
     "the library's name is the tenant's own identity" — is the same act one
     step later.
+
+    **The sign-up act lives here too (P4.1c, §4.3 step 2).** A caller with
+    NO account minting their first library mints the account WITH it: an
+    account with no library is a customer with nowhere to put a book, so
+    the two are created together — domain objects first (a blank name
+    refuses before anything is written), rows after. The new account's
+    membership is ADMIN by construction (`new_account`), so the §4.2 check
+    is cleared the honest way, and `LIBRARIES_PER_ACCOUNT` never binds a
+    first library.
     """
-    account, membership = _account(request, principal, tenancy)
+    resolved = _account(request, principal, tenancy)
+    now = clock.now_iso()
+    if resolved is None:
+        user = tenancy.get_user(principal.id)
+        if user is None:  # a session names a user; its absence is a 401
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED,
+                                "this session's user no longer exists")
+        try:
+            account, membership = new_account(
+                id=ids.new_id(), owner=user, created_at=now,
+            )
+            library = new_library(id=ids.new_id(), label=body.label,
+                                  account=account, created_at=now)
+        except LibraryNeedsAName as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+        tenancy.save_account(account)
+        tenancy.save_membership(membership)
+        tenancy.save_library(library)
+        return LibraryDTO.of(library, membership)
+
+    account, membership = resolved
     if not allowed(membership.role, Capability.MANAGE_LIBRARY):
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             "adding a library to this account is an admin action (§4.2)",
         )
+    # The cap is a number on the ACCOUNT, checked at create — never a
+    # second scope on the data (VISION §4.1; the constant argues for its
+    # own value). 403, not 429: this is not a window that reopens.
+    if len(tenancy.list_libraries(account.id)) >= LIBRARIES_PER_ACCOUNT:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            f"this account already holds {LIBRARIES_PER_ACCOUNT} libraries "
+            f"— the cap guards against runaway creation, and merging or "
+            f"removing one is not offered yet",
+        )
     try:
         library = new_library(
             id=ids.new_id(), label=body.label, account=account,
-            created_at=clock.now_iso(),
+            created_at=now,
         )
     except LibraryNeedsAName as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
