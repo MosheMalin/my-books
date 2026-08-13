@@ -179,6 +179,12 @@ export function fakeServer(initial: FakeBookRecord[] = []): FakeServer {
       return respond(server.libraries)
     }
     if (u.pathname === '/api/v1/libraries' && method === 'POST') {
+      if (server.failNextWith) {
+        const status = server.failNextWith
+        server.failNextWith = null
+        return respond({ detail: 'a library is created with a name (§4.3)' },
+                       status)
+      }
       const { label } = JSON.parse(String(init?.body)) as { label: string }
       const made: LibraryDTO = {
         id: `lib-${server.libraries.length + 1}`,

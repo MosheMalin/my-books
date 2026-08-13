@@ -13,13 +13,16 @@ import { CaptureTab } from './capture/CaptureTab'
 import { ShelfPage } from './shelf/ShelfPage'
 import { useAuth } from './lib/auth'
 import { useBooks } from './lib/books'
+import { FirstLibrary } from './lib/FirstLibrary'
 import { useI18n } from './lib/i18n'
+import { useLibrary } from './lib/library'
 import { LibrarySwitcher } from './lib/LibrarySwitcher'
 import { bookHash, CAPTURE_HASH, LIBRARY_HASH, useRoute } from './lib/route'
 
 export function App() {
   const { t, lang, toggleLang } = useI18n()
   const { signOutNow } = useAuth()
+  const { libraries, loading, failed } = useLibrary()
   const books = useBooks()
   const { route, navigate, back } = useRoute()
   const [drawerId, setDrawerId] = useState<string | null>(null)
@@ -48,6 +51,9 @@ export function App() {
   // links to nothing.
   const onBooks = route.name === 'library' || route.name === 'book'
   const onCapture = route.name === 'capture'
+  // P4.1c: no library yet — the tabs' screens can only 404, so the nav is
+  // ABSENT during onboarding, not disabled (the house rule).
+  const onboarding = !loading && !failed && libraries.length === 0
 
   return (
     <>
@@ -60,24 +66,26 @@ export function App() {
             there); its library is the RESOLVED one, which is what the
             switcher's own list is checked against server-side. */}
         <LibrarySwitcher />
-        <nav className="nav" aria-label={t.app}>
-          <button
-            type="button"
-            className={onBooks ? 'on' : ''}
-            aria-pressed={onBooks}
-            onClick={() => navigate(LIBRARY_HASH)}
-          >
-            {t.books}
-          </button>
-          <button
-            type="button"
-            className={onCapture ? 'on' : ''}
-            aria-pressed={onCapture}
-            onClick={() => navigate(CAPTURE_HASH)}
-          >
-            {t.capture_tab}
-          </button>
-        </nav>
+        {!onboarding && (
+          <nav className="nav" aria-label={t.app}>
+            <button
+              type="button"
+              className={onBooks ? 'on' : ''}
+              aria-pressed={onBooks}
+              onClick={() => navigate(LIBRARY_HASH)}
+            >
+              {t.books}
+            </button>
+            <button
+              type="button"
+              className={onCapture ? 'on' : ''}
+              aria-pressed={onCapture}
+              onClick={() => navigate(CAPTURE_HASH)}
+            >
+              {t.capture_tab}
+            </button>
+          </nav>
+        )}
         <span className="spacer" />
         <button
           type="button"
@@ -102,6 +110,13 @@ export function App() {
         </button>
       </header>
 
+      {/* P4.1c: a signed-in user with NO library names their first one
+          instead of seeing tabs that can only 404. `failed` stays with the
+          tabs — an unreachable list is an error state, not an invitation
+          to create a duplicate library. */}
+      {onboarding ? (
+        <FirstLibrary />
+      ) : (
       <main className="page">
         {route.name === 'book' ? (
           <BookPage bookId={route.id} onBack={back} onAuthor={filterByAuthor} />
@@ -113,6 +128,7 @@ export function App() {
           <BooksTab onOpen={setDrawerId} />
         )}
       </main>
+      )}
 
       <BookDrawer
         bookId={route.name === 'book' ? null : drawerId}

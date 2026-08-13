@@ -642,6 +642,15 @@ export interface paths {
          *     library" row, and the closest cell it does have — *rename the library*,
          *     "the library's name is the tenant's own identity" — is the same act one
          *     step later.
+         *
+         *     **The sign-up act lives here too (P4.1c, §4.3 step 2).** A caller with
+         *     NO account minting their first library mints the account WITH it: an
+         *     account with no library is a customer with nowhere to put a book, so
+         *     the two are created together — domain objects first (a blank name
+         *     refuses before anything is written), rows after. The new account's
+         *     membership is ADMIN by construction (`new_account`), so the §4.2 check
+         *     is cleared the honest way, and `LIBRARIES_PER_ACCOUNT` never binds a
+         *     first library.
          */
         post: operations["create_library_api_v1_libraries_post"];
         delete?: never;

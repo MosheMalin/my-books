@@ -241,6 +241,16 @@ class Membership:
 
 # --- operations -----------------------------------------------------------
 
+#: How many libraries one account may hold (owner, 2026-08-13, P4.1c) — a
+#: policy number checked at create time on the ACCOUNT, never a second
+#: scope on the data (VISION §4.1). It exists as a retry-loop and abuse
+#: guard, like §1.2's run-rate cap, not as a product limit: one library is
+#: the normal case, a second is the rare separate collection, and five is
+#: generous for both. Raising it is a one-line decision with this comment
+#: to argue with.
+LIBRARIES_PER_ACCOUNT = 5
+
+
 def new_account(
     *,
     id: str,
