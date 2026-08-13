@@ -145,8 +145,10 @@ class DiskBlobStore:
                 f"{len(data)} bytes is over the {MAX_UPLOAD_BYTES} limit"
             )
         # Truncated, never rejected — the name is display metadata, and the
-        # port states why (MAX_FILENAME). This is the door the sidecar and
-        # every DTO read through, so nothing downstream re-caps.
+        # port states why (MAX_FILENAME). `_read_meta` re-caps on the way
+        # OUT for sidecars written before this line existed (restored
+        # backups); the staff console keeps its own read-side copy for the
+        # same files.
         filename = filename[:MAX_FILENAME]
         normalised, content_type, ext, size_px = _normalise(data)
 
@@ -289,6 +291,11 @@ class DiskBlobStore:
         if sidecar is None or not sidecar.exists():
             return None
         raw = json.loads(sidecar.read_text(encoding="utf-8"))
+        # The read-side half of the cap: a sidecar THIS code wrote is already
+        # capped, but a restored backup or a pre-P4.0b install left long
+        # names on disk, and republishing one would re-open the measured
+        # 40MB-per-page amplification the write cap closed.
+        raw["filename"] = str(raw.get("filename") or "")[:MAX_FILENAME]
         return Blob(**raw)
 
 
@@ -342,6 +349,14 @@ def _normalise(data: bytes) -> tuple[bytes, str, str, tuple[int, int]]:
             return out.getvalue(), content_type, ext, upright.size
     except UnidentifiedImageError as exc:
         raise UnsupportedImage(_undecodable_reason(data)) from exc
+    except Image.DecompressionBombError as exc:
+        # PIL refuses >~89 Mpx before allocating. Without this catch that
+        # refusal surfaced as a bare 500 (measured: a 388KB PNG declaring
+        # 20000x20000). A refusal must say what to do — same rule as HEIC.
+        raise UnsupportedImage(
+            "this image's declared dimensions are beyond what this system "
+            "will decode; export it at a smaller size and re-upload"
+        ) from exc
 
 
 def _undecodable_reason(data: bytes) -> str:

@@ -4377,3 +4377,49 @@ def test_a_first_ever_address_mints_its_user_exactly_once():
                         json={"token": second_token})
         assert first.json()["id"] == second.json()["id"]
         assert tenancy.user_by_email("new@example.com").id == first.json()["id"]
+
+
+def test_a_pre_cap_sidecar_is_republished_capped():
+    """The read-side half of P4.0b (its security review, finding 1): the
+    write path caps, but a restored backup carries sidecars written before
+    the cap -- measured republishing a 200,000-character name in a 400KB
+    metadata answer. `_read_meta` re-caps on the way out."""
+    import json as _json
+
+    from app.ports.blobs import MAX_FILENAME
+
+    with _blobs() as blobs:
+        c = TestClient(_app(blobs=blobs))
+        key = c.post(f"{API_PREFIX}/images",
+                     files={"file": ("a.png", _png(), "image/png")}).json()["key"]
+        # Rewrite the sidecar the way a pre-P4.0b install left it.
+        sidecar = next(Path(blobs.root).rglob("*.json"))
+        raw = _json.loads(sidecar.read_text(encoding="utf-8"))
+        raw["filename"] = "ש" * 100_000
+        sidecar.write_text(_json.dumps(raw, ensure_ascii=False),
+                           encoding="utf-8")
+
+        meta = c.get(f"{API_PREFIX}/images/{key}")
+        assert meta.status_code == 200
+        assert len(meta.json()["filename"]) == MAX_FILENAME
+
+
+def test_a_decompression_bomb_is_refused_not_a_500():
+    """P4.0b's security review, finding 3: PIL refuses a bomb before
+    allocating, and that refusal surfaced as a bare 500. A refusal must
+    say what to do (the HEIC rule). The bomb is simulated by lowering
+    PIL's own threshold -- the mechanism under test is the catch, not
+    PIL's arithmetic."""
+    from PIL import Image as PILImage
+
+    old = PILImage.MAX_IMAGE_PIXELS
+    PILImage.MAX_IMAGE_PIXELS = 100        # a 40x30 test png is now a bomb
+    try:
+        with _blobs() as blobs:
+            c = TestClient(_app(blobs=blobs))
+            r = c.post(f"{API_PREFIX}/images",
+                       files={"file": ("a.png", _png(), "image/png")})
+            assert r.status_code == 415, r.text
+            assert "smaller" in r.json()["detail"]
+    finally:
+        PILImage.MAX_IMAGE_PIXELS = old
