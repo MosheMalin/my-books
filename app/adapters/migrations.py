@@ -819,6 +819,55 @@ def _account_id(library_ids: list[str]) -> str:
     return hashlib.blake2s(seed.encode("utf-8"), digest_size=16).hexdigest()
 
 
+# --- v15: sessions and login tokens (P4.1a, VISION §3) ---------------------
+#
+# Authentication arrives. Two tables, both holding HASHES only
+# (`app.domain.auth.hash_token`): a leaked database must contain nothing
+# that logs anyone in. The cookie and the emailed link carry the raw token
+# exactly once, to its owner.
+#
+# `sessions.revoked_at` is a tombstone, never a DELETE — "when did this
+# device stop being trusted" outlives the trust. `login_tokens.consumed_at`
+# is the single-use rule's record; the consume itself is one guarded UPDATE
+# in the store, so two racing redeems of one link mint one session.
+#
+# `source_hash` is the requesting client's HASHED address, kept solely for
+# §3's per-source rate window. The address itself has no business
+# persisting, and no column here holds one.
+#
+# ⚠ User-scoped, deliberately: neither table names a library or a role.
+# A session says WHO — the account walk stays where it lives today
+# (`deps.owner_membership`), and adding a shortcut column here would be a
+# second copy of that rule.
+_V15 = """
+CREATE TABLE sessions (
+    token_hash TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL REFERENCES users (id),
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    revoked_at TEXT
+);
+
+-- "Every session of this user" is the lost-phone question (revoke them
+-- all) and P4.3's account screen. Nothing queries by expiry alone.
+CREATE INDEX sessions_by_user ON sessions (user_id, created_at);
+
+CREATE TABLE login_tokens (
+    token_hash  TEXT PRIMARY KEY,
+    email       TEXT NOT NULL,
+    source_hash TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL,
+    expires_at  TEXT NOT NULL,
+    consumed_at TEXT
+);
+
+-- The two rate windows (§3): how many links for this address, how many
+-- from this source, inside the hour. Both lead with their filter.
+CREATE INDEX login_tokens_by_email  ON login_tokens (email, created_at);
+CREATE INDEX login_tokens_by_source ON login_tokens (source_hash, created_at);
+"""
+
+
 # A step is either SQL to execute or a callable to run — both inside the same
 # once-only transaction. Callables exist because a derived column whose rule
 # lives in the domain must be backfilled BY that rule, not by a re-statement
@@ -838,6 +887,7 @@ MIGRATIONS: tuple[tuple[int, str | Step], ...] = (
     (12, _V12),
     (13, _v13),
     (14, _v14),
+    (15, _V15),
 )
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]

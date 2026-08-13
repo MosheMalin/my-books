@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app import API_PREFIX, __version__
 from app.api.deps import (
+    get_auth_store,
     get_blob_store,
     get_book_store,
     get_clock,
@@ -25,6 +26,7 @@ from app.api.deps import (
     get_duplicate_queue,
     get_id_gen,
     get_job_runner,
+    get_mailer,
     get_principal,
     get_read_store,
     get_reader,
@@ -32,6 +34,7 @@ from app.api.deps import (
     get_tenancy_store,
 )
 from app.api.routers import (
+    auth,
     books,
     duplicates,
     images,
@@ -41,6 +44,7 @@ from app.api.routers import (
     shelves,
 )
 from app.ports import Clock, IdGen, Principal
+from app.ports.auth import AuthStore, Mailer
 from app.ports.blobs import BlobStore
 from app.ports.decisions import DecisionStore
 from app.ports.duplicates import DuplicateQueue
@@ -84,6 +88,8 @@ def bind_ports(
     reader: Reader | None = None,
     job_runner: JobRunner | None = None,
     tenancy_store: TenancyStore | None = None,
+    auth_store: AuthStore | None = None,
+    mailer: Mailer | None = None,
 ) -> None:
     """Point an already-built app's ports at these implementations.
 
@@ -106,7 +112,8 @@ def bind_ports(
                       (get_decision_store, decision_store),
                       (get_duplicate_queue, duplicate_queue),
                       (get_reader, reader), (get_job_runner, job_runner),
-                      (get_tenancy_store, tenancy_store)):
+                      (get_tenancy_store, tenancy_store),
+                      (get_auth_store, auth_store), (get_mailer, mailer)):
         if impl is not None:
             app.dependency_overrides[dep] = _always(impl)
 
@@ -124,6 +131,8 @@ def create_app(
     reader: Reader | None = None,
     job_runner: JobRunner | None = None,
     tenancy_store: TenancyStore | None = None,
+    auth_store: AuthStore | None = None,
+    mailer: Mailer | None = None,
     web_dist: Path | None = None,
 ) -> FastAPI:
     """Build the product API.
@@ -150,6 +159,10 @@ def create_app(
         redoc_url=None,
     )
     app.include_router(meta.router, prefix=API_PREFIX)
+    # PRE-AUTH, the narrowest scope of all: these are the routes a caller
+    # uses to BECOME a principal (see the router's own docstring, and the
+    # closed _PRE_AUTH list in tests/test_api.py).
+    app.include_router(auth.router, prefix=API_PREFIX)
     # User-scoped, unlike every other router here — these are the routes a
     # caller uses to find out which libraries it may name (see the router's
     # own ⚠⚠, and the closed exemption list in tests/test_api.py).
@@ -169,6 +182,7 @@ def create_app(
         read_store=read_store, decision_store=decision_store,
         duplicate_queue=duplicate_queue, reader=reader,
         job_runner=job_runner, tenancy_store=tenancy_store,
+        auth_store=auth_store, mailer=mailer,
     )
 
     # Static client last: mounting at "/" first would shadow the API routes.

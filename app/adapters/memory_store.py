@@ -12,6 +12,10 @@ frozen, so there is nothing to defensively copy.
 """
 from __future__ import annotations
 
+import threading
+from dataclasses import replace
+
+from app.domain.auth import LoginToken, Session
 from app.domain import (
     Account,
     Book,
@@ -399,6 +403,13 @@ class MemoryTenancyStore:
     def get_user(self, user_id: str) -> User | None:
         return self._users.get(user_id)
 
+    def user_by_email(self, email: str) -> User | None:
+        # Exact match, like the sqlite index: the caller normalizes.
+        for user in self._users.values():
+            if user.email == email:
+                return user
+        return None
+
     # --- accounts --------------------------------------------------------
 
     def save_account(self, account: Account) -> None:
@@ -450,6 +461,70 @@ class MemoryTenancyStore:
         rows = [m for m in self._members.values() if m.account_id == account_id]
         rows.sort(key=lambda m: (m.role is not Role.ADMIN, m.user_id))
         return tuple(rows)
+
+
+class MemoryAuthStore:
+    """Implements ``app.ports.auth.AuthStore`` (P4.1a).
+
+    Single-use consume holds a real `threading.Lock` around the
+    check-and-mark. An earlier draft claimed the GIL made it atomic; the
+    migration review measured 2299/4000 double-redeems at 4 threads with a
+    tiny switch interval — read-check-replace is several bytecodes, and
+    CPython preempts between them. One lock, matching what the port
+    promises.
+    """
+
+    def __init__(self) -> None:
+        self._sessions: dict[str, Session] = {}
+        self._tokens: dict[str, LoginToken] = {}
+        self._consume = threading.Lock()
+
+    # --- sessions --------------------------------------------------------
+
+    def save_session(self, session: Session) -> None:
+        # An existing tombstone survives a rewrite — same rule, same reason
+        # as the sqlite adapter's COALESCE.
+        old = self._sessions.get(session.token_hash)
+        if old is not None and old.revoked_at is not None \
+                and session.revoked_at is None:
+            session = replace(session, revoked_at=old.revoked_at)
+        self._sessions[session.token_hash] = session
+
+    def get_session(self, token_hash: str) -> Session | None:
+        return self._sessions.get(token_hash)
+
+    def revoke_session(self, token_hash: str, *, at: str) -> bool:
+        session = self._sessions.get(token_hash)
+        if session is None or session.revoked_at is not None:
+            return False
+        self._sessions[token_hash] = replace(session, revoked_at=at)
+        return True
+
+    # --- login tokens ----------------------------------------------------
+
+    def save_login_token(self, token: LoginToken) -> None:
+        self._tokens[token.token_hash] = token
+
+    def consume_login_token(self, token_hash: str, *, now: str) -> LoginToken | None:
+        with self._consume:
+            token = self._tokens.get(token_hash)
+            if token is None or token.consumed_at is not None \
+                    or token.expires_at <= now:
+                return None
+            consumed = replace(token, consumed_at=now)
+            self._tokens[token_hash] = consumed
+            return consumed
+
+    def count_recent_login_tokens(self, *, email: str | None = None,
+                                  source_hash: str | None = None,
+                                  since: str) -> int:
+        assert (email is None) != (source_hash is None), \
+            "exactly one filter per call"
+        if email is not None:
+            return sum(1 for t in self._tokens.values()
+                       if t.email == email and t.created_at >= since)
+        return sum(1 for t in self._tokens.values()
+                   if t.source_hash == source_hash and t.created_at >= since)
 
 
 def _any_copy_out(book: Book) -> bool:

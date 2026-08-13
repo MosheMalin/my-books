@@ -35,10 +35,12 @@ from dataclasses import replace
 from pathlib import Path
 
 from app.adapters.booksnap_reader import BooksnapReader
+from app.adapters.console_mailer import ConsoleMailer
 from app.adapters.dev_identity import DevPrincipal, SystemClock, UuidIdGen
 from app.adapters.disk_blobs import DiskBlobStore
 from app.adapters.queued_jobs import QueuedJobRunner
 from app.adapters.sqlite_store import (
+    SqliteAuthStore,
     SqliteBookStore,
     SqliteDecisionStore,
     SqliteDuplicateQueue,
@@ -48,6 +50,7 @@ from app.adapters.sqlite_store import (
 )
 from app.api.app import create_app
 from app.domain import Library, Membership, Role, User, new_account
+from app.domain.auth import normalize_email
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WEB_DIST = REPO_ROOT / "app" / "web" / "dist"
@@ -156,6 +159,20 @@ def _bootstrap_dev_user(tenancy: SqliteTenancyStore, principal) -> None:
     if user is None:
         user = User(id=principal.id)
         tenancy.save_user(user)
+    # ⚠ The identity anchor, and the window is CLOSING (P4.1a's migration
+    # review). v15 makes `users.email` load-bearing — the magic link's
+    # redeem resolves the user by address, and nothing else — but the
+    # owner's real row predates email entirely. When P4.1b deletes this
+    # whole function together with the dev principal, an unlinked owner
+    # signs in to a freshly-minted empty user while 286 books sit under
+    # this one, reachable by nobody. So while the bootstrap still runs,
+    # it links the address: set BOOKSNAP_OWNER_EMAIL (in .env), start the
+    # server once. Fills a BLANK email only — it never overwrites a row
+    # the redeem flow owns, same one-way rule as the label below.
+    owner_email = os.environ.get("BOOKSNAP_OWNER_EMAIL", "").strip()
+    if owner_email and not user.email:
+        user = replace(user, email=normalize_email(owner_email))
+        tenancy.save_user(user)
     ref = principal.library
     library = tenancy.get_library(ref.id)
     if library is None:
@@ -246,6 +263,15 @@ def build() -> object:
         # what H2/§1.3 asks for — every job's state lives on THIS object,
         # never a module global.
         job_runner=QueuedJobRunner(workers=2),
+        # P4.1a: sessions and login tokens, same file as everything else — a
+        # session and the user it authenticates must never disagree about
+        # the moment. The mailer is the DEV one until P4.4 deploys a real
+        # provider; its base URL is Vite's dev client, which serves the
+        # login route the link lands on.
+        auth_store=SqliteAuthStore(path),
+        mailer=ConsoleMailer(
+            os.environ.get("BOOKSNAP_PUBLIC_URL", "http://localhost:5173")
+        ),
         clock=SystemClock(),
         id_gen=UuidIdGen(),
         web_dist=WEB_DIST,

@@ -61,10 +61,10 @@ _SAFE_LIBRARY_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 #: (`app.ports.blobs.MAX_FILENAME`, truncated in `DiskBlobStore.put` — the
 #: fix a review asked for after measuring 20 captures with 200,000-character
 #: names turning one `GET /images` into 4 MB). This read-side copy STAYS: it
-#: guards the sidecars written before the cap existed and whatever
-#: `tools/import_legacy.py` republishes, and this service deliberately
-#: imports nothing from `app`, so the number lives twice — a test pins the
-#: two equal (`test_staff_api.py`).
+#: guards the sidecars written before the cap existed (a restored backup, a
+#: pre-cap install), and this service deliberately imports nothing from
+#: `app`, so the number lives twice — a test pins the two equal
+#: (`test_staff_api.py`).
 MAX_FILENAME = 200
 
 

@@ -17,6 +17,7 @@ from fastapi import Depends, HTTPException, Request, status
 
 from app.domain import Library, LibraryRef, Membership
 from app.ports import Clock, IdGen, Principal
+from app.ports.auth import AuthStore, Mailer
 from app.ports.blobs import BlobStore
 from app.ports.decisions import DecisionStore
 from app.ports.duplicates import DuplicateQueue
@@ -38,6 +39,12 @@ from app.ports.tenancy import TenancyStore
 #: or two libraries; if links ever have to travel, the fix is a query
 #: parameter the router honours, not a change of transport.
 LIBRARY_HEADER = "X-Booksnap-Library"
+
+#: The session cookie (P4.1a). Lives here with the other transport constants
+#: (`LIBRARY_HEADER`, `LIBRARY_PARAM`): the auth router SETS it and P4.1b's
+#: resolver READS it, and neither may import the other. The cookie's value is
+#: the raw token; the database only ever holds its hash.
+SESSION_COOKIE = "booksnap_session"
 
 #: The same reference, as a query parameter, for requests the BROWSER issues
 #: rather than the client's own ``fetch()``.
@@ -238,6 +245,14 @@ def get_reader() -> Reader:
 
 def get_job_runner() -> JobRunner:
     raise RuntimeError("no JobRunner bound; build the app via create_app")
+
+
+def get_auth_store() -> AuthStore:
+    raise RuntimeError("no AuthStore bound; build the app via create_app")
+
+
+def get_mailer() -> Mailer:
+    raise RuntimeError("no Mailer bound; build the app via create_app")
 
 
 def get_clock() -> Clock:

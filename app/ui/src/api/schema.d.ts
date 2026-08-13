@@ -4,6 +4,65 @@
  */
 
 export interface paths {
+    "/api/v1/auth/link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request Login Link
+         * @description Mail a sign-in link. **202 whatever the address is** — known member,
+         *     stranger, or future sign-up all read the same, so the route cannot be
+         *     used to enumerate who has an account here.
+         */
+        post: operations["request_login_link_api_v1_auth_link_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Redeem Login Link
+         * @description Trade an emailed token for a session cookie.
+         *
+         *     Single-use is the STORE's atomic consume — two racing redeems of one
+         *     link mint one session. Expired, consumed and invented tokens are the
+         *     same 401: the caller's remedy is identical (request a new link), and
+         *     distinguishing them tells an attacker which guesses were nearly right.
+         *
+         *     A first-ever address mints its User here — the bare identity row. It
+         *     owns nothing and belongs to nowhere until P4.1c's sign-up gives it an
+         *     account and a first library; `list_accounts` answering empty for it is
+         *     a real state the switcher already renders.
+         */
+        post: operations["redeem_login_link_api_v1_auth_session_post"];
+        /**
+         * Sign Out
+         * @description Revoke the cookie's session — a tombstone, not a delete.
+         *
+         *     204 whether or not a live session was presented: sign-out is a state to
+         *     arrive at, not an action to fail. The cookie is cleared either way.
+         */
+        delete: operations["sign_out_api_v1_auth_session_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/books": {
         parameters: {
             query?: never;
@@ -1815,6 +1874,24 @@ export interface components {
             label: string;
         };
         /**
+         * LoginLinkRequest
+         * @description Ask for a sign-in link (§3's magic link, P4.1a).
+         *
+         *     ⚠ Minimal shape-checking only, and no `EmailStr` on purpose: that
+         *     validator drags in a dependency to reject addresses a mail provider
+         *     would accept, and the honest test of an address is whether mail
+         *     arrives. A wrong address costs its owner a link that never comes —
+         *     the same answer as a right address, which is also the anti-enumeration
+         *     property the route needs.
+         */
+        LoginLinkRequest: {
+            /**
+             * Email
+             * @description Where the link goes. 254 is RFC 5321's cap.
+             */
+            email: string;
+        };
+        /**
          * ManualFindingIn
          * @description *"The engine missed this book"* — a book the owner adds to a photo by
          *     hand (P2.10, owner 2026-08-09).
@@ -1964,6 +2041,17 @@ export interface components {
             started_at?: string | null;
             /** Status */
             status: string;
+        };
+        /**
+         * SessionCreate
+         * @description Redeem an emailed token for a session cookie.
+         */
+        SessionCreate: {
+            /**
+             * Token
+             * @description The token from the sign-in link, verbatim.
+             */
+            token: string;
         };
         /**
          * ShelfCreate
@@ -2138,6 +2226,92 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    request_login_link_api_v1_auth_link_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LoginLinkRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    redeem_login_link_api_v1_auth_session_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SessionCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sign_out_api_v1_auth_session_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     list_books_api_v1_books_get: {
         parameters: {
             query?: {

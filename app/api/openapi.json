@@ -1297,6 +1297,22 @@
         "title": "LibraryRefDTO",
         "type": "object"
       },
+      "LoginLinkRequest": {
+        "description": "Ask for a sign-in link (§3's magic link, P4.1a).\n\n⚠ Minimal shape-checking only, and no `EmailStr` on purpose: that\nvalidator drags in a dependency to reject addresses a mail provider\nwould accept, and the honest test of an address is whether mail\narrives. A wrong address costs its owner a link that never comes —\nthe same answer as a right address, which is also the anti-enumeration\nproperty the route needs.",
+        "properties": {
+          "email": {
+            "description": "Where the link goes. 254 is RFC 5321's cap.",
+            "maxLength": 254,
+            "title": "Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "LoginLinkRequest",
+        "type": "object"
+      },
       "ManualFindingIn": {
         "description": "*\"The engine missed this book\"* — a book the owner adds to a photo by\nhand (P2.10, owner 2026-08-09).\n\nIt becomes a MANUAL-tier `Claim` on that read, which is what keeps the\nphoto's findings a complete account of what is in the picture rather than\nonly what a reader managed to see. Entering the library needs no approval\nstep: typing the title IS the approval (§5.1's ladder).",
         "properties": {
@@ -1616,6 +1632,22 @@
         "title": "ReadSummaryDTO",
         "type": "object"
       },
+      "SessionCreate": {
+        "description": "Redeem an emailed token for a session cookie.",
+        "properties": {
+          "token": {
+            "description": "The token from the sign-in link, verbatim.",
+            "maxLength": 128,
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "title": "SessionCreate",
+        "type": "object"
+      },
       "ShelfCreate": {
         "description": "Declare a shelf. Every field optional — see :class:`ShelfDTO.label`.",
         "properties": {
@@ -1900,6 +1932,105 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/auth/link": {
+      "post": {
+        "description": "Mail a sign-in link. **202 whatever the address is** — known member,\nstranger, or future sign-up all read the same, so the route cannot be\nused to enumerate who has an account here.",
+        "operationId": "request_login_link_api_v1_auth_link_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginLinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Request Login Link Api V1 Auth Link Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Request Login Link",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/session": {
+      "delete": {
+        "description": "Revoke the cookie's session — a tombstone, not a delete.\n\n204 whether or not a live session was presented: sign-out is a state to\narrive at, not an action to fail. The cookie is cleared either way.",
+        "operationId": "sign_out_api_v1_auth_session_delete",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Sign Out",
+        "tags": [
+          "auth"
+        ]
+      },
+      "post": {
+        "description": "Trade an emailed token for a session cookie.\n\nSingle-use is the STORE's atomic consume — two racing redeems of one\nlink mint one session. Expired, consumed and invented tokens are the\nsame 401: the caller's remedy is identical (request a new link), and\ndistinguishing them tells an attacker which guesses were nearly right.\n\nA first-ever address mints its User here — the bare identity row. It\nowns nothing and belongs to nowhere until P4.1c's sign-up gives it an\naccount and a first library; `list_accounts` answering empty for it is\na real state the switcher already renders.",
+        "operationId": "redeem_login_link_api_v1_auth_session_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Redeem Login Link",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/api/v1/books": {
       "get": {
         "description": "One endpoint, two modes.\n\nSearching is not a filter on top of a sort — relevance IS the order, so a\n`sort` passed alongside `q` would be a promise the server cannot keep.\nIt is ignored rather than rejected: a UI that keeps a sort control on\nscreen while the user types should not start returning 400s mid-keystroke.\nThe `duplicates` filter is ignored during a search too, same as every\nother filter here — the two are ORTHOGONAL views (find a book vs. review\na queue), and combining them was never asked for.",

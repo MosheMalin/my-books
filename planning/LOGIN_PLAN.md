@@ -163,6 +163,15 @@ JWT — revocation is trivial, scale is a household, and it adds no
 dependency. Reviewers: `review-migration` (before each schema commit),
 `review-security`, `review-data-integrity`, `review-quality`.
 
+⚠ **P4.1b prerequisite, recorded at P4.1a (migration review): the owner's
+real user row must carry his email BEFORE the dev identity dies.** v15 makes
+`users.email` the whole identity resolution (`user_by_email` at redeem), and
+the owner's row predates email. P4.1a's bootstrap fills it from
+`BOOKSNAP_OWNER_EMAIL` (set in `.env`) on server start — verify
+`users.email` is populated on the real database before starting P4.1b, and
+P4.1b's cutover carries a test that a v14-shaped file with an email-less
+user survives (signs in to the RIGHT user, never a freshly-minted twin).
+
 **P4.1b — the resolver reads the session; the fallbacks DIE (M/L).** The
 first real act of authentication, not a cleanup afterwards: delete all three
 fallbacks together (`deps.current_library` branch 2, `policy._role`'s ADMIN

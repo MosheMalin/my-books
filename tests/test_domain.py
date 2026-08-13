@@ -1971,3 +1971,67 @@ if __name__ == "__main__":
     raise SystemExit(subprocess.call(
         [sys.executable, str(Path(__file__).parent / "run_all.py"), __file__]
     ))
+
+
+# --- auth: sessions and login tokens (P4.1a, §3) ---------------------------
+
+def test_a_session_lives_ninety_days_and_rolls_without_a_write_per_request():
+    """Owner, 2026-08-13: 90-day ROLLING sessions. Rolling must not mean a
+    store write per tap: `refreshed` answers None until the remaining life
+    dips under the threshold, then pushes expiry back out to the full
+    lifetime -- and a dead session (expired or revoked) never refreshes,
+    because a refresh that resurrects is a session that cannot be killed."""
+    from dataclasses import replace
+
+    from app.domain.auth import (SESSION_LIFETIME, SESSION_REFRESH_BELOW,
+                                 new_session, refreshed)
+
+    born = "2026-08-13T12:00:00+00:00"
+    s = new_session("tok", "u1", born)
+    assert s.expires_at == "2026-11-11T12:00:00+00:00"  # born + 90 days
+    assert s.live(born)
+    assert not s.live(s.expires_at), "expiry is exclusive -- at the instant, dead"
+
+    # Fresh: plenty of life left, no write due.
+    assert refreshed(s, "2026-08-20T12:00:00+00:00") is None
+
+    # Worn past the threshold (90 - 60 = 30 days in): expiry rolls out.
+    later = "2026-09-15T12:00:00+00:00"
+    rolled = refreshed(s, later)
+    assert rolled is not None
+    assert rolled.expires_at == "2026-12-14T12:00:00+00:00"  # later + 90
+    assert rolled.token_hash == s.token_hash and rolled.created_at == s.created_at
+
+    # Dead sessions never roll.
+    assert refreshed(s, "2027-01-01T12:00:00+00:00") is None
+    revoked = replace(s, revoked_at="2026-08-14T00:00:00+00:00")
+    assert not revoked.live("2026-08-15T00:00:00+00:00")
+    assert refreshed(revoked, later) is None
+    assert SESSION_REFRESH_BELOW < SESSION_LIFETIME, "the roll must be reachable"
+
+
+def test_a_login_token_expires_in_minutes_and_is_stored_as_a_hash():
+    """§3: expiring -- an emailed credential outlives a coffee break, never
+    an afternoon inbox. And nothing stored equals the token: the database
+    holds sha256, so a leaked file logs nobody in."""
+    import hashlib
+
+    from app.domain.auth import hash_token, new_login_token
+
+    t = new_login_token("secret-token", "A@B.com", "2026-08-13T12:00:00+00:00")
+    assert t.expires_at == "2026-08-13T12:15:00+00:00"
+    assert t.email == "a@b.com", "the address was not normalized at the mint"
+    assert t.token_hash != "secret-token"
+    assert t.token_hash == hashlib.sha256(b"secret-token").hexdigest()
+    assert hash_token("secret-token") == t.token_hash
+
+
+def test_an_email_address_has_one_spelling():
+    """`Moshe@Example.COM ` and `moshe@example.com` are one inbox and must
+    be one user -- case-folded whole (a distinction RFC 5321 allows and no
+    real provider honours), trimmed, and nothing else."""
+    from app.domain.auth import normalize_email
+
+    assert normalize_email(" Moshe@Example.COM ") == "moshe@example.com"
+    assert normalize_email("a.b+tag@x.co") == "a.b+tag@x.co", (
+        "plus-tags and dots are the OWNER's business, not ours to fold")
