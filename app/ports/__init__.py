@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from app.domain import LibraryRef
 from app.ports.blobs import Blob, BlobError, BlobStore, ImageTooLarge, UnsupportedImage
 
 __all__ = [

@@ -3866,3 +3866,61 @@ Admin console: unchanged by design. Its reads are the staff service (own
 token); its tenancy writes go through the product API and now ride the
 operator's product session — cookies are host-scoped, not port-scoped, so
 signing into the product once per browser covers the proxied console.
+
+
+## P4.3 — invites, and the review fleet earning its keep
+
+An invite is a SHARE-LINK (schema v16): the admin mints one, the raw token
+appears in the response exactly once (stores hold the hash — nothing can
+reproduce the link later, which the open-invites screen states), the
+household's own chat is the transport, and accepting joins the ACCOUNT at
+the carried role — §4.1's "invite once", literally. Accepting while
+already a member spends the link and changes NOTHING: a link is never a
+role change around an admin's explicit `set_role`, in either direction.
+Member management finally gives MANAGE_MEMBERS routes; NoAdminLeft answers
+409 with its remedy over HTTP.
+
+The same landing folded three review passes' findings, several of them
+measured rather than argued:
+
+- **UX (P4.1b)**: one Back press after signing in re-fired the consumed
+  token and threw a live 272-book session onto a false "link expired"
+  screen — `replaceHash` exists now (the token URL never enters history),
+  the redeem remembers what it already traded (StrictMode's double effect
+  run consumed-then-401'd every dev sign-in), and a failed redeem probes
+  /libraries before believing itself (a mail scanner's prefetch consumes
+  the link; the human who taps second IS signed in). The phone could not
+  complete sign-in at all — the link said localhost, which on the phone is
+  the phone — so the dev default now guesses the LAN address, the Mailer
+  port grew `delivery`, and the login screen says "the link is in the
+  server log" instead of implying a mailbox. Sign-out moved behind an
+  account menu (the bare buttons pushed the app bar 77px past an iPhone
+  width, measured both directions). Raw exception text reached the family
+  screen in English; refusals are localized by failure class now.
+- **Security (P4.1b/P4.1a)**: the pair-bucket rate door had silently
+  removed the only bound on mail aimed at one address — a wide per-address
+  ceiling (30/window) returned; `/api/v1/docs` executed an unpinned CDN
+  script on the origin that now holds a 90-day cookie — off by default;
+  `save_user`'s probe raced the unique index and 13/100 concurrent
+  redeems answered 500 — the driver error comes out as `EmailTaken` now.
+- **Data-integrity (P4.1c)**: concurrent sign-ups minted one PERMANENT
+  account per request (16/16 at the barrier, and nothing can delete an
+  account) — sign-up is one atomic, idempotent `mint_first_account` now,
+  BEGIN IMMEDIATE like the migration runner, losers adopting the winner's
+  world exactly like the raced user mint.
+- **Quality (P4.1b)**: revocation-at-the-door had NO real gate — the
+  tombstone check mutated away and 800 tests stayed green, because the
+  polite client had dropped the cookie and 401'd for the wrong reason; the
+  sign-out test replays the RAW cookie now. The header-less default
+  library now follows the switcher's flat order (first-account-first
+  measurably diverged the moment a second account existed — one item
+  before invites made that reachable). The composition-root test became
+  behavioural (`build()` against a seeded file, rows byte-identical) after
+  a `getattr` spelling walked straight past the source grep.
+
+Client lessons worth their line: the shared-Select gate caught a bare
+`<select>` the day it was written (the trap list works); an email input
+strips surrounding whitespace ITSELF, so a wire-exactness test can only
+pin case; and the sign-in sentinel in client tests must be something only
+the app renders (the login screen now carries the language toggle — the
+first screen a new device shows cannot be single-language).

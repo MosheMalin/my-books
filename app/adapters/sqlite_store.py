@@ -29,6 +29,7 @@ from typing import Iterator
 
 from app.adapters.migrations import migrate
 from app.domain.auth import LoginToken, Session
+from app.domain.invites import Invite
 from app.domain import (
     Account,
     Alternative,
@@ -774,14 +775,31 @@ class SqliteTenancyStore(_SqliteStore):
                     raise EmailTaken(
                         f"{user.email!r} already belongs to another user"
                     )
-            with conn:
-                conn.execute(
-                    "INSERT INTO users (id, display_name, email, created_at)"
-                    " VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET"
-                    " display_name=excluded.display_name, email=excluded.email,"
-                    " created_at=excluded.created_at",
-                    (user.id, user.display_name, user.email, user.created_at),
-                )
+            try:
+                with conn:
+                    conn.execute(
+                        "INSERT INTO users (id, display_name, email,"
+                        " created_at) VALUES (?,?,?,?)"
+                        " ON CONFLICT(id) DO UPDATE SET"
+                        " display_name=excluded.display_name,"
+                        " email=excluded.email,"
+                        " created_at=excluded.created_at",
+                        (user.id, user.display_name, user.email,
+                         user.created_at),
+                    )
+            except sqlite3.IntegrityError as exc:
+                # The probe above races the unique index (measured 13/100
+                # concurrent redeems answering 500 at review): under
+                # concurrency the index fires first, and the driver's
+                # error must still come out as the port's own word — but
+                # ONLY for the email index; any other constraint keeps
+                # its own name (review: a NOT NULL failure reported as
+                # EmailTaken is a wrong stated reason).
+                if "users.email" in str(exc):
+                    raise EmailTaken(
+                        f"{user.email!r} already belongs to another user"
+                    ) from exc
+                raise
 
     def get_user(self, user_id: str) -> User | None:
         with self._connect() as conn:
@@ -895,6 +913,51 @@ class SqliteTenancyStore(_SqliteStore):
                     (user_id, account_id),
                 )
             return cur.rowcount > 0
+
+    def mint_first_account(
+        self, account: Account, membership: Membership, library: Library,
+    ) -> tuple[Account, Membership]:
+        # BEGIN IMMEDIATE serializes concurrent sign-ups the way the
+        # migration runner serializes fresh-file opens: the loser re-reads
+        # under the lock and adopts.
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = conn.execute(
+                    "SELECT * FROM memberships WHERE user_id = ?"
+                    " ORDER BY account_id LIMIT 1",
+                    (membership.user_id,),
+                ).fetchone()
+                if row is not None:
+                    held = _load_membership(row)
+                    existing = conn.execute(
+                        "SELECT * FROM accounts WHERE id = ?",
+                        (held.account_id,),
+                    ).fetchone()
+                    conn.rollback()
+                    return _load_account(existing), held
+                conn.execute(
+                    "INSERT INTO accounts (id, label, created_at)"
+                    " VALUES (?,?,?)",
+                    (account.id, account.label, account.created_at),
+                )
+                conn.execute(
+                    "INSERT INTO memberships (user_id, account_id, role,"
+                    " joined_at) VALUES (?,?,?,?)",
+                    (membership.user_id, membership.account_id,
+                     membership.role.value, membership.joined_at),
+                )
+                conn.execute(
+                    "INSERT INTO libraries (id, account_id, label,"
+                    " created_at) VALUES (?,?,?,?)",
+                    (library.id, library.account_id, library.label,
+                     library.created_at),
+                )
+                conn.commit()
+            except BaseException:
+                conn.rollback()
+                raise
+        return account, membership
 
     def list_accounts(
         self, user_id: str,
@@ -1060,6 +1123,93 @@ class SqliteAuthStore(_SqliteStore):
                     (before,),
                 )
             return cur.rowcount
+
+
+class SqliteInviteStore(_SqliteStore):
+    """Implements ``app.ports.invites.InviteStore`` (P4.3)."""
+
+    def __init__(self, path: str | Path) -> None:
+        super().__init__(path, kind="SqliteInviteStore")
+
+    def save_invite(self, invite: Invite) -> None:
+        with self._connect() as conn:
+            try:
+                with conn:
+                    conn.execute(
+                        "INSERT INTO invites (token_hash, account_id, role,"
+                        " created_by, created_at, expires_at, consumed_at,"
+                        " consumed_by) VALUES (?,?,?,?,?,?,?,?)",
+                        (invite.token_hash, invite.account_id,
+                         invite.role.value, invite.created_by,
+                         invite.created_at, invite.expires_at,
+                         invite.consumed_at, invite.consumed_by),
+                    )
+            except sqlite3.IntegrityError as exc:
+                # Discriminated: v16 gave this table FOREIGN KEYs, and a
+                # missing account reported as "already stored" is the
+                # wrong stated reason at its most literal (review).
+                if "FOREIGN KEY" in str(exc):
+                    raise ValueError(
+                        f"invite names an unknown account or user"
+                    ) from exc
+                raise ValueError(
+                    f"invite {invite.token_hash!r} already stored"
+                ) from exc
+
+    def get_invite(self, token_hash: str) -> Invite | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM invites WHERE token_hash = ?",
+                (token_hash,),
+            ).fetchone()
+        return _load_invite(row) if row else None
+
+    def list_open_invites(self, account_id: str, *, now: str) -> tuple[Invite, ...]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM invites WHERE account_id = ?"
+                " AND consumed_at IS NULL AND expires_at > ?"
+                " ORDER BY created_at, token_hash",
+                (account_id, now),
+            ).fetchall()
+        return tuple(_load_invite(r) for r in rows)
+
+    def consume_invite(self, token_hash: str, *, by: str, now: str) -> Invite | None:
+        # One guarded UPDATE — the single-use rule, same shape as the
+        # login token's consume.
+        with self._connect() as conn:
+            with conn:
+                cur = conn.execute(
+                    "UPDATE invites SET consumed_at = ?, consumed_by = ?"
+                    " WHERE token_hash = ? AND consumed_at IS NULL"
+                    " AND expires_at > ?",
+                    (now, by, token_hash, now),
+                )
+                if cur.rowcount == 0:
+                    return None
+                row = conn.execute(
+                    "SELECT * FROM invites WHERE token_hash = ?",
+                    (token_hash,),
+                ).fetchone()
+        return _load_invite(row)
+
+    def revoke_invite(self, account_id: str, token_hash: str) -> bool:
+        with self._connect() as conn:
+            with conn:
+                cur = conn.execute(
+                    "DELETE FROM invites WHERE token_hash = ?"
+                    " AND account_id = ? AND consumed_at IS NULL",
+                    (token_hash, account_id),
+                )
+            return cur.rowcount > 0
+
+
+def _load_invite(row: sqlite3.Row) -> Invite:
+    return Invite(token_hash=row["token_hash"], account_id=row["account_id"],
+                  role=Role(row["role"]), created_by=row["created_by"],
+                  created_at=row["created_at"], expires_at=row["expires_at"],
+                  consumed_at=row["consumed_at"],
+                  consumed_by=row["consumed_by"])
 
 
 def _load_session(row: sqlite3.Row) -> Session:

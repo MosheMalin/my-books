@@ -24,6 +24,9 @@ LINK_PATH = "/#/login?token="
 class ConsoleMailer:
     """Implements ``app.ports.auth.Mailer`` by printing to stderr."""
 
+    #: The sign-in screen tells the person where their link actually is.
+    delivery = "server-log"
+
     def __init__(self, base_url: str = "http://localhost:5173") -> None:
         # The DEV base: Vite's client, which proxies /api here. Configured
         # by the composition root, never read from the environment in here.

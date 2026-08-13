@@ -158,6 +158,20 @@ class TenancyStore(Protocol):
         stays (UI_PLAN §5's separation, one level up).
         """
 
+    def mint_first_account(
+        self, account: Account, membership: Membership, library: Library,
+    ) -> tuple[Account, Membership]:
+        """Sign-up's write (P4.1c): account + admin membership + first
+        library, ATOMICALLY, and idempotent for the user — if the user
+        already belongs to ANY account, nothing is written and the
+        existing (account, membership) comes back: the loser of a race
+        adopts the winner's world, the same rule the redeem route applies
+        to a raced user mint. Three separate saves here minted one
+        permanent account per concurrent request (measured, P4.1c's
+        data-integrity review), and an account-without-membership crash
+        window reintroduced the exact phantom `new_account` exists to
+        make unreachable."""
+
     def list_accounts(self, user_id: str) -> tuple[tuple[Account, Membership], ...]:
         """Every account this user belongs to, with the membership.
 

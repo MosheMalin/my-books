@@ -868,6 +868,38 @@ CREATE INDEX login_tokens_by_source ON login_tokens (source_hash, created_at);
 """
 
 
+# --- v16: invites (P4.3, §4.1 "invite once") -------------------------------
+#
+# ⚠ `consumed_by` carries NO foreign key while its two neighbours do,
+# deliberately: it is the link's own audit line, written to outlive the
+# membership it minted (see app/domain/invites.py) — an FK would make
+# a future user deletion either cascade the audit away or refuse the
+# deletion over a spent link. Recorded here, OUTSIDE the shipped
+# string, because v16 has run on the real file and rule 11 owns it.
+#
+# One table, same credential discipline as v15: the HASH of the token, never
+# the token — nothing stored can reproduce the link the admin was shown.
+# Joining is to the ACCOUNT (the FK is the boundary object itself), at the
+# role the invite carries. Revocation DELETEs (an invite that minted nothing
+# leaves nothing worth explaining); acceptance records who and when, so the
+# row outlives its use as the link's own audit line.
+_V16 = """
+CREATE TABLE invites (
+    token_hash  TEXT PRIMARY KEY,
+    account_id  TEXT NOT NULL REFERENCES accounts (id),
+    role        TEXT NOT NULL,
+    created_by  TEXT NOT NULL REFERENCES users (id),
+    created_at  TEXT NOT NULL,
+    expires_at  TEXT NOT NULL,
+    consumed_at TEXT,
+    consumed_by TEXT
+);
+
+-- The admin's screen: open invites of ONE account, oldest first.
+CREATE INDEX invites_by_account ON invites (account_id, created_at);
+"""
+
+
 # A step is either SQL to execute or a callable to run — both inside the same
 # once-only transaction. Callables exist because a derived column whose rule
 # lives in the domain must be backfilled BY that rule, not by a re-statement
@@ -888,6 +920,7 @@ MIGRATIONS: tuple[tuple[int, str | Step], ...] = (
     (13, _v13),
     (14, _v14),
     (15, _V15),
+    (16, _V16),
 )
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]

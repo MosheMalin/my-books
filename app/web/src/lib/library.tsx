@@ -88,6 +88,11 @@ export interface LibraryApi {
   failed: boolean
   switchTo: (id: string) => void
   create: (label: string) => Promise<LibraryDTO>
+  /** Absorb rows that appeared out-of-band — an accepted invite (P4.3) is
+   *  the case the mount-once ⚠ below always named. Rows merge by id; the
+   *  first NEW one becomes the selection, because "show me what just
+   *  opened up" is the whole reason the caller has rows in hand. */
+  absorb: (rows: LibraryDTO[]) => void
 }
 
 const Ctx = createContext<LibraryApi | null>(null)
@@ -99,13 +104,11 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   const [failed, setFailed] = useState(false)
 
   // ⚠ Fetched ONCE, on mount, and this provider sits above `LibraryScope`
-  // so it never remounts short of a full page load. A library that appears
-  // out-of-band mid-session (created via the API today; an accepted invite
-  // at P4.3) is invisible until a hard reload — acceptable while the only
-  // out-of-band path is the owner at a terminal, and EXACTLY the thing
-  // P4.3 must revisit: an in-app invite acceptance has to update this state
-  // the way `create()` does, or trigger a refetch, or the newly-joined
-  // member's switcher will not exist (review finding, 2026-08-10).
+  // so it never remounts short of a full page load. The case this always
+  // named — an accepted invite appearing mid-session — is answered since
+  // P4.3 by `absorb()`: the accept response's rows merge in the way
+  // `create()`'s do. A library created out-of-band at a terminal is still
+  // invisible until reload, which is fine: the terminal user can press F5.
   useEffect(() => {
     let live = true
     listLibraries()
@@ -150,6 +153,22 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     return made
   }, [])
 
+  const absorb = useCallback((rows: LibraryDTO[]) => {
+    if (!rows.length) return
+    setLibraries((prev) => {
+      const known = new Set(prev.map((l) => l.id))
+      const fresh = rows.filter((r) => !known.has(r.id))
+      if (fresh.length) {
+        const target = fresh[0]!.id
+        setCurrentLibrary(target)
+        remember(target)
+        globalThis.location.hash = LIBRARY_HASH
+        setCurrentId(target)
+      }
+      return [...prev, ...rows.filter((r) => !known.has(r.id))]
+    })
+  }, [])
+
   const value = useMemo<LibraryApi>(() => ({
     libraries,
     current: libraries.find((l) => l.id === currentId) ?? null,
@@ -158,7 +177,8 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     failed,
     switchTo,
     create,
-  }), [libraries, currentId, loading, failed, switchTo, create])
+    absorb,
+  }), [libraries, currentId, loading, failed, switchTo, create, absorb])
 
   // ⚠ Nothing renders until the library is known, and the reason is not
   // cosmetic. Every screen fetches on mount; a screen mounted before

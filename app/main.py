@@ -39,6 +39,7 @@ from app.adapters.disk_blobs import DiskBlobStore
 from app.adapters.queued_jobs import QueuedJobRunner
 from app.adapters.sqlite_store import (
     SqliteAuthStore,
+    SqliteInviteStore,
     SqliteBookStore,
     SqliteDecisionStore,
     SqliteDuplicateQueue,
@@ -94,6 +95,24 @@ def db_path() -> Path:
     return _work() / "product.db"
 
 
+def _lan_base_url() -> str:
+    """Where the sign-in link should land when BOOKSNAP_PUBLIC_URL is unset.
+
+    `localhost:5173` on the PHONE is the phone (P4.1b's UX review, MAJOR
+    8) — and capture is a phone flow, which is the stated reason the
+    servers bind 0.0.0.0. Best-effort LAN address via a connectionless
+    UDP socket (nothing is sent); localhost when the machine is offline.
+    """
+    import socket
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.connect(("192.0.2.1", 80))   # TEST-NET; no packet leaves
+            return f"http://{probe.getsockname()[0]}:5173"
+    except OSError:
+        return "http://localhost:5173"
+
+
 def blob_root() -> Path:
     """Where uploaded photos live.
 
@@ -112,6 +131,7 @@ def build() -> object:
     books = SqliteBookStore(path)
     tenancy = SqliteTenancyStore(path)
     return create_app(
+        docs=os.environ.get("BOOKSNAP_DOCS") == "1",
         # P4.1b: identity is the session cookie, resolved per request —
         # the dev principal and its bootstrap are DELETED, not parked
         # behind a flag (a flag that restores an auth bypass is the
@@ -164,8 +184,9 @@ def build() -> object:
         # provider; its base URL is Vite's dev client, which serves the
         # login route the link lands on.
         auth_store=SqliteAuthStore(path),
+        invite_store=SqliteInviteStore(path),
         mailer=ConsoleMailer(
-            os.environ.get("BOOKSNAP_PUBLIC_URL", "http://localhost:5173")
+            os.environ.get("BOOKSNAP_PUBLIC_URL") or _lan_base_url()
         ),
         clock=SystemClock(),
         id_gen=UuidIdGen(),

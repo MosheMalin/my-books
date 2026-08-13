@@ -260,7 +260,37 @@ shelf. Steps 5–6 of §4.3 stay skippable; the product works for someone who
 never invites anyone. Reviewers: `review-security`,
 `review-data-integrity`, `review-ux`, `review-quality`.
 
+✅ **P4.3 landed 2026-08-13** (schema v16). An invite is a SHARE-LINK, not
+a mail: the admin mints one (raw token in the response, once — stores hold
+the hash), hands it over their own channel, and the invitee joins the
+ACCOUNT at the carried role. Member management (§4.2's MANAGE_MEMBERS row
+finally consuming routes): list/role-change/remove with NoAdminLeft as
+409, open invites with revoke. The client: an account menu in the app bar
+(members panel for admins; sign-out moved behind it after the UX review
+measured the bare buttons 77px past an iPhone width), the invite-accept
+route that survives the sign-in detour via a stash, `absorb()` on the
+library provider so the joined account's libraries appear and select
+without a reload. The P4.1 review fleet's findings folded in the same
+landing — see the commit message for the list.
+
 ### P4.4 — deploy + RESTORE rehearsal (L)
+
+**Additions from the P4.1/P4.3 reviews (2026-08-13):**
+- a request-body size limit at uvicorn or the proxy (the pre-auth routes
+  buffer an unbounded body before validation — measured 100 MB in memory);
+- run uvicorn with `--proxy-headers --forwarded-allow-ips=<proxy>` or the
+  per-source rate door collapses to a whole-service cap behind TLS
+  (measured: 15 requests lock everyone out) — never an unconditional
+  X-Forwarded-For read;
+- the interactive docs page is OFF by default since P4.1b's review (an
+  unpinned CDN script on the origin that holds the session cookie;
+  `BOOKSNAP_DOCS=1` opts a dev machine in) — vendor swagger-ui into the
+  build or leave it off in production;
+- `BOOKSNAP_PUBLIC_URL` must be the deployed domain (the dev default now
+  guesses the LAN address so a phone can open the link; `.env.example`
+  documents it — created early, at the review's insistence);
+- the production Mailer implements `delivery` (the 202 carries how the
+  link travels; the login screen renders the server-log hint in dev).
 
 Not backup — restore: review decisions cannot be re-derived (§11.3), and
 this item gates handing a URL to a relative.

@@ -24,19 +24,25 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
   type ReactNode,
 } from 'react'
 
-import { navigateHash, useHash } from '@booksnap/ui'
+import { replaceHash, useHash } from '@booksnap/ui'
 
 import {
   SIGNED_OUT_EVENT,
+  listLibraries,
   redeemLoginToken,
   signOut as apiSignOut,
 } from '../api/client'
 import { LoginScreen } from './LoginScreen'
 import { LIBRARY_HASH, parseHash } from './route'
+
+/** Where an invite token waits out the sign-in detour (P4.3). Reset by
+ *  `src/test/setup.ts` like every other storage key. */
+export const PENDING_INVITE_KEY = 'booksnap.invite'
 
 interface AuthApi {
   /** Revoke the session server-side, then show the login screen. */
@@ -66,29 +72,53 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => globalThis.removeEventListener(SIGNED_OUT_EVENT, onSignedOut)
   }, [])
 
-  // The emailed link lands here. Redeem exactly once per hash value; the
-  // `live` guard covers the unmount-mid-fetch case, same as every other
-  // effect that fetches.
+  // An invite link opened by someone SIGNED OUT: the token must survive
+  // the sign-in detour (the redeem below navigates away). Stashed under
+  // its own storage key; `InviteGate` consumes it once inside the app.
+  useEffect(() => {
+    const route = parseHash(hash)
+    if (route.name === 'invite' && route.token) {
+      localStorage.setItem(PENDING_INVITE_KEY, route.token)
+    }
+  }, [hash])
+
+  // The emailed link lands here. THREE guards, each measured necessary
+  // (P4.1b's UX review, CRITICALs 1 and 2):
+  //   - `replaceHash`, never navigate: the token URL must not stay one
+  //     Back-press behind the app, where it re-fires consumed;
+  //   - `attempted` remembers the token this mount already traded, so
+  //     StrictMode's double effect run (dev) cannot redeem-then-401 the
+  //     same token and paint "expired" over a fresh session;
+  //   - a 401 probes /libraries before believing itself: a mail scanner
+  //     prefetching the link consumes it, and the human who then taps IS
+  //     signed in — the cookie their browser holds is the truth, not the
+  //     token's second-use refusal.
+  const attempted = useRef<string | null>(null)
   useEffect(() => {
     const route = parseHash(hash)
     if (route.name !== 'login' || !route.token) return
+    if (attempted.current === route.token) return
+    attempted.current = route.token
     let live = true
+    const arrive = () => {
+      setLinkError(false)
+      replaceHash(LIBRARY_HASH)
+      setState('in')
+      setEpoch((e) => e + 1)
+    }
     redeemLoginToken(route.token)
-      .then(() => {
-        if (!live) return
-        setLinkError(false)
-        navigateHash(LIBRARY_HASH)
-        setState('in')
-        setEpoch((e) => e + 1)
-      })
-      .catch(() => {
-        if (!live) return
-        // Expired, consumed, invented — the server answers one 401 for
-        // all of them, and the remedy is one sentence on the screen.
-        setLinkError(true)
-        navigateHash(LIBRARY_HASH)
-        setState('out')
-      })
+      .then(() => live && arrive())
+      .catch(() =>
+        listLibraries()
+          .then(() => live && arrive())
+          .catch(() => {
+            if (!live) return
+            // Expired, consumed, invented — one sentence, one remedy.
+            setLinkError(true)
+            replaceHash(LIBRARY_HASH)
+            setState('out')
+          }),
+      )
     return () => {
       live = false
     }

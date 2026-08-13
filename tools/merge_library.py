@@ -151,16 +151,6 @@ def main() -> int:
         print(f"no database at {db}")
         return 2
 
-    # The dev principal's own library is re-bootstrapped by app/main.py on
-    # the next server start — retiring it would resurrect an EMPTY ghost
-    # while its books live under another id (review F9).
-    default_lib = os.environ.get("BOOKSNAP_DEV_LIBRARY", "dev-library")
-    if args.src == default_lib:
-        print(f"REFUSED: {args.src} is the principal's own default library — "
-              "retiring it would just re-bootstrap an empty ghost. You "
-              "almost certainly meant it as --dst.")
-        return 1
-
     if not args.execute:
         return _dry_run(db, args.src, args.dst)
     if args.confirm_retire != args.src:

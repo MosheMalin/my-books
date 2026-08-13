@@ -238,6 +238,23 @@ const HE = {
       admin: 'ניהול',
     } as Record<string, string>,
 
+  // --- members and invites (P4.3, §4.1) ---
+  members_open: 'משתתפים',
+  members_title: 'משתתפי החשבון',
+  members_loading: 'טוען…',
+  member_role_of: 'תפקיד של',
+  member_remove: 'הסרה',
+  invite_title: 'הזמנה לחשבון',
+  invite_role: 'תפקיד למוזמן',
+  invite_create: 'יצירת קישור הזמנה',
+  invite_once: 'העתיקו עכשיו — הקישור לא יוצג שוב.',
+  invite_link: 'קישור ההזמנה',
+  invite_copy: 'העתקה',
+  invite_copied: 'הועתק',
+  invite_expires: 'בתוקף עד',
+  invite_revoke: 'ביטול',
+  invite_dead: 'ההזמנה פגה, נוצלה או בוטלה — בקשו קישור חדש.',
+
   // --- sign-in (P4.1b/P4.1c, VISION §3/§4.3) ---
   onboard_title: 'הספרייה הראשונה שלך',
   onboard_intro: 'תנו שם לאוסף — למשל שם המשפחה. מדפים וספרים מצטרפים מיד אחר כך.',
@@ -249,6 +266,11 @@ const HE = {
   login_sending: 'שולח…',
   login_sent: 'אם הכתובת יכולה להיכנס לכאן, קישור בדרך אליה. פתחו אותו מהמכשיר הזה.',
   login_link_bad: 'הקישור פג תוקף או שכבר נוצל — בקשו קישור חדש.',
+  login_sent_log: 'בגרסת הפיתוח אין דואר: הקישור מודפס ביומן השרת, במחשב שמריץ אותו.',
+  login_again: 'שליחה שוב',
+  login_rate: 'יותר מדי בקשות — נסו שוב בעוד כשעה.',
+  login_error: 'אין חיבור לשרת — נסו שוב.',
+  account_menu: 'חשבון',
   sign_out: 'התנתקות',
   lang: 'EN',
 }
@@ -477,6 +499,23 @@ const EN: Strings = {
       admin: 'Admin',
     },
 
+  // --- members and invites (P4.3, §4.1) ---
+  members_open: 'People',
+  members_title: 'Account members',
+  members_loading: 'Loading…',
+  member_role_of: 'Role of',
+  member_remove: 'Remove',
+  invite_title: 'Invite to the account',
+  invite_role: 'Role for the invitee',
+  invite_create: 'Create invite link',
+  invite_once: 'Copy it now — the link will not be shown again.',
+  invite_link: 'Invite link',
+  invite_copy: 'Copy',
+  invite_copied: 'Copied',
+  invite_expires: 'Valid until',
+  invite_revoke: 'Revoke',
+  invite_dead: 'That invite has expired, was used, or was revoked — ask for a new link.',
+
   // --- sign-in (P4.1b/P4.1c, VISION §3/§4.3) ---
   onboard_title: 'Your first library',
   onboard_intro: 'Name the collection — the family name works well. Shelves and books come right after.',
@@ -490,6 +529,12 @@ const EN: Strings = {
     + 'Open it on this device.',
   login_link_bad: 'That link has expired or was already used — request a '
     + 'new one.',
+  login_sent_log: 'The dev build has no mail: the link is printed in the '
+    + 'server log, on the machine running it.',
+  login_again: 'Send again',
+  login_rate: 'Too many requests — try again in about an hour.',
+  login_error: 'Cannot reach the server — try again.',
+  account_menu: 'Account',
   sign_out: 'Sign out',
   lang: 'עב',
 }

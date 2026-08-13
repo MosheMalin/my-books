@@ -15,9 +15,10 @@ from __future__ import annotations
 
 from fastapi import Depends, HTTPException, Request, status
 
-from app.domain import Library, LibraryRef, Membership
+from app.domain import Account, Library, LibraryRef, Membership
 from app.ports import Clock, IdGen, Principal
 from app.ports.auth import AuthStore, Mailer
+from app.ports.invites import InviteStore
 from app.ports.blobs import BlobStore
 from app.ports.decisions import DecisionStore
 from app.ports.duplicates import DuplicateQueue
@@ -84,6 +85,14 @@ def get_tenancy_store() -> TenancyStore:
     raise RuntimeError("no TenancyStore bound; build the app via create_app")
 
 
+def requested_library_id(request: Request) -> str | None:
+    """The library reference this request carries, header winning over the
+    query parameter — ONE copy of the precedence (a second, unpinned copy
+    in `operating_account` survived a reversal at review)."""
+    return (request.headers.get(LIBRARY_HEADER)
+            or request.query_params.get(LIBRARY_PARAM))
+
+
 def current_library(
     request: Request,
     principal: Principal = Depends(get_principal),
@@ -120,14 +129,18 @@ def current_library(
     existence of other customers' libraries from the one place that can see
     all of them.
     """
-    requested = (request.headers.get(LIBRARY_HEADER)
-                 or request.query_params.get(LIBRARY_PARAM))
+    requested = requested_library_id(request)
     if not requested:
-        for account, _membership in tenancy.list_accounts(principal.id):
-            libraries = tenancy.list_libraries(account.id)
-            if libraries:
-                return libraries[0].ref
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "no such library")
+        rows = [lib
+                for account, _m in tenancy.list_accounts(principal.id)
+                for lib in tenancy.list_libraries(account.id)]
+        if not rows:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "no such library")
+        # The SAME flat order the switcher renders — first-account-first
+        # measurably diverged from it the moment a second account existed
+        # (P4.1b's quality review, with invites one item away).
+        rows.sort(key=lambda lib: lib.sort_key)
+        return rows[0].ref
     library, membership = owner_membership(tenancy, principal.id, requested)
     if library is None or membership is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no such library")
@@ -179,6 +192,46 @@ def owner_membership(
     if library is None:
         return None, None
     return library, membership
+
+
+def operating_account(
+    request: Request, principal: Principal, tenancy: TenancyStore,
+) -> tuple[Account, Membership] | None:
+    """The ACCOUNT a user-scoped write acts on — the one the caller is
+    OPERATING AS — or ``None`` for a caller who belongs to none (the
+    sign-up case, which only `create_library` may answer by minting).
+
+    One copy of the rule, since P4.3 needs it for member management too:
+    the account owning the library the request itself names (the header
+    every call carries — the client's actual selection); with no header,
+    the caller's sole account. Several accounts and no header is refused
+    with instructions rather than guessed at — "the first account we list"
+    was a cross-tenant write the moment a second membership existed
+    (P3.7b's review, M6).
+
+    Not a FastAPI dependency, like `owner_membership` beside it: the
+    routers that need it also need its ``None`` case to mean different
+    things, which a Depends cannot express.
+    """
+    requested = requested_library_id(request)
+    if requested:
+        library, membership = owner_membership(tenancy, principal.id, requested)
+        if library is None or membership is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "no such library")
+        account = tenancy.get_account(library.account_id)
+        if account is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "no such library")
+        return account, membership
+    mine = tenancy.list_accounts(principal.id)
+    if len(mine) == 1:
+        return mine[0]
+    if not mine:
+        return None
+    raise HTTPException(
+        status.HTTP_400_BAD_REQUEST,
+        "you belong to several accounts; name a library of the one this "
+        "should go under (the X-Booksnap-Library header)",
+    )
 
 
 def owning_account(tenancy: TenancyStore, library: LibraryRef) -> str:
@@ -241,6 +294,10 @@ def get_reader() -> Reader:
 
 def get_job_runner() -> JobRunner:
     raise RuntimeError("no JobRunner bound; build the app via create_app")
+
+
+def get_invite_store() -> InviteStore:
+    raise RuntimeError("no InviteStore bound; build the app via create_app")
 
 
 def get_auth_store() -> AuthStore:

@@ -18,10 +18,9 @@ them is deliberately narrow:
     in tests, and a session credential must never inherit that property by
     someone swapping an adapter.
 
-⚠ In P4.1a these routes are ADDITIVE: the dev principal still answers every
-other request, and nothing consumes the session cookie yet. P4.1b points the
-resolver at it and deletes the dev identity — the plan
-(`planning/LOGIN_PLAN.md`) stages the cutover deliberately.
+Since P4.1b the session cookie these routes mint is the ONLY identity:
+the resolver reads it per request (`app.api.principal`), and the dev
+principal is deleted, not parked.
 
 ⚠ The cookie carries no ``Secure`` flag yet: the household flow is plain
 HTTP on the LAN until P4.4 puts TLS in front, and a Secure cookie on HTTP
@@ -39,6 +38,7 @@ from app.api.dto import LoginLinkRequest, SessionCreate, UserDTO
 from app.domain import User
 from app.domain.auth import (
     LINK_RATE_PER_EMAIL,
+    LINK_RATE_PER_EMAIL_WIDE,
     LINK_RATE_PER_SOURCE,
     LINK_RATE_WINDOW,
     SESSION_LIFETIME,
@@ -110,7 +110,9 @@ def request_login_link(
     if (auth.count_recent_login_tokens(email=email, source_hash=source,
                                        since=since) >= LINK_RATE_PER_EMAIL
             or auth.count_recent_login_tokens(source_hash=source, since=since)
-            >= LINK_RATE_PER_SOURCE):
+            >= LINK_RATE_PER_SOURCE
+            or auth.count_recent_login_tokens(email=email, since=since)
+            >= LINK_RATE_PER_EMAIL_WIDE):
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
             f"too many sign-in links; try again in "
@@ -119,7 +121,10 @@ def request_login_link(
     token = secrets.token_urlsafe(32)
     auth.save_login_token(new_login_token(token, email, now, source_hash=source))
     mailer.send_login_link(email, token)
-    return {"detail": "if that address can sign in here, a link is on its way"}
+    # `delivery` is a fact about the transport, identical for every
+    # address — the anti-enumeration answer above it is untouched.
+    return {"detail": "if that address can sign in here, a link is on its way",
+            "delivery": mailer.delivery}
 
 
 @router.post("/session", response_model=UserDTO,

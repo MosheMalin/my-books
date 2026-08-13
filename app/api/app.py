@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from app import API_PREFIX, __version__
 from app.api.deps import (
     get_auth_store,
+    get_invite_store,
     get_blob_store,
     get_book_store,
     get_clock,
@@ -36,6 +37,7 @@ from app.api.deps import (
 from app.api.routers import (
     auth,
     books,
+    members,
     duplicates,
     images,
     libraries,
@@ -45,6 +47,7 @@ from app.api.routers import (
 )
 from app.ports import Clock, IdGen, Principal
 from app.ports.auth import AuthStore, Mailer
+from app.ports.invites import InviteStore
 from app.ports.blobs import BlobStore
 from app.ports.decisions import DecisionStore
 from app.ports.duplicates import DuplicateQueue
@@ -90,6 +93,7 @@ def bind_ports(
     tenancy_store: TenancyStore | None = None,
     auth_store: AuthStore | None = None,
     mailer: Mailer | None = None,
+    invite_store: InviteStore | None = None,
 ) -> None:
     """Point an already-built app's ports at these implementations.
 
@@ -113,13 +117,16 @@ def bind_ports(
                       (get_duplicate_queue, duplicate_queue),
                       (get_reader, reader), (get_job_runner, job_runner),
                       (get_tenancy_store, tenancy_store),
-                      (get_auth_store, auth_store), (get_mailer, mailer)):
+                      (get_auth_store, auth_store), (get_mailer, mailer),
+                      (get_invite_store, invite_store)):
         if impl is not None:
             app.dependency_overrides[dep] = _always(impl)
 
 
 def create_app(
     principal_provider: Callable[[], Principal],
+    *,
+    docs: bool = True,
     book_store: BookStore | None = None,
     clock: Clock | None = None,
     id_gen: IdGen | None = None,
@@ -133,6 +140,7 @@ def create_app(
     tenancy_store: TenancyStore | None = None,
     auth_store: AuthStore | None = None,
     mailer: Mailer | None = None,
+    invite_store: InviteStore | None = None,
     web_dist: Path | None = None,
 ) -> FastAPI:
     """Build the product API.
@@ -155,7 +163,12 @@ def create_app(
         # Every route is versioned (H3). The prefix lives on the router, not
         # on each path, so an unversioned route cannot be added by accident.
         openapi_url="/api/v1/openapi.json",
-        docs_url="/api/v1/docs",
+        # ⚠ The docs page loads swagger-ui from a CDN, unpinned — a script
+        # that runs same-origin with a 90-day session cookie since P4.1b
+        # (security review). Off by default; BOOKSNAP_DOCS=1 opts a dev
+        # machine in. The OpenAPI document itself stays on — the contract
+        # tooling reads it and it carries no credential.
+        docs_url="/api/v1/docs" if docs else None,
         redoc_url=None,
     )
     app.include_router(meta.router, prefix=API_PREFIX)
@@ -167,6 +180,8 @@ def create_app(
     # caller uses to find out which libraries it may name (see the router's
     # own ⚠⚠, and the closed exemption list in tests/test_api.py).
     app.include_router(libraries.router, prefix=API_PREFIX)
+    # User-scoped too (P4.3): membership is a fact about the ACCOUNT.
+    app.include_router(members.router, prefix=API_PREFIX)
     app.include_router(books.router, prefix=API_PREFIX)
     app.include_router(shelves.router, prefix=API_PREFIX)
     app.include_router(shelves.captures, prefix=API_PREFIX)
@@ -182,7 +197,7 @@ def create_app(
         read_store=read_store, decision_store=decision_store,
         duplicate_queue=duplicate_queue, reader=reader,
         job_runner=job_runner, tenancy_store=tenancy_store,
-        auth_store=auth_store, mailer=mailer,
+        auth_store=auth_store, mailer=mailer, invite_store=invite_store,
     )
 
     # Static client last: mounting at "/" first would shadow the API routes.

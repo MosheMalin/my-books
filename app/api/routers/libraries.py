@@ -46,6 +46,7 @@ from app.api.deps import (
     get_id_gen,
     get_principal,
     get_tenancy_store,
+    operating_account,
     owner_membership,
 )
 from app.api.dto import LibraryCreate, LibraryDTO, LibraryPatch
@@ -65,49 +66,6 @@ from app.ports.tenancy import TenancyStore
 router = APIRouter(prefix="/libraries", tags=["libraries"])
 
 
-def _account(
-    request: Request, principal: Principal, tenancy: TenancyStore,
-) -> tuple[Account, Membership] | None:
-    """The account a new library goes under — the one the caller is
-    OPERATING AS (P4.1b) — or ``None`` for the caller who has none, which
-    is `create_library`'s sign-up case (P4.1c), not an error here.
-
-    "Which account?" has one answer per request and it is answered in ONE
-    place. The rule: the account owning the library the request itself
-    names (the same ``X-Booksnap-Library`` header every other call
-    carries — the client's actual selection, which is what "operating as"
-    means); with no header, the caller's sole account. A caller in SEVERAL
-    accounts with no header is refused with instructions rather than
-    guessed at — "the first account we happen to list" was a cross-tenant
-    write the moment a second membership existed (P3.7b's review, M6).
-
-    No user row is minted here (the session's user exists by construction),
-    and no account is minted here — the sign-up branch in `create_library`
-    owns that, so the ONLY route that can mint a customer is the one §4.3
-    names.
-    """
-    requested = (request.headers.get(deps.LIBRARY_HEADER)
-                 or request.query_params.get(deps.LIBRARY_PARAM))
-    if requested:
-        library, membership = owner_membership(tenancy, principal.id, requested)
-        if library is None or membership is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "no such library")
-        account = tenancy.get_account(library.account_id)
-        if account is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "no such library")
-        return account, membership
-    mine = tenancy.list_accounts(principal.id)
-    if len(mine) == 1:
-        return mine[0]
-    if not mine:
-        return None
-    raise HTTPException(
-        status.HTTP_400_BAD_REQUEST,
-        "you belong to several accounts; name a library of the one this "
-        "should go under (the X-Booksnap-Library header)",
-    )
-
-
 @router.get("", response_model=list[LibraryDTO],
             summary="Libraries this user can reach")
 def list_libraries(
@@ -119,15 +77,11 @@ def list_libraries(
     A user that belongs to nothing gets ``[]``, not an error — a real
     state (P4.3's sign-up, before the first library) the client has to render.
 
-    ⚠ **Store data only, with no special case for the principal's own default
-    library** — even though :func:`app.api.deps.current_library` serves that
-    one without consulting the store. Patching it in here would put a second
-    copy of the resolver's dev-trusted rule in a second module, and the day
-    they disagreed the switcher would be missing the very library on screen.
-    Guaranteeing the membership row exists is the composition root's job
-    (``app.main:_bootstrap_dev_user``), and
-    ``test_the_library_meta_resolves_is_always_one_the_switcher_lists`` pins
-    the agreement rather than trusting it.
+    Store data only. Since P4.1b the resolver reads the SAME rows this
+    lists — the dev-trusted special case died with the dev identity — so
+    the switcher and the resolver cannot disagree by construction;
+    ``test_the_library_meta_resolves_is_always_one_the_switcher_lists``
+    keeps them pinned anyway.
     """
     rows = [
         (lib, membership)
@@ -162,15 +116,15 @@ def create_library(
     ⚠ This route is the DELIBERATE escape hatch for §4.1's settled tenancy
     rule (owner, 2026-08-10): a second Library under one account is legal —
     it is the rare genuinely-separate collection (a shop's stock, a
-    classroom set) — and the ONLY discouragement is client-side, on purpose:
-    the app-bar switcher renders no create action until a second library
-    already exists (`LibrarySwitcher.tsx`). A server-side count cap was
-    considered and REFUSED: it would block the very cases the decision
-    blesses, a quota is a different axis from P3.2's (role × capability)
-    policy data, and the structural half of the rule is already enforced
-    where it matters — a Library cannot carry a room or a place
-    (`test_a_library_is_not_a_place`). Do not "fix" this route in either
-    direction without re-reading VISION §4.1.
+    classroom set) — and the everyday discouragement is client-side, on
+    purpose: the app-bar switcher renders no create action until a second
+    library already exists (`LibrarySwitcher.tsx`). The [OPEN] count cap
+    CLOSED at P4.1c (owner, 2026-08-13: 5 per account) — a retry-loop and
+    abuse guard like §1.2's run-rate cap, set high enough to never block a
+    legitimate separate collection, which is why 5 and not 1. The
+    structural half of the rule stays where it was — a Library cannot
+    carry a room or a place (`test_a_library_is_not_a_place`). Do not
+    change either half without re-reading VISION §4.1.
 
     ⚠⚠ **Admin-only, and P3.7b is what made that necessary.** Before the
     boundary moved, this route minted a BRAND-NEW tenant with the caller as
@@ -197,7 +151,7 @@ def create_library(
     is cleared the honest way, and `LIBRARIES_PER_ACCOUNT` never binds a
     first library.
     """
-    resolved = _account(request, principal, tenancy)
+    resolved = operating_account(request, principal, tenancy)
     now = clock.now_iso()
     if resolved is None:
         user = tenancy.get_user(principal.id)
@@ -205,17 +159,26 @@ def create_library(
             raise HTTPException(status.HTTP_401_UNAUTHORIZED,
                                 "this session's user no longer exists")
         try:
-            account, membership = new_account(
+            minted, first = new_account(
                 id=ids.new_id(), owner=user, created_at=now,
             )
             library = new_library(id=ids.new_id(), label=body.label,
-                                  account=account, created_at=now)
+                                  account=minted, created_at=now)
         except LibraryNeedsAName as exc:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
-        tenancy.save_account(account)
-        tenancy.save_membership(membership)
-        tenancy.save_library(library)
-        return LibraryDTO.of(library, membership)
+        # ONE atomic, idempotent write: a raced double sign-up (two tabs,
+        # a pull-to-refresh mid-flight) adopts the winner's account
+        # instead of minting a permanent twin, and no crash window can
+        # leave an account without its membership (P4.1c's data-integrity
+        # review measured both).
+        account, membership = tenancy.mint_first_account(
+            minted, first, library)
+        if account.id == minted.id:
+            return LibraryDTO.of(library, membership)
+        # Lost the race: fall through to the existing-account path with
+        # the winner's account — the same request now creates a SECOND
+        # library there only if it clears the same gates as anyone else.
+        resolved = (account, membership)
 
     account, membership = resolved
     if not allowed(membership.role, Capability.MANAGE_LIBRARY):
@@ -226,6 +189,11 @@ def create_library(
     # The cap is a number on the ACCOUNT, checked at create — never a
     # second scope on the data (VISION §4.1; the constant argues for its
     # own value). 403, not 429: this is not a window that reopens.
+    # ⚠ ADVISORY under concurrency, stated plainly (P4.1c's review
+    # measured 14 at n=10): the count and the insert are two operations,
+    # and racing past a loop-guard by the width of a burst harms nothing
+    # it protects against. If it ever must BIND, count and insert become
+    # one transaction — do not trust this check for that.
     if len(tenancy.list_libraries(account.id)) >= LIBRARIES_PER_ACCOUNT:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,

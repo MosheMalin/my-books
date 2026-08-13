@@ -189,18 +189,13 @@ def _reads_of_account(
     revision refuses. Fanning out HERE keeps the boundary question in the
     api layer, where the account is already known.
 
-    ⚠ `account_id` comes from `deps.owning_account`, which is where the
-    fallback for a library with no row lives — see its own note. When
-    that happens the account id IS the library id, so the list below is
-    empty and the named library is counted directly.
-
-    ⚠ One consequence of the dev-trusted default library, to be deleted
-    with it at P4.1: if `BOOKSNAP_DEV_LIBRARY` names a library owned by an
-    account the principal does not belong to, `current_library` serves it
-    without a membership check and this then counts that account's OTHER
-    libraries — echoing the total back in the 429 text. One integer, only
-    reachable by operator misconfiguration, and named here so P4.1 does
-    not inherit it silently.
+    Since P4.1b `deps.owning_account` RAISES for a library with no row
+    rather than inventing a key, and every library a request reaches came
+    through the membership join — the two dev-era edge cases this
+    docstring used to carry (an invented account id; a misconfigured
+    `BOOKSNAP_DEV_LIBRARY` counting a foreign account) died with the dev
+    identity. The empty-siblings branch below is now pure defence: a
+    resolved library's account owns at least that library.
     """
     siblings = tenancy.list_libraries(account_id)
     if not siblings:

@@ -89,6 +89,15 @@ class AuthStore(Protocol):
 class Mailer(Protocol):
     """Outbound mail, magic links only — a wider interface is speculative."""
 
+    @property
+    def delivery(self) -> str:
+        """How the link travels — ``"mail"`` for a real mailbox,
+        ``"server-log"`` for the dev adapter. Returned on the 202 so the
+        sign-in screen can stop claiming "check your inbox" while the link
+        sits in a log the phone user cannot read (P4.1b's UX review). A
+        fact about the TRANSPORT, identical for every address, so the
+        anti-enumeration property is untouched."""
+
     def send_login_link(self, email: str, token: str) -> None:
         """Deliver a sign-in link carrying ``token`` to ``email``.
 

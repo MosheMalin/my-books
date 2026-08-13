@@ -36,11 +36,10 @@ def get_meta(
         version=__version__,
         api_version=API_VERSION,
         library=LibraryRefDTO(id=library.id, label=library.label),
-        # The user row may not exist yet on a fresh database (it is created
-        # by the composition root, or on the first `POST /libraries`). Falling
-        # back to the principal's own id keeps `meta` a route that always
-        # answers — it is the one the client calls to find out whether the
-        # server is there at all.
+        # The session's user row exists by construction (the redeem
+        # mints it); the fallback is for the moment a user row is deleted
+        # out-of-band while a session still names it — meta answers
+        # rather than 500s, like everything else on the read path.
         user=UserDTO(
             id=principal.id,
             display_name=user.display_name if user else "",

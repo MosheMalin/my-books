@@ -40,6 +40,21 @@ export function navigateHash(next: string): void {
 }
 
 /**
+ * Navigate WITHOUT leaving the old hash in history.
+ *
+ * For routes that must not be returnable: a redeemed sign-in token
+ * (`#/login?token=…`) one Back-press behind the app re-fires a consumed
+ * credential and throws a live session onto a false "link expired" screen
+ * — measured, P4.1b's UX review, CRITICAL 1. `location.replace` swaps the
+ * current history entry and still fires `hashchange`, which
+ * `history.replaceState` would not.
+ */
+export function replaceHash(next: string): void {
+  if (globalThis.location.hash === next) return
+  globalThis.location.replace(next)
+}
+
+/**
  * Go back, or to `fallback` when there is nowhere to go.
  *
  * `history.back()` rather than navigating to the list, so returning from a
