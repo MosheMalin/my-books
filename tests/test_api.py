@@ -37,6 +37,7 @@ from app import API_PREFIX, __version__
 from app.adapters.disk_blobs import DiskBlobStore
 from app.adapters.queued_jobs import QueuedJobRunner
 from app.adapters.memory_store import (
+    MemoryAuthStore,
     MemoryBookStore,
     MemoryDecisionStore,
     MemoryDuplicateQueue,
@@ -73,6 +74,27 @@ TEST_LIBRARY = LibraryRef(id="lib-test", label="Test library")
 class StubClock:
     def now_iso(self) -> str:
         return "2026-08-07T12:00:00+00:00"
+
+
+class TickClock:
+    """A clock a test can move — expiry rules need 'later' to be steerable."""
+
+    def __init__(self, at: str = "2026-08-07T12:00:00+00:00") -> None:
+        self.at = at
+
+    def now_iso(self) -> str:
+        return self.at
+
+
+class StubMailer:
+    """Implements app.ports.auth.Mailer by remembering what it was handed —
+    the token comes back out of here, the way a person reads it off a mail."""
+
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, str]] = []
+
+    def send_login_link(self, email: str, token: str) -> None:
+        self.sent.append((email, token))
 
 
 class SeqIdGen:
@@ -158,7 +180,8 @@ def after_each() -> None:
 
 def _app(principal: StubPrincipal | None = None, store=None, shelves=None,
          blobs=None, reads=None, reader=None, jobs=None, decisions=None,
-         duplicates=None, tenancy=None, recycle: bool = True):
+         duplicates=None, tenancy=None, auth=None, mailer=None, clock=None,
+         recycle: bool = True):
     """Build (or recycle) an app with these ports bound.
 
     :param recycle: pass ``False`` for an app whose per-app state a later test
@@ -176,7 +199,9 @@ def _app(principal: StubPrincipal | None = None, store=None, shelves=None,
         duplicate_queue=duplicates if duplicates is not None else MemoryDuplicateQueue(),
         reader=reader,
         job_runner=jobs if jobs is not None else QueuedJobRunner(),
-        clock=StubClock(),
+        auth_store=auth if auth is not None else MemoryAuthStore(),
+        mailer=mailer if mailer is not None else StubMailer(),
+        clock=clock if clock is not None else StubClock(),
         id_gen=SeqIdGen(),
     )
     if not recycle:
@@ -1086,9 +1111,23 @@ _USER_SCOPED = {
     ("PATCH", f"{API_PREFIX}/libraries/{{library_id}}"),
 }
 
+# The routes a caller uses to BECOME a principal (P4.1a) — the only ones
+# allowed to resolve neither a library nor a user, because both exist on the
+# other side of them. Same closed-list discipline as _USER_SCOPED, keyed by
+# (METHOD, path) for the same recorded reason, and their own meta-test below
+# asserts what "pre-auth" must mean structurally: no library resolution, no
+# capability, and no principal — a sign-in route that consulted the principal
+# would be trusting the thing it exists to establish.
+_PRE_AUTH = {
+    ("POST", f"{API_PREFIX}/auth/link"),
+    ("POST", f"{API_PREFIX}/auth/session"),
+    ("DELETE", f"{API_PREFIX}/auth/session"),
+}
+
 
 def _exempt(path: str, route: APIRoute) -> bool:
-    return all((m, path) in _USER_SCOPED for m in route.methods)
+    return all((m, path) in _USER_SCOPED or (m, path) in _PRE_AUTH
+               for m in route.methods)
 
 
 def test_every_api_route_resolves_its_library_from_the_principal():
@@ -1260,6 +1299,30 @@ def test_the_user_scoped_routes_are_still_scoped_by_something():
             f"{method} {path} is exempted but does not exist"
         assert deps.get_principal in _dependency_calls(routes[(method, path)]), \
             f"{method} {path} resolves neither a library nor a user"
+
+
+def test_the_pre_auth_routes_touch_no_principal_and_no_library():
+    """The _PRE_AUTH exemption's own structural half (P4.1a). A sign-in
+    route that depended on the principal would be trusting the identity it
+    exists to establish; one that resolved a library would 404 every
+    fresh browser. And each must at least be scoped to the auth store —
+    "exempt" never means "unscoped". Probed with each route's OWN methods
+    (the P3.2 lesson: a path-only check inherits exemptions silently)."""
+    from app.api.policy import CAPABILITY_ATTR
+
+    routes = {(m, p): r for p, r in _api_routes(_app()) for m in r.methods}
+    for method, path in _PRE_AUTH:
+        assert (method, path) in routes, \
+            f"{method} {path} is exempted but does not exist"
+        calls = _dependency_calls(routes[(method, path)])
+        assert deps.current_library not in calls, \
+            f"{method} {path} resolves a library before anyone is signed in"
+        assert deps.get_principal not in calls, \
+            f"{method} {path} consults the principal it exists to establish"
+        assert not any(hasattr(c, CAPABILITY_ATTR) for c in calls), \
+            f"{method} {path} declares a capability with nobody to hold it"
+        assert deps.get_auth_store in calls, \
+            f"{method} {path} is not even auth-scoped"
 
 
 def test_library_resolution_has_exactly_one_implementation():
@@ -4153,3 +4216,164 @@ def test_acting_on_a_finding_that_is_not_in_this_read_is_a_404():
         r = c.post(f"{API_PREFIX}/shelves/{shelf_id}/reads/{read_id}"
                    f"/findings/nope/retract")
         assert r.status_code == 404, r.text
+
+
+# --- auth: the magic link (P4.1a, VISION §3) ------------------------------
+#
+# Additive in P4.1a: nothing consumes the session cookie yet (P4.1b points
+# the resolver at it). What is pinned here is the credential lifecycle --
+# rate-limited, single-use, expiring -- and the anti-enumeration answer.
+
+def test_a_login_link_arrives_and_mints_a_session_cookie():
+    """The happy path end to end: ask for a link, read the token out of the
+    mail, trade it for a cookie. The cookie is HttpOnly (a script that can
+    read it can BE you) and carries the raw token -- the store holds only
+    its hash, which this test asserts by looking."""
+    from app.domain.auth import hash_token
+
+    mailer = StubMailer()
+    auth = MemoryAuthStore()
+    with TestClient(_app(mailer=mailer, auth=auth)) as c:
+        r = c.post(f"{API_PREFIX}/auth/link", json={"email": " Moshe@Example.COM "})
+        assert r.status_code == 202, r.text
+        assert len(mailer.sent) == 1
+        email, token = mailer.sent[0]
+        assert email == "moshe@example.com", "the address was not normalized"
+
+        r = c.post(f"{API_PREFIX}/auth/session", json={"token": token})
+        assert r.status_code == 201, r.text
+        cookie = r.headers.get("set-cookie", "")
+        assert "booksnap_session=" in cookie
+        assert "HttpOnly" in cookie and "samesite=lax" in cookie.lower()
+        raw = r.cookies["booksnap_session"]
+        assert auth.get_session(hash_token(raw)) is not None, (
+            "the store does not hold the cookie's hash")
+        assert auth.get_session(raw) is None, (
+            "the store holds the RAW token -- a leaked database logs people in")
+
+
+def test_the_link_answer_never_says_whether_an_address_is_known():
+    """Requesting a link for a member and for a stranger must be
+    indistinguishable on the wire -- an enumeration door on the sign-in
+    route undoes §4.2's 404-never-403 everywhere else."""
+    p = StubPrincipal()
+    tenancy = _tenancy(p)
+    tenancy.save_user(User(id="u-known", email="known@example.com"))
+    with TestClient(_app(principal=p, tenancy=tenancy)) as c:
+        known = c.post(f"{API_PREFIX}/auth/link",
+                       json={"email": "known@example.com"})
+        stranger = c.post(f"{API_PREFIX}/auth/link",
+                          json={"email": "nobody@example.com"})
+    assert known.status_code == stranger.status_code == 202
+    assert known.json() == stranger.json()
+
+
+def test_a_login_link_is_single_use():
+    """§3: single-use. The second redeem gets the same 401 as an invented
+    token -- which guess was nearly right is not on the wire."""
+    mailer = StubMailer()
+    with TestClient(_app(mailer=mailer)) as c:
+        c.post(f"{API_PREFIX}/auth/link", json={"email": "a@example.com"})
+        _, token = mailer.sent[0]
+        assert c.post(f"{API_PREFIX}/auth/session",
+                      json={"token": token}).status_code == 201
+        second = c.post(f"{API_PREFIX}/auth/session", json={"token": token})
+        invented = c.post(f"{API_PREFIX}/auth/session",
+                          json={"token": "x" * 43})
+        assert second.status_code == invented.status_code == 401
+        assert second.json() == invented.json()
+
+
+def test_an_expired_link_is_refused():
+    """§3: expiring. Fifteen minutes is the life of an emailed credential;
+    at 14 it signs you in and at 16 it is the same 401 as never-existed."""
+    clock = TickClock("2026-08-07T12:00:00+00:00")
+    mailer = StubMailer()
+    with TestClient(_app(mailer=mailer, clock=clock)) as c:
+        c.post(f"{API_PREFIX}/auth/link", json={"email": "a@example.com"})
+        c.post(f"{API_PREFIX}/auth/link", json={"email": "b@example.com"})
+        (_, tok_a), (_, tok_b) = mailer.sent
+
+        clock.at = "2026-08-07T12:14:00+00:00"
+        assert c.post(f"{API_PREFIX}/auth/session",
+                      json={"token": tok_a}).status_code == 201
+
+        clock.at = "2026-08-07T12:16:00+00:00"
+        assert c.post(f"{API_PREFIX}/auth/session",
+                      json={"token": tok_b}).status_code == 401
+
+
+def test_the_link_rate_limit_guards_both_doors():
+    """§3: rate-limited, per address AND per source. A guard against loops
+    and abuse, not a quota (§1.2's precedent) -- and the 429 arrives BEFORE
+    a token is minted or a mail sent, or the limiter itself would be the
+    amplifier."""
+    from app.domain.auth import LINK_RATE_PER_EMAIL, LINK_RATE_PER_SOURCE
+
+    mailer = StubMailer()
+    with TestClient(_app(mailer=mailer)) as c:
+        for _ in range(LINK_RATE_PER_EMAIL):
+            assert c.post(f"{API_PREFIX}/auth/link",
+                          json={"email": "same@example.com"}).status_code == 202
+        r = c.post(f"{API_PREFIX}/auth/link",
+                   json={"email": "same@example.com"})
+        assert r.status_code == 429
+        assert len(mailer.sent) == LINK_RATE_PER_EMAIL, (
+            "the refused request still sent mail")
+
+    # The source door: many DIFFERENT addresses from one client. The test
+    # client presents one source, so the per-email door never fires here.
+    mailer = StubMailer()
+    with TestClient(_app(mailer=mailer)) as c:
+        for i in range(LINK_RATE_PER_SOURCE):
+            assert c.post(f"{API_PREFIX}/auth/link",
+                          json={"email": f"u{i}@example.com"}).status_code == 202
+        r = c.post(f"{API_PREFIX}/auth/link",
+                   json={"email": "u-last@example.com"})
+        assert r.status_code == 429
+
+
+def test_sign_out_tombstones_the_session_and_keeps_the_first_timestamp():
+    """Logout revokes server-side (a tombstone, never a delete) and is
+    idempotent -- 204 twice, and the SECOND sign-out does not move the
+    timestamp: when trust ended is a fact, not the latest logout's opinion."""
+    from app.domain.auth import hash_token
+
+    clock = TickClock("2026-08-07T12:00:00+00:00")
+    mailer = StubMailer()
+    auth = MemoryAuthStore()
+    with TestClient(_app(mailer=mailer, auth=auth, clock=clock)) as c:
+        c.post(f"{API_PREFIX}/auth/link", json={"email": "a@example.com"})
+        _, token = mailer.sent[0]
+        raw = c.post(f"{API_PREFIX}/auth/session",
+                     json={"token": token}).cookies["booksnap_session"]
+
+        clock.at = "2026-08-07T13:00:00+00:00"
+        c.cookies.set("booksnap_session", raw)
+        assert c.delete(f"{API_PREFIX}/auth/session").status_code == 204
+        first = auth.get_session(hash_token(raw)).revoked_at
+        assert first == "2026-08-07T13:00:00+00:00"
+
+        clock.at = "2026-08-07T14:00:00+00:00"
+        c.cookies.set("booksnap_session", raw)
+        assert c.delete(f"{API_PREFIX}/auth/session").status_code == 204
+        assert auth.get_session(hash_token(raw)).revoked_at == first
+
+
+def test_a_first_ever_address_mints_its_user_exactly_once():
+    """A stranger's first redeem creates the bare identity row -- owning
+    nothing until P4.1c's sign-up -- and a second sign-in with a NEW link
+    finds that same user rather than minting a twin."""
+    p = StubPrincipal()
+    tenancy = _tenancy(p)
+    mailer = StubMailer()
+    with TestClient(_app(principal=p, tenancy=tenancy, mailer=mailer)) as c:
+        for _ in range(2):
+            c.post(f"{API_PREFIX}/auth/link", json={"email": "new@example.com"})
+        (_, first_token), (_, second_token) = mailer.sent
+        first = c.post(f"{API_PREFIX}/auth/session",
+                       json={"token": first_token})
+        second = c.post(f"{API_PREFIX}/auth/session",
+                        json={"token": second_token})
+        assert first.json()["id"] == second.json()["id"]
+        assert tenancy.user_by_email("new@example.com").id == first.json()["id"]

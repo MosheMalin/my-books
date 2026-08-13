@@ -69,6 +69,15 @@ class TenancyStore(Protocol):
     def get_user(self, user_id: str) -> User | None:
         ...
 
+    def user_by_email(self, email: str) -> User | None:
+        """The user this address authenticates to, or ``None`` (P4.1a).
+
+        EXACT match: callers pass an address already through
+        :func:`app.domain.auth.normalize_email` — the store compares bytes,
+        because a second normalization here would be a second copy of the
+        rule, and the two would drift.
+        """
+
     # --- accounts ---------------------------------------------------------
 
     def save_account(self, account: Account) -> None:

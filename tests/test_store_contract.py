@@ -2524,3 +2524,244 @@ if __name__ == "__main__":
     raise SystemExit(subprocess.call(
         [sys.executable, str(Path(__file__).parent / "run_all.py"), __file__]
     ))
+
+
+# --- the AuthStore contract (P4.1a) ---------------------------------------
+#
+# One spec x both implementations, in a loop -- the generated matrix above
+# is per-library and this store is user-scoped, so the loop is the honest
+# equivalent. The sqlite side runs on a private copy of the migrated
+# template like every other sqlite case here.
+
+@contextmanager
+def _auth_stores():
+    """Both implementations, each fresh."""
+    from app.adapters.memory_store import MemoryAuthStore
+    from app.adapters.sqlite_store import SqliteAuthStore, SqliteTenancyStore
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "auth.db"
+        sqlite_store = SqliteAuthStore(path)
+        # sessions.user_id has a foreign key; give both stores their user.
+        SqliteTenancyStore(path).save_user(User(id="u1"))
+        memory = MemoryAuthStore()
+        yield (memory, sqlite_store)
+
+
+def test_a_session_round_trips_and_a_tombstone_keeps_its_first_timestamp():
+    from app.domain.auth import new_session
+
+    with _auth_stores() as stores:
+        for store in stores:
+            s = new_session("tok", "u1", "2026-08-13T12:00:00+00:00")
+            store.save_session(s)
+            assert store.get_session(s.token_hash) == s
+            assert store.get_session("no-such-hash") is None
+
+            assert store.revoke_session(s.token_hash, at="2026-08-13T13:00:00+00:00")
+            assert not store.revoke_session(s.token_hash, at="2026-08-13T14:00:00+00:00"), (
+                "a second revoke reported doing something")
+            got = store.get_session(s.token_hash)
+            assert got.revoked_at == "2026-08-13T13:00:00+00:00", (
+                "the tombstone moved -- when trust ended is a fact")
+            assert not store.revoke_session("no-such-hash", at="2026-08-13T13:00:00+00:00")
+
+
+def test_a_login_token_is_consumed_exactly_once_even_when_raced():
+    """The single-use gate, sequentially and raced. N threads redeeming one
+    link get one token between them -- the sqlite adapter's guarded UPDATE
+    and the memory adapter's lock both must hold.
+
+    ⚠ Four threads and a near-zero switch interval, not two and the
+    default: P4.1a's migration review measured the 2-thread version passing
+    0/4000 against a memory adapter with NO lock at all (the race arm was a
+    no-op), and 2299/4000 failing under this configuration."""
+    import sys
+    import threading
+
+    from app.domain.auth import new_login_token
+
+    with _auth_stores() as stores:
+        for store in stores:
+            t = new_login_token("tok-seq", "a@b.com", "2026-08-13T12:00:00+00:00")
+            store.save_login_token(t)
+            first = store.consume_login_token(t.token_hash, now="2026-08-13T12:05:00+00:00")
+            assert first is not None and first.consumed_at == "2026-08-13T12:05:00+00:00"
+            assert store.consume_login_token(t.token_hash, now="2026-08-13T12:06:00+00:00") is None
+
+            old_interval = sys.getswitchinterval()
+            sys.setswitchinterval(1e-9)
+            try:
+                for round_ in range(50):
+                    raced = new_login_token(f"tok-race-{round_}", "a@b.com",
+                                            "2026-08-13T12:00:00+00:00")
+                    store.save_login_token(raced)
+                    barrier = threading.Barrier(4, timeout=30)
+                    wins: list = []
+
+                    def worker():
+                        barrier.wait()
+                        got = store.consume_login_token(
+                            raced.token_hash, now="2026-08-13T12:05:00+00:00")
+                        if got is not None:
+                            wins.append(got)
+
+                    threads = [threading.Thread(target=worker)
+                               for _ in range(4)]
+                    for th in threads:
+                        th.start()
+                    for th in threads:
+                        th.join()
+                    assert len(wins) == 1, (
+                        f"{type(store).__name__}: {len(wins)} redeems of one "
+                        f"link (round {round_})")
+            finally:
+                sys.setswitchinterval(old_interval)
+
+
+def test_an_expired_login_token_cannot_be_consumed_and_nothing_changes():
+    from app.domain.auth import new_login_token
+
+    with _auth_stores() as stores:
+        for store in stores:
+            t = new_login_token("tok", "a@b.com", "2026-08-13T12:00:00+00:00")
+            store.save_login_token(t)
+            # At the boundary and after: dead. Expiry is exclusive.
+            assert store.consume_login_token(t.token_hash, now=t.expires_at) is None
+            assert store.consume_login_token(
+                t.token_hash, now="2026-08-13T13:00:00+00:00") is None
+            # The failed consume left it unconsumed (nothing changed) --
+            # visible through a consume back inside the window.
+            assert store.consume_login_token(
+                t.token_hash, now="2026-08-13T12:10:00+00:00") is not None
+
+
+def test_the_rate_window_counts_by_address_and_by_source_separately():
+    from app.domain.auth import new_login_token
+
+    with _auth_stores() as stores:
+        for store in stores:
+            mk = new_login_token
+            store.save_login_token(mk("t1", "a@b.com", "2026-08-13T12:00:00+00:00",
+                                      source_hash="s1"))
+            store.save_login_token(mk("t2", "a@b.com", "2026-08-13T12:30:00+00:00",
+                                      source_hash="s2"))
+            store.save_login_token(mk("t3", "c@d.com", "2026-08-13T12:45:00+00:00",
+                                      source_hash="s1"))
+            # An OLD one, outside any window asked below.
+            store.save_login_token(mk("t4", "a@b.com", "2026-08-13T09:00:00+00:00",
+                                      source_hash="s1"))
+
+            since = "2026-08-13T11:50:00+00:00"
+            assert store.count_recent_login_tokens(email="a@b.com", since=since) == 2
+            assert store.count_recent_login_tokens(email="c@d.com", since=since) == 1
+            assert store.count_recent_login_tokens(email="x@y.com", since=since) == 0
+            assert store.count_recent_login_tokens(source_hash="s1", since=since) == 2
+            assert store.count_recent_login_tokens(source_hash="s2", since=since) == 1
+
+
+def test_the_tenancy_store_finds_a_user_by_exact_email():
+    """`user_by_email` is the redeem route's lookup (P4.1a). EXACT match:
+    normalization happens once, in the domain, and a store that folded case
+    again would be a second copy of that rule."""
+    from app.adapters.memory_store import MemoryTenancyStore
+    from app.adapters.sqlite_store import SqliteTenancyStore
+
+    with tempfile.TemporaryDirectory() as tmp:
+        for store in (MemoryTenancyStore(),
+                      SqliteTenancyStore(Path(tmp) / "t.db")):
+            store.save_user(User(id="u1", email="moshe@example.com"))
+            store.save_user(User(id="u2"))  # no email at all
+            found = store.user_by_email("moshe@example.com")
+            assert found is not None and found.id == "u1"
+            assert store.user_by_email("MOSHE@example.com") is None, (
+                "the store normalized -- that rule lives in the domain, once")
+            assert store.user_by_email("") is None, (
+                "an empty address matched a user with none")
+
+
+def test_a_v14_database_gains_the_auth_tables_and_keeps_its_rows():
+    """The v15 upgrade on an UPGRADED file, not only a fresh one -- the
+    owner's file is an upgraded file, and this is the first step whose
+    tables a fresh-only suite would never open there. Also pins the three
+    index names: each exists for a stated query (the lost-phone revoke-all,
+    the two rate windows), and an index is exactly the kind of line a
+    refactor drops with every test green (adopted from P4.1a's migration
+    review, which measured that)."""
+    import sqlite3
+
+    from app.adapters.migrations import MIGRATIONS, SCHEMA_VERSION, current_version
+    from app.adapters.sqlite_store import SqliteAuthStore
+    from app.domain.auth import new_login_token, new_session
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "v14.db"
+        conn = sqlite3.connect(str(path))
+        try:
+            for version, step in MIGRATIONS:
+                if version > 14:
+                    break
+                if isinstance(step, str):
+                    conn.executescript(step)
+                else:
+                    step(conn)
+            conn.execute("PRAGMA user_version = 14")
+            conn.execute("INSERT INTO users (id, display_name, email) VALUES"
+                         " ('dev-owner', 'משה', 'owner@example.com')")
+            conn.execute("INSERT INTO accounts (id, label) VALUES ('acc', '')")
+            conn.execute("INSERT INTO libraries (id, account_id, label) VALUES"
+                         " ('lib', 'acc', 'הבית')")
+            conn.execute("INSERT INTO memberships (user_id, account_id, role)"
+                         " VALUES ('dev-owner', 'acc', 'admin')")
+            conn.execute(
+                "INSERT INTO books (id, library_id, title, author, norm_title,"
+                " norm_author, book_key, notes, search_text, sort_author)"
+                " VALUES ('b1','lib','ספר','','ספר','','k','','ספר','')")
+            conn.commit()
+        finally:
+            conn.close()
+
+        auth = SqliteAuthStore(path)          # migrates 14 -> 15 on open
+        check = sqlite3.connect(str(path))
+        try:
+            assert current_version(check) == SCHEMA_VERSION
+            assert check.execute("SELECT count(*) FROM books").fetchone()[0] == 1
+            assert check.execute("PRAGMA foreign_key_check").fetchall() == []
+            names = {r[0] for r in check.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'")}
+            for required in ("sessions_by_user", "login_tokens_by_email",
+                             "login_tokens_by_source"):
+                assert required in names, f"v15's {required} index is gone"
+        finally:
+            check.close()
+
+        # The FK points at `users` even though that table was `accounts`
+        # until v13 renamed it -- and the store works on the UPGRADED file.
+        s = new_session("tok", "dev-owner", "2026-08-13T12:00:00+00:00")
+        auth.save_session(s)
+        assert auth.get_session(s.token_hash) == s
+        t = new_login_token("lt", "owner@example.com",
+                            "2026-08-13T12:00:00+00:00")
+        auth.save_login_token(t)
+        assert auth.consume_login_token(
+            t.token_hash, now="2026-08-13T12:01:00+00:00") is not None
+
+
+def test_saving_over_a_revoked_session_keeps_the_tombstone():
+    """"A tombstone, never a delete" is enforced in the STORE, not only
+    promised by the callers: a fresh Session written over a revoked one --
+    unreachable today, but one refactor away -- must not resurrect it
+    (P4.1a's migration review found the upsert clearing it)."""
+    from dataclasses import replace
+
+    from app.domain.auth import new_session
+
+    with _auth_stores() as stores:
+        for store in stores:
+            s = new_session("tok", "u1", "2026-08-13T12:00:00+00:00")
+            store.save_session(s)
+            store.revoke_session(s.token_hash, at="2026-08-13T13:00:00+00:00")
+            store.save_session(replace(s, revoked_at=None))
+            got = store.get_session(s.token_hash)
+            assert got.revoked_at == "2026-08-13T13:00:00+00:00", (
+                f"{type(store).__name__} resurrected a tombstoned session")

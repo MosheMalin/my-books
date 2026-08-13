@@ -113,6 +113,28 @@ class LibraryPatch(BaseModel):
     label: str
 
 
+class LoginLinkRequest(BaseModel):
+    """Ask for a sign-in link (§3's magic link, P4.1a).
+
+    ⚠ Minimal shape-checking only, and no `EmailStr` on purpose: that
+    validator drags in a dependency to reject addresses a mail provider
+    would accept, and the honest test of an address is whether mail
+    arrives. A wrong address costs its owner a link that never comes —
+    the same answer as a right address, which is also the anti-enumeration
+    property the route needs.
+    """
+
+    email: str = Field(max_length=254,
+                       description="Where the link goes. 254 is RFC 5321's cap.")
+
+
+class SessionCreate(BaseModel):
+    """Redeem an emailed token for a session cookie."""
+
+    token: str = Field(max_length=128,
+                       description="The token from the sign-in link, verbatim.")
+
+
 class MetaResponse(BaseModel):
     """Service identity + who is asking + the library resolved for them."""
 

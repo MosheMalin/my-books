@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Iterator
 
 from app.adapters.migrations import migrate
+from app.domain.auth import LoginToken, Session
 from app.domain import (
     Account,
     Alternative,
@@ -775,6 +776,14 @@ class SqliteTenancyStore(_SqliteStore):
                                (user_id,)).fetchone()
         return _load_user(row) if row else None
 
+    def user_by_email(self, email: str) -> User | None:
+        # Exact match — the caller normalizes (app.domain.auth), the store
+        # compares bytes. Backed by the partial unique index users_by_email.
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM users WHERE email = ?",
+                               (email,)).fetchone()
+        return _load_user(row) if row else None
+
     # --- accounts --------------------------------------------------------
 
     def save_account(self, account: Account) -> None:
@@ -899,6 +908,118 @@ class SqliteTenancyStore(_SqliteStore):
                 (account_id,),
             ).fetchall()
         return tuple(_load_membership(r) for r in rows)
+
+
+class SqliteAuthStore(_SqliteStore):
+    """Implements ``app.ports.auth.AuthStore`` (P4.1a).
+
+    Same file as everything else, same argument at its sharpest: a session
+    and the user it authenticates must never live in two databases that
+    could disagree about the moment. Every value that arrives here is
+    already a HASH — see the port's contract.
+    """
+
+    def __init__(self, path: str | Path) -> None:
+        super().__init__(path, kind="SqliteAuthStore")
+
+    # --- sessions --------------------------------------------------------
+
+    def save_session(self, session: Session) -> None:
+        # COALESCE keeps an existing tombstone: "revoked, never deleted" is
+        # enforced HERE, not just promised by the callers — a refresh row
+        # written over a revoked session must not resurrect it.
+        with self._connect() as conn:
+            with conn:
+                conn.execute(
+                    "INSERT INTO sessions (token_hash, user_id, created_at,"
+                    " expires_at, revoked_at) VALUES (?,?,?,?,?)"
+                    " ON CONFLICT(token_hash) DO UPDATE SET"
+                    " expires_at=excluded.expires_at,"
+                    " revoked_at=COALESCE(sessions.revoked_at,"
+                    "                     excluded.revoked_at)",
+                    (session.token_hash, session.user_id, session.created_at,
+                     session.expires_at, session.revoked_at),
+                )
+
+    def get_session(self, token_hash: str) -> Session | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM sessions WHERE token_hash = ?",
+                (token_hash,),
+            ).fetchone()
+        return _load_session(row) if row else None
+
+    def revoke_session(self, token_hash: str, *, at: str) -> bool:
+        # The guard keeps the FIRST tombstone: when trust ended is a fact,
+        # not the latest logout's opinion.
+        with self._connect() as conn:
+            with conn:
+                cur = conn.execute(
+                    "UPDATE sessions SET revoked_at = ?"
+                    " WHERE token_hash = ? AND revoked_at IS NULL",
+                    (at, token_hash),
+                )
+            return cur.rowcount > 0
+
+    # --- login tokens ----------------------------------------------------
+
+    def save_login_token(self, token: LoginToken) -> None:
+        with self._connect() as conn:
+            with conn:
+                conn.execute(
+                    "INSERT INTO login_tokens (token_hash, email, source_hash,"
+                    " created_at, expires_at, consumed_at) VALUES (?,?,?,?,?,?)",
+                    (token.token_hash, token.email, token.source_hash,
+                     token.created_at, token.expires_at, token.consumed_at),
+                )
+
+    def consume_login_token(self, token_hash: str, *, now: str) -> LoginToken | None:
+        # Single-use is THIS statement: the WHERE clause is the whole rule,
+        # and sqlite serializes writers, so two racing redeems resolve to
+        # one rowcount=1 and one rowcount=0.
+        with self._connect() as conn:
+            with conn:
+                cur = conn.execute(
+                    "UPDATE login_tokens SET consumed_at = ?"
+                    " WHERE token_hash = ? AND consumed_at IS NULL"
+                    " AND expires_at > ?",
+                    (now, token_hash, now),
+                )
+                if cur.rowcount == 0:
+                    return None
+                row = conn.execute(
+                    "SELECT * FROM login_tokens WHERE token_hash = ?",
+                    (token_hash,),
+                ).fetchone()
+        return _load_login_token(row)
+
+    def count_recent_login_tokens(self, *, email: str | None = None,
+                                  source_hash: str | None = None,
+                                  since: str) -> int:
+        assert (email is None) != (source_hash is None), \
+            "exactly one filter per call"
+        column, value = (("email", email) if email is not None
+                         else ("source_hash", source_hash))
+        with self._connect() as conn:
+            return conn.execute(
+                f"SELECT count(*) FROM login_tokens"
+                f" WHERE {column} = ? AND created_at >= ?",
+                (value, since),
+            ).fetchone()[0]
+
+
+def _load_session(row: sqlite3.Row) -> Session:
+    return Session(token_hash=row["token_hash"], user_id=row["user_id"],
+                   created_at=row["created_at"], expires_at=row["expires_at"],
+                   revoked_at=row["revoked_at"])
+
+
+def _load_login_token(row: sqlite3.Row) -> LoginToken:
+    return LoginToken(token_hash=row["token_hash"], email=row["email"],
+                      source_hash=row["source_hash"],
+                      created_at=row["created_at"],
+                      expires_at=row["expires_at"],
+                      consumed_at=row["consumed_at"])
 
 
 def _load_user(row: sqlite3.Row) -> User:
