@@ -1,0 +1,26 @@
+# TLS and the one public door (P4.4).
+#
+# Caddy gets a certificate automatically, which is the whole reason it is
+# here rather than nginx: the deployment step that most often goes stale is
+# certificate renewal, and this one has no step.
+
+{$BOOKSNAP_DOMAIN} {
+	encode gzip
+
+	# ⚠ The staff console's service is NOT routed here. It is cross-tenant
+	# and read-only-by-construction, and the operator reaches it over an SSH
+	# tunnel (see DEPLOY.md) — a shared token on the public internet is a
+	# password with no rate limit and no rotation story.
+
+	# A body ceiling in front of everything: the pre-auth sign-in routes
+	# buffer a request before validating it, so an unbounded body is memory
+	# an unauthenticated caller can spend (P4.1b's security review). 45 MB
+	# clears the 40 MB upload limit `disk_blobs.py` enforces itself.
+	request_body {
+		max_size 45MB
+	}
+
+	reverse_proxy api:8757 {
+		header_up X-Forwarded-Proto {scheme}
+	}
+}

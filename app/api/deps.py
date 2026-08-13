@@ -47,6 +47,18 @@ LIBRARY_HEADER = "X-Booksnap-Library"
 #: the raw token; the database only ever holds its hash.
 SESSION_COOKIE = "booksnap_session"
 
+
+def get_session_secure() -> bool:
+    """Whether the session cookie carries ``Secure`` (P4.4).
+
+    ⚠ A per-DEPLOYMENT fact, not a constant and not an env read in a
+    route: on plain HTTP a Secure cookie is silently dropped, which reads
+    as "the login did nothing" — so the LAN dev flow needs it off and the
+    TLS deployment needs it on. `app/main.py` binds it from
+    BOOKSNAP_SESSION_SECURE; the compose file sets it, because that is
+    the file that also puts TLS in front."""
+    return False
+
 #: The same reference, as a query parameter, for requests the BROWSER issues
 #: rather than the client's own ``fetch()``.
 #:

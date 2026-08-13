@@ -93,7 +93,12 @@ next, pausing for the owner only on unsettled decisions.
    `python tools/api_contract.py --write`, commit all four artefacts.
 10. **Snapshot `work/product.db` (and `work/product_blobs`) BEFORE driving
     live mutations through the browser**; restore after. It is the owner's
-    real data.
+    real data. `python tools/backup.py` is the one right way (SQLite's
+    backup API + the blob tree + a manifest); `python tools/restore.py
+    --drill` proves the copy by opening it through the real stores.
+    ⚠ Take the snapshot BEFORE the gate runs, not after — importing
+    `app.main` migrates, so a "pre-change" snapshot taken late is a
+    snapshot of the change (P4.3 shipped one, believing otherwise).
 11. **Never edit a migration step in place** — importing `app.main` migrates
     the real DB (the contract check and pre-commit hook both import it), so
     "not shipped yet" is usually already false. A fix is a new step. And a
@@ -421,6 +426,8 @@ different world — the product never reads it.
 ## Running things
 
 ```bash
+python tools/backup.py             # db + blobs + manifest, restorable
+python tools/restore.py --drill    # prove the newest backup; never writes
 # dev servers — use preview_start with these launch.json names, never Bash:
 #   booksnap-ui (:8756)  product-api (:8757)  product-web (:5173)
 #   staff-api (:8758, start before admin-web)  admin-web (:5174)

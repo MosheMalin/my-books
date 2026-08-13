@@ -609,3 +609,74 @@ def test_the_composition_root_writes_no_tenancy_at_all():
             "building the app wrote tenancy rows — the composition root "
             "is minting or joining accounts again (P4.1b deleted that)"
         )
+
+
+_REPO = Path(__file__).resolve().parent.parent
+
+
+def nl_join(lines) -> str:
+    return "\n".join(lines)
+
+
+# --- the deployment's load-bearing choices (P4.4) --------------------------
+#
+# Nothing in the gate runs docker, so these assert the PROPERTIES the
+# deployment turns on — each one is a decision that would otherwise drift
+# silently, and each has a stated reason in DEPLOY.md.
+
+def test_the_deployment_refuses_to_start_the_staff_service_without_a_token():
+    """The staff service fails OPEN without its token (the owner's local
+    posture, 2026-08-13) — which must never reach the internet. Compose's
+    `:?` guard is what makes the deployment refuse rather than inherit
+    it."""
+    compose = (_REPO / "docker-compose.yml").read_text(encoding="utf-8")
+    assert "BOOKSNAP_STAFF_TOKEN: ${BOOKSNAP_STAFF_TOKEN:?" in compose, (
+        "the staff service can be deployed without a token"
+    )
+    assert "BOOKSNAP_PUBLIC_URL: ${BOOKSNAP_PUBLIC_URL:?" in compose, (
+        "the sign-in link would point at localhost, which on the "
+        "recipient's phone is the recipient's phone"
+    )
+
+
+def test_only_the_tls_proxy_publishes_a_port():
+    """One public door. The api and staff services `expose` (container
+    network) but must never `ports:` (host) — a published :8757 is the
+    unauthenticated-LAN posture P4.1b just closed, re-opened on the
+    internet, and a published :8758 is every tenant behind one token."""
+    import re
+
+    raw = (_REPO / "docker-compose.yml").read_text(encoding="utf-8")
+    # Comments stripped first: this file EXPLAINS why the api service has
+    # no `ports:`, and a checker fooled by its own documentation is a
+    # checker nobody keeps.
+    compose = nl_join(line for line in raw.splitlines()
+                      if not line.lstrip().startswith("#"))
+    blocks = re.split(r"^  (\w[\w-]*):$", compose, flags=re.M)[1:]
+    services = dict(zip(blocks[::2], blocks[1::2]))
+    for name in ("api", "staff", "backup"):
+        assert "ports:" not in services[name], (
+            f"the {name} service publishes a host port — only the TLS "
+            f"proxy may"
+        )
+    assert "ports:" in services["caddy"]
+
+
+def test_the_image_keeps_the_free_reading_path_installed():
+    """Tesseract and the Hebrew models ship in the image: the free
+    deterministic path IS §10's graceful-degradation answer, and an image
+    that can only run the paid engine stops working when a quota does."""
+    dockerfile = (_REPO / "Dockerfile").read_text(encoding="utf-8")
+    assert "tesseract-ocr-heb" in dockerfile
+    # One worker: the job runner's state lives on the app INSTANCE (§1.3).
+    assert '"--workers", "1"' in dockerfile
+
+
+def test_the_deploy_runbook_names_the_drill_command_that_exists():
+    """A runbook whose command has drifted is worse than none — this is
+    the document someone follows at 3am."""
+    runbook = (_REPO / "DEPLOY.md").read_text(encoding="utf-8")
+    assert "tools/restore.py --drill" in runbook
+    assert "--i-mean-it" in runbook
+    assert (_REPO / "tools" / "restore.py").exists()
+    assert (_REPO / "deploy" / "Caddyfile").exists()

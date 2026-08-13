@@ -51,9 +51,31 @@ class Invite:
     expires_at: str
     consumed_at: str | None = None
     consumed_by: str | None = None
+    #: When the membership this invite carries actually LANDED. Distinct
+    #: from `consumed_at` because consume and grant are two transactions:
+    #: a crash between them leaves a spent link that granted nothing, and
+    #: only its own consumer may finish it (`may_finish`). Once stamped,
+    #: the link is inert for everyone — which is what keeps a removal
+    #: from being undoable by replaying an old link (P4.3's DI review).
+    granted_at: str | None = None
 
     def live(self, now: str) -> bool:
         return self.consumed_at is None and now < self.expires_at
+
+    def may_finish(self, user_id: str, now: str) -> bool:
+        """Whether ``user_id`` may complete a half-finished acceptance.
+
+        Three conditions, and each removes a way the first version of this
+        was too wide (both P4.3 reviews found it independently): only the
+        CONSUMER, only before the grant landed, and only while the invite
+        would still have been redeemable. The window it reopens is a crash
+        between two writes the server itself made — seconds, not days — so
+        the expiry bound costs a retry nobody will need and closes a
+        replay path that otherwise had none.
+        """
+        return (self.consumed_by == user_id
+                and self.granted_at is None
+                and now < self.expires_at)
 
 
 def new_invite(token: str, account_id: str, role: Role, created_by: str,

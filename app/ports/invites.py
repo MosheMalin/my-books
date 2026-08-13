@@ -45,6 +45,22 @@ class InviteStore(Protocol):
         the invite and marks it consumed atomically IF it is live, else
         ``None`` with nothing changed."""
 
+    def purge_invites(self, *, before: str) -> int:
+        """Delete invites whose expiry is behind ``before``; returns how
+        many. Mirrors `AuthStore.purge_login_tokens`: an expired invite
+        opens no door and answers no question, and rows that accumulate
+        forever are rows a future bug can reanimate."""
+
+    def mark_granted(self, token_hash: str, *, at: str) -> bool:
+        """Record that the membership this invite carries now EXISTS.
+
+        The second half of accept, and the line that makes a spent link
+        inert: after this, ``Invite.may_finish`` is False for everyone, so
+        an admin's ``delete_member`` cannot be undone by replaying the
+        link (P4.3's data-integrity review measured exactly that, a year
+        after expiry, at the invite's original role). Idempotent — the
+        first stamp wins, like a session's tombstone."""
+
     def revoke_invite(self, account_id: str, token_hash: str) -> bool:
         """Delete an invite of THIS account. ``False`` when there was
         nothing to delete. The account id narrows it — one admin must not

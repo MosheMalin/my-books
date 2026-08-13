@@ -14,7 +14,7 @@
  */
 import { useEffect, useState } from 'react'
 
-import { useHash } from '@booksnap/ui'
+import { replaceHash, useHash } from '@booksnap/ui'
 
 import { acceptInvite } from '../api/client'
 import { PENDING_INVITE_KEY } from './auth'
@@ -45,11 +45,17 @@ export function InviteGate() {
         if (!live) return
         setFailed(false)
         absorb(rows)
+        // replaceHash, never navigate: a raw token must not stay in the
+        // address bar, in history, or one Back-press behind the app —
+        // the login token's own lesson (P4.1b, CRITICAL 1). `absorb`
+        // already moves the hash when it selects a NEW library; this
+        // covers the "nothing new" case, which is most of them.
+        replaceHash(LIBRARY_HASH)
       })
       .catch(() => {
         if (!live) return
         setFailed(true)
-        globalThis.location.hash = LIBRARY_HASH
+        replaceHash(LIBRARY_HASH)
       })
     return () => {
       live = false

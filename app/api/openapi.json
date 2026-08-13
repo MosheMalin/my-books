@@ -3719,7 +3719,7 @@
         ]
       },
       "patch": {
-        "description": "The whole member list comes back — \"is there still an admin?\" is a\nfact about the list, and the screen showing one row is showing the\nlist.",
+        "description": "The whole member list comes back — \"is there still an admin?\" is a\nfact about the list, and the screen showing one row is showing the\nlist.\n\n⚠ The response is built from what the WRITE returned, never by\nre-entering `list_members`: an admin demoting themselves would be\nrefused by the re-entered admin gate AFTER their change had already\nlanded — told it failed while it succeeded (P4.3's DI review).",
         "operationId": "patch_member_api_v1_members__user_id__patch",
         "parameters": [
           {

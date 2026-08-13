@@ -38,12 +38,7 @@ from app.api.dto import (
 from app.domain import Capability, Membership, Role, allowed
 from app.domain.auth import hash_token
 from app.domain.invites import new_invite
-from app.domain.tenancy import (
-    NoAdminLeft,
-    UnknownMember,
-    remove_member,
-    set_role,
-)
+from app.domain.tenancy import NoAdminLeft, UnknownMember
 from app.ports import Clock, Principal
 from app.ports.invites import InviteStore
 from app.ports.tenancy import TenancyStore
@@ -76,17 +71,22 @@ def list_members(
     tenancy: TenancyStore = Depends(deps.get_tenancy_store),
 ) -> list[MemberDTO]:
     account, _membership = _admin_account(request, principal, tenancy)
-    rows = tenancy.list_members(account.id)
-    return [
-        MemberDTO(
+    return _as_dtos(tenancy, tenancy.list_members(account.id))
+
+
+def _as_dtos(tenancy: TenancyStore,
+             rows: tuple[Membership, ...]) -> list[MemberDTO]:
+    """One user lookup per member, not two (each is its own connection)."""
+    out = []
+    for m in rows:
+        user = tenancy.get_user(m.user_id)
+        out.append(MemberDTO(
             user_id=m.user_id,
-            display_name=(tenancy.get_user(m.user_id).display_name
-                          if tenancy.get_user(m.user_id) else ""),
+            display_name=user.display_name if user else "",
             role=m.role.value,
             joined_at=m.joined_at,
-        )
-        for m in rows
-    ]
+        ))
+    return out
 
 
 @router.patch("/{user_id}", response_model=list[MemberDTO],
@@ -100,19 +100,26 @@ def patch_member(
 ) -> list[MemberDTO]:
     """The whole member list comes back — "is there still an admin?" is a
     fact about the list, and the screen showing one row is showing the
-    list."""
+    list.
+
+    ⚠ The response is built from what the WRITE returned, never by
+    re-entering `list_members`: an admin demoting themselves would be
+    refused by the re-entered admin gate AFTER their change had already
+    landed — told it failed while it succeeded (P4.3's DI review).
+    """
     account, _membership = _admin_account(request, principal, tenancy)
-    members = tenancy.list_members(account.id)
     try:
-        updated = set_role(members, user_id, Role(body.role))
+        role = Role(body.role)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            f"{body.role!r} is not a role") from exc
+    try:
+        updated = tenancy.change_member_role(account.id, user_id, role)
     except UnknownMember as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
     except NoAdminLeft as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
-    for m in updated:
-        if m.user_id == user_id:
-            tenancy.save_membership(m)
-    return list_members(request, principal, tenancy)
+    return _as_dtos(tenancy, updated)
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT,
@@ -126,14 +133,12 @@ def delete_member(
     """The person leaves, the collection stays (UI_PLAN §5, one level up).
     Since P4.1b removal is EFFECTIVE — their next request answers 404."""
     account, _membership = _admin_account(request, principal, tenancy)
-    members = tenancy.list_members(account.id)
     try:
-        remove_member(members, user_id)
+        tenancy.remove_member_row(account.id, user_id)
     except UnknownMember as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
     except NoAdminLeft as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
-    tenancy.delete_membership(user_id, account.id)
 
 
 @router.post("/invites", response_model=InviteMintedDTO,
@@ -155,9 +160,13 @@ def create_invite(
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                             f"{body.role!r} is not a role") from exc
+    now = clock.now_iso()
+    # Sweep on the way past, like `/auth/link` does: an expired invite
+    # opens no door, and rows that live forever are rows a future bug can
+    # reanimate (P4.3's reviews).
+    invites.purge_invites(before=now)
     token = secrets.token_urlsafe(32)
-    invite = new_invite(token, account.id, role, principal.id,
-                        clock.now_iso())
+    invite = new_invite(token, account.id, role, principal.id, now)
     invites.save_invite(invite)
     return InviteMintedDTO(token=token, role=invite.role.value,
                            expires_at=invite.expires_at)
@@ -223,7 +232,7 @@ def accept_invite(
         # caller re-enters here and finishes the grant below. Single-use
         # across USERS is untouched: anyone else's token is still 404.
         existing = invites.get_invite(token_hash)
-        if existing is None or existing.consumed_by != principal.id:
+        if existing is None or not existing.may_finish(principal.id, now):
             raise HTTPException(status.HTTP_404_NOT_FOUND,
                                 "that invite is expired, used, or was revoked")
         invite = existing
@@ -237,6 +246,11 @@ def accept_invite(
         ))
     # else: already in — the link is spent, the membership is UNTOUCHED.
     # A link is never a role change around an admin's explicit set_role.
+    #
+    # The grant has landed, so the link goes INERT: after this stamp
+    # `may_finish` is False for everyone, which is what keeps an admin's
+    # `delete_member` from being undoable by replaying an old link.
+    invites.mark_granted(token_hash, at=now)
     membership = tenancy.membership(principal.id, invite.account_id)
     return [
         LibraryDTO.of(lib, membership)

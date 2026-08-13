@@ -34,6 +34,7 @@ from pathlib import Path
 
 from app.adapters.booksnap_reader import BooksnapReader
 from app.adapters.console_mailer import ConsoleMailer
+from app.adapters.smtp_mailer import SmtpMailer
 from app.adapters.dev_identity import SystemClock, UuidIdGen
 from app.adapters.disk_blobs import DiskBlobStore
 from app.adapters.queued_jobs import QueuedJobRunner
@@ -124,6 +125,29 @@ def blob_root() -> Path:
     return Path(explicit) if explicit else _work() / "product_blobs"
 
 
+def _mailer():
+    """The real mailer when SMTP is configured, the dev one otherwise.
+
+    Configuration decides, not a flag: a deployment that has an SMTP host
+    wants mail, and a laptop that does not wants the link in its log. The
+    Mailer PORT is what makes this the composition root's one-line choice
+    rather than a branch inside a route (the credential-preflight rule).
+    """
+    host = os.environ.get("BOOKSNAP_SMTP_HOST", "").strip()
+    public = os.environ.get("BOOKSNAP_PUBLIC_URL") or _lan_base_url()
+    if not host:
+        return ConsoleMailer(public)
+    return SmtpMailer(
+        host=host,
+        port=int(os.environ.get("BOOKSNAP_SMTP_PORT", "587")),
+        username=os.environ.get("BOOKSNAP_SMTP_USER", ""),
+        password=os.environ.get("BOOKSNAP_SMTP_PASSWORD", ""),
+        sender=os.environ.get("BOOKSNAP_MAIL_FROM", "")
+        or os.environ.get("BOOKSNAP_SMTP_USER", ""),
+        base_url=public,
+    )
+
+
 def build() -> object:
     """Bind adapters to ports and return the ASGI app."""
     path = db_path()
@@ -185,9 +209,10 @@ def build() -> object:
         # login route the link lands on.
         auth_store=SqliteAuthStore(path),
         invite_store=SqliteInviteStore(path),
-        mailer=ConsoleMailer(
-            os.environ.get("BOOKSNAP_PUBLIC_URL") or _lan_base_url()
-        ),
+        mailer=_mailer(),
+        # TLS is in front only when the deployment says so (P4.4's compose
+        # file sets it); a Secure cookie on plain HTTP is silently dropped.
+        session_secure=os.environ.get("BOOKSNAP_SESSION_SECURE") == "1",
         clock=SystemClock(),
         id_gen=UuidIdGen(),
         web_dist=WEB_DIST,
