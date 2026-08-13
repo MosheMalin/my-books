@@ -53,39 +53,22 @@ def _role(
     that comes back governs every library that account owns, which is what
     §4.1's revision means by a library being logical and not a boundary.
 
-    The membership row is the answer, and it is consulted FIRST — a stored
-    VIEWER role outranks the fallback below (pinned by
-    ``test_a_membership_row_on_your_own_library_outranks_the_dev_trusted_
-    fallback``). The one fallback mirrors ``current_library``'s own
-    dev-trusted case, for the same reason it has one: a ``Principal`` is built
-    by the server, never by a request, so the principal's OWN library is
-    legitimately theirs even before any row exists (``app/main.py``'s
-    bootstrap writes the account and the ADMIN row; a test that skipped it is
-    exercising the same trust).
+    **A role comes from rows, full stop** (P4.1b). The dev-trusted fallback
+    that upgraded a missing membership on the principal's own library to
+    ADMIN — the landmine P3.7b named so it would be removed on time — died
+    with the dev identity: removing someone's membership now removes their
+    access, which is the sentence authentication exists to make true.
 
-    ⚠ P4-era landmine, kept deliberately at P3.7b and still named so that it
-    is removed on time: this fallback means REMOVING someone's membership from
-    the account that owns their default library is ineffective — the resolver
-    still serves that library and this line upgrades them to ADMIN. Dormant
-    while the principal is the dev adapter (there is no removal and no login),
-    and it MUST be deleted when P4.1 makes principals real: a logged-in user's
-    role comes from rows, full stop. Moving the boundary did not make it safe
-    — note it is keyed to ``principal.library``, so it grants ADMIN on that
-    one library and not on its whole account, which is the narrower of the two
-    wrongs and still a wrong.
-
-    ``None`` for any OTHER library is unreachable past ``current_library`` —
-    it just resolved a membership for exactly this pair — but unreachable is
-    not a reason to serve it as admin, so it answers the same 404 the
-    resolver would have.
+    ``None`` here is unreachable past ``current_library`` — it just
+    resolved a membership for exactly this pair — but unreachable is not a
+    reason to serve it as admin, so it answers the same 404 the resolver
+    would have.
     """
     _library, membership = deps.owner_membership(
         tenancy, principal.id, library.id
     )
     if membership is not None:
         return membership.role
-    if library.id == principal.library.id:
-        return Role.ADMIN
     raise HTTPException(status.HTTP_404_NOT_FOUND, "no such library")
 
 

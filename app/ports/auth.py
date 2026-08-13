@@ -49,6 +49,14 @@ class AuthStore(Protocol):
         Idempotent: revoking twice keeps the FIRST timestamp — when trust
         ended is a fact, not the latest logout's opinion."""
 
+    def revoke_sessions_of_user(self, user_id: str, *, at: str) -> int:
+        """Tombstone every live session of one user; returns how many.
+
+        The lost-phone answer, and the compensating control the 90-day
+        lifetime assumes: without it, revocation reached only the cookie
+        you still Hold. Routes arrive with P4.3's account screen; the
+        capability lands with the lifetime that depends on it."""
+
     # --- login tokens -----------------------------------------------------
 
     def save_login_token(self, token: LoginToken) -> None:
@@ -63,9 +71,19 @@ class AuthStore(Protocol):
     def count_recent_login_tokens(self, *, email: str | None = None,
                                   source_hash: str | None = None,
                                   since: str) -> int:
-        """How many links were minted since ``since`` for this address or
-        from this source — §3's rate windows. Exactly one of the two
-        filters is given per call."""
+        """How many links were minted since ``since``, filtered by address,
+        by source, or by the (address × source) PAIR when both are given —
+        the pair is the narrow rate door (an address-wide count let a
+        stranger lock the owner out; see the domain constants). At least
+        one filter, enforced with a raise — never an assert, which
+        ``python -O`` deletes."""
+
+    def purge_login_tokens(self, *, before: str) -> int:
+        """Delete every token whose EXPIRY is behind ``before``; returns
+        how many. Tokens are ephemeral by design — what outlives them
+        otherwise is the address column, in cleartext, for every stranger
+        who ever typed one. Callers pass a floor at or behind the rate
+        window's start so the counters above are never fooled."""
 
 
 class Mailer(Protocol):

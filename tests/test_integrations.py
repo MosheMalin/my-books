@@ -555,45 +555,22 @@ if __name__ == "__main__":
     print(f"\n{passed}/{len(fns)} passed")
 
 
-def test_the_bootstrap_never_joins_an_account_it_did_not_create():
-    """The composition root may mint a customer; it may not add itself to one.
+def test_the_composition_root_writes_no_tenancy_at_all():
+    """P4.1b retired `test_the_bootstrap_never_joins_an_account_it_did_not_
+    create` by deleting its subject: the composition root no longer writes
+    users, accounts or memberships under ANY circumstance — sign-in mints
+    the bare user (the auth router), sign-up mints the account (P4.1c), and
+    the account-hijack the old test pinned (P3.7b's security review) has no
+    code path left to happen in. Asserted structurally, the way the old
+    hazard would return: `app/main.py` acquiring a tenancy write."""
+    import inspect
 
-    Point the dev principal at a library belonging to somebody else's account
-    — a `BOOKSNAP_DEV_LIBRARY` typo is enough — and the first version of this
-    wrote an ADMIN row for that whole customer, reaching every collection it
-    owns. Worse than the in-memory fallback in `app/api/policy.py` that it
-    resembles: that one is per-request and deleting the line at P4.1 removes
-    the grant, while this one persisted a ROW a login would land on and find
-    already true (P3.7b's security review demonstrated it).
-    """
-    import tempfile
+    import app.main as main
 
-    from app.domain import (
-        Account, Library, LibraryRef, Membership, Role, User,
-    )
-    from app.adapters.sqlite_store import SqliteTenancyStore
-    from app.main import _bootstrap_dev_user
-
-    class Principal:
-        id = "bob"
-        library = LibraryRef(id="lib-home", label="הבית")
-
-    with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "someone-elses.db"
-        tenancy = SqliteTenancyStore(path)
-        tenancy.save_user(User(id="alice"))
-        tenancy.save_account(Account(id="acc-family", label="Family"))
-        tenancy.save_membership(Membership("alice", "acc-family", Role.ADMIN))
-        for lib in ("lib-home", "lib-shop"):
-            tenancy.save_library(Library(id=lib, account_id="acc-family",
-                                         label=lib))
-
-        _bootstrap_dev_user(tenancy, Principal())
-
-        assert tenancy.membership("bob", "acc-family") is None, (
-            "the composition root joined a customer it did not create"
+    src = inspect.getsource(main)
+    for verb in ("save_user", "save_account", "save_membership",
+                 "save_library"):
+        assert verb not in src, (
+            f"app/main.py calls {verb} — the composition root is writing "
+            f"tenancy again; P4.1b deleted that on purpose"
         )
-        assert tenancy.list_accounts("bob") == ()
-        # Alice's account is untouched: still one member, still two libraries.
-        assert len(tenancy.list_members("acc-family")) == 1
-        assert len(tenancy.list_libraries("acc-family")) == 2

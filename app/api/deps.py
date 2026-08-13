@@ -91,50 +91,43 @@ def current_library(
 ) -> LibraryRef:
     """The single principal -> library resolution point (H2).
 
-    Until P3.1 this returned ``principal.library`` and nothing else — correct
-    for one hardcoded library, and the reason every route was written to ask
-    THIS function rather than reach for "the" library. Nothing above it
-    changes now that it does real work; that was the whole point of the stub.
+    Until P3.1 this returned the principal's own library and nothing else;
+    until P4.1b it also trusted that library without a store lookup — the
+    dev-trusted branch, deleted together with the dev identity. Since P4.1b
+    EVERY resolution goes through :func:`owner_membership`: the library
+    names its owning account, the caller's membership of that account
+    decides, the library's own row supplies the label. There is no library
+    a session reaches without a row saying so.
 
     The reference is read from the header, or — for requests the browser
     issues itself, where a header is not available — from the ``library``
-    query parameter (see :data:`LIBRARY_PARAM`). The header WINS: the client's
-    own ``fetch()`` always sets it, so a URL that also carries a stale
-    parameter must not override what the app currently has selected.
+    query parameter (see :data:`LIBRARY_PARAM`). The header WINS: the
+    client's own ``fetch()`` always sets it, so a URL that also carries a
+    stale parameter must not override what the app currently has selected.
 
-    Three cases, in order:
+    **No reference at all** resolves to the caller's first library — first
+    account by id, first library by its own sort key, the same total order
+    the switcher renders — kept rather than made an error because it is
+    what every ``curl``, every API test and the OpenAPI examples do, and
+    refusing them buys no safety. A caller with no library anywhere (a
+    bare user before P4.1c's sign-up) gets the same 404 as any other
+    unresolvable reference.
 
-    1. **neither given** — the principal's own default library. Kept, rather
-       than made an error, because it is what every ``curl``, every API test
-       and the OpenAPI examples do, and refusing them buys no safety: a caller
-       with no reference still only reaches their own library;
-    2. **it names the principal's default** — served without a store
-       lookup. This is both the common path and the *dev-trusted* half of the
-       item the plan asks for: a `Principal` is built by the server, never by
-       a request, so its own library needs no membership row to be legitimate.
-       P4.1 replaces the adapter, not this line;
-    3. **it names anything else** — resolved through the
-       :class:`TenancyStore`: the library names its OWNING ACCOUNT, the
-       caller's membership of that account decides, and the library's own row
-       supplies the label.
-
-    ⚠ Case 3 is where P3.7b moved the boundary, and it is two lookups rather
-    than one on purpose. Before, a membership named a library and this asked
-    about that pair directly. Now a membership names an ACCOUNT, so the
-    question is *who owns this library, and do you belong to them* — which is
-    the whole of §4.1's revision, in one place, on every request. Nothing
-    else in the product asks it.
-
-    A library that does not exist, one owned by an account the caller does not
-    belong to, and one whose owner does not exist are the SAME answer —
-    **404, never 403** (§4.2). P3.3 makes that a meta-test over every route;
-    here it is the door, and getting it wrong here would leak the existence of
-    other customers' libraries from the one place that can see all of them.
+    A library that does not exist, one owned by an account the caller does
+    not belong to, and one whose owner does not exist are the SAME answer —
+    **404, never 403** (§4.2). P3.3 makes that a meta-test over every
+    route; here it is the door, and getting it wrong here would leak the
+    existence of other customers' libraries from the one place that can see
+    all of them.
     """
     requested = (request.headers.get(LIBRARY_HEADER)
                  or request.query_params.get(LIBRARY_PARAM))
-    if not requested or requested == principal.library.id:
-        return principal.library
+    if not requested:
+        for account, _membership in tenancy.list_accounts(principal.id):
+            libraries = tenancy.list_libraries(account.id)
+            if libraries:
+                return libraries[0].ref
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no such library")
     library, membership = owner_membership(tenancy, principal.id, requested)
     if library is None or membership is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no such library")
@@ -199,16 +192,19 @@ def owning_account(tenancy: TenancyStore, library: LibraryRef) -> str:
     the product come to disagree about who owns what, and P3.7c had it
     written four times before this existed.
 
-    ⚠ Falls back to the library's own id when the row is missing, which
-    is reachable ONLY behind ``policy._role``'s dev-trusted branch — a
-    library that is not the principal's own and has no row is already a
-    404 one dependency earlier. Delete this fallback together with that
-    branch at P4.1. Until then it is the honest answer: an unplaceable
-    read still needs a key, and its own id is the one that cannot
-    collide with somebody else's.
+    ⚠ Unreachable-for-a-missing-row since P4.1b: every ``LibraryRef`` a
+    route holds came out of :func:`current_library`, which resolved a real
+    row moments ago. The old dev-trusted fallback (the library's own id as
+    the account key) died with the dev identity; a miss here now RAISES,
+    because inventing an account key is how one customer's read bills
+    another's budget, silently.
     """
     owner = tenancy.get_library(library.id)
-    return owner.account_id if owner is not None else library.id
+    if owner is None:
+        raise LookupError(
+            f"library {library.id!r} vanished between resolution and use"
+        )
+    return owner.account_id
 
 
 # The remaining ports, same pattern as get_principal: placeholders that FAIL

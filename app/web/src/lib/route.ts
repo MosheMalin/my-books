@@ -36,6 +36,7 @@ export type Route =
   | { name: 'book'; id: string }
   | { name: 'capture' }
   | { name: 'shelf'; id: string }
+  | { name: 'login'; token: string | null }
 
 export function parseHash(hash: string): Route {
   const path = hash.replace(/^#\/?/, '').split('?')[0] ?? ''
@@ -43,6 +44,13 @@ export function parseHash(hash: string): Route {
   if (head === 'book' && arg) return { name: 'book', id: decodeURIComponent(arg) }
   if (head === 'capture') return { name: 'capture' }
   if (head === 'map' && arg) return { name: 'shelf', id: decodeURIComponent(arg) }
+  if (head === 'login') {
+    // The one route that reads its query: the emailed link lands here
+    // (`console_mailer.LINK_PATH`), and the token must survive the parse —
+    // the general rule of stripping `?` is exactly what would eat it.
+    const query = hash.split('?')[1] ?? ''
+    return { name: 'login', token: new URLSearchParams(query).get('token') }
+  }
   return { name: 'library' }
 }
 

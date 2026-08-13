@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Sessions and login tokens — the pure rules of §3's magic link (P4.1a).
+"""Sessions and login tokens — the pure rules of the magic link (P4.1a).
 
-VISION §3, the decided spec in six words: **rate-limited, single-use,
-expiring**. This module holds every number and every rule; the stores
+VISION §3 decided the mechanism (email magic link);
+IMPLEMENTATION_PLAN's P4.1 row states the spec in six words:
+**rate-limited, single-use, expiring**. This module holds every number and
+every rule; the stores
 enforce single-use atomically, the routes enforce the rate, and both read
 the policy from here so there is exactly one copy of each (CLAUDE.md §6).
 
@@ -41,10 +43,13 @@ SESSION_REFRESH_BELOW = timedelta(days=60)
 #: an afternoon inbox.
 TOKEN_LIFETIME = timedelta(minutes=15)
 
-#: §3's "rate-limited", the two doors: per address (an attacker guessing
-#: emails burns this) and per source (one machine hammering many addresses
-#: burns this). Windows are an hour, like §1.2's run-rate cap — a guard
-#: against loops and abuse, not a quota.
+#: §3's "rate-limited", the two doors. The narrow one counts per
+#: (address × source) PAIR, not per address alone — a stranger who knows
+#: the owner's email must not be able to close the owner's own door by
+#: burning an address-wide budget from elsewhere (P4.1a's security review
+#: measured exactly that lockout). The wide one counts per source: one
+#: machine hammering many addresses burns this. Windows are an hour, like
+#: §1.2's run-rate cap — a guard against loops and abuse, not a quota.
 LINK_RATE_PER_EMAIL = 5
 LINK_RATE_PER_SOURCE = 15
 LINK_RATE_WINDOW = timedelta(hours=1)
@@ -64,6 +69,25 @@ def normalize_email(email: str) -> str:
     which is a duplicate identity for a standards point nobody exercises.
     """
     return email.strip().lower()
+
+
+def valid_email_shape(email: str) -> bool:
+    """Rejects only what no mailbox could receive — deliberately loose.
+
+    The honest test of an address is whether mail arrives; heavy validation
+    rejects real addresses to feel thorough. What this DOES refuse is the
+    class that is dangerous rather than wrong: control characters and inner
+    whitespace ride straight into the Mailer's message and into
+    ``users.email`` — P4.1a's security review measured a CRLF payload
+    landing a forged ``Bcc:`` in the mail text and control bytes in the
+    identity column. Exactly one ``@`` with non-empty halves is the rest.
+    """
+    if not 3 <= len(email) <= 254 or email.count("@") != 1:
+        return False
+    local, domain = email.split("@")
+    if not local or not domain:
+        return False
+    return not any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in email)
 
 
 def _at(iso: str) -> datetime:

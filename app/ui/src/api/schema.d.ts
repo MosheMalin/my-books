@@ -641,8 +641,7 @@ export interface paths {
          *     `MANAGE_LIBRARY` rather than a new capability: §4.2 has no "create a
          *     library" row, and the closest cell it does have — *rename the library*,
          *     "the library's name is the tenant's own identity" — is the same act one
-         *     step later. The fresh-account branch of `_account` needs no exemption: it
-         *     hands back an ADMIN membership, so it clears this check by construction.
+         *     step later.
          */
         post: operations["create_library_api_v1_libraries_post"];
         delete?: never;

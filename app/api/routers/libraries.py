@@ -38,8 +38,9 @@ same reason: an invite with no login to accept it is not a feature.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
+from app.api import deps
 from app.api.deps import (
     get_clock,
     get_id_gen,
@@ -52,9 +53,7 @@ from app.domain import (
     Account,
     Capability,
     Membership,
-    User,
     allowed,
-    new_account,
     new_library,
     rename_library,
 )
@@ -65,57 +64,50 @@ from app.ports.tenancy import TenancyStore
 router = APIRouter(prefix="/libraries", tags=["libraries"])
 
 
-def _user(principal: Principal, tenancy: TenancyStore) -> User:
-    """The caller's user record, created on first sight if need be.
-
-    A dev-trusted principal exists before any row does (that is what
-    "dev-trusted" means), and the composition root already ensures the owner's
-    user row — but a fresh database reached through some other entry point
-    would otherwise 500 the first time someone pressed *new library*. Creating
-    it here is idempotent and cheap; P4.1 replaces the whole path with a
-    session lookup, where an unknown user is a real error.
-    """
-    existing = tenancy.get_user(principal.id)
-    if existing is not None:
-        return existing
-    user = User(id=principal.id)
-    tenancy.save_user(user)
-    return user
-
-
 def _account(
-    principal: Principal, tenancy: TenancyStore, clock: Clock, ids: IdGen,
+    request: Request, principal: Principal, tenancy: TenancyStore,
 ) -> tuple[Account, Membership]:
-    """The account a new library goes under, created on first sight if need be.
+    """The account a new library goes under — the one the caller is
+    OPERATING AS (P4.1b).
 
-    ⚠ "Which account?" is a question that only has one answer today and will
-    have several at P4.3, so it is answered in ONE place rather than assumed at
-    each call site. The rule, in order: the account that owns the principal's
-    own default library — the composition root guarantees it, and it is the
-    customer the caller is demonstrably operating as; failing that, their sole
-    account; failing that, a new one.
+    "Which account?" has one answer per request and it is answered in ONE
+    place. The rule: the account owning the library the request itself
+    names (the same ``X-Booksnap-Library`` header every other call
+    carries — the client's actual selection, which is what "operating as"
+    means); with no header, the caller's sole account. A caller in SEVERAL
+    accounts with no header is refused with instructions rather than
+    guessed at — "the first account we happen to list" was a cross-tenant
+    write the moment a second membership existed (P3.7b's review, M6).
 
-    The third branch is not decoration: it is the path a fresh database
-    reached through some other entry point takes, and without it the first
-    press of *new library* would 500. P4.1 replaces the whole function with
-    the account the session names, where "none" is a real error.
+    The dev-era branches died with the dev identity: no user row is minted
+    here (the session's user exists by construction), and no account is
+    minted here (that is sign-up's job, P4.1c) — a user with no account
+    cannot create a library, which is §4.1's "creating a library writes
+    into a customer" taken at face value.
     """
-    user = _user(principal, tenancy)
-    library = tenancy.get_library(principal.library.id)
-    if library is not None:
-        held = tenancy.membership(user.id, library.account_id)
+    requested = (request.headers.get(deps.LIBRARY_HEADER)
+                 or request.query_params.get(deps.LIBRARY_PARAM))
+    if requested:
+        library, membership = owner_membership(tenancy, principal.id, requested)
+        if library is None or membership is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "no such library")
         account = tenancy.get_account(library.account_id)
-        if held is not None and account is not None:
-            return account, held
-    mine = tenancy.list_accounts(user.id)
-    if mine:
+        if account is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "no such library")
+        return account, membership
+    mine = tenancy.list_accounts(principal.id)
+    if len(mine) == 1:
         return mine[0]
-    account, membership = new_account(
-        id=ids.new_id(), owner=user, created_at=clock.now_iso(),
+    if not mine:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "this user has no account yet — sign-up creates one (§4.3)",
+        )
+    raise HTTPException(
+        status.HTTP_400_BAD_REQUEST,
+        "you belong to several accounts; name a library of the one this "
+        "should go under (the X-Booksnap-Library header)",
     )
-    tenancy.save_account(account)
-    tenancy.save_membership(membership)
-    return account, membership
 
 
 @router.get("", response_model=list[LibraryDTO],
@@ -156,6 +148,7 @@ def list_libraries(
              summary="Create a library")
 def create_library(
     body: LibraryCreate,
+    request: Request,
     principal: Principal = Depends(get_principal),
     tenancy: TenancyStore = Depends(get_tenancy_store),
     clock: Clock = Depends(get_clock),
@@ -195,10 +188,9 @@ def create_library(
     `MANAGE_LIBRARY` rather than a new capability: §4.2 has no "create a
     library" row, and the closest cell it does have — *rename the library*,
     "the library's name is the tenant's own identity" — is the same act one
-    step later. The fresh-account branch of `_account` needs no exemption: it
-    hands back an ADMIN membership, so it clears this check by construction.
+    step later.
     """
-    account, membership = _account(principal, tenancy, clock, ids)
+    account, membership = _account(request, principal, tenancy)
     if not allowed(membership.role, Capability.MANAGE_LIBRARY):
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,

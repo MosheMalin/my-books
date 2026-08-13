@@ -66,7 +66,7 @@ from app.ports.store import (
     UnknownShelf,
     WrongLibrary,
 )
-from app.ports.tenancy import UnknownAccount, UnknownUser
+from app.ports.tenancy import EmailTaken, UnknownAccount, UnknownUser
 
 _ORDER_BY = {
     BookSort.TITLE: "norm_title {dir}, id {dir}",
@@ -761,6 +761,19 @@ class SqliteTenancyStore(_SqliteStore):
 
     def save_user(self, user: User) -> None:
         with self._connect() as conn:
+            # Probed here as well as declared as the partial unique index
+            # users_by_email: the index raises sqlite3.IntegrityError, a
+            # driver detail the port must not leak — and the memory store
+            # has no indexes at all (same pattern as save_membership).
+            if user.email is not None:
+                row = conn.execute(
+                    "SELECT id FROM users WHERE email = ? AND id <> ?",
+                    (user.email, user.id),
+                ).fetchone()
+                if row is not None:
+                    raise EmailTaken(
+                        f"{user.email!r} already belongs to another user"
+                    )
             with conn:
                 conn.execute(
                     "INSERT INTO users (id, display_name, email, created_at)"
@@ -965,13 +978,22 @@ class SqliteAuthStore(_SqliteStore):
 
     def save_login_token(self, token: LoginToken) -> None:
         with self._connect() as conn:
-            with conn:
-                conn.execute(
-                    "INSERT INTO login_tokens (token_hash, email, source_hash,"
-                    " created_at, expires_at, consumed_at) VALUES (?,?,?,?,?,?)",
-                    (token.token_hash, token.email, token.source_hash,
-                     token.created_at, token.expires_at, token.consumed_at),
-                )
+            try:
+                with conn:
+                    conn.execute(
+                        "INSERT INTO login_tokens (token_hash, email,"
+                        " source_hash, created_at, expires_at, consumed_at)"
+                        " VALUES (?,?,?,?,?,?)",
+                        (token.token_hash, token.email, token.source_hash,
+                         token.created_at, token.expires_at,
+                         token.consumed_at),
+                    )
+            except sqlite3.IntegrityError as exc:
+                # Same refusal, same words, as the memory adapter -- a
+                # driver class must not be the contract.
+                raise ValueError(
+                    f"login token {token.token_hash!r} already stored"
+                ) from exc
 
     def consume_login_token(self, token_hash: str, *, now: str) -> LoginToken | None:
         # Single-use is THIS statement: the WHERE clause is the whole rule,
@@ -996,16 +1018,48 @@ class SqliteAuthStore(_SqliteStore):
     def count_recent_login_tokens(self, *, email: str | None = None,
                                   source_hash: str | None = None,
                                   since: str) -> int:
-        assert (email is None) != (source_hash is None), \
-            "exactly one filter per call"
-        column, value = (("email", email) if email is not None
-                         else ("source_hash", source_hash))
+        # `raise`, not `assert`: under `python -O` an assert vanishes and
+        # the WHERE would compare against None -- count 0, rate door open.
+        if email is None and source_hash is None:
+            raise ValueError("at least one filter per call")
+        clauses, values = ["created_at >= ?"], [since]
+        if email is not None:
+            clauses.append("email = ?")
+            values.append(email)
+        if source_hash is not None:
+            clauses.append("source_hash = ?")
+            values.append(source_hash)
         with self._connect() as conn:
             return conn.execute(
-                f"SELECT count(*) FROM login_tokens"
-                f" WHERE {column} = ? AND created_at >= ?",
-                (value, since),
+                "SELECT count(*) FROM login_tokens WHERE "
+                + " AND ".join(clauses),
+                tuple(values),
             ).fetchone()[0]
+
+    def revoke_sessions_of_user(self, user_id: str, *, at: str) -> int:
+        # The lost-phone answer, and what pays for the 90-day lifetime:
+        # without it, `sessions_by_user` was an index nothing read
+        # (P4.1a's data-integrity review).
+        with self._connect() as conn:
+            with conn:
+                cur = conn.execute(
+                    "UPDATE sessions SET revoked_at = ?"
+                    " WHERE user_id = ? AND revoked_at IS NULL",
+                    (at, user_id),
+                )
+            return cur.rowcount
+
+    def purge_login_tokens(self, *, before: str) -> int:
+        # Tokens are ephemeral by design; the EMAIL on the row is not.
+        # Rows whose expiry is behind `before` serve no redeem and no rate
+        # window -- keeping them keeps a mailing list in cleartext.
+        with self._connect() as conn:
+            with conn:
+                cur = conn.execute(
+                    "DELETE FROM login_tokens WHERE expires_at < ?",
+                    (before,),
+                )
+            return cur.rowcount
 
 
 def _load_session(row: sqlite3.Row) -> Session:

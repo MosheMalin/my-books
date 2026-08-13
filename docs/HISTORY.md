@@ -3797,3 +3797,72 @@ owner's real size is 16ms, and a reader during the chain returns in 1ms
 under WAL, so the staff service never blocks. The failure envelope for the
 10s busy timeout starts around a 600× larger chain, and the lock failure now
 names the file and what was happening.
+
+
+## P4.1 — login: the magic link, and the day the fallbacks died
+
+Two landings (P4.1a additive, P4.1b the cutover), each with its own review
+pass folded before merge. The long-standing sentence closed here: the
+unauthenticated-LAN trade ("until pillar 4") ended when every `/api/v1`
+route began requiring a session cookie — verified live against the owner's
+real database: login screen, link printed by the dev mailer, redeem, 272
+books, sign-out, and a cookie-less `curl` answering 401.
+
+**P4.1a** added machinery without consuming it: `app/domain/auth.py` holds
+every number and rule (90-day rolling sessions refreshing when under 60
+days remain — one write a month per device; 15-minute single-use tokens;
+the rate doors), schema v15 (sessions + login_tokens, HASHES only), the
+`AuthStore`/`Mailer` ports, three pre-auth routes with their own closed
+exemption list and structural meta-test, and the identity anchor: the
+bootstrap linked `BOOKSNAP_OWNER_EMAIL` into the owner's email-less user
+row while it still existed. The pre-commit migration review earned its
+place — it found that anchor gap (v15 made `users.email` load-bearing and
+the owner's row predated email entirely; without the link, P4.1b's cutover
+would have stranded 286 books under a user nobody could authenticate as).
+
+**The review fleet then earned its place twice more.** Security measured a
+targeted LOCKOUT — five link requests for the owner's address from
+anywhere closed the owner's own sign-in for an hour — so the narrow rate
+door counts the (address × source) PAIR now; it also measured a CRLF
+payload riding an "email" into the mailer message (a forged Bcc, verbatim)
+and into `users.email`, so the shape check refuses control characters and
+inner whitespace, and nothing else. Data-integrity proved the memory
+adapter's GIL-atomicity claim false with numbers (2299/4000 double-redeems
+at 4 threads — a real lock now), found the email-uniqueness rule enforced
+only by the sqlite index (a port-level `EmailTaken` in both adapters now,
+and the redeem races it idempotently), and found `sessions_by_user` was an
+index nothing read — `revoke_sessions_of_user` (the lost-phone answer the
+90-day lifetime assumes) and `purge_login_tokens` (expired rows kept
+addresses in cleartext forever; every link request now sweeps) exist
+because of it.
+
+**P4.1b deleted, structurally:** all three dev-trusted fallbacks
+(`current_library`'s no-lookup branch, `policy._role`'s ADMIN upgrade,
+`owning_account`'s id-as-account), `DevPrincipal`, `_bootstrap_dev_user`
+(pinned gone by `test_the_composition_root_writes_no_tenancy_at_all` — an
+AST-style check, because that hazard returns as a WRITE, not a flag), and
+`routers/libraries.py`'s `_user`/`_account`. The `Principal` port is
+identity-only — a session says WHO; which libraries follow is the tenancy
+store's answer, resolved in the one place H2 always named. "Operating as"
+for `POST /libraries` is the request's own library header (the client's
+actual selection); a multi-account caller naming nothing is refused with
+instructions, never guessed at. `refreshed()` wired in
+`app/api/principal.py`, the one door every authenticated request passes.
+
+**Client:** the login screen replaces the whole tree on any 401 —
+`SIGNED_OUT_EVENT` fires from the ONE function all five request helpers
+throw through, so a new helper cannot opt out silently. The login route is
+the one hash route that keeps its query (the general parse rule eats `?…`,
+which would have eaten the token). The email input is `dir="ltr"` inside
+the RTL page, and `input[type=email]` joined `base.css`'s styled selector
+list — it was unlisted, and no jsdom test can see UA chrome.
+
+Worth remembering: the sign-in marker in client tests is the LANGUAGE
+toggle, not the library switcher — one library renders the switcher as a
+plain label (the settled §4.1 demotion), so a test waiting for a switcher
+button waits forever on exactly the default fixture.
+
+Admin console: unchanged by design. Its reads are the staff service (own
+token); its tenancy writes go through the product API and now ride the
+operator's product session — cookies are host-scoped, not port-scoped, so
+signing into the product once per browser covers the proxied console.

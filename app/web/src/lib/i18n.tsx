@@ -237,6 +237,16 @@ const HE = {
       editor: 'עריכה',
       admin: 'ניהול',
     } as Record<string, string>,
+
+  // --- sign-in (P4.1b, VISION §3) ---
+  login_title: 'כניסה',
+  login_intro: 'הזינו את כתובת האימייל ונשלח קישור כניסה.',
+  login_email: 'אימייל',
+  login_send: 'שליחת קישור',
+  login_sending: 'שולח…',
+  login_sent: 'אם הכתובת יכולה להיכנס לכאן, קישור בדרך אליה. פתחו אותו מהמכשיר הזה.',
+  login_link_bad: 'הקישור פג תוקף או שכבר נוצל — בקשו קישור חדש.',
+  sign_out: 'התנתקות',
   lang: 'EN',
 }
 
@@ -463,6 +473,18 @@ const EN: Strings = {
       editor: 'Editor',
       admin: 'Admin',
     },
+
+  // --- sign-in (P4.1b, VISION §3) ---
+  login_title: 'Sign in',
+  login_intro: 'Enter your email address and we will send a sign-in link.',
+  login_email: 'Email',
+  login_send: 'Send link',
+  login_sending: 'Sending…',
+  login_sent: 'If that address can sign in here, a link is on its way. '
+    + 'Open it on this device.',
+  login_link_bad: 'That link has expired or was already used — request a '
+    + 'new one.',
+  sign_out: 'Sign out',
   lang: 'עב',
 }
 
