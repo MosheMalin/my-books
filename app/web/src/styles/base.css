@@ -68,6 +68,7 @@ a {
    instead of re-declaring the whole control. */
 input[type=text],
 input[type=search],
+input[type=email], /* the login screen (P4.1b); unlisted = raw UA chrome */
 textarea,
 select {
   font: inherit;

@@ -147,6 +147,14 @@ the deployed environment; the local-dev behaviour is unchanged.
 
 The riskiest item of the pillar; staged so each stage lands green on `main`.
 
+✅ **P4.1a landed 2026-08-13.** Numbers decided in code, each with a stated
+reason there: token life 15 min, refresh threshold 60 days remaining (one
+write/month/device), link rate 5/hr per (address × source) pair and 15/hr
+per source — the pair form replaced address-alone after the security review
+measured a stranger locking the owner out through it. Post-landing reviews
+(security, data-integrity, quality) all folded; the identity anchor
+(`BOOKSNAP_OWNER_EMAIL`) is linked on the real database.
+
 **P4.1a — session machinery, additive (M).** New schema steps (v15+): a
 `sessions` table (opaque random id, `user_id`, `created_at`, `expires_at`,
 `revoked_at`) and a `login_tokens` table (token stored HASHED, single-use,
@@ -171,6 +179,20 @@ the owner's row predates email. P4.1a's bootstrap fills it from
 `users.email` is populated on the real database before starting P4.1b, and
 P4.1b's cutover carries a test that a v14-shaped file with an email-less
 user survives (signs in to the RIGHT user, never a freshly-minted twin).
+
+✅ **P4.1b landed 2026-08-13.** All three fallbacks, the bootstrap, the dev
+principal and `routers/libraries.py`'s `_user`/`_account` deleted; the
+`Principal` port is identity-only and `current_library` resolves the
+no-header default through the store. "Operating as" for `POST /libraries`
+is the request's own library header; a multi-account caller naming nothing
+is refused with instructions. The web client gained the login screen, the
+401→login mechanism (`SIGNED_OUT_EVENT` out of the one place all five
+request helpers fail through), the redeem route, and sign-out. The
+`owner_membership` timing-oracle fix turned out to have landed WITH P3.7b
+(both lookups already run on every path — the plan text below overstated
+the debt). Admin-console note: its tenancy writes ride the operator's
+product session (cookies are host-scoped, not port-scoped), so the
+operator signs into the product once in the same browser.
 
 **P4.1b — the resolver reads the session; the fallbacks DIE (M/L).** The
 first real act of authentication, not a cleanup afterwards: delete all three

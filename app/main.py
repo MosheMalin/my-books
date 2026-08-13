@@ -29,14 +29,12 @@ Populate it once with::
 """
 from __future__ import annotations
 
-import hashlib
 import os
-from dataclasses import replace
 from pathlib import Path
 
 from app.adapters.booksnap_reader import BooksnapReader
 from app.adapters.console_mailer import ConsoleMailer
-from app.adapters.dev_identity import DevPrincipal, SystemClock, UuidIdGen
+from app.adapters.dev_identity import SystemClock, UuidIdGen
 from app.adapters.disk_blobs import DiskBlobStore
 from app.adapters.queued_jobs import QueuedJobRunner
 from app.adapters.sqlite_store import (
@@ -49,8 +47,7 @@ from app.adapters.sqlite_store import (
     SqliteTenancyStore,
 )
 from app.api.app import create_app
-from app.domain import Library, Membership, Role, User, new_account
-from app.domain.auth import normalize_email
+from app.api.principal import session_principal
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WEB_DIST = REPO_ROOT / "app" / "web" / "dist"
@@ -108,122 +105,20 @@ def blob_root() -> Path:
     return Path(explicit) if explicit else _work() / "product_blobs"
 
 
-def _bootstrap_dev_user(tenancy: SqliteTenancyStore, principal) -> None:
-    """Make the dev principal a real, stored user with a real membership.
-
-    P3.1's resolver serves ``principal.library`` without a store lookup (the
-    dev-trusted case), but ``GET /libraries`` deliberately does NOT patch that
-    library into its answer — one copy of that rule, in one module. So the
-    switcher would be missing the very library on screen unless the row
-    exists. Creating it here is what keeps the two in step, and
-    ``test_the_library_meta_resolves_is_always_one_the_switcher_lists`` is
-    what fails if this is dropped.
-
-    It also names the library that schema v12 backfilled. The migration
-    deliberately leaves ``label`` blank — it cannot know what the owner calls
-    their collection, and an invented English "My library" would be our string
-    in a Hebrew switcher. The name comes from the same env var that has been
-    producing the label on screen since P1.0, so nothing visibly changes.
-
-    Idempotent, and it never renames a library the owner has named: only a
-    blank label is filled in. P4.1 replaces this whole function with a real
-    sign-up.
-
-    ⚠ Since P3.7b it mints the ACCOUNT too, because that is now the thing a
-    membership names. On the owner's own database that branch never fires —
-    schema v14 derived an account from the existing membership graph — so what
-    it really covers is a database with no tenancy rows at all: a fresh clone,
-    a test, a `work/` someone deleted. The id is derived from the library id
-    rather than random for the same reason v14's is: running this twice
-    against the same file must not produce two customers.
-
-    ⚠⚠ **It grants a membership ONLY in the account it just created, and this
-    is the sharp edge of the whole item.** The first version also wrote an
-    ADMIN row whenever the principal had none for an EXISTING library's owner
-    — which, pointed at a library belonging to somebody else's account, made
-    the dev principal an admin of that whole customer, including collections
-    it was never told about. P3.7b's security review demonstrated it: start
-    the server as `bob` on `lib-home` and bob ends up admin of `acc-family`,
-    reaching `lib-shop` too.
-
-    That is worse than the in-memory fallback in ``app/api/policy.py`` it
-    resembles, and the difference is what makes it worth a paragraph: the
-    fallback lives per-request and DELETING the line at P4.1 removes the
-    grant. This wrote a ROW. A login landing on that database would find it
-    already true, with nothing left to delete. A pre-existing account's member
-    list is not the composition root's to edit — if a migrated library's owner
-    has no members, that is an orphan for the operator console to show, not
-    something to adopt silently.
-    """
-    user = tenancy.get_user(principal.id)
-    if user is None:
-        user = User(id=principal.id)
-        tenancy.save_user(user)
-    # ⚠ The identity anchor, and the window is CLOSING (P4.1a's migration
-    # review). v15 makes `users.email` load-bearing — the magic link's
-    # redeem resolves the user by address, and nothing else — but the
-    # owner's real row predates email entirely. When P4.1b deletes this
-    # whole function together with the dev principal, an unlinked owner
-    # signs in to a freshly-minted empty user while 286 books sit under
-    # this one, reachable by nobody. So while the bootstrap still runs,
-    # it links the address: set BOOKSNAP_OWNER_EMAIL (in .env), start the
-    # server once. Fills a BLANK email only — it never overwrites a row
-    # the redeem flow owns, same one-way rule as the label below.
-    owner_email = os.environ.get("BOOKSNAP_OWNER_EMAIL", "").strip()
-    if owner_email and not user.email:
-        user = replace(user, email=normalize_email(owner_email))
-        tenancy.save_user(user)
-    ref = principal.library
-    library = tenancy.get_library(ref.id)
-    if library is None:
-        # Nothing here yet: mint the customer, the admin row and the library
-        # together. This is the ONLY branch that writes a membership — see
-        # the ⚠ below for the one that used to and must not.
-        account_id = _dev_account_id(ref.id)
-        if tenancy.get_account(account_id) is None:
-            account, first = new_account(id=account_id, owner=user)
-            tenancy.save_account(account)
-            tenancy.save_membership(first)
-        tenancy.save_library(
-            Library(id=ref.id, account_id=account_id, label=ref.label)
-        )
-    elif not library.label and ref.label:
-        tenancy.save_library(replace(library, label=ref.label))
-
-
-def _dev_account_id(library_id: str) -> str:
-    """Derived, never random — see :func:`_bootstrap_dev_user`.
-
-    Mirrors the SHAPE of ``app.adapters.migrations._account_id`` without
-    importing it, deliberately: a migration's ids are frozen history the
-    moment they are written to somebody's file, and a composition root that
-    called into that function would make a future edit there silently rewrite
-    what this one answers.
-
-    ⚠ They do NOT agree by value, and nothing needs them to: the migration
-    length-prefixes its seed and this does not. The two never run on the
-    same file — v14 backfills a database that already has libraries, and
-    this fires only when there are none — so a bootstrapped database and a
-    migrated one simply get different account ids, and neither is wrong.
-    """
-    return hashlib.blake2s(
-        library_id.encode("utf-8"), digest_size=16
-    ).hexdigest()
-
-
 def build() -> object:
     """Bind adapters to ports and return the ASGI app."""
-    # One instance is correct today (a hardcoded dev identity is immutable and
-    # request-independent). P4.1 replaces this with a per-request session read;
-    # the signature does not change, which is the point of the stub.
-    principal = DevPrincipal()
     path = db_path()
     blobs = DiskBlobStore(blob_root())
     books = SqliteBookStore(path)
     tenancy = SqliteTenancyStore(path)
-    _bootstrap_dev_user(tenancy, principal)
     return create_app(
-        principal_provider=lambda: principal,
+        # P4.1b: identity is the session cookie, resolved per request —
+        # the dev principal and its bootstrap are DELETED, not parked
+        # behind a flag (a flag that restores an auth bypass is the
+        # landmine this item removes). A fresh database now starts EMPTY:
+        # sign-in mints the bare user, P4.1c's sign-up mints the account
+        # and first library.
+        principal_provider=session_principal,
         # P3.1: users, libraries and memberships — the SIXTH aggregate in
         # this one file, and the sharpest version of the reason they share it.
         # "May this person see this?" and "what is there to see?" must never be

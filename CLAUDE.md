@@ -408,8 +408,12 @@ different world — the product never reads it.
 - sqlite backfills must call the SAME domain function as the write path
   (v3's lesson); WAL sidecars travel when copying DB files; snapshot a live
   DB via SQLite's backup API, never three `copy2`s.
-- `:8757`/`:5173` bind 0.0.0.0 on purpose (phone capture); unauthenticated
-  LAN API is a known single-household trade until pillar 4.
+- `:8757`/`:5173` bind 0.0.0.0 on purpose (phone capture). CLOSED at P4.1b:
+  every `/api/v1` route (bar the three pre-auth ones) needs a session
+  cookie; the dev sign-in link prints to the server log (ConsoleMailer).
+  A fresh dev database starts EMPTY — no dev principal, no bootstrap; the
+  admin console's tenancy writes ride the operator's product session
+  (cookies are host-scoped, so sign into the product once per browser).
 - Windows/AV: loading many small files costs ~5ms each (jsdom 3.5s) — likely
   real-time AV scanning of node_modules; machine setting, not repo-fixable.
 - 4-core i5: wall-clock numbers move ±20%; distrust small parallel gains.

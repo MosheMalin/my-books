@@ -11,6 +11,7 @@ import { BookPage } from './book/BookPage'
 import { BooksTab } from './books/BooksTab'
 import { CaptureTab } from './capture/CaptureTab'
 import { ShelfPage } from './shelf/ShelfPage'
+import { useAuth } from './lib/auth'
 import { useBooks } from './lib/books'
 import { useI18n } from './lib/i18n'
 import { LibrarySwitcher } from './lib/LibrarySwitcher'
@@ -18,6 +19,7 @@ import { bookHash, CAPTURE_HASH, LIBRARY_HASH, useRoute } from './lib/route'
 
 export function App() {
   const { t, lang, toggleLang } = useI18n()
+  const { signOutNow } = useAuth()
   const books = useBooks()
   const { route, navigate, back } = useRoute()
   const [drawerId, setDrawerId] = useState<string | null>(null)
@@ -86,6 +88,17 @@ export function App() {
           aria-label={lang === 'he' ? 'Switch to English' : 'עברו לעברית'}
         >
           {t.lang}
+        </button>
+        {/* P4.1b: its own accessible name (the collision rule) and no
+            confirmation — sign-out is a state to arrive at, and the login
+            screen it lands on is one click from returning. */}
+        <button
+          type="button"
+          className="langswitch"
+          onClick={signOutNow}
+          aria-label={t.sign_out}
+        >
+          {t.sign_out}
         </button>
       </header>
 

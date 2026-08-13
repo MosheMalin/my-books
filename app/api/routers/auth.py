@@ -47,10 +47,11 @@ from app.domain.auth import (
     new_session,
     normalize_email,
     rate_window_start,
+    valid_email_shape,
 )
 from app.ports import Clock, IdGen
 from app.ports.auth import AuthStore, Mailer
-from app.ports.tenancy import TenancyStore
+from app.ports.tenancy import EmailTaken, TenancyStore
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -58,9 +59,21 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 def _source_hash(request: Request) -> str:
     """The requesting client's address, hashed for the rate window.
 
-    Hashed like a token — the address itself has no business persisting.
-    Empty when the transport has none (the test client): those requests
-    then share one bucket, which only ever errs toward stricter.
+    Honestly: an UNSALTED hash of an IP is a rate-limit key, not
+    anonymisation — the IPv4 space brute-forces in minutes. It is stored
+    this way because the counter needs a deterministic lookup, and it
+    stops being stored at all once the row ages past the window (the
+    purge in the route below). Whatever string the transport presents is
+    one bucket — Starlette's test client presents the literal host
+    "testclient", a transport with no peer at all presents "" — and a
+    shared bucket only ever errs toward stricter.
+
+    ⚠ P4.4: this reads the DIRECT peer. Behind the TLS reverse proxy that
+    item adds, every caller becomes 127.0.0.1 and the per-source door
+    turns into a whole-service cap (15 requests lock everyone out for an
+    hour — measured at review). The fix belongs to the deployment: run
+    uvicorn with --proxy-headers --forwarded-allow-ips=<proxy>, never an
+    unconditional X-Forwarded-For read here (that hands the bypass back).
     """
     host = request.client.host if request.client else ""
     return hash_token(host)
@@ -78,21 +91,29 @@ def request_login_link(
     stranger, or future sign-up all read the same, so the route cannot be
     used to enumerate who has an account here."""
     email = normalize_email(body.email)
-    if "@" not in email or len(email) < 3:
-        # Shape, not validity — see LoginLinkRequest's ⚠. This 422 is for
-        # "that is not an email at all", which no mail could ever reach.
+    if not valid_email_shape(email):
+        # Shape, not validity — see LoginLinkRequest's ⚠. This 422 refuses
+        # what no mail could reach AND what must not ride into the Mailer
+        # (CRLF into a real message is header injection; the review
+        # measured a forged Bcc landing verbatim).
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                             "that does not look like an email address")
     now = clock.now_iso()
     since = rate_window_start(now)
     source = _source_hash(request)
-    if (auth.count_recent_login_tokens(email=email, since=since)
-            >= LINK_RATE_PER_EMAIL
+    # Expired tokens serve no redeem and no rate window; what they DO hold
+    # is an address in cleartext, forever, for anyone who ever typed one.
+    # Each request sweeps — no cron to forget, cost one indexed DELETE.
+    auth.purge_login_tokens(before=since)
+    # The narrow door is the (address × source) PAIR — see the constants'
+    # comment for why address-alone was a lockout an attacker could aim.
+    if (auth.count_recent_login_tokens(email=email, source_hash=source,
+                                       since=since) >= LINK_RATE_PER_EMAIL
             or auth.count_recent_login_tokens(source_hash=source, since=since)
             >= LINK_RATE_PER_SOURCE):
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
-            f"too many sign-in links; try again within "
+            f"too many sign-in links; try again in "
             f"{int(LINK_RATE_WINDOW.total_seconds() // 60)} minutes",
         )
     token = secrets.token_urlsafe(32)
@@ -131,8 +152,17 @@ def redeem_login_link(
                             "request a new one")
     user = tenancy.user_by_email(token.email)
     if user is None:
-        user = User(id=ids.new_id(), email=token.email, created_at=now)
-        tenancy.save_user(user)
+        try:
+            user = User(id=ids.new_id(), email=token.email, created_at=now)
+            tenancy.save_user(user)
+        except EmailTaken:
+            # Two redeems for one never-seen address raced the read above
+            # (two links opened at once, a mail client prefetching while
+            # the human taps). The loser's answer is the winner's user —
+            # one address, one identity, whoever wrote the row.
+            user = tenancy.user_by_email(token.email)
+            if user is None:  # pragma: no cover — the row just refused us
+                raise
     session_token = secrets.token_urlsafe(32)
     auth.save_session(new_session(session_token, user.id, now))
     response.set_cookie(

@@ -181,7 +181,7 @@ def after_each() -> None:
 def _app(principal: StubPrincipal | None = None, store=None, shelves=None,
          blobs=None, reads=None, reader=None, jobs=None, decisions=None,
          duplicates=None, tenancy=None, auth=None, mailer=None, clock=None,
-         recycle: bool = True):
+         principal_provider=None, recycle: bool = True):
     """Build (or recycle) an app with these ports bound.
 
     :param recycle: pass ``False`` for an app whose per-app state a later test
@@ -189,7 +189,10 @@ def _app(principal: StubPrincipal | None = None, store=None, shelves=None,
     """
     p = principal or StubPrincipal()
     ports = dict(
-        principal_provider=lambda: p,
+        # A raw provider wins: the session tests bind the REAL
+        # session_principal dependency; everything else gets the stub.
+        principal_provider=(principal_provider if principal_provider
+                            is not None else (lambda: p)),
         tenancy_store=tenancy if tenancy is not None else _tenancy(p),
         book_store=store if store is not None else MemoryBookStore(),
         shelf_store=shelves if shelves is not None else MemoryShelfStore(),
@@ -504,16 +507,14 @@ def test_only_an_admin_adds_a_library_to_an_account_others_belong_to():
         ]
 
 
-def test_a_library_goes_under_an_account_you_belong_to_never_your_defaults():
-    """`_account`'s first branch reads the principal's OWN default library and
-    uses its owner — which is only legitimate while the caller is a member of
-    that owner. A principal whose default library belongs to a customer they
-    have nothing to do with must NOT get a library written into it; they get a
-    fresh account of their own instead.
-
-    Dev-trusted principals make this unreachable today. It is pinned because
-    it is the one line that decides whether `principal.library` can be used as
-    a lever into somebody else's customer (P3.7b's data-integrity review)."""
+def test_a_caller_with_no_account_cannot_create_a_library_anywhere():
+    """P4.1b: no account is minted on the way past — that is sign-up's job
+    (P4.1c), and until then a bare user pressing *new library* is refused
+    with the reason, not gifted a customer. And naming a library of an
+    account they do NOT belong to is the same 404 as everywhere else —
+    `_account` resolves through the one `owner_membership` join, so a
+    foreign library cannot be a lever into somebody else's customer
+    (P3.7b's data-integrity review, survived the cutover)."""
     p = StubPrincipal()
     tenancy = MemoryTenancyStore()
     tenancy.save_user(User(id=p.id))
@@ -521,9 +522,11 @@ def test_a_library_goes_under_an_account_you_belong_to_never_your_defaults():
     tenancy.save_library(Library(id=p.library.id, account_id="acc-foreign",
                                  label=p.library.label))
     with TestClient(_app(principal=p, tenancy=tenancy)) as c:
-        made = c.post(f"{API_PREFIX}/libraries", json={"label": "שלי"})
-    assert made.status_code == 201, made.text
-    assert made.json()["account_id"] != "acc-foreign"
+        bare = c.post(f"{API_PREFIX}/libraries", json={"label": "שלי"})
+        assert bare.status_code == 403, bare.text
+        named = c.post(f"{API_PREFIX}/libraries", json={"label": "שלי"},
+                       headers={deps.LIBRARY_HEADER: p.library.id})
+        assert named.status_code == 404, named.text
     assert [lib.id for lib in tenancy.list_libraries("acc-foreign")] == \
         [p.library.id], "a library was written into a foreign customer"
 
@@ -584,31 +587,39 @@ def test_a_missing_library_and_a_foreign_one_cost_the_same_lookups():
 
 
 def test_a_library_goes_under_the_account_you_are_operating_as():
-    """`_account`'s first branch, pinned where it can actually be wrong.
+    """`_account`, pinned where it can actually be wrong.
 
-    A user may belong to several customers (P4.3's invites), and only one of
-    them is the one they are demonstrably operating as: the owner of the
-    library their own principal resolves to. Picking "the first account we
-    happen to list" is a cross-tenant write the moment a second membership
-    exists — and it survived the whole ring until this case (P3.7b's security
-    review, mutation M6)."""
+    A user may belong to several customers (P4.3's invites), and only one
+    of them is the one they are demonstrably operating as: since P4.1b,
+    the owner of the library the REQUEST names — the same header every
+    other call carries, i.e. the client's actual selection. Picking "the
+    first account we happen to list" is a cross-tenant write the moment a
+    second membership exists (P3.7b's security review, mutation M6) — and
+    a multi-account caller who names nothing is REFUSED with instructions,
+    never guessed at."""
     p = StubPrincipal()
     tenancy = MemoryTenancyStore()
     tenancy.save_user(User(id=p.id))
-    # Two accounts, ADMIN of both. "acc-aaa" sorts first; the principal's own
-    # library belongs to the OTHER one, which is the answer.
+    # Two accounts, ADMIN of both. "acc-aaa" sorts first; the request names
+    # a library belonging to the OTHER one, which is the answer.
     for account_id in ("acc-aaa", TEST_ACCOUNT):
         tenancy.save_account(Account(id=account_id))
         tenancy.save_membership(Membership(p.id, account_id, Role.ADMIN))
     tenancy.save_library(Library(id=p.library.id, account_id=TEST_ACCOUNT,
                                  label=p.library.label))
     with TestClient(_app(principal=p, tenancy=tenancy)) as c:
-        made = c.post(f"{API_PREFIX}/libraries", json={"label": "שנייה"})
-    assert made.status_code == 201, made.text
-    assert made.json()["account_id"] == TEST_ACCOUNT, (
-        "a library landed in a customer the caller was not operating as"
-    )
-    assert tenancy.list_libraries("acc-aaa") == ()
+        made = c.post(f"{API_PREFIX}/libraries", json={"label": "שנייה"},
+                      headers={deps.LIBRARY_HEADER: p.library.id})
+        assert made.status_code == 201, made.text
+        assert made.json()["account_id"] == TEST_ACCOUNT, (
+            "a library landed in a customer the caller was not operating as"
+        )
+        assert tenancy.list_libraries("acc-aaa") == ()
+
+        # Nothing named, several accounts: refused, with the remedy.
+        vague = c.post(f"{API_PREFIX}/libraries", json={"label": "עוד"})
+        assert vague.status_code == 400
+        assert "X-Booksnap-Library" in vague.json()["detail"]
 
 def test_a_library_created_with_a_blank_name_is_refused():
     """§4.3, and the deliberate asymmetry with a shelf (whose label is
@@ -1239,22 +1250,27 @@ def test_an_editor_captures_but_only_an_admin_deletes_photos():
             assert r.status_code == 204
 
 
-def test_a_membership_row_on_your_own_library_outranks_the_dev_trusted_fallback():
-    """`_role` consults the membership row FIRST and falls back to ADMIN only
-    when no row exists for the principal's own library. Reordering those two
-    branches would silently grant ADMIN to anyone whose own-library row says
-    less — invisible today (the bootstrap writes ADMIN) and a landmine the
-    day P4.3 lets an admin demote someone. Pinned by planting a VIEWER row
-    on the ACCOUNT that owns the principal's own library and watching a
-    write refuse."""
+def test_a_role_comes_from_rows_and_a_missing_membership_is_a_404():
+    """P4.1b's sentence: the dev-trusted ADMIN fallback is DELETED, so a
+    role comes from membership rows, full stop. A stored VIEWER row denies
+    a write (403 — the caller is a member, the library is no secret), and
+    a caller whose membership was REMOVED gets the same 404 as a stranger:
+    removing someone's membership now removes their access, which is the
+    ineffectiveness the deleted fallback was named for."""
     p = StubPrincipal()
     tenancy = _tenancy(p)   # seeds ADMIN…
     tenancy.save_membership(Membership(p.id, TEST_ACCOUNT, Role.VIEWER))
     with TestClient(_app(principal=p, tenancy=tenancy)) as c:
         r = c.post(f"{API_PREFIX}/books", json={"title": "ס", "author": ""})
         assert r.status_code == 403, (
-            "a stored viewer role on the caller's own library was ignored — "
-            "the dev-trusted ADMIN fallback must lose to a real row"
+            "a stored viewer role on the caller's own library was ignored"
+        )
+        tenancy.delete_membership(p.id, TEST_ACCOUNT)
+        r = c.get(f"{API_PREFIX}/books",
+                  headers={deps.LIBRARY_HEADER: p.library.id})
+        assert r.status_code == 404, (
+            "a removed member still reached the library — the dev-trusted "
+            "fallback is back from the dead"
         )
 
 
@@ -4423,3 +4439,242 @@ def test_a_decompression_bomb_is_refused_not_a_500():
             assert "smaller" in r.json()["detail"]
     finally:
         PILImage.MAX_IMAGE_PIXELS = old
+
+
+# --- the session principal: the fallbacks are dead (P4.1b) ----------------
+#
+# These bind the REAL `session_principal` dependency instead of the stub,
+# so the whole chain runs: cookie -> session row -> user -> resolver ->
+# policy. The dev principal, its bootstrap and all three dev-trusted
+# fallbacks are deleted; these are the tests of what replaced them.
+
+def _session_world():
+    """A signed-up world: a user with email, account, library, membership --
+    what P4.1c's sign-up will mint, hand-seeded until it exists."""
+    from app.api.principal import session_principal
+
+    tenancy = MemoryTenancyStore()
+    tenancy.save_user(User(id="u-owner", email="owner@example.com"))
+    tenancy.save_account(Account(id=TEST_ACCOUNT))
+    tenancy.save_membership(Membership("u-owner", TEST_ACCOUNT, Role.ADMIN))
+    tenancy.save_library(Library(id="lib-test", account_id=TEST_ACCOUNT,
+                                 label="Test library"))
+    mailer = StubMailer()
+    auth = MemoryAuthStore()
+    clock = TickClock("2026-08-13T12:00:00+00:00")
+    app = _app(tenancy=tenancy, mailer=mailer, auth=auth, clock=clock,
+               principal_provider=session_principal)
+    return app, tenancy, mailer, auth, clock
+
+
+def _sign_in(c, mailer, email="owner@example.com"):
+    c.post(f"{API_PREFIX}/auth/link", json={"email": email})
+    _, token = mailer.sent[-1]
+    r = c.post(f"{API_PREFIX}/auth/session", json={"token": token})
+    assert r.status_code == 201, r.text
+    return r
+
+
+def test_a_session_cookie_authenticates_the_whole_chain():
+    """Cookie -> session -> user -> resolver -> policy, over real HTTP.
+    The default library (no header) resolves through the STORE now -- the
+    first library of the caller's accounts, the same order the switcher
+    renders -- and a named library still resolves through the one
+    owner_membership join."""
+    app, _tenancy_store, mailer, _auth, _clock = _session_world()
+    with TestClient(app) as c:
+        assert c.get(f"{API_PREFIX}/meta").status_code == 401
+        _sign_in(c, mailer)
+        meta = c.get(f"{API_PREFIX}/meta")
+        assert meta.status_code == 200
+        assert meta.json()["library"]["id"] == "lib-test"
+        assert meta.json()["user"]["id"] == "u-owner"
+        named = c.get(f"{API_PREFIX}/books",
+                      headers={deps.LIBRARY_HEADER: "lib-test"})
+        assert named.status_code == 200
+
+
+def test_without_a_cookie_every_scoped_route_is_401():
+    """The LAN trade closes: :8757 without a session answers 401 with the
+    remedy, on the library axis AND the user axis. The pre-auth routes are
+    the only door left open, which their own meta-test pins."""
+    app, *_ = _session_world()
+    with TestClient(app) as c:
+        for path in ("/meta", "/books", "/shelves", "/libraries"):
+            r = c.get(f"{API_PREFIX}{path}")
+            assert r.status_code == 401, (path, r.status_code)
+            assert "sign-in" in r.json()["detail"]
+
+
+def test_sign_out_ends_the_sessions_access():
+    """Logout is not cosmetic: the tombstoned session stops authenticating
+    on the very next request."""
+    app, _t, mailer, _auth, _clock = _session_world()
+    with TestClient(app) as c:
+        _sign_in(c, mailer)
+        assert c.get(f"{API_PREFIX}/libraries").status_code == 200
+        assert c.delete(f"{API_PREFIX}/auth/session").status_code == 204
+        assert c.get(f"{API_PREFIX}/libraries").status_code == 401
+
+
+def test_an_expired_session_stops_authenticating_and_a_worn_one_rolls():
+    """90-day rolling (owner, 2026-08-13): past expiry is a 401; past the
+    refresh threshold the expiry moves OUT on an ordinary request -- one
+    write a month, invisible to the user."""
+    from app.domain.auth import hash_token
+
+    app, _t, mailer, auth, clock = _session_world()
+    with TestClient(app) as c:
+        r = _sign_in(c, mailer)
+        raw = r.cookies["booksnap_session"]
+        before = auth.get_session(hash_token(raw)).expires_at
+
+        clock.at = "2026-10-01T12:00:00+00:00"   # day 49: under 60 remain
+        assert c.get(f"{API_PREFIX}/libraries").status_code == 200
+        after = auth.get_session(hash_token(raw)).expires_at
+        assert after > before, "a worn session was not rolled"
+
+        clock.at = "2027-01-01T12:00:00+00:00"   # past even the rolled expiry
+        assert c.get(f"{API_PREFIX}/libraries").status_code == 401
+
+
+def test_removing_a_membership_removes_access_the_next_request():
+    """THE sentence of P4.1b, end to end over a real session: the deleted
+    fallback made removal ineffective for the default library; now the
+    next request after a removal reads 404, indistinguishable from a
+    library that never existed."""
+    app, tenancy, mailer, _auth, _clock = _session_world()
+    with TestClient(app) as c:
+        _sign_in(c, mailer)
+        h = {deps.LIBRARY_HEADER: "lib-test"}
+        assert c.get(f"{API_PREFIX}/books", headers=h).status_code == 200
+        tenancy.delete_membership("u-owner", TEST_ACCOUNT)
+        assert c.get(f"{API_PREFIX}/books", headers=h).status_code == 404
+        assert c.get(f"{API_PREFIX}/meta").status_code == 404, (
+            "the default-library path still served a removed member"
+        )
+
+
+def test_a_bare_user_resolves_no_library_and_hears_it_as_404():
+    """A first-ever sign-in owns nothing until P4.1c's sign-up: the
+    switcher list is honestly empty (200 []), and any library-scoped route
+    is the same 404 as an unresolvable reference -- never a 500."""
+    app, _t, mailer, _auth, _clock = _session_world()
+    with TestClient(app) as c:
+        _sign_in(c, mailer, email="stranger@example.com")
+        assert c.get(f"{API_PREFIX}/libraries").json() == []
+        assert c.get(f"{API_PREFIX}/books").status_code == 404
+        assert c.get(f"{API_PREFIX}/meta").status_code == 404
+
+
+def test_a_stranger_cannot_lock_the_owner_out_of_sign_in():
+    """P4.1a's security review measured the lockout: five requests for the
+    owner's address from anywhere closed the owner's own door for an hour.
+    The narrow rate door now counts the (address × source) PAIR — the
+    stranger burns their own budget, the owner's stays whole."""
+    from app.domain.auth import LINK_RATE_PER_EMAIL
+
+    mailer = StubMailer()
+    with _blobs() as _unused:  # keep the app-pool shape uniform
+        pass
+    attacker_app = _app(mailer=mailer)
+    with TestClient(attacker_app, client=("10.0.0.9", 1234)) as attacker:
+        for _ in range(LINK_RATE_PER_EMAIL):
+            assert attacker.post(f"{API_PREFIX}/auth/link",
+                                 json={"email": "owner@example.com"}
+                                 ).status_code == 202
+        assert attacker.post(f"{API_PREFIX}/auth/link",
+                             json={"email": "owner@example.com"}
+                             ).status_code == 429
+    with TestClient(attacker_app, client=("10.0.0.2", 1234)) as owner:
+        r = owner.post(f"{API_PREFIX}/auth/link",
+                       json={"email": "owner@example.com"})
+        assert r.status_code == 202, (
+            "a stranger burning the address budget locked the owner out"
+        )
+
+
+def test_an_address_that_no_mailbox_could_receive_is_refused():
+    """P4.1a's security review measured CRLF riding into the Mailer (a
+    forged Bcc landing verbatim in the message) and into users.email. The
+    shape check refuses control characters, inner whitespace and multiple
+    @s — and nothing else, because the honest test of an address is
+    whether mail arrives."""
+    mailer = StubMailer()
+    with TestClient(_app(mailer=mailer)) as c:
+        bad = (
+            "victim@x.com\r\nBcc: everyone@target.test",
+            "two@ats@x.com",
+            "spaced out@x.com",
+            "@x.com",
+            "local@",
+            "no-at-sign",
+        )
+        for address in bad:
+            r = c.post(f"{API_PREFIX}/auth/link", json={"email": address})
+            assert r.status_code == 422, (address, r.status_code)
+        assert mailer.sent == [], "a refused address still reached the mailer"
+        assert c.post(f"{API_PREFIX}/auth/link",
+                      json={"email": "a.b+tag@x.co"}).status_code == 202
+
+
+def test_the_minted_tokens_are_real_secrets_not_ids():
+    """The router's own rule — a session credential must never inherit
+    IdGen's deliberate reproducibility — was one line from silently
+    breaking with every test green (a review's mutation survived). Both
+    minted tokens are long, urlsafe, differ from each other, and are not
+    the deterministic ids the test IdGen mints."""
+    import re
+
+    mailer = StubMailer()
+    with TestClient(_app(mailer=mailer)) as c:
+        c.post(f"{API_PREFIX}/auth/link", json={"email": "a@example.com"})
+        _, link_token = mailer.sent[0]
+        r = c.post(f"{API_PREFIX}/auth/session", json={"token": link_token})
+        cookie_token = r.cookies["booksnap_session"]
+
+        for token in (link_token, cookie_token):
+            assert len(token) >= 40, f"{len(token)} chars is not 256 bits"
+            assert re.fullmatch(r"[A-Za-z0-9_-]+", token)
+            assert not token.startswith("id-"), "a token came from IdGen"
+        assert link_token != cookie_token
+        # And the cookie rides on the whole app, not a sub-path.
+        assert "path=/" in r.headers["set-cookie"].lower()
+
+
+def test_the_stored_source_is_a_hash_of_the_peer_not_the_peer():
+    """The privacy rule stated in three places was enforced by none (a
+    review's mutation survived): the raw address must not persist. The
+    stored value is 64 hex chars and is the sha256 of the transport's
+    peer string, never the peer itself."""
+    import re as _re
+
+    from app.domain.auth import hash_token, rate_window_start
+
+    auth = MemoryAuthStore()
+    with TestClient(_app(auth=auth)) as c:
+        c.post(f"{API_PREFIX}/auth/link", json={"email": "a@example.com"})
+    stored = [t.source_hash for t in auth._tokens.values()]
+    assert len(stored) == 1
+    assert _re.fullmatch(r"[0-9a-f]{64}", stored[0])
+    assert stored[0] != "testclient"
+    assert stored[0] == hash_token("testclient")
+
+
+def test_sign_out_clears_the_cookie_as_well_as_the_row():
+    """Both halves gated: the tombstone (the security half) and the
+    Set-Cookie clearing (the courtesy half — a stale cookie means every
+    later request 401s noisily instead of the browser just forgetting)."""
+    mailer = StubMailer()
+    with TestClient(_app(mailer=mailer)) as c:
+        c.post(f"{API_PREFIX}/auth/link", json={"email": "a@example.com"})
+        _, token = mailer.sent[0]
+        c.post(f"{API_PREFIX}/auth/session", json={"token": token})
+        r = c.delete(f"{API_PREFIX}/auth/session")
+        assert r.status_code == 204
+        cleared = r.headers.get("set-cookie", "")
+        assert "booksnap_session=" in cleared and (
+            'booksnap_session=""' in cleared
+            or "booksnap_session=;" in cleared
+            or "Max-Age=0" in cleared or "expires=" in cleared.lower()
+        ), f"sign-out left the cookie in place: {cleared!r}"

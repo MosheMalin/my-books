@@ -58,6 +58,19 @@ class UnknownAccount(DomainError):
     """
 
 
+class EmailTaken(DomainError):
+    """``save_user`` would give two users one address (P4.1b).
+
+    The address IS the identity anchor (the magic link resolves users by it
+    and by nothing else), so two users sharing one is two people one login
+    cannot tell apart. Raised as a domain error rather than leaking the
+    sqlite ``IntegrityError``, because the api layer may not import
+    adapters — and because the MEMORY store must refuse identically, or the
+    contract suite tests the one adapter that cannot fail (P4.1a's
+    data-integrity review measured exactly that divergence).
+    """
+
+
 class TenancyStore(Protocol):
     """Account-scoped, not library-scoped — see the module note."""
 

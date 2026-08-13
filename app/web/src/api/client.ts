@@ -26,6 +26,27 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Fired on `window` whenever ANY request answers 401 (P4.1b). The login
+ * screen listens; nothing else should. An event rather than a callback
+ * registry because the five request helpers below must not import React,
+ * and rather than module state because "signed out" is something that
+ * HAPPENS mid-session — a screen needs the moment, not a flag it forgot
+ * to poll.
+ */
+export const SIGNED_OUT_EVENT = 'booksnap:signed-out'
+
+/** Every non-2xx becomes an ApiError HERE, so a 401 cannot reach a caller
+ *  without the sign-in screen hearing about it. The helpers below throw
+ *  what this returns — a new helper that `throw new ApiError(...)` directly
+ *  has quietly opted out of the whole mechanism. */
+function apiError(status: number, path: string, message: string): ApiError {
+  if (status === 401) {
+    globalThis.dispatchEvent(new Event(SIGNED_OUT_EVENT))
+  }
+  return new ApiError(status, path, message)
+}
+
 /** Success body of a GET, straight out of the generated schema. */
 export type GetResponse<P extends ApiPath> = paths[P] extends {
   get: { responses: { 200: { content: { 'application/json': infer T } } } }
@@ -133,13 +154,31 @@ export async function apiGet<P extends ApiPath>(
     ...(opts.signal ? { signal: opts.signal } : {}),
   })
   if (!res.ok) {
-    throw new ApiError(res.status, path, `GET ${path} failed: ${res.status}`)
+    throw apiError(res.status, path, `GET ${path} failed: ${res.status}`)
   }
   return (await res.json()) as GetResponse<P>
 }
 
 export const getMeta = (opts?: ApiOptions): Promise<Meta> =>
   apiGet('/api/v1/meta', opts)
+
+// --- auth (P4.1b) ----------------------------------------------------------
+//
+// The pre-auth routes. The session itself travels as an HttpOnly cookie the
+// browser attaches on its own — nothing here reads or stores it, which is
+// the point of HttpOnly. The stray library header these carry is ignored
+// server-side, same note as the tenancy calls below.
+
+export type UserDTO = components['schemas']['UserDTO']
+
+export const requestLoginLink = (email: string, opts?: ApiOptions) =>
+  send('POST', '/api/v1/auth/link', { email }, opts) as Promise<{ detail: string }>
+
+export const redeemLoginToken = (token: string, opts?: ApiOptions) =>
+  send('POST', '/api/v1/auth/session', { token }, opts) as Promise<UserDTO>
+
+export const signOut = (opts?: ApiOptions) =>
+  send('DELETE', '/api/v1/auth/session', undefined, opts) as Promise<void>
 
 // --- tenancy (P3.1) --------------------------------------------------------
 //
@@ -186,7 +225,7 @@ export async function getBook(
     headers: headersFor(opts),
     ...(opts.signal ? { signal: opts.signal } : {}),
   })
-  if (!res.ok) throw new ApiError(res.status, path, `GET ${path}: ${res.status}`)
+  if (!res.ok) throw apiError(res.status, path, `GET ${path}: ${res.status}`)
   return (await res.json()) as BookDetail
 }
 
@@ -234,7 +273,7 @@ async function send(
     } catch {
       /* a 204 or an HTML error page — the status is what matters */
     }
-    throw new ApiError(res.status, path, detail)
+    throw apiError(res.status, path, detail)
   }
   return res.status === 204 ? undefined : await res.json()
 }
@@ -354,7 +393,7 @@ async function getJson<T>(path: string, opts: ApiOptions = {}): Promise<T> {
     headers: headersFor(opts),
     ...(opts.signal ? { signal: opts.signal } : {}),
   })
-  if (!res.ok) throw new ApiError(res.status, path, `GET ${path}: ${res.status}`)
+  if (!res.ok) throw apiError(res.status, path, `GET ${path}: ${res.status}`)
   return (await res.json()) as T
 }
 
@@ -393,7 +432,7 @@ export async function uploadImage(
     ...(opts.signal ? { signal: opts.signal } : {}),
   })
   if (!res.ok) {
-    throw new ApiError(res.status, path, `POST ${path} failed: ${res.status}`)
+    throw apiError(res.status, path, `POST ${path} failed: ${res.status}`)
   }
   return (await res.json()) as ImageDTO
 }

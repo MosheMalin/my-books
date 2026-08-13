@@ -9,6 +9,7 @@
 import { render, type RenderResult } from '@testing-library/react'
 import { vi } from 'vitest'
 import type { ReactElement } from 'react'
+import { AuthProvider } from '../lib/auth'
 import { BooksProvider } from '../lib/books'
 import { I18nProvider } from '../lib/i18n'
 import { LibraryProvider, LibraryScope, applyStoredLibrary } from '../lib/library'
@@ -79,6 +80,13 @@ export interface FakeServer {
    *  `calls`, so a test can assert that a switch actually reached the wire
    *  and not just the UI. */
   libraryHeaders: (string | null)[]
+  /** P4.1b: when true, every non-auth route answers 401 the way the real
+   *  session principal does. Redeeming `validToken` signs back in. */
+  signedOut: boolean
+  /** The one token `POST /auth/session` accepts. */
+  validToken: string
+  /** Every address `POST /auth/link` was asked to mail, in order. */
+  linkRequests: string[]
   /** The tenant each request matching `part` went out under. Empty if the
    *  request was never made — assert on that separately, or a test that
    *  proves nothing passes. */
@@ -96,6 +104,11 @@ export function fakeServer(initial: FakeBookRecord[] = []): FakeServer {
     libraries: [{ id: 'lib-test', account_id: 'acc-test', label: 'ספרייה',
                   role: 'admin', created_at: null }],
     libraryHeaders: [],
+    // P4.1b: flip to true for a signed-out server (every non-auth route
+    // answers 401). Redeeming `validToken` flips it back, like the real one.
+    signedOut: false,
+    validToken: 'tok-valid',
+    linkRequests: [],
     tenantsFor: (part) =>
       server.libraryHeaders.filter((_, i) => server.calls[i]?.includes(part)),
     release: () => {
@@ -123,6 +136,33 @@ export function fakeServer(initial: FakeBookRecord[] = []): FakeServer {
     const u = new URL(url, 'http://test')
     const headers = new Headers(init?.headers)
     server.libraryHeaders.push(headers.get('X-Booksnap-Library'))
+
+    // --- auth (P4.1b) -----------------------------------------------------
+    // The pre-auth routes answer even when `signedOut` is set — that is
+    // what pre-auth means, and the login flow is exactly the thing a
+    // signed-out test is exercising.
+    if (u.pathname === '/api/v1/auth/link' && method === 'POST') {
+      const { email } = JSON.parse(String(init?.body)) as { email: string }
+      server.linkRequests.push(email)
+      return respond({ detail: 'sent' }, 202)
+    }
+    if (u.pathname === '/api/v1/auth/session' && method === 'POST') {
+      const { token } = JSON.parse(String(init?.body)) as { token: string }
+      if (token !== server.validToken) {
+        return respond({ detail: 'that link is expired or already used' }, 401)
+      }
+      server.signedOut = false
+      return respond({ id: 'p-test', display_name: '' }, 201)
+    }
+    if (u.pathname === '/api/v1/auth/session' && method === 'DELETE') {
+      server.signedOut = true
+      return respond(null, 204)
+    }
+    // A signed-out server answers 401 to everything else, like the real
+    // one: the session principal runs before any route logic.
+    if (server.signedOut) {
+      return respond({ detail: 'not signed in — request a sign-in link' }, 401)
+    }
 
     if (u.pathname === '/api/v1/meta') {
       return respond({
@@ -310,18 +350,21 @@ export function fakeServer(initial: FakeBookRecord[] = []): FakeServer {
   return server
 }
 
-/** The same three providers, in the same order, as `main.tsx` — including
- *  `LibraryScope`, which is what makes a library switch discard the screen's
- *  state. A harness that composed its own tree could not catch a regression
- *  in that rule. */
+/** The same providers, in the same order, as `main.tsx` — including
+ *  `LibraryScope` (a library switch discards the screen's state) and
+ *  `AuthProvider` (a 401 anywhere replaces the tree with the login screen,
+ *  P4.1b). A harness that composed its own tree could not catch a
+ *  regression in either remount rule. */
 export function renderApp(ui: ReactElement): RenderResult {
   return render(
     <I18nProvider>
-      <LibraryProvider>
-        <LibraryScope>
-          <BooksProvider>{ui}</BooksProvider>
-        </LibraryScope>
-      </LibraryProvider>
+      <AuthProvider>
+        <LibraryProvider>
+          <LibraryScope>
+            <BooksProvider>{ui}</BooksProvider>
+          </LibraryScope>
+        </LibraryProvider>
+      </AuthProvider>
     </I18nProvider>,
   )
 }

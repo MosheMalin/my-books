@@ -31,21 +31,20 @@ __all__ = [
 
 @runtime_checkable
 class Principal(Protocol):
-    """Whoever is making the request.
+    """Whoever is making the request — identity, and NOTHING else (P4.1b).
 
-    Until pillar 4 there is no login, so the adapter is a hardcoded dev
-    principal. The important part is that it exists NOW: H2 requires exactly
-    one function resolving principal -> library, and a route that reaches for
-    "the" library instead is the thing that has to be rewritten later.
+    Until P4.1b this also carried a default ``library``, because the
+    dev-trusted principal was configuration and configuration had to say
+    which library it meant. A session says only WHO: which libraries that
+    person may reach is the tenancy store's answer, resolved per request in
+    exactly one place (``app.api.deps.current_library`` — H2), and a
+    principal that carried a library would be a second copy of that answer
+    going stale in every session row.
     """
 
     @property
     def id(self) -> str:
         """Stable identifier for the caller."""
-
-    @property
-    def library(self) -> LibraryRef:
-        """The library this request operates on."""
 
 
 @runtime_checkable

@@ -42,7 +42,7 @@ from app.ports.store import (
     UnknownShelf,
     WrongLibrary,
 )
-from app.ports.tenancy import UnknownAccount, UnknownUser
+from app.ports.tenancy import EmailTaken, UnknownAccount, UnknownUser
 
 
 class MemoryBookStore:
@@ -398,6 +398,14 @@ class MemoryTenancyStore:
     # --- users -----------------------------------------------------------
 
     def save_user(self, user: User) -> None:
+        # The email-uniqueness rule the sqlite index enforces, enforced
+        # here too -- or the contract suite tests the one adapter that
+        # cannot fail (P4.1a's data-integrity review).
+        if user.email is not None and any(
+            u.email == user.email and u.id != user.id
+            for u in self._users.values()
+        ):
+            raise EmailTaken(f"{user.email!r} already belongs to another user")
         self._users[user.id] = user
 
     def get_user(self, user_id: str) -> User | None:
@@ -482,13 +490,28 @@ class MemoryAuthStore:
     # --- sessions --------------------------------------------------------
 
     def save_session(self, session: Session) -> None:
-        # An existing tombstone survives a rewrite — same rule, same reason
-        # as the sqlite adapter's COALESCE.
+        # Parity with the sqlite upsert, field for field: an existing row
+        # keeps its identity (user_id, created_at) and its tombstone; a
+        # save updates expiry and may only ADD a revocation (measured
+        # divergence, P4.1a's data-integrity review).
         old = self._sessions.get(session.token_hash)
-        if old is not None and old.revoked_at is not None \
-                and session.revoked_at is None:
-            session = replace(session, revoked_at=old.revoked_at)
+        if old is not None:
+            session = replace(
+                session,
+                user_id=old.user_id,
+                created_at=old.created_at,
+                revoked_at=old.revoked_at if old.revoked_at is not None
+                else session.revoked_at,
+            )
         self._sessions[session.token_hash] = session
+
+    def revoke_sessions_of_user(self, user_id: str, *, at: str) -> int:
+        revoked = 0
+        for token_hash, s in list(self._sessions.items()):
+            if s.user_id == user_id and s.revoked_at is None:
+                self._sessions[token_hash] = replace(s, revoked_at=at)
+                revoked += 1
+        return revoked
 
     def get_session(self, token_hash: str) -> Session | None:
         return self._sessions.get(token_hash)
@@ -503,7 +526,19 @@ class MemoryAuthStore:
     # --- login tokens ----------------------------------------------------
 
     def save_login_token(self, token: LoginToken) -> None:
+        # "Insert", like the port says: silently replacing an existing
+        # hash would reset consumed_at and re-arm a spent link (measured
+        # divergence, P4.1a's data-integrity review). Unreachable with
+        # 256-bit tokens; refused identically to the sqlite PK.
+        if token.token_hash in self._tokens:
+            raise ValueError(f"login token {token.token_hash!r} already stored")
         self._tokens[token.token_hash] = token
+
+    def purge_login_tokens(self, *, before: str) -> int:
+        dead = [h for h, t in self._tokens.items() if t.expires_at < before]
+        for h in dead:
+            del self._tokens[h]
+        return len(dead)
 
     def consume_login_token(self, token_hash: str, *, now: str) -> LoginToken | None:
         with self._consume:
@@ -518,13 +553,14 @@ class MemoryAuthStore:
     def count_recent_login_tokens(self, *, email: str | None = None,
                                   source_hash: str | None = None,
                                   since: str) -> int:
-        assert (email is None) != (source_hash is None), \
-            "exactly one filter per call"
-        if email is not None:
-            return sum(1 for t in self._tokens.values()
-                       if t.email == email and t.created_at >= since)
-        return sum(1 for t in self._tokens.values()
-                   if t.source_hash == source_hash and t.created_at >= since)
+        if email is None and source_hash is None:
+            raise ValueError("at least one filter per call")
+        return sum(
+            1 for t in self._tokens.values()
+            if t.created_at >= since
+            and (email is None or t.email == email)
+            and (source_hash is None or t.source_hash == source_hash)
+        )
 
 
 def _any_copy_out(book: Book) -> bool:

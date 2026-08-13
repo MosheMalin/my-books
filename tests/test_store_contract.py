@@ -2542,8 +2542,10 @@ def _auth_stores():
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "auth.db"
         sqlite_store = SqliteAuthStore(path)
-        # sessions.user_id has a foreign key; give both stores their user.
-        SqliteTenancyStore(path).save_user(User(id="u1"))
+        # sessions.user_id has a foreign key; give both stores their users.
+        tenancy = SqliteTenancyStore(path)
+        tenancy.save_user(User(id="u1"))
+        tenancy.save_user(User(id="u9"))
         memory = MemoryAuthStore()
         yield (memory, sqlite_store)
 
@@ -2592,7 +2594,11 @@ def test_a_login_token_is_consumed_exactly_once_even_when_raced():
             old_interval = sys.getswitchinterval()
             sys.setswitchinterval(1e-9)
             try:
-                for round_ in range(50):
+                # 15 rounds, not 50: the P4.1a quality review measured an
+                # unlocked adapter caught 20/20 within 5 rounds (median 0,
+                # worst 4); 15 keeps a 3x margin and returns ~3s to the
+                # ring's longest module.
+                for round_ in range(15):
                     raced = new_login_token(f"tok-race-{round_}", "a@b.com",
                                             "2026-08-13T12:00:00+00:00")
                     store.save_login_token(raced)
@@ -2765,3 +2771,158 @@ def test_saving_over_a_revoked_session_keeps_the_tombstone():
             got = store.get_session(s.token_hash)
             assert got.revoked_at == "2026-08-13T13:00:00+00:00", (
                 f"{type(store).__name__} resurrected a tombstoned session")
+
+
+def test_an_email_belongs_to_one_user_in_both_adapters():
+    """The identity anchor's uniqueness, enforced as a PORT rule
+    (`EmailTaken`) rather than left to the sqlite index alone — the memory
+    adapter minted silent duplicates, so the contract suite was testing
+    the one adapter that cannot fail (P4.1a's data-integrity review)."""
+    from app.adapters.memory_store import MemoryTenancyStore
+    from app.adapters.sqlite_store import SqliteTenancyStore
+    from app.ports.tenancy import EmailTaken
+
+    with tempfile.TemporaryDirectory() as tmp:
+        for store in (MemoryTenancyStore(),
+                      SqliteTenancyStore(Path(tmp) / "t.db")):
+            store.save_user(User(id="u1", email="a@b.com"))
+            try:
+                store.save_user(User(id="u2", email="a@b.com"))
+            except EmailTaken:
+                pass
+            else:
+                raise AssertionError(
+                    f"{type(store).__name__} gave two users one address")
+            # Re-saving the HOLDER is not a conflict; two NULLs are fine.
+            store.save_user(User(id="u1", email="a@b.com", display_name="x"))
+            store.save_user(User(id="u3"))
+            store.save_user(User(id="u4"))
+
+
+def test_revoking_every_session_of_a_user_is_one_call():
+    """The lost-phone answer (P4.1a's data-integrity review): the 90-day
+    lifetime is paid for by revocation, and revocation must reach the
+    sessions whose cookies you do NOT hold. Another user's sessions are
+    untouched, and the call is idempotent (0 the second time)."""
+    from app.domain.auth import new_session
+
+    with _auth_stores() as stores:
+        for store in stores:
+            for i, user in enumerate(("u1", "u1", "u1", "u9")):
+                store.save_session(new_session(f"t{i}", user,
+                                               "2026-08-13T12:00:00+00:00"))
+            n = store.revoke_sessions_of_user("u1", at="2026-08-13T13:00:00+00:00")
+            assert n == 3, f"{type(store).__name__}: revoked {n}"
+            assert store.revoke_sessions_of_user(
+                "u1", at="2026-08-13T14:00:00+00:00") == 0
+            from app.domain.auth import hash_token
+            assert store.get_session(hash_token("t3")).revoked_at is None, (
+                "another user's session was revoked")
+            assert store.get_session(hash_token("t0")).revoked_at == \
+                "2026-08-13T13:00:00+00:00"
+
+
+def test_expired_login_tokens_can_be_purged_and_live_ones_survive():
+    """Retention (P4.1a's data-integrity review): a token row outliving
+    its expiry serves no redeem and no rate window — what it keeps is an
+    ADDRESS in cleartext. The purge floor sits at the rate window's start,
+    so the counters never lose a row they still read."""
+    from app.domain.auth import new_login_token
+
+    with _auth_stores() as stores:
+        for store in stores:
+            store.save_login_token(new_login_token(
+                "old", "a@b.com", "2026-08-13T09:00:00+00:00"))
+            store.save_login_token(new_login_token(
+                "new", "a@b.com", "2026-08-13T12:00:00+00:00"))
+            gone = store.purge_login_tokens(before="2026-08-13T11:00:00+00:00")
+            assert gone == 1, f"{type(store).__name__}: purged {gone}"
+            assert store.count_recent_login_tokens(
+                email="a@b.com", since="2026-08-13T08:00:00+00:00") == 1
+            assert store.consume_login_token(
+                "no-such", now="2026-08-13T12:01:00+00:00") is None
+            from app.domain.auth import hash_token
+            assert store.consume_login_token(
+                hash_token("new"), now="2026-08-13T12:01:00+00:00") is not None
+
+
+def test_the_rate_window_counts_the_address_source_pair():
+    """The narrow rate door counts the (address × source) PAIR — an
+    address-wide count let a stranger burn the owner's budget from
+    elsewhere and lock them out (P4.1a's security review, measured)."""
+    from app.domain.auth import new_login_token
+
+    with _auth_stores() as stores:
+        for store in stores:
+            mk = new_login_token
+            store.save_login_token(mk("p1", "a@b.com",
+                                      "2026-08-13T12:00:00+00:00",
+                                      source_hash="attacker"))
+            store.save_login_token(mk("p2", "a@b.com",
+                                      "2026-08-13T12:10:00+00:00",
+                                      source_hash="attacker"))
+            store.save_login_token(mk("p3", "a@b.com",
+                                      "2026-08-13T12:20:00+00:00",
+                                      source_hash="owner"))
+            since = "2026-08-13T11:50:00+00:00"
+            assert store.count_recent_login_tokens(
+                email="a@b.com", source_hash="attacker", since=since) == 2
+            assert store.count_recent_login_tokens(
+                email="a@b.com", source_hash="owner", since=since) == 1
+            assert store.count_recent_login_tokens(
+                email="a@b.com", since=since) == 3
+            try:
+                store.count_recent_login_tokens(since=since)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("no filter at all was accepted")
+
+
+def test_a_spent_login_token_cannot_be_rearmed_by_a_rewrite():
+    """`save_login_token` is INSERT, in both adapters: silently replacing
+    an existing hash resets consumed_at and re-arms a spent link
+    (measured divergence, P4.1a's data-integrity review)."""
+    from app.domain.auth import hash_token, new_login_token
+
+    with _auth_stores() as stores:
+        for store in stores:
+            t = new_login_token("dup", "a@b.com", "2026-08-13T12:00:00+00:00")
+            store.save_login_token(t)
+            assert store.consume_login_token(
+                t.token_hash, now="2026-08-13T12:01:00+00:00") is not None
+            try:
+                store.save_login_token(new_login_token(
+                    "dup", "a@b.com", "2026-08-13T12:02:00+00:00"))
+            except ValueError:
+                pass
+            else:
+                raise AssertionError(
+                    f"{type(store).__name__} re-armed a spent link")
+            assert store.consume_login_token(
+                hash_token("dup"), now="2026-08-13T12:03:00+00:00") is None
+
+
+def test_a_session_rewrite_cannot_change_whose_it_is():
+    """`save_session` updates expiry (the rolling refresh) and may only
+    ADD a revocation; identity fields are the ORIGINAL row's. The sqlite
+    upsert always behaved so; the memory adapter replaced wholesale, and
+    one cookie answering two user_ids between adapters is the divergence
+    the contract exists to catch (P4.1a's data-integrity review)."""
+    from dataclasses import replace
+
+    from app.domain.auth import new_session
+
+    with _auth_stores() as stores:
+        for store in stores:
+            s = new_session("tok", "u1", "2026-08-13T12:00:00+00:00")
+            store.save_session(s)
+            stolen = replace(new_session("tok", "u9",
+                                         "2026-09-01T12:00:00+00:00"))
+            store.save_session(stolen)
+            got = store.get_session(s.token_hash)
+            assert got.user_id == "u1", (
+                f"{type(store).__name__}: a rewrite changed the session's user")
+            assert got.created_at == "2026-08-13T12:00:00+00:00"
+            assert got.expires_at == stolen.expires_at, (
+                "the refresh write stopped moving the expiry")
