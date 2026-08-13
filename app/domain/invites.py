@@ -26,12 +26,22 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from app.domain.auth import _at, _iso, hash_token
+
 from app.domain.tenancy import Role
 
 #: Long enough for "אמא, תלחצי על הקישור" to take a weekend; short enough
 #: that a link forgotten in a chat scroll is not a standing door. Days,
 #: not minutes, on purpose — see the module note.
 INVITE_LIFETIME = timedelta(days=7)
+
+#: How long a HALF-FINISHED acceptance may be completed by its own
+#: consumer. Consume and grant are two writes; this is the window between
+#: them, which is milliseconds in practice. It was the invite's full
+#: lifetime, and a review measured the consequence: seven days in which a
+#: removed member's replay re-granted them at admin, with no revoke
+#: possible. Minutes, so a retry after a real crash still works and a
+#: stale link does not.
+FINISH_WINDOW = timedelta(minutes=5)
 
 
 @dataclass(frozen=True)
@@ -65,17 +75,18 @@ class Invite:
     def may_finish(self, user_id: str, now: str) -> bool:
         """Whether ``user_id`` may complete a half-finished acceptance.
 
-        Three conditions, and each removes a way the first version of this
-        was too wide (both P4.3 reviews found it independently): only the
-        CONSUMER, only before the grant landed, and only while the invite
-        would still have been redeemable. The window it reopens is a crash
-        between two writes the server itself made — seconds, not days — so
-        the expiry bound costs a retry nobody will need and closes a
-        replay path that otherwise had none.
+        Three conditions, each removing a way an earlier version was too
+        wide (every P4.3/P4.4 review found one): only the CONSUMER, only
+        before the grant landed, and only inside :data:`FINISH_WINDOW` of
+        the consume — not the invite's whole 7-day life, which left a
+        removed member able to replay for a week at the invite's original
+        role, unrevokable (measured).
         """
-        return (self.consumed_by == user_id
-                and self.granted_at is None
-                and now < self.expires_at)
+        if self.consumed_by != user_id or self.granted_at is not None:
+            return False
+        if self.consumed_at is None:  # not consumed: nothing to finish
+            return False
+        return now < _iso(_at(self.consumed_at) + FINISH_WINDOW)
 
 
 def new_invite(token: str, account_id: str, role: Role, created_by: str,

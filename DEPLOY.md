@@ -48,7 +48,13 @@ BOOKSNAP_MAIL_FROM=booksnap@example.com
 ANTHROPIC_API_KEY=…
 ```
 
-Two of those refuse to start without a value, on purpose:
+Three of those refuse to start without a value, on purpose:
+
+- **`BOOKSNAP_SMTP_HOST`** — without it the composition root binds the DEV
+  mailer, which prints sign-in links to the container log. A live
+  credential readable by anyone with `docker compose logs` is a worse
+  threat model than the mailbox it replaces, so both compose and
+  `app/main.py` refuse it in a TLS posture.
 
 - **`BOOKSNAP_STAFF_TOKEN`** — unset, the staff service serves every tenant
   to anyone who can reach it (the owner's deliberate local-dev posture,
@@ -72,6 +78,12 @@ no rotation story, which is not a thing to expose:
 ```bash
 ssh -L 8758:localhost:8758 you@vps     # then point the console at it
 ```
+
+That works because the staff service publishes on the VPS's **loopback**
+(`127.0.0.1:8758:8758`), reachable by the tunnel and by nothing else. ⚠ If
+it ever seems unreachable, the fix is not `ports: - "8758:8758"` — that
+publishes cross-tenant read access, behind one shared token, to the
+internet.
 
 The console's own writes (create/rename a library) ride the operator's
 **product** session; cookies are host-scoped, so sign into the product once

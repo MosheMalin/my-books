@@ -135,6 +135,10 @@ app/
   reconcile_apply.py / blob_lifecycle.py  the two port-only top-level modules
   api/       FastAPI /api/v1 (:8757) — THIN routers, DTOs, deps.py resolver,
              policy.py enforcement; openapi.json committed+generated
+             auth: magic link + Google/Apple (OIDC code flow, PKCE);
+             the ID Token's signature is unchecked BY ARGUMENT (OIDC
+             §3.1.3.7 — it arrives over our own TLS to a pinned endpoint),
+             every claim is checked in app/domain/oauth.py
   main.py    composition root — the ONE file allowed to cross layers
   web/       household client, React+Vite+TS (:5173 dev → built into :8757)
   ui/        shared client package; consumed as SOURCE via path alias

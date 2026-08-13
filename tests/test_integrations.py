@@ -637,6 +637,10 @@ def test_the_deployment_refuses_to_start_the_staff_service_without_a_token():
         "the sign-in link would point at localhost, which on the "
         "recipient's phone is the recipient's phone"
     )
+    assert "BOOKSNAP_SMTP_HOST: ${BOOKSNAP_SMTP_HOST:?" in compose, (
+        "with no SMTP host the dev mailer prints sign-in links to the "
+        "container log — a live credential for anyone who can read it"
+    )
 
 
 def test_only_the_tls_proxy_publishes_a_port():
@@ -654,11 +658,30 @@ def test_only_the_tls_proxy_publishes_a_port():
                       if not line.lstrip().startswith("#"))
     blocks = re.split(r"^  (\w[\w-]*):$", compose, flags=re.M)[1:]
     services = dict(zip(blocks[::2], blocks[1::2]))
+    def published_ports(body: str) -> list[str]:
+        """The `ports:` list only — `expose:` is the container network and
+        publishes nothing on the host."""
+        out: list[str] = []
+        collecting = False
+        for line in body.splitlines():
+            if re.match(r"^\s+ports:\s*$", line):
+                collecting = True
+                continue
+            if collecting:
+                if re.match(r"^\s+-\s", line):
+                    out.append(line.strip())
+                elif line.strip():
+                    collecting = False
+        return out
+
     for name in ("api", "staff", "backup"):
-        assert "ports:" not in services[name], (
-            f"the {name} service publishes a host port — only the TLS "
-            f"proxy may"
-        )
+        for entry in published_ports(services[name]):
+            assert entry.startswith('- "127.0.0.1:'), (
+                f"the {name} service publishes {entry} on a PUBLIC "
+                f"interface — only the TLS proxy may. Loopback is allowed: "
+                f"it is what lets `ssh -L` reach the staff service while "
+                f"the internet cannot."
+            )
     assert "ports:" in services["caddy"]
 
 
@@ -670,6 +693,13 @@ def test_the_image_keeps_the_free_reading_path_installed():
     assert "tesseract-ocr-heb" in dockerfile
     # One worker: the job runner's state lives on the app INSTANCE (§1.3).
     assert '"--workers", "1"' in dockerfile
+    # ⚠ Never "*": uvicorn then takes the LEFTMOST X-Forwarded-For, i.e.
+    # whatever the caller typed, and the per-source rate door becomes the
+    # attacker's own field (measured: 120 links from one host, 0
+    # refusals). Latent behind Caddy's default, live the moment anyone
+    # adds `trusted_proxies` or a second balancer.
+    assert '"--forwarded-allow-ips", "*"' not in dockerfile
+    assert '"--forwarded-allow-ips"' in dockerfile
 
 
 def test_the_deploy_runbook_names_the_drill_command_that_exists():
@@ -680,3 +710,7 @@ def test_the_deploy_runbook_names_the_drill_command_that_exists():
     assert "--i-mean-it" in runbook
     assert (_REPO / "tools" / "restore.py").exists()
     assert (_REPO / "deploy" / "Caddyfile").exists()
+    # The build context must not ship the owner's database or secrets.
+    ignored = (_REPO / ".dockerignore").read_text(encoding="utf-8")
+    for secret in (".env", "work/", "**/node_modules/"):
+        assert secret in ignored, f"{secret} reaches the build daemon"

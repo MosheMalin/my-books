@@ -17,6 +17,7 @@ from dataclasses import replace
 
 from app.domain.auth import LoginToken, Session
 from app.domain.invites import Invite
+from app.domain.oauth import OAuthState
 from app.domain import (
     Account,
     Book,
@@ -602,6 +603,38 @@ class MemoryAuthStore:
             and (email is None or t.email == email)
             and (source_hash is None or t.source_hash == source_hash)
         )
+
+
+class MemoryOAuthStateStore:
+    """Implements ``app.ports.oauth.OAuthStateStore`` (P4.2)."""
+
+    def __init__(self) -> None:
+        self._states: dict[str, OAuthState] = {}
+        self._lock = threading.Lock()
+
+    def save_state(self, state: OAuthState) -> None:
+        with self._lock:
+            if state.state_hash in self._states:
+                raise ValueError(
+                    f"oauth state {state.state_hash!r} already stored")
+            self._states[state.state_hash] = state
+
+    def consume_state(self, state_hash: str, *, now: str) -> OAuthState | None:
+        # Deleted, not tombstoned — see the sqlite adapter for why.
+        with self._lock:
+            state = self._states.get(state_hash)
+            if state is None or not state.live(now):
+                return None
+            del self._states[state_hash]
+            return replace(state, consumed_at=now)
+
+    def purge_states(self, *, before: str) -> int:
+        with self._lock:
+            dead = [h for h, s in self._states.items()
+                    if s.expires_at < before]
+            for h in dead:
+                del self._states[h]
+            return len(dead)
 
 
 class MemoryInviteStore:

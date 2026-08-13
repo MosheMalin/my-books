@@ -39,6 +39,7 @@ from app.adapters.queued_jobs import QueuedJobRunner
 from app.adapters.memory_store import (
     MemoryAuthStore,
     MemoryInviteStore,
+    MemoryOAuthStateStore,
     MemoryBookStore,
     MemoryDecisionStore,
     MemoryDuplicateQueue,
@@ -184,7 +185,8 @@ def after_each() -> None:
 def _app(principal: StubPrincipal | None = None, store=None, shelves=None,
          blobs=None, reads=None, reader=None, jobs=None, decisions=None,
          duplicates=None, tenancy=None, auth=None, mailer=None, clock=None,
-         invites=None, principal_provider=None, recycle: bool = True):
+         invites=None, oauth_states=None, providers=None,
+         principal_provider=None, recycle: bool = True):
     """Build (or recycle) an app with these ports bound.
 
     :param recycle: pass ``False`` for an app whose per-app state a later test
@@ -207,6 +209,9 @@ def _app(principal: StubPrincipal | None = None, store=None, shelves=None,
         job_runner=jobs if jobs is not None else QueuedJobRunner(),
         auth_store=auth if auth is not None else MemoryAuthStore(),
         invite_store=invites if invites is not None else MemoryInviteStore(),
+        oauth_state_store=(oauth_states if oauth_states is not None
+                           else MemoryOAuthStateStore()),
+        identity_providers=providers if providers is not None else {},
         mailer=mailer if mailer is not None else StubMailer(),
         clock=clock if clock is not None else StubClock(),
         id_gen=SeqIdGen(),
@@ -1201,6 +1206,14 @@ _PRE_AUTH = {
     ("POST", f"{API_PREFIX}/auth/link"),
     ("POST", f"{API_PREFIX}/auth/session"),
     ("DELETE", f"{API_PREFIX}/auth/session"),
+    # P4.2: the provider flow. `/providers` is here because the login
+    # screen must know which buttons work BEFORE anyone is signed in;
+    # the callbacks are the routes a provider redirects a browser to,
+    # and their safety is the single-use state, not a principal.
+    ("GET", f"{API_PREFIX}/auth/providers"),
+    ("GET", f"{API_PREFIX}/auth/oauth/{{provider}}/start"),
+    ("GET", f"{API_PREFIX}/auth/oauth/{{provider}}/callback"),
+    ("POST", f"{API_PREFIX}/auth/oauth/{{provider}}/callback"),
 }
 
 
@@ -1389,11 +1402,20 @@ def test_the_pre_auth_routes_touch_no_principal_and_no_library():
     """The _PRE_AUTH exemption's own structural half (P4.1a). A sign-in
     route that depended on the principal would be trusting the identity it
     exists to establish; one that resolved a library would 404 every
-    fresh browser. And each must at least be scoped to the auth store —
-    "exempt" never means "unscoped". Probed with each route's OWN methods
-    (the P3.2 lesson: a path-only check inherits exemptions silently)."""
+    fresh browser. And each must at least be scoped to the SIGN-IN
+    surface — "exempt" never means "unscoped". Probed with each route's
+    OWN methods (the P3.2 lesson: a path-only check inherits exemptions
+    silently).
+
+    ⚠ "The auth store" was the original phrasing and P4.2 outgrew it:
+    `/auth/providers` reads which buttons this deployment configured and
+    touches no credential at all. The rule is that a pre-auth route deals
+    in the sign-in machinery and nothing else — widened to name it,
+    rather than dropped."""
     from app.api.policy import CAPABILITY_ATTR
 
+    sign_in_surface = {deps.get_auth_store, deps.get_oauth_state_store,
+                       deps.get_identity_providers}
     routes = {(m, p): r for p, r in _api_routes(_app()) for m in r.methods}
     for method, path in _PRE_AUTH:
         assert (method, path) in routes, \
@@ -1405,8 +1427,8 @@ def test_the_pre_auth_routes_touch_no_principal_and_no_library():
             f"{method} {path} consults the principal it exists to establish"
         assert not any(hasattr(c, CAPABILITY_ATTR) for c in calls), \
             f"{method} {path} declares a capability with nobody to hold it"
-        assert deps.get_auth_store in calls, \
-            f"{method} {path} is not even auth-scoped"
+        assert calls & sign_in_surface, \
+            f"{method} {path} touches no sign-in machinery at all"
 
 
 def test_library_resolution_has_exactly_one_implementation():
@@ -5095,3 +5117,222 @@ def test_an_invented_role_is_refused_the_same_way_on_both_routes():
         patched = admin.patch(f"{API_PREFIX}/members/p-stranger",
                               json={"role": "owner"}, headers=h)
         assert minted.status_code == patched.status_code == 422
+
+
+# --- Google and Apple sign-in (P4.2, VISION §3) ---------------------------
+
+
+class StubProvider:
+    """Implements app.ports.oauth.IdentityProvider without a network.
+
+    Records what the front channel was told, so the tests can assert the
+    PKCE challenge and the nonce actually travelled — and answers the
+    exchange with whatever identity the test wants back.
+    """
+
+    def __init__(self, key="google", email="owner@example.com",
+                 fail=False):
+        self._key = key
+        self.email = email
+        self.fail = fail
+        self.seen: list[dict] = []
+        self.exchanges: list[dict] = []
+
+    @property
+    def key(self) -> str:
+        return self._key
+
+    def authorize_url(self, *, state, nonce, challenge):
+        self.seen.append({"state": state, "nonce": nonce,
+                          "challenge": challenge})
+        return f"https://provider.test/authorize?state={state}"
+
+    def exchange(self, *, code, verifier, nonce):
+        from app.domain.oauth import OAuthError, VerifiedIdentity
+
+        self.exchanges.append({"code": code, "verifier": verifier,
+                               "nonce": nonce})
+        if self.fail:
+            raise OAuthError("the provider refused")
+        return VerifiedIdentity(email=self.email, subject="sub-1",
+                                provider=self._key)
+
+
+def _oauth_world(**kwargs):
+    """The REAL session principal, so these drive the whole chain: the
+    cookie the callback sets is the one every later request is resolved
+    from, exactly as in production."""
+    from app.api.principal import session_principal
+
+    provider = StubProvider(**kwargs)
+    states = MemoryOAuthStateStore()
+    tenancy = _tenancy(StubPrincipal())
+    app = _app(tenancy=tenancy, oauth_states=states,
+               providers={provider.key: provider},
+               principal_provider=session_principal)
+    return app, provider, states, tenancy
+
+
+def test_the_login_screen_is_offered_only_the_providers_that_work():
+    """Absent, not disabled — at the first screen anyone sees. A
+    deployment with no Google client signs in by link, and a dangling
+    button that answers 404 is the rule broken at the door."""
+    with TestClient(_app()) as bare:
+        assert bare.get(f"{API_PREFIX}/auth/providers").json() == {
+            "providers": []}
+        assert bare.get(f"{API_PREFIX}/auth/oauth/google/start"
+                        ).status_code == 404
+
+    app, _provider, _states, _tenancy_store = _oauth_world()
+    with TestClient(app) as c:
+        assert c.get(f"{API_PREFIX}/auth/providers").json() == {
+            "providers": ["google"]}
+
+
+def test_a_provider_sign_in_mints_a_session_for_the_verified_address():
+    """The whole flow through the real routes: start redirects with a
+    state and an S256 challenge, the callback trades the code, and the
+    person lands signed in."""
+    from app.domain.oauth import pkce_challenge
+
+    app, provider, states, tenancy = _oauth_world()
+    with TestClient(app) as c:
+        start = c.get(f"{API_PREFIX}/auth/oauth/google/start",
+                      follow_redirects=False)
+        assert start.status_code == 307
+        assert start.headers["location"].startswith(
+            "https://provider.test/authorize")
+        sent = provider.seen[0]
+        assert len(sent["state"]) >= 40 and not sent["state"].startswith("id-")
+
+        landed = c.get(f"{API_PREFIX}/auth/oauth/google/callback",
+                       params={"code": "code-1", "state": sent["state"]},
+                       follow_redirects=False)
+        assert landed.status_code == 303, landed.text
+        assert "booksnap_session" in landed.cookies
+
+        # PKCE and the nonce were bound to THIS request, not invented at
+        # the exchange: the verifier hashes to the challenge that went out.
+        traded = provider.exchanges[0]
+        assert pkce_challenge(traded["verifier"]) == sent["challenge"]
+        assert traded["nonce"] == sent["nonce"]
+
+        # …and the session actually authenticates.
+        assert c.get(f"{API_PREFIX}/libraries").status_code == 200
+
+
+def test_a_provider_sign_in_lands_on_the_user_the_magic_link_made():
+    """§4.1's one-person-one-identity, across sign-in methods: a verified
+    address is a verified address, whoever confirmed it. Signing in with
+    Google to an address that has been using links must NOT mint a second
+    user — that would be one person with two libraries and no way back."""
+    app, _provider, _states, tenancy = _oauth_world()
+    tenancy.save_user(User(id="u-existing", email="owner@example.com"))
+    tenancy.save_membership(Membership("u-existing", TEST_ACCOUNT, Role.ADMIN))
+    with TestClient(app) as c:
+        state = _start_and_state(c)
+        c.get(f"{API_PREFIX}/auth/oauth/google/callback",
+              params={"code": "c", "state": state}, follow_redirects=False)
+        meta = c.get(f"{API_PREFIX}/meta")
+    assert tenancy.user_by_email("owner@example.com").id == "u-existing", (
+        "a provider sign-in minted a SECOND user for an address that "
+        "already had one"
+    )
+    assert meta.status_code == 200, meta.text
+    assert meta.json()["user"]["id"] == "u-existing", (
+        "the session names a different user than the address' own"
+    )
+
+
+def _start_and_state(client) -> str:
+    from urllib.parse import parse_qs, urlparse
+
+    start = client.get(f"{API_PREFIX}/auth/oauth/google/start",
+                       follow_redirects=False)
+    return parse_qs(urlparse(start.headers["location"]).query)["state"][0]
+
+
+def test_the_callbacks_state_is_single_use_and_ours():
+    """The state parameter IS the CSRF guard for a route anyone can aim a
+    browser at. Replayed, forged and absent are one answer — a redirect
+    back to the login screen, never a session."""
+    app, _provider, _states, _tenancy_store = _oauth_world()
+    with TestClient(app) as c:
+        state = _start_and_state(c)
+        first = c.get(f"{API_PREFIX}/auth/oauth/google/callback",
+                      params={"code": "c", "state": state},
+                      follow_redirects=False)
+        assert "booksnap_session" in first.cookies
+
+        for params in ({"code": "c", "state": state},         # replayed
+                       {"code": "c", "state": "invented"},    # forged
+                       {"code": "c"}):                        # absent
+            r = c.get(f"{API_PREFIX}/auth/oauth/google/callback",
+                      params=params, follow_redirects=False)
+            assert r.status_code == 303, params
+            assert "error=provider" in r.headers["location"], params
+            assert "booksnap_session" not in r.cookies, params
+
+
+def test_a_refused_exchange_lands_on_the_login_screen_not_a_json_error():
+    """This is the only route whose caller is a REDIRECT — the person
+    clicked a button, so the answer has to be a screen."""
+    app, _provider, _states, _tenancy_store = _oauth_world(fail=True)
+    with TestClient(app) as c:
+        state = _start_and_state(c)
+        r = c.get(f"{API_PREFIX}/auth/oauth/google/callback",
+                  params={"code": "c", "state": state},
+                  follow_redirects=False)
+    assert r.status_code == 303
+    assert "error=provider" in r.headers["location"]
+
+
+def test_apples_cross_site_form_post_callback_works():
+    """Apple posts the callback from ITS origin, so no SameSite=Lax
+    cookie accompanies it — which is exactly why the state is
+    server-side. The POST route must work with no cookie at all."""
+    app, provider, _states, _tenancy_store = _oauth_world(key="apple")
+    with TestClient(app) as c:
+        start = c.get(f"{API_PREFIX}/auth/oauth/apple/start",
+                      follow_redirects=False)
+        assert start.status_code == 307
+        state = provider.seen[0]["state"]
+        r = c.post(f"{API_PREFIX}/auth/oauth/apple/callback",
+                   data={"code": "c", "state": state},
+                   follow_redirects=False)
+    assert r.status_code == 303, r.text
+    assert "booksnap_session" in r.cookies
+
+
+def test_the_next_hash_cannot_become_an_open_redirect():
+    """`next` survives a detour through a provider so a shared invite
+    link is not lost — and it is a hash fragment of OUR client or
+    nothing. Anything that could name another origin is dropped."""
+    app, _provider, _states, _tenancy_store = _oauth_world()
+    with TestClient(app) as c:
+        for hostile in ("https://evil.test", "//evil.test", "#//evil.test",
+                        "/api/v1/books"):
+            start = c.get(f"{API_PREFIX}/auth/oauth/google/start",
+                          params={"next": hostile}, follow_redirects=False)
+            from urllib.parse import parse_qs, urlparse
+            state = parse_qs(urlparse(
+                start.headers["location"]).query)["state"][0]
+            landed = c.get(f"{API_PREFIX}/auth/oauth/google/callback",
+                           params={"code": "c", "state": state},
+                           follow_redirects=False)
+            assert landed.headers["location"] == "/", (hostile,
+                                                       landed.headers)
+
+        # The ROUTE survives the detour; the token never does. A client
+        # that sent one anyway would have us store a live 7-day grant in
+        # cleartext in `oauth_states` (P4.2's migration review) — so the
+        # query is dropped at the door as well as at the source.
+        start = c.get(f"{API_PREFIX}/auth/oauth/google/start",
+                      params={"next": "#/invite?token=abc"},
+                      follow_redirects=False)
+        from urllib.parse import parse_qs, urlparse
+        state = parse_qs(urlparse(start.headers["location"]).query)["state"][0]
+        landed = c.get(f"{API_PREFIX}/auth/oauth/google/callback",
+                       params={"code": "c", "state": state},
+                       follow_redirects=False)
+        assert landed.headers["location"] == "/#/invite"

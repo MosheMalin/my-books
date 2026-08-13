@@ -180,3 +180,59 @@ describe('the login route', () => {
     expect(parseHash('#/library?token=abc')).toEqual({ name: 'library' })
   })
 })
+
+
+describe('provider sign-in (P4.2)', () => {
+  it('offers no provider buttons when none are configured', async () => {
+    const server = fakeServer()
+    server.signedOut = true
+    renderApp(<App />)
+    await screen.findByRole('form', { name: 'כניסה' })
+    // Absent, not disabled: a household that signs in by link sees only
+    // the link form, never a button that answers 404.
+    expect(screen.queryByRole('link', { name: /Google/ })).toBeNull()
+    expect(screen.queryByRole('link', { name: /Apple/ })).toBeNull()
+  })
+
+  it('offers exactly the configured providers, as real navigations', async () => {
+    const server = fakeServer()
+    server.signedOut = true
+    server.providers = ['google']
+    renderApp(<App />)
+
+    const google = await screen.findByRole('link', { name: 'כניסה עם Google' })
+    // A LINK, not a fetch: the flow is a redirect the provider must see,
+    // and an XHR would follow it into an opaque cross-origin response.
+    expect(google).toHaveAttribute(
+      'href', '/api/v1/auth/oauth/google/start?next=',
+    )
+    expect(screen.queryByRole('link', { name: /Apple/ })).toBeNull()
+  })
+
+  it('carries a pending invite through the provider detour', async () => {
+    const server = fakeServer()
+    server.signedOut = true
+    server.providers = ['apple']
+    location.hash = '#/invite?token=inv-1'
+    renderApp(<App />)
+
+    const apple = await screen.findByRole('link', { name: 'כניסה עם Apple' })
+    const href = apple.getAttribute('href') ?? ''
+    // The ROUTE travels, the TOKEN does not: it is already stashed, and
+    // sending it would put a live grant in the server's oauth_states in
+    // cleartext (P4.2's migration review).
+    expect(href).toContain(`next=${encodeURIComponent('#/invite')}`)
+    expect(href).not.toContain('inv-1')
+  })
+
+  it('says so when a provider sign-in came back refused', async () => {
+    const server = fakeServer()
+    server.signedOut = true
+    location.hash = '#/login?error=provider'
+    renderApp(<App />)
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(
+      'הכניסה דרך הספק לא הושלמה — נסו שוב או בקשו קישור.',
+    )
+  })
+})

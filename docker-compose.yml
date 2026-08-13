@@ -24,7 +24,12 @@ services:
       BOOKSNAP_SESSION_SECURE: "1"
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       NLI_API_KEY: ${NLI_API_KEY:-}
-      BOOKSNAP_SMTP_HOST: ${BOOKSNAP_SMTP_HOST:-}
+      # ⚠ Refusing, not defaulting: with no SMTP host the composition
+      # root would bind the DEV mailer, which prints sign-in links to
+      # the container log — a live credential for anyone who can read
+      # it (P4.4's security review). app/main.py refuses too; this is
+      # the door the operator actually meets.
+      BOOKSNAP_SMTP_HOST: ${BOOKSNAP_SMTP_HOST:?the deployed mailer must be real -- see .env.example}
       BOOKSNAP_SMTP_PORT: ${BOOKSNAP_SMTP_PORT:-587}
       BOOKSNAP_SMTP_USER: ${BOOKSNAP_SMTP_USER:-}
       BOOKSNAP_SMTP_PASSWORD: ${BOOKSNAP_SMTP_PASSWORD:-}
@@ -57,12 +62,20 @@ services:
       - --forwarded-allow-ips
       - "*"
     volumes:
-      # ⚠ `state:ro` would name the TARGET "ro"; the mode is the third
-      # field. The service is read-only by construction; this makes the
-      # mount say so too.
-      - state:/data:ro
-    expose:
-      - "8758"
+      # ⚠ NOT `:ro`, deliberately: app/staff_api/queries.py records that
+      # this service opens the file read-WRITE because a WAL database has
+      # to create its `-shm` sidecar, and a genuinely read-only mount
+      # fails the moment the product is not already holding one open. The
+      # service is read-only BY CONSTRUCTION (it has no write path at
+      # all), which is a property of the code, not of the mount.
+      - state:/data
+    # Published on LOOPBACK only, so `ssh -L 8758:localhost:8758` in
+    # DEPLOY.md actually reaches it. `expose:` alone put it on the compose
+    # network where no tunnel can go — and the fix a frustrated operator
+    # reaches for at 3am is `ports: 8758:8758`, which is cross-tenant read
+    # access behind one shared token, on the internet.
+    ports:
+      - "127.0.0.1:8758:8758"
 
   caddy:
     image: caddy:2-alpine

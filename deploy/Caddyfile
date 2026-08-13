@@ -20,6 +20,19 @@
 		max_size 45MB
 	}
 
+	header {
+		# A year of HTTPS-only, so a downgrade cannot lift the session
+		# cookie off the wire before the redirect happens.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		# The members drawer has remove/rename controls a hostile frame
+		# would be happy to borrow a click for.
+		Content-Security-Policy "frame-ancestors 'none'"
+		Referrer-Policy "same-origin"
+		-Server
+		-Via
+	}
+
 	reverse_proxy api:8757 {
 		header_up X-Forwarded-Proto {scheme}
 	}

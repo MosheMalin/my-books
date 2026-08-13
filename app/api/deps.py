@@ -19,6 +19,7 @@ from app.domain import Account, Library, LibraryRef, Membership
 from app.ports import Clock, IdGen, Principal
 from app.ports.auth import AuthStore, Mailer
 from app.ports.invites import InviteStore
+from app.ports.oauth import OAuthStateStore
 from app.ports.blobs import BlobStore
 from app.ports.decisions import DecisionStore
 from app.ports.duplicates import DuplicateQueue
@@ -306,6 +307,20 @@ def get_reader() -> Reader:
 
 def get_job_runner() -> JobRunner:
     raise RuntimeError("no JobRunner bound; build the app via create_app")
+
+
+def get_oauth_state_store() -> OAuthStateStore:
+    raise RuntimeError("no OAuthStateStore bound; build via create_app")
+
+
+def get_identity_providers() -> dict:
+    """Configured providers by key — EMPTY is the normal state.
+
+    A deployment with no Google client is not broken; it is one that
+    signs in by link. The login screen asks `/auth/providers` so it
+    offers exactly the buttons that work (absent, not disabled).
+    """
+    return {}
 
 
 def get_invite_store() -> InviteStore:

@@ -26,6 +26,53 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/oauth/{provider}/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Begin a provider sign-in
+         * @description Mint the state, the nonce and the PKCE verifier, then redirect.
+         *
+         *     All three are `secrets`, never `IdGen`: they are credentials, and the
+         *     test id generator is reproducible on purpose (the same rule the
+         *     session token carries).
+         */
+        get: operations["start_oauth_api_v1_auth_oauth__provider__start_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Which sign-in providers are configured
+         * @description So the login screen can offer exactly the buttons that WORK.
+         *
+         *     A dangling "Sign in with Apple" on a deployment with no Apple key is
+         *     the absent-not-disabled rule broken at the first screen anyone sees.
+         */
+        get: operations["list_providers_api_v1_auth_providers_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/session": {
         parameters: {
             query?: never;
@@ -2142,6 +2189,21 @@ export interface components {
             copy_id: string;
         };
         /**
+         * ProvidersDTO
+         * @description Which provider sign-ins this DEPLOYMENT configured (P4.2).
+         *
+         *     A fact about configuration, not about any caller — so it is safe
+         *     before anyone is signed in, and it is what lets the login screen
+         *     offer exactly the buttons that work (absent, not disabled).
+         */
+        ProvidersDTO: {
+            /**
+             * Providers
+             * @description Subset of ['google', 'apple'] — empty is normal.
+             */
+            providers: string[];
+        };
+        /**
          * ReadCreate
          * @description Start a read of one shelf at one depth.
          */
@@ -2447,6 +2509,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_oauth_api_v1_auth_oauth__provider__start_get: {
+        parameters: {
+            query?: {
+                next?: string;
+            };
+            header?: never;
+            path: {
+                provider: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            307: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_providers_api_v1_auth_providers_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProvidersDTO"];
                 };
             };
         };

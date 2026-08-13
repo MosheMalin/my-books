@@ -59,5 +59,13 @@ EXPOSE 8757
 # job runner holds its state on an INSTANCE, never a module global"), and a
 # second worker would be a second queue with its own idea of what is running.
 # Scaling past one household means a shared queue, not more workers.
+# ⚠ --forwarded-allow-ips is the PROXY's network, never "*". With "*",
+# uvicorn takes the LEFTMOST X-Forwarded-For — the caller's own value —
+# so the per-source rate door is whatever an attacker types (measured:
+# 120 sign-in links from one host, 0 refusals). Caddy replaces XFF by
+# default so it is latent today, and it goes live the first time anyone
+# adds `trusted_proxies` or a second load balancer. 172.16/12 is
+# Docker's own bridge range: only the proxy beside us is believed.
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8757", \
-     "--workers", "1", "--proxy-headers", "--forwarded-allow-ips", "*"]
+     "--workers", "1", "--proxy-headers", \
+     "--forwarded-allow-ips", "172.16.0.0/12"]

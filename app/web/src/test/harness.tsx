@@ -91,6 +91,9 @@ export interface FakeServer {
   delivery: string
   /** Refuse the next link request with this status (429, 422). */
   linkFailWith: number | null
+  /** Provider sign-ins this fake 'deployment' configured (P4.2).
+   *  Empty by default — the household that signs in by link. */
+  providers: string[]
   /** The account's people (P4.3). */
   members: { user_id: string; display_name: string; role: string;
              joined_at: string | null }[]
@@ -125,6 +128,7 @@ export function fakeServer(initial: FakeBookRecord[] = []): FakeServer {
     linkRequests: [],
     delivery: 'mail',
     linkFailWith: null,
+    providers: [],
     members: [{ user_id: 'p-test', display_name: 'משה', role: 'admin',
                 joined_at: null }],
     invites: [],
@@ -159,6 +163,10 @@ export function fakeServer(initial: FakeBookRecord[] = []): FakeServer {
     const u = new URL(url, 'http://test')
     const headers = new Headers(init?.headers)
     server.libraryHeaders.push(headers.get('X-Booksnap-Library'))
+
+    if (u.pathname === '/api/v1/auth/providers') {
+      return respond({ providers: server.providers })
+    }
 
     // --- auth (P4.1b) -----------------------------------------------------
     // The pre-auth routes answer even when `signedOut` is set — that is

@@ -74,8 +74,16 @@ class SmtpMailer:
             server.send_message(message)
 
 
+#: Everything Python (and some parsers) treat as ending a line. CR/LF is
+#: the classic injection pair; U+2028/2029, VT, FF and NEL are the ones a
+#: narrow check misses (P4.4's security review found the guard narrower
+#: than its own docstring claimed — redundantly covered by the route's
+#: shape check, which is not a reason to leave it wrong).
+_LINE_BREAKS = "\r\n\v\f\x1c\x1d\x1e\x85\u2028\u2029"
+
+
 def _no_headers(value: str, what: str) -> str:
-    """Refuse CR/LF before it can become a header (see the module note)."""
-    if any(c in value for c in "\r\n"):
+    """Refuse anything that ends a line before it can become a header."""
+    if any(c in value for c in _LINE_BREAKS):
         raise ValueError(f"the {what} address contains a line break")
     return value

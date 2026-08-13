@@ -40,15 +40,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tools.backup import (  # noqa: E402  (path set above)
     BACKUP_FORMAT,
     _sha256,
+    _work,
+    complete_backups,
     default_blobs,
     default_db,
-    _work,
 )
 
 
 def newest(root: Path) -> Path:
-    """The most recent backup directory under ``root``."""
-    candidates = sorted(p for p in root.glob("*") if (p / "manifest.json").exists())
+    """The most recent backup under ``root``, by its manifest's own time.
+
+    One definition, shared with `backup.prune` — three copies of "which
+    is newest" is how the sweep and the restore come to disagree about
+    which file they are talking about.
+    """
+    candidates = complete_backups(root)
     if not candidates:
         raise SystemExit(f"no backups under {root}")
     return candidates[-1]
@@ -185,6 +191,22 @@ def drill(backup: Path) -> dict:
         findings["decisions"] = seen
         findings["checks"].append(f"{seen} review decisions, matching")
 
+        # Open invites: a standing 7-day grant somebody is waiting on, and
+        # the other row a restore must not silently drop (P4.2's review).
+        stored_invites = manifest["database"]["rows"].get("invites")
+        if stored_invites is not None:
+            conn = sqlite3.connect(str(db))
+            try:
+                live = conn.execute(
+                    "SELECT count(*) FROM invites").fetchone()[0]
+            finally:
+                conn.close()
+            if live != stored_invites:
+                raise SystemExit(
+                    f"{live} invites restored, manifest says {stored_invites}")
+            findings["invites"] = live
+            findings["checks"].append(f"{live} invites, matching")
+
         blob_files = sum(1 for p in (room / "blobs").rglob("*") if p.is_file()) \
             if (room / "blobs").is_dir() else 0
         if blob_files != manifest["blobs"]["files"]:
@@ -212,6 +234,7 @@ def restore(backup: Path, to_db: Path, to_blobs: Path) -> None:
     deleted — the moment you restore the wrong backup is the moment you
     can least afford to lose what was there."""
     verify(backup)
+    _refuse_impossible_destinations(backup, to_db, to_blobs)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     if to_db.exists():
         _refuse_if_in_use(to_db)
@@ -241,6 +264,39 @@ def restore(backup: Path, to_db: Path, to_blobs: Path) -> None:
     # files had landed — reading as "the restore failed" at the exact
     # moment ambiguity is most expensive (measured at review).
     print(f"restored {backup} -> {to_db} / {to_blobs}")
+
+
+def _refuse_impossible_destinations(backup: Path, to_db: Path,
+                                    to_blobs: Path) -> None:
+    """Check WHERE before moving anything. ``--i-mean-it`` gates whether,
+    never where.
+
+    Every step of a restore is a move, so nothing here is unrecoverable —
+    but the failures are exactly the moment the tool promises to protect:
+    P4.4's security review measured `--to-blobs /data/work` (one word off
+    the line above it in the runbook) replacing the database, failing on
+    the blobs, reporting failure, and leaving the previous database two
+    directories deep; and naming the volume root moved the BACKUP being
+    restored from out from under the copy.
+    """
+    backup, to_db, to_blobs = (p.resolve() for p in (backup, to_db, to_blobs))
+
+    def inside(child: Path, parent: Path) -> bool:
+        return child == parent or parent in child.parents
+
+    for name, target in (("--to-db", to_db), ("--to-blobs", to_blobs)):
+        if inside(target, backup) or inside(backup, target):
+            raise SystemExit(
+                f"{name} {target} overlaps the backup at {backup} — the "
+                f"restore would move its own source aside"
+            )
+    if inside(to_db, to_blobs) or to_blobs == to_db.parent:
+        raise SystemExit(
+            f"--to-blobs {to_blobs} contains --to-db {to_db}: restoring "
+            f"the blobs would move the database away with it"
+        )
+    if to_db == to_blobs:
+        raise SystemExit("--to-db and --to-blobs are the same path")
 
 
 def _refuse_if_in_use(db: Path) -> None:

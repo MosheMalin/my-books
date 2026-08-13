@@ -23,13 +23,14 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import contextmanager
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Iterator
 
 from app.adapters.migrations import migrate
 from app.domain.auth import LoginToken, Session
 from app.domain.invites import Invite
+from app.domain.oauth import OAuthState
 from app.domain import (
     Account,
     Alternative,
@@ -1175,6 +1176,78 @@ class SqliteAuthStore(_SqliteStore):
                     (before,),
                 )
             return cur.rowcount
+
+
+class SqliteOAuthStateStore(_SqliteStore):
+    """Implements ``app.ports.oauth.OAuthStateStore`` (P4.2)."""
+
+    def __init__(self, path: str | Path) -> None:
+        super().__init__(path, kind="SqliteOAuthStateStore")
+
+    def save_state(self, state: OAuthState) -> None:
+        with self._connect() as conn:
+            try:
+                with conn:
+                    conn.execute(
+                        "INSERT INTO oauth_states (state_hash, provider,"
+                        " nonce, verifier, next_hash, created_at,"
+                        " expires_at, consumed_at) VALUES (?,?,?,?,?,?,?,?)",
+                        (state.state_hash, state.provider, state.nonce,
+                         state.verifier, state.next_hash, state.created_at,
+                         state.expires_at, state.consumed_at),
+                    )
+            except sqlite3.IntegrityError as exc:
+                raise ValueError(
+                    f"oauth state {state.state_hash!r} already stored"
+                ) from exc
+
+    def consume_state(self, state_hash: str, *, now: str) -> OAuthState | None:
+        # One guarded statement: a replayed callback gets nothing, which
+        # is the CSRF property the state parameter exists for.
+        #
+        # DELETE, not a tombstone — the deliberate difference from
+        # `sessions.revoked_at` (when trust ended is a fact worth
+        # keeping) and `invites.consumed_by` (the link's audit line).
+        # Nothing reads a consumed state: `live()` refuses it and no
+        # screen shows it. What lingering costs is a row holding the
+        # PKCE verifier, swept only when somebody else happens to start
+        # a sign-in later (P4.2's migration review).
+        #
+        # ⚠ The predicate restates `app.domain.oauth.OAuthState.live` in
+        # SQL. That function is the authority; change both together.
+        with self._connect() as conn:
+            with conn:
+                row = conn.execute(
+                    "SELECT * FROM oauth_states WHERE state_hash = ?"
+                    " AND consumed_at IS NULL AND expires_at > ?",
+                    (state_hash, now),
+                ).fetchone()
+                if row is None:
+                    return None
+                cur = conn.execute(
+                    "DELETE FROM oauth_states WHERE state_hash = ?"
+                    " AND consumed_at IS NULL AND expires_at > ?",
+                    (state_hash, now),
+                )
+                if cur.rowcount == 0:      # lost the race to another caller
+                    return None
+        return replace(_load_state(row), consumed_at=now)
+
+    def purge_states(self, *, before: str) -> int:
+        with self._connect() as conn:
+            with conn:
+                cur = conn.execute(
+                    "DELETE FROM oauth_states WHERE expires_at < ?", (before,))
+            return cur.rowcount
+
+
+def _load_state(row: sqlite3.Row) -> OAuthState:
+    return OAuthState(state_hash=row["state_hash"], provider=row["provider"],
+                      nonce=row["nonce"], verifier=row["verifier"],
+                      next_hash=row["next_hash"],
+                      created_at=row["created_at"],
+                      expires_at=row["expires_at"],
+                      consumed_at=row["consumed_at"])
 
 
 class SqliteInviteStore(_SqliteStore):

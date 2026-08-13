@@ -128,6 +128,18 @@ class LoginLinkRequest(BaseModel):
                        description="Where the link goes. 254 is RFC 5321's cap.")
 
 
+class ProvidersDTO(BaseModel):
+    """Which provider sign-ins this DEPLOYMENT configured (P4.2).
+
+    A fact about configuration, not about any caller — so it is safe
+    before anyone is signed in, and it is what lets the login screen
+    offer exactly the buttons that work (absent, not disabled).
+    """
+
+    providers: list[str] = Field(
+        description="Subset of ['google', 'apple'] — empty is normal.")
+
+
 class SessionCreate(BaseModel):
     """Redeem an emailed token for a session cookie."""
 

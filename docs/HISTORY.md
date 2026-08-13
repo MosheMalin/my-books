@@ -3998,3 +3998,62 @@ the read-write window (the domain rule is called between the read and the
 writes) makes it deterministic. The first attempt at that deadlocked to its
 timeouts and cost the ring 34 seconds; waiting for the second caller to have
 STARTED rather than FINISHED is what makes it both correct and free.
+
+
+## P4.2 — Google and Apple, and the signature we deliberately do not check
+
+Pillar 4's last item, landed last on purpose: Apple refuses localhost and
+wants a real HTTPS redirect, so it waited for P4.4 to settle the domain.
+
+Authorization-code flow with PKCE, one `IdentityProvider` port, two
+adapters over stdlib `urllib` — no OAuth framework, for the reason the
+NLI catalogue already uses urllib: a library here would hide the exact
+decisions this flow is made of. The two providers differ in two ways and
+both are absorbed in the adapter: Google's client secret is a string,
+Apple's is a JWT we sign per exchange with ES256 (via `cryptography`,
+already a dependency — a JWT library for one token would have been the
+tail wagging the dog); and Apple's callback is a cross-site form POST
+while Google's is a top-level GET.
+
+**The decision worth recording: the ID Token's signature is not verified,
+and that is sound only because of how it arrives.** OIDC Core §3.1.3.7
+permits exactly this omission for the code flow — the token comes back
+over a TLS connection WE opened to a token endpoint whose URL this
+codebase pins, so TLS server authentication has already established who
+said it. There is no attacker-supplied token in the path. What an
+attacker CAN supply is the redirect back, which is why the state is
+single-use and server-side, and why every CLAIM is still checked in one
+place (`app/domain/oauth.py`): issuer, audience, nonce, and
+`email_verified`. That last is the load-bearing one — without it, anyone
+who types your address into a provider account they control is you. The
+comment says all of this, because the day someone accepts an ID Token
+from the front channel the reasoning evaporates and a JWKS check becomes
+mandatory.
+
+**Apple is why the state is a table** (v18) and not a cookie: a
+`SameSite=Lax` cookie does not accompany a cross-site POST, so a
+cookie-carried state would be absent at exactly the moment it is checked.
+The row holds the PKCE verifier in cleartext — the one secret in this
+schema that is not stored hashed, and necessarily so: the server must
+send it back to the provider verbatim. It lives fifteen minutes, is
+consumed once, and is swept.
+
+Identity links on the VERIFIED email, so signing in with Google to an
+address that has been using magic links lands on the same `User` — §4.1's
+one-person-one-identity across sign-in methods, and the test that pins it
+is the one that would otherwise let a household member end up with two
+libraries and no way back.
+
+Absent, not disabled, at the first screen anyone sees: `/auth/providers`
+reports which providers this deployment configured, and the login screen
+renders exactly those buttons. A deployment with neither — which is every
+deployment until the owner creates the credentials — signs in by link
+exactly as before. That is also the honest boundary of this item: the
+Google OAuth client and the Apple Services ID + .p8 key are things only
+the account holder can create, and `.env.example` documents both.
+
+Process note, third time running: the vN-1 upgrade test was the finding at
+v16 and at v17, so v18's was written before the review rather than after
+it. The mutations that make it worth having are the same each time —
+folding the new DDL into the previous step, and deleting the index — and
+both die with a named test now.
