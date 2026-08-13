@@ -57,12 +57,14 @@ _SAFE_LIBRARY_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 #: Longest filename this service will republish.
 #:
-#: ⚠ `filename` is the upload's form field, verbatim, and NOTHING on the write
-#: path caps it. A review measured 20 captures with 200,000-character names
-#: turning one `GET /images` into 4 MB, i.e. ~40 MB at `limit=200` — from an
-#: unauthenticated LAN upload. The real fix belongs at the port where the name
-#: enters; this is the console refusing to be the amplifier in the meantime,
-#: and it is lossless for every name a camera or a human produces.
+#: The write path caps at the same number since P4.0b
+#: (`app.ports.blobs.MAX_FILENAME`, truncated in `DiskBlobStore.put` — the
+#: fix a review asked for after measuring 20 captures with 200,000-character
+#: names turning one `GET /images` into 4 MB). This read-side copy STAYS: it
+#: guards the sidecars written before the cap existed and whatever
+#: `tools/import_legacy.py` republishes, and this service deliberately
+#: imports nothing from `app`, so the number lives twice — a test pins the
+#: two equal (`test_staff_api.py`).
 MAX_FILENAME = 200
 
 

@@ -1524,6 +1524,29 @@ def test_a_photo_round_trips_and_comes_back_decodable():
         assert Image.open(io.BytesIO(thumb.content)).size[0] <= 480
 
 
+def test_a_megabyte_filename_is_truncated_at_the_door_not_republished():
+    """P4.0b. The name is display metadata — never identity, never format —
+    so an absurd one is TRUNCATED, not rejected: the upload itself must
+    succeed (a phone's genuine long name is not the user's fault). Before
+    this cap, 20 captures with 200,000-character names made one staff
+    `GET /images` weigh 4 MB from an unauthenticated LAN upload."""
+    from app.ports.blobs import MAX_FILENAME
+
+    absurd = "ש" * 100_000 + ".png"
+    with _blobs() as blobs:
+        c = TestClient(_app(blobs=blobs))
+        r = c.post(f"{API_PREFIX}/images",
+                   files={"file": ("a.png", _png(), "image/png")},
+                   data={"filename": absurd})
+        assert r.status_code == 201, r.text
+        stored = r.json()["filename"]
+        assert stored == absurd[:MAX_FILENAME]
+        # And the metadata read agrees — the cap is at the door, so nothing
+        # downstream holds the long form.
+        meta = c.get(f"{API_PREFIX}/images/{r.json()['key']}").json()
+        assert meta["filename"] == absurd[:MAX_FILENAME]
+
+
 def test_uploading_the_same_photo_twice_stores_it_once():
     """§12.3 #13. Re-uploading after a browser refresh is the NORMAL case with
     a camera roll, not an edge one — so the second attempt must cost a hash
