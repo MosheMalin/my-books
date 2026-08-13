@@ -56,6 +56,7 @@ from app.domain import (
     User,
     WorkFields,
 )
+from app.domain.tenancy import remove_member, set_role
 from app.domain.search import compile_sql_like, haystack, parse
 from app.domain.search import search as domain_search
 from app.ports.store import (
@@ -976,6 +977,57 @@ class SqliteTenancyStore(_SqliteStore):
             for r in rows
         )
 
+    def change_member_role(
+        self, account_id: str, user_id: str, role: Role,
+    ) -> tuple[Membership, ...]:
+        return self._rewrite_members(
+            account_id, lambda rows: set_role(rows, user_id, role))
+
+    def remove_member_row(
+        self, account_id: str, user_id: str,
+    ) -> tuple[Membership, ...]:
+        return self._rewrite_members(
+            account_id, lambda rows: remove_member(rows, user_id))
+
+    def _rewrite_members(self, account_id: str, rule):
+        """Read, apply the DOMAIN rule, and write — under one write lock.
+
+        BEGIN IMMEDIATE before the read is the whole point: the rule being
+        enforced ("is there still an admin?") is about the list, so a list
+        read outside the transaction is a list that can be stale by the
+        time it is acted on.
+        """
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                rows = tuple(
+                    _load_membership(r) for r in conn.execute(
+                        "SELECT * FROM memberships WHERE account_id = ?"
+                        " ORDER BY role <> 'admin', user_id",
+                        (account_id,),
+                    ).fetchall()
+                )
+                updated = rule(rows)
+                keep = {m.user_id for m in updated}
+                for old in rows:
+                    if old.user_id not in keep:
+                        conn.execute(
+                            "DELETE FROM memberships WHERE user_id = ?"
+                            " AND account_id = ?",
+                            (old.user_id, account_id),
+                        )
+                for m in updated:
+                    conn.execute(
+                        "UPDATE memberships SET role = ? WHERE user_id = ?"
+                        " AND account_id = ?",
+                        (m.role.value, m.user_id, account_id),
+                    )
+                conn.commit()
+            except BaseException:
+                conn.rollback()
+                raise
+        return self.list_members(account_id)
+
     def list_members(self, account_id: str) -> tuple[Membership, ...]:
         with self._connect() as conn:
             rows = conn.execute(
@@ -1138,11 +1190,12 @@ class SqliteInviteStore(_SqliteStore):
                     conn.execute(
                         "INSERT INTO invites (token_hash, account_id, role,"
                         " created_by, created_at, expires_at, consumed_at,"
-                        " consumed_by) VALUES (?,?,?,?,?,?,?,?)",
+                        " consumed_by, granted_at) VALUES (?,?,?,?,?,?,?,?,?)",
                         (invite.token_hash, invite.account_id,
                          invite.role.value, invite.created_by,
                          invite.created_at, invite.expires_at,
-                         invite.consumed_at, invite.consumed_by),
+                         invite.consumed_at, invite.consumed_by,
+                         invite.granted_at),
                     )
             except sqlite3.IntegrityError as exc:
                 # Discriminated: v16 gave this table FOREIGN KEYs, and a
@@ -1193,6 +1246,24 @@ class SqliteInviteStore(_SqliteStore):
                 ).fetchone()
         return _load_invite(row)
 
+    def purge_invites(self, *, before: str) -> int:
+        with self._connect() as conn:
+            with conn:
+                cur = conn.execute(
+                    "DELETE FROM invites WHERE expires_at < ?", (before,))
+            return cur.rowcount
+
+    def mark_granted(self, token_hash: str, *, at: str) -> bool:
+        # The guard keeps the FIRST stamp, like a session's tombstone.
+        with self._connect() as conn:
+            with conn:
+                cur = conn.execute(
+                    "UPDATE invites SET granted_at = ?"
+                    " WHERE token_hash = ? AND granted_at IS NULL",
+                    (at, token_hash),
+                )
+            return cur.rowcount > 0
+
     def revoke_invite(self, account_id: str, token_hash: str) -> bool:
         with self._connect() as conn:
             with conn:
@@ -1209,7 +1280,8 @@ def _load_invite(row: sqlite3.Row) -> Invite:
                   role=Role(row["role"]), created_by=row["created_by"],
                   created_at=row["created_at"], expires_at=row["expires_at"],
                   consumed_at=row["consumed_at"],
-                  consumed_by=row["consumed_by"])
+                  consumed_by=row["consumed_by"],
+                  granted_at=row["granted_at"])
 
 
 def _load_session(row: sqlite3.Row) -> Session:

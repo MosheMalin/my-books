@@ -185,6 +185,27 @@ class TenancyStore(Protocol):
         created), and the switcher has to render it.
         """
 
+    def change_member_role(
+        self, account_id: str, user_id: str, role: Role,
+    ) -> tuple[Membership, ...]:
+        """Apply :func:`app.domain.tenancy.set_role` ATOMICALLY, returning
+        the account's whole member list afterwards.
+
+        ⚠ The read, the rule and the write must be ONE operation. Done as
+        three (list, decide, save) the last-admin rule is a TOCTOU: two
+        admins demoting each other at the same moment both saw an admin
+        beside them, and the account reached ZERO admins — measured at
+        P4.3's data-integrity review, along with the removal version that
+        reached zero MEMBERS and made every library the account owns
+        permanently unreachable. `NoAdminLeft` is raised from inside the
+        transaction or it is not enforced at all."""
+
+    def remove_member_row(
+        self, account_id: str, user_id: str,
+    ) -> tuple[Membership, ...]:
+        """:func:`app.domain.tenancy.remove_member`, same atomicity rule
+        and same reason as :meth:`change_member_role`."""
+
     def list_members(self, account_id: str) -> tuple[Membership, ...]:
         """Everyone in this account, admins first then by user id.
 

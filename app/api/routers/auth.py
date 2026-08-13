@@ -22,10 +22,11 @@ Since P4.1b the session cookie these routes mint is the ONLY identity:
 the resolver reads it per request (`app.api.principal`), and the dev
 principal is deleted, not parked.
 
-⚠ The cookie carries no ``Secure`` flag yet: the household flow is plain
-HTTP on the LAN until P4.4 puts TLS in front, and a Secure cookie on HTTP
-is a cookie the browser silently drops — a login that "worked" and left
-you logged out. P4.4 revisits with the deployment.
+⚠ The cookie's ``Secure`` flag is a per-DEPLOYMENT fact
+(`deps.get_session_secure`), not a constant: on plain HTTP a Secure cookie
+is silently dropped — a login that "worked" and left you logged out — so
+the LAN dev flow runs without it and the TLS deployment (P4.4's compose
+file, which is what puts TLS in front) sets BOOKSNAP_SESSION_SECURE=1.
 """
 from __future__ import annotations
 
@@ -136,6 +137,7 @@ def redeem_login_link(
     tenancy: TenancyStore = Depends(deps.get_tenancy_store),
     clock: Clock = Depends(deps.get_clock),
     ids: IdGen = Depends(deps.get_id_gen),
+    secure: bool = Depends(deps.get_session_secure),
 ) -> UserDTO:
     """Trade an emailed token for a session cookie.
 
@@ -176,6 +178,7 @@ def redeem_login_link(
         max_age=int(SESSION_LIFETIME.total_seconds()),
         httponly=True,       # a script that can read the cookie can BE you
         samesite="lax",      # the link lands via navigation; Lax lets it in
+        secure=secure,       # see the module note: per-deployment, not fixed
         path="/",
     )
     return UserDTO(id=user.id, display_name=user.display_name)

@@ -1,0 +1,107 @@
+# booksnap deployment — VPS + Compose (owner, 2026-08-13; VISION §12.3 #10).
+#
+# Chosen against the alternatives on record: the stack is SQLite + a disk
+# blob tree, so a managed PaaS fights the storage model (ephemeral disks) and
+# managed cloud services would replace parts that already work and are
+# measured. A VPS keeps the restore story to "one directory and one file",
+# which is exactly what `tools/restore.py --drill` rehearses.
+#
+# ⚠ TLS terminates at Caddy, and the API is only reachable through it. That
+# is what lets the session cookie become `Secure` — until this compose file
+# is what runs, the cookie is deliberately non-Secure, because a Secure
+# cookie on plain HTTP is silently dropped and reads as "login did nothing"
+# (app/api/routers/auth.py's own note).
+
+services:
+  api:
+    build: .
+    restart: unless-stopped
+    environment:
+      # The domain the emailed sign-in link must point AT — not localhost,
+      # which on the recipient's phone is the recipient's phone (P4.1b's UX
+      # review measured exactly that dead end).
+      BOOKSNAP_PUBLIC_URL: ${BOOKSNAP_PUBLIC_URL:?set it to https://your.domain}
+      BOOKSNAP_SESSION_SECURE: "1"
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      NLI_API_KEY: ${NLI_API_KEY:-}
+      BOOKSNAP_SMTP_HOST: ${BOOKSNAP_SMTP_HOST:-}
+      BOOKSNAP_SMTP_PORT: ${BOOKSNAP_SMTP_PORT:-587}
+      BOOKSNAP_SMTP_USER: ${BOOKSNAP_SMTP_USER:-}
+      BOOKSNAP_SMTP_PASSWORD: ${BOOKSNAP_SMTP_PASSWORD:-}
+      BOOKSNAP_MAIL_FROM: ${BOOKSNAP_MAIL_FROM:-}
+    volumes:
+      - state:/data
+    expose:
+      - "8757"
+    # NOT `ports:` — nothing but Caddy may reach it. The 0.0.0.0 bind inside
+    # the container is the container's own network, not the internet.
+
+  staff:
+    build: .
+    restart: unless-stopped
+    # ⚠ The staff service serves EVERY tenant. With no token it serves them
+    # to anyone who can reach the port and says so on screen — the owner's
+    # deliberate local-dev posture (2026-08-13). Deployed, the token is
+    # required, and this file refuses to start without one rather than
+    # letting the fail-open default reach the internet.
+    environment:
+      BOOKSNAP_STAFF_TOKEN: ${BOOKSNAP_STAFF_TOKEN:?the staff service must not be deployed without a token}
+    command:
+      - uvicorn
+      - app.staff_api.main:app
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8758"
+      - --proxy-headers
+      - --forwarded-allow-ips
+      - "*"
+    volumes:
+      # ⚠ `state:ro` would name the TARGET "ro"; the mode is the third
+      # field. The service is read-only by construction; this makes the
+      # mount say so too.
+      - state:/data:ro
+    expose:
+      - "8758"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      BOOKSNAP_DOMAIN: ${BOOKSNAP_DOMAIN:?set it to your.domain}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+
+  # The restore REHEARSAL, on a schedule. Not a backup job with a hope
+  # attached: it takes the backup AND proves it restores, and it exits
+  # non-zero when it cannot — which is what makes a monitor able to notice.
+  backup:
+    build: .
+    restart: unless-stopped
+    # ⚠ No `|| echo`: swallowing the exit code made a silently-failing
+    # drill, which is worse than no drill. The container DIES on failure,
+    # `restart` brings it back, and the restart loop is what a monitor
+    # (or `docker compose ps`) can actually see.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        while true; do
+          python tools/backup.py --out /data/backups --keep 14
+          python tools/restore.py --drill --from "$$(ls -d /data/backups/* | tail -1)"
+          sleep 86400
+        done
+    volumes:
+      - state:/data
+
+volumes:
+  state:
+  caddy_data:
+  caddy_config:

@@ -20,6 +20,7 @@ from app import API_PREFIX, __version__
 from app.api.deps import (
     get_auth_store,
     get_invite_store,
+    get_session_secure,
     get_blob_store,
     get_book_store,
     get_clock,
@@ -94,6 +95,7 @@ def bind_ports(
     auth_store: AuthStore | None = None,
     mailer: Mailer | None = None,
     invite_store: InviteStore | None = None,
+    session_secure: bool | None = None,
 ) -> None:
     """Point an already-built app's ports at these implementations.
 
@@ -110,6 +112,8 @@ def bind_ports(
     exists to catch.
     """
     app.dependency_overrides[get_principal] = principal_provider
+    if session_secure is not None:
+        app.dependency_overrides[get_session_secure] = _always(session_secure)
     for dep, impl in ((get_book_store, book_store), (get_clock, clock),
                       (get_id_gen, id_gen), (get_shelf_store, shelf_store),
                       (get_blob_store, blob_store), (get_read_store, read_store),
@@ -141,6 +145,7 @@ def create_app(
     auth_store: AuthStore | None = None,
     mailer: Mailer | None = None,
     invite_store: InviteStore | None = None,
+    session_secure: bool | None = None,
     web_dist: Path | None = None,
 ) -> FastAPI:
     """Build the product API.
@@ -198,6 +203,7 @@ def create_app(
         duplicate_queue=duplicate_queue, reader=reader,
         job_runner=job_runner, tenancy_store=tenancy_store,
         auth_store=auth_store, mailer=mailer, invite_store=invite_store,
+        session_secure=session_secure,
     )
 
     # Static client last: mounting at "/" first would shadow the API routes.

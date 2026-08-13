@@ -32,6 +32,7 @@ from app.domain import (
     Status,
     User,
 )
+from app.domain.tenancy import remove_member, set_role
 from app.domain.search import parse
 from app.domain.search import search as domain_search
 from app.ports.store import (
@@ -480,6 +481,31 @@ class MemoryTenancyStore:
         rows.sort(key=lambda pair: pair[0].id)
         return tuple(rows)
 
+    def change_member_role(
+        self, account_id: str, user_id: str, role: Role,
+    ) -> tuple[Membership, ...]:
+        with self._mint:
+            return self._rewrite(account_id,
+                                 lambda rows: set_role(rows, user_id, role))
+
+    def remove_member_row(
+        self, account_id: str, user_id: str,
+    ) -> tuple[Membership, ...]:
+        with self._mint:
+            return self._rewrite(account_id,
+                                 lambda rows: remove_member(rows, user_id))
+
+    def _rewrite(self, account_id: str, rule):
+        rows = self.list_members(account_id)
+        updated = rule(rows)
+        keep = {m.user_id for m in updated}
+        for old in rows:
+            if old.user_id not in keep:
+                self._members.pop((old.user_id, account_id), None)
+        for m in updated:
+            self._members[(m.user_id, account_id)] = m
+        return self.list_members(account_id)
+
     def list_members(self, account_id: str) -> tuple[Membership, ...]:
         rows = [m for m in self._members.values() if m.account_id == account_id]
         rows.sort(key=lambda m: (m.role is not Role.ADMIN, m.user_id))
@@ -586,9 +612,13 @@ class MemoryInviteStore:
         self._consume = threading.Lock()
 
     def save_invite(self, invite: Invite) -> None:
-        if invite.token_hash in self._invites:
-            raise ValueError(f"invite {invite.token_hash!r} already stored")
-        self._invites[invite.token_hash] = invite
+        # Under the same lock as consume/revoke: check-and-write is several
+        # bytecodes, and the GIL preempts between them (the login token's
+        # measured lesson, applied to every writer here).
+        with self._consume:
+            if invite.token_hash in self._invites:
+                raise ValueError(f"invite {invite.token_hash!r} already stored")
+            self._invites[invite.token_hash] = invite
 
     def get_invite(self, token_hash: str) -> Invite | None:
         return self._invites.get(token_hash)
@@ -610,13 +640,33 @@ class MemoryInviteStore:
             self._invites[token_hash] = consumed
             return consumed
 
+    def purge_invites(self, *, before: str) -> int:
+        with self._consume:
+            dead = [h for h, i in self._invites.items()
+                    if i.expires_at < before]
+            for h in dead:
+                del self._invites[h]
+            return len(dead)
+
+    def mark_granted(self, token_hash: str, *, at: str) -> bool:
+        with self._consume:
+            invite = self._invites.get(token_hash)
+            if invite is None or invite.granted_at is not None:
+                return False
+            self._invites[token_hash] = replace(invite, granted_at=at)
+            return True
+
     def revoke_invite(self, account_id: str, token_hash: str) -> bool:
-        invite = self._invites.get(token_hash)
-        if invite is None or invite.account_id != account_id \
-                or invite.consumed_at is not None:
-            return False
-        del self._invites[token_hash]
-        return True
+        # The same lock consume takes: without it, a revoke landing inside
+        # consume's check-and-write window reported success AND left the
+        # row granted (measured under a forced interleave at review).
+        with self._consume:
+            invite = self._invites.get(token_hash)
+            if invite is None or invite.account_id != account_id \
+                    or invite.consumed_at is not None:
+                return False
+            del self._invites[token_hash]
+            return True
 
 
 def _any_copy_out(book: Book) -> bool:

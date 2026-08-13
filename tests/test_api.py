@@ -4826,15 +4826,28 @@ def test_an_invite_is_single_use_expiring_and_admin_only():
     with TestClient(stranger_app) as stranger:
         assert stranger.post(f"{API_PREFIX}/members/invites/accept",
                              json={"token": token}).status_code == 200
-        # Single-use is about USERS, not about presses: the same person
-        # re-opening their own link finishes (or re-finishes) their own
-        # join — consume and grant are two transactions, and a crash
-        # between them used to burn the link with nothing granted and no
-        # retry (P4.3's migration review). The membership is untouched.
+
+        # ⚠ Once the membership has LANDED the link is inert, for everyone
+        # — including the person who used it. Both P4.3 reviews measured
+        # the wider version independently: a spent invite that its own
+        # consumer could replay is a permanent re-entry ticket, invisible
+        # to `list_open_invites` and refused by `revoke_invite`, so an
+        # admin's removal was undoable a year later at the invite's
+        # original role, with no remedy anywhere in the product.
         again = stranger.post(f"{API_PREFIX}/members/invites/accept",
                               json={"token": token})
-        assert again.status_code == 200
+        assert again.status_code == 404
         assert tenancy.membership("p-stranger", TEST_ACCOUNT).role is Role.VIEWER
+
+        # …and REMOVAL stays final: the replay cannot bring them back.
+        tenancy.delete_membership("p-stranger", TEST_ACCOUNT)
+        replay = stranger.post(f"{API_PREFIX}/members/invites/accept",
+                               json={"token": token})
+        assert replay.status_code == 404
+        assert tenancy.membership("p-stranger", TEST_ACCOUNT) is None, (
+            "a removed member re-admitted themselves by replaying their "
+            "old invite link"
+        )
 
         # Anyone ELSE presenting the spent link gets the same 404 as an
         # invented one — that is the property single-use protects.
@@ -4850,7 +4863,10 @@ def test_an_invite_is_single_use_expiring_and_admin_only():
         assert stranger.post(f"{API_PREFIX}/members/invites/accept",
                              json={"token": stale}).status_code == 404
 
-    # Minting is §4.2's one row: a viewer in the account may not.
+    # Minting is §4.2's one row: a viewer in the account may not. (Put
+    # back as a member first — the replay assertions above removed them,
+    # and 403 "not your role" is a different answer from 404 "not yours".)
+    tenancy.save_membership(Membership("p-stranger", TEST_ACCOUNT, Role.VIEWER))
     with TestClient(stranger_app) as stranger:
         h = {deps.LIBRARY_HEADER: "lib-test"}
         r = stranger.post(f"{API_PREFIX}/members/invites",
@@ -4972,3 +4988,110 @@ def test_a_link_request_sweeps_expired_tokens():
         assert held == ["new@example.com"], (
             f"expired tokens were kept: {held}"
         )
+
+
+# --- deployment posture (P4.4) --------------------------------------------
+
+def test_the_session_cookie_is_secure_only_where_tls_is_in_front():
+    """A per-DEPLOYMENT fact, and BOTH directions are the bug: a Secure
+    cookie on plain HTTP is silently dropped (a login that "worked" and
+    left you logged out), and a non-Secure cookie behind TLS is a session
+    liftable off any downgrade. The compose file that sets
+    BOOKSNAP_SESSION_SECURE is the same file that puts TLS in front."""
+    mailer = StubMailer()
+    for secure in (False, True):
+        app = _app(mailer=mailer, recycle=False)
+        from app.api.app import bind_ports
+        from app.api.deps import get_session_secure
+        app.dependency_overrides[get_session_secure] = lambda s=secure: s
+        with TestClient(app) as c:
+            c.post(f"{API_PREFIX}/auth/link", json={"email": "a@example.com"})
+            _, token = mailer.sent[-1]
+            r = c.post(f"{API_PREFIX}/auth/session", json={"token": token})
+            cookie = r.headers["set-cookie"].lower()
+            assert ("secure" in cookie) is secure, (secure, cookie)
+        _ = bind_ports   # imported to prove the binding path is the real one
+
+
+def test_the_production_mailer_refuses_a_line_break_in_an_address():
+    """SMTP header injection, at the door where it would become mail: a
+    CRLF inside an address forges a Bcc under our own credentials. The
+    route's shape check is the first line; this is the second, because a
+    Mailer may be called by anything that holds the port."""
+    from app.adapters.smtp_mailer import SmtpMailer
+
+    mailer = SmtpMailer(host="mail.example.com", port=587, username="u",
+                        password="p", sender="booksnap@example.com",
+                        base_url="https://books.example.com")
+    for bad in ("victim@x.com\r\nBcc: everyone@target.test",
+                "victim@x.com\nBcc: everyone@target.test"):
+        try:
+            mailer.send_login_link(bad, "tok")
+        except ValueError as exc:
+            assert "line break" in str(exc)
+        else:
+            raise AssertionError("a CRLF address reached the SMTP layer")
+
+    # And a sender is checked at construction, for the same reason.
+    try:
+        SmtpMailer(host="h", port=587, username="", password="",
+                   sender="a@b.com\r\nBcc: x@y.com",
+                   base_url="https://books.example.com")
+    except ValueError as exc:
+        assert "line break" in str(exc)
+    else:
+        raise AssertionError("a CRLF sender was accepted")
+
+
+def test_the_production_mailer_says_the_link_travels_by_mail():
+    """`delivery` is what stops the login screen claiming an inbox it does
+    not have — the dev adapter says server-log, this one says mail, and
+    the screen renders the hint only for the former."""
+    from app.adapters.console_mailer import ConsoleMailer
+    from app.adapters.smtp_mailer import SmtpMailer
+
+    assert ConsoleMailer("http://x").delivery == "server-log"
+    assert SmtpMailer(host="h", port=587, username="", password="",
+                      sender="a@b.com", base_url="http://x").delivery == "mail"
+
+
+def test_two_admins_acting_at_once_cannot_empty_the_account():
+    """The route half of the same rule: whichever request loses gets a
+    409 carrying its remedy, and the account keeps an admin."""
+    admin_app, _stranger_app, tenancy, _clock = _two_person_world()
+    tenancy.save_membership(Membership("p-stranger", TEST_ACCOUNT, Role.ADMIN))
+    with TestClient(admin_app) as admin:
+        h = {deps.LIBRARY_HEADER: "lib-test"}
+        first = admin.delete(f"{API_PREFIX}/members/p-stranger", headers=h)
+        assert first.status_code == 204
+        second = admin.delete(f"{API_PREFIX}/members/p-admin", headers=h)
+        assert second.status_code == 409
+        assert tenancy.membership("p-admin", TEST_ACCOUNT).role is Role.ADMIN
+
+
+def test_an_admin_demoting_themselves_is_told_the_truth():
+    """The response is built from what the WRITE returned: re-entering
+    the admin-gated list route answered 403 AFTER the change had landed —
+    told it failed while it succeeded (P4.3's DI review)."""
+    admin_app, _stranger_app, tenancy, _clock = _two_person_world()
+    tenancy.save_membership(Membership("p-stranger", TEST_ACCOUNT, Role.ADMIN))
+    with TestClient(admin_app) as admin:
+        r = admin.patch(f"{API_PREFIX}/members/p-admin",
+                        json={"role": "viewer"},
+                        headers={deps.LIBRARY_HEADER: "lib-test"})
+        assert r.status_code == 200, r.text
+        assert {m["user_id"]: m["role"] for m in r.json()}["p-admin"] == "viewer"
+
+
+def test_an_invented_role_is_refused_the_same_way_on_both_routes():
+    """Two routes share one DTO; one answered 422 and the other raised
+    into a 500 (P4.3's reviews, both of them)."""
+    admin_app, _stranger_app, tenancy, _clock = _two_person_world()
+    tenancy.save_membership(Membership("p-stranger", TEST_ACCOUNT, Role.VIEWER))
+    with TestClient(admin_app) as admin:
+        h = {deps.LIBRARY_HEADER: "lib-test"}
+        minted = admin.post(f"{API_PREFIX}/members/invites",
+                            json={"role": "owner"}, headers=h)
+        patched = admin.patch(f"{API_PREFIX}/members/p-stranger",
+                              json={"role": "owner"}, headers=h)
+        assert minted.status_code == patched.status_code == 422

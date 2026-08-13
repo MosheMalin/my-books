@@ -38,6 +38,7 @@ import {
   setCurrentLibrary,
   type LibraryDTO,
 } from '../api/client'
+import { replaceHash } from '@booksnap/ui'
 import { LIBRARY_HASH } from './route'
 
 const STORAGE_KEY = 'booksnap.library'
@@ -162,7 +163,9 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
         const target = fresh[0]!.id
         setCurrentLibrary(target)
         remember(target)
-        globalThis.location.hash = LIBRARY_HASH
+        // replace, not assign: the hash being left behind here is an
+        // invite link carrying a raw token (P4.3's security review).
+        replaceHash(LIBRARY_HASH)
         setCurrentId(target)
       }
       return [...prev, ...rows.filter((r) => !known.has(r.id))]

@@ -789,6 +789,11 @@ export interface paths {
          * @description The whole member list comes back — "is there still an admin?" is a
          *     fact about the list, and the screen showing one row is showing the
          *     list.
+         *
+         *     ⚠ The response is built from what the WRITE returned, never by
+         *     re-entering `list_members`: an admin demoting themselves would be
+         *     refused by the re-entered admin gate AFTER their change had already
+         *     landed — told it failed while it succeeded (P4.3's DI review).
          */
         patch: operations["patch_member_api_v1_members__user_id__patch"];
         trace?: never;

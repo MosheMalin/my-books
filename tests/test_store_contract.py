@@ -3098,3 +3098,214 @@ def test_a_v15_database_gains_the_invites_table_and_keeps_its_rows():
             else:
                 raise AssertionError(
                     "an invite naming a nonexistent row was stored")
+
+
+def test_the_last_admin_rule_holds_when_two_admins_act_at_once():
+    """The rule is about the LIST, so a list read outside the write is a
+    list that can be stale: two admins demoting each other at the same
+    moment each saw an admin beside them, and the account reached ZERO
+    admins — and the removal version reached zero MEMBERS, which makes
+    every library that account owns permanently unreachable (measured,
+    P4.3's data-integrity review). Both adapters, both interleavings."""
+    import sys
+    import threading
+
+    from app.adapters.memory_store import MemoryTenancyStore
+    from app.adapters.sqlite_store import SqliteTenancyStore
+    from app.domain import Account, Membership, Role, User
+
+    with tempfile.TemporaryDirectory() as tmp:
+        for i, store in enumerate((MemoryTenancyStore(),
+                                   SqliteTenancyStore(Path(tmp) / "t.db"))):
+            for act in ("demote", "remove"):
+                account = f"acc-{i}-{act}"
+                store.save_account(Account(id=account))
+                for who in ("u-a", "u-b"):
+                    store.save_user(User(id=who))
+                    store.save_membership(
+                        Membership(who, account, Role.ADMIN))
+
+                # ⚠ DETERMINISTIC, not raced: the first version released
+                # two threads at a barrier and the mutation that deletes
+                # `BEGIN IMMEDIATE` survived it — the window is too narrow
+                # to hit by chance. Instead the FIRST caller is held
+                # inside the read-write window (the domain rule is called
+                # between the read and the writes), which is exactly where
+                # the second caller's read must not be allowed to see a
+                # stale list.
+                import app.adapters.memory_store as mem
+                import app.adapters.sqlite_store as sq
+
+                module = mem if isinstance(store, MemoryTenancyStore) else sq
+                real_rule = module.set_role if act == "demote" \
+                    else module.remove_member
+                inside = threading.Event()
+                started = threading.Event()
+                first = {"done": False}
+
+                def slow_rule(*args, **kwargs):
+                    if not first["done"]:
+                        first["done"] = True
+                        inside.set()
+                        # Only until the second caller has ENTERED its
+                        # own call — waiting for it to FINISH deadlocks
+                        # (it is blocked behind this very lock), which
+                        # cost the ring 34s before this line said so.
+                        started.wait(timeout=5)
+                    return real_rule(*args, **kwargs)
+
+                errors: list = []
+
+                def worker(target: str, second: bool) -> None:
+                    if second:
+                        inside.wait(timeout=5)
+                        started.set()
+                    try:
+                        if act == "demote":
+                            store.change_member_role(account, target,
+                                                     Role.VIEWER)
+                        else:
+                            store.remove_member_row(account, target)
+                    except Exception as exc:   # NoAdminLeft is the WIN
+                        errors.append(exc)
+
+                name = "set_role" if act == "demote" else "remove_member"
+                setattr(module, name, slow_rule)
+                try:
+                    threads = [
+                        threading.Thread(target=worker, args=("u-a", False)),
+                        threading.Thread(target=worker, args=("u-b", True)),
+                    ]
+                    for th in threads:
+                        th.start()
+                    for th in threads:
+                        th.join(timeout=30)
+                finally:
+                    setattr(module, name, real_rule)
+
+                left = store.list_members(account)
+                assert any(m.role is Role.ADMIN for m in left), (
+                    f"{type(store).__name__}/{act}: the account reached "
+                    f"zero admins ({left})"
+                )
+
+
+def test_an_invite_goes_inert_once_its_membership_has_landed():
+    """`consumed_at` says the link was spent; `granted_at` says the
+    membership EXISTS. Only the second makes a removal final — without it
+    a spent invite was a permanent re-entry ticket its own consumer could
+    replay (both P4.3 reviews, independently)."""
+    from app.domain import Role
+    from app.domain.invites import new_invite
+
+    with _invite_stores() as stores:
+        for store in stores:
+            i = new_invite("tok", "acc-a", Role.EDITOR, "u-admin",
+                           "2026-08-13T12:00:00+00:00")
+            store.save_invite(i)
+            spent = store.consume_invite(i.token_hash, by="u-x",
+                                         now="2026-08-13T12:05:00+00:00")
+            assert spent is not None and spent.granted_at is None
+            # The crash window: consumed, not granted — its own consumer
+            # may finish, nobody else, and not past the expiry.
+            assert spent.may_finish("u-x", "2026-08-13T12:06:00+00:00")
+            assert not spent.may_finish("u-other", "2026-08-13T12:06:00+00:00")
+            assert not spent.may_finish("u-x", "2026-08-21T12:00:00+00:00")
+
+            assert store.mark_granted(i.token_hash, at="2026-08-13T12:06:00+00:00")
+            assert not store.mark_granted(i.token_hash,
+                                          at="2026-08-13T13:00:00+00:00"), (
+                "the first stamp must win, like a session's tombstone")
+            after = store.get_invite(i.token_hash)
+            assert after.granted_at == "2026-08-13T12:06:00+00:00"
+            assert not after.may_finish("u-x", "2026-08-13T12:07:00+00:00"), (
+                f"{type(store).__name__}: a granted invite is still a door")
+
+
+def test_expired_invites_can_be_purged():
+    from app.domain import Role
+    from app.domain.invites import new_invite
+
+    with _invite_stores() as stores:
+        for store in stores:
+            store.save_invite(new_invite("old", "acc-a", Role.VIEWER,
+                                         "u-admin",
+                                         "2026-08-01T12:00:00+00:00"))
+            store.save_invite(new_invite("new", "acc-a", Role.VIEWER,
+                                         "u-admin",
+                                         "2026-08-13T12:00:00+00:00"))
+            gone = store.purge_invites(before="2026-08-13T00:00:00+00:00")
+            assert gone == 1, f"{type(store).__name__}: purged {gone}"
+            assert len(store.list_open_invites(
+                "acc-a", now="2026-08-13T12:30:00+00:00")) == 1
+
+
+def test_a_v16_database_gains_granted_at_and_the_backfill_closes_the_hole():
+    """v17 on an UPGRADED file. Two mutations survived the whole ring
+    without this (P4.4's migration review): folding `granted_at` into
+    _V16 (the repo's own forbidden edit — green board, dead invites on
+    the one database that matters), and deleting the backfill (leaving
+    the permanent-re-entry CRITICAL alive on pre-v17 rows).
+
+    The backfill is fail-CLOSED, and this pins each row shape: an OPEN
+    invite stays NULL (reopening nothing — `may_finish` also needs the
+    consumer to match), a consumed one becomes granted, and the migrated
+    consumed row is inert to the very person who consumed it."""
+    import sqlite3
+
+    from app.adapters.migrations import MIGRATIONS, SCHEMA_VERSION, current_version
+    from app.adapters.sqlite_store import SqliteInviteStore
+    from app.domain.auth import hash_token
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "v16.db"
+        conn = sqlite3.connect(str(path))
+        try:
+            for version, step in MIGRATIONS:
+                if version > 16:
+                    break
+                if isinstance(step, str):
+                    conn.executescript(step)
+                else:
+                    step(conn)
+            conn.execute("PRAGMA user_version = 16")
+            conn.execute("INSERT INTO users (id, display_name) VALUES"
+                         " ('u-admin', ''), ('u-x', '')")
+            conn.execute("INSERT INTO accounts (id, label) VALUES ('acc', '')")
+            conn.execute(
+                "INSERT INTO invites (token_hash, account_id, role,"
+                " created_by, created_at, expires_at, consumed_at,"
+                " consumed_by) VALUES"
+                # open, and consumed — the two shapes that existed at v16
+                " (?, 'acc', 'editor', 'u-admin', '2026-08-13T12:00:00+00:00',"
+                "  '2026-08-20T12:00:00+00:00', NULL, NULL),"
+                " (?, 'acc', 'admin', 'u-admin', '2026-08-13T12:00:00+00:00',"
+                "  '2026-08-20T12:00:00+00:00', '2026-08-13T12:05:00+00:00',"
+                "  'u-x')",
+                (hash_token("open"), hash_token("spent")),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        store = SqliteInviteStore(path)          # migrates 16 -> 17
+        check = sqlite3.connect(str(path))
+        try:
+            assert current_version(check) == SCHEMA_VERSION
+            assert "granted_at" in {
+                r[1] for r in check.execute("PRAGMA table_info(invites)")}
+            assert check.execute("PRAGMA foreign_key_check").fetchall() == []
+        finally:
+            check.close()
+
+        still_open = store.get_invite(hash_token("open"))
+        assert still_open.granted_at is None, "an OPEN invite was marked granted"
+        assert store.consume_invite(hash_token("open"), by="u-x",
+                                    now="2026-08-14T12:00:00+00:00") is not None
+
+        migrated = store.get_invite(hash_token("spent"))
+        assert migrated.granted_at == "2026-08-13T12:05:00+00:00"
+        assert not migrated.may_finish("u-x", "2026-08-14T12:00:00+00:00"), (
+            "a pre-v17 consumed invite is still a re-entry ticket for its "
+            "own consumer — the backfill did not close the hole"
+        )

@@ -900,6 +900,38 @@ CREATE INDEX invites_by_account ON invites (account_id, created_at);
 """
 
 
+# --- v17: an invite goes inert once it has granted (P4.3's DI review) ------
+#
+# `consumed_at` says the link was SPENT; it does not say the membership
+# landed. Consume and grant are two transactions over one file, so a crash
+# between them left a spent link with nothing granted and no way back — and
+# the fix for THAT (letting its own consumer re-enter) turned every consumed
+# invite into a permanent re-entry ticket: a removed member could replay
+# their link a year later and be re-granted, at the role it carried, with no
+# revoke possible (a consumed invite is invisible to `list_open_invites` and
+# refused by `revoke_invite`). Measured end to end at review.
+#
+# `granted_at` closes both: the re-entry is allowed only while it is NULL,
+# and it is stamped the moment the membership exists. After that the link is
+# inert for EVERYONE, including the person who used it — which is what makes
+# `delete_member` final again.
+#
+# Backfilled to `consumed_at` for rows that already exist. That is the
+# fail-CLOSED reading, not a universal truth: a pre-v17 row could also have
+# been consumed by the very crash this column exists for, and such a row is
+# marked granted here, locking its consumer out of an acceptance they
+# legitimately half-finished. The two costs are not comparable — wrongly
+# granted costs "ask the admin for a new link", wrongly NULL leaves the
+# permanent re-entry ticket alive on the owner's own file (the CRITICAL both
+# P4.3 reviews measured). Open rows stay NULL, which reopens nothing:
+# `may_finish` also requires `consumed_by` to match, and NULL never does.
+_V17 = """
+ALTER TABLE invites ADD COLUMN granted_at TEXT;
+
+UPDATE invites SET granted_at = consumed_at WHERE consumed_at IS NOT NULL;
+"""
+
+
 # A step is either SQL to execute or a callable to run — both inside the same
 # once-only transaction. Callables exist because a derived column whose rule
 # lives in the domain must be backfilled BY that rule, not by a re-statement
@@ -921,6 +953,7 @@ MIGRATIONS: tuple[tuple[int, str | Step], ...] = (
     (14, _v14),
     (15, _V15),
     (16, _V16),
+    (17, _V17),
 )
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]

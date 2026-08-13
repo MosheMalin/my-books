@@ -129,6 +129,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // at, and a dropped connection must not leave the screen signed in
     // with a cookie the next request will 401 on anyway.
     void apiSignOut().catch(() => undefined)
+    // ⚠ The stash goes with the session. A shared family tablet:
+    // whoever taps a chat link while signed out leaves a token behind,
+    // and the NEXT person to open the app was silently joining the
+    // account with it (measured, P4.3's security review).
+    localStorage.removeItem(PENDING_INVITE_KEY)
     setLinkError(false)
     setState('out')
   }, [])

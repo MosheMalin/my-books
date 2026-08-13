@@ -273,6 +273,19 @@ library provider so the joined account's libraries appear and select
 without a reload. The P4.1 review fleet's findings folded in the same
 landing — see the commit message for the list.
 
+✅ **P4.4 landed 2026-08-13** (schema v17 rode with it). Deployment is
+VPS + Compose: one image serving the API and the built client (same origin,
+so the session cookie needs no CORS), Caddy terminating TLS as the only
+published port, the staff service reachable by SSH tunnel alone, and a
+backup service that takes a backup daily AND drills it. `tools/backup.py`
+copies through SQLite's backup API + the blob tree + a manifest written
+LAST; `tools/restore.py --drill` restores into a temp directory and reads it
+back through the real stores — proven on the owner's 286 books, and a gate
+(`tests/test_backup_restore.py`) covers the round trip, an older-schema
+backup, an interrupted one, a corrupted one, and the move-aside rule. The
+production `SmtpMailer` and the per-deployment `Secure` cookie flag are the
+two things TLS turns on. `DEPLOY.md` is the runbook.
+
 ### P4.4 — deploy + RESTORE rehearsal (L)
 
 **Additions from the P4.1/P4.3 reviews (2026-08-13):**

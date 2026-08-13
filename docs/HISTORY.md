@@ -3924,3 +3924,77 @@ strips surrounding whitespace ITSELF, so a wire-exactness test can only
 pin case; and the sign-in sentinel in client tests must be something only
 the app renders (the login screen now carries the language toggle — the
 first screen a new device shows cannot be single-language).
+
+
+## P4.4 — deploy and RESTORE, and the invite that was a permanent key (v17)
+
+Pillar 4's last item is the one that gates handing a URL to a relative, and
+its deliverable is not a backup script: it is a REHEARSAL. §11.3's argument
+is that an accuracy regression on someone else's library cannot be undone by
+re-running, because their review DECISIONS are the expensive artifact — so
+what had to be proven is that a copy comes BACK, with the judgements in it.
+
+`tools/backup.py` writes a directory: the database through SQLite's own
+backup API (never `copy2` — a live file's WAL sidecars are a second and
+third instant), the whole blob tree, and a manifest written LAST carrying a
+checksum and the row counts. The manifest going last IS the integrity rule:
+an interrupted backup has none, and `restore.py` refuses it rather than
+writing a half-copy over a working system.
+
+`tools/restore.py --drill` is the item. It restores into a temp directory,
+opens the result through the product's own store adapters — which MIGRATES
+it, so a backup written by yesterday's code proves it comes forward — and
+checks books, decisions and blob files against the manifest. Run on the
+owner's real data: 286 books across two libraries, decisions and 36 blob
+files, schema v16 at the time. It is also a test
+(`tests/test_backup_restore.py`), so the gate runs a restore on every
+commit: the round trip, an older-schema backup, an interrupted one (refused),
+a corrupted one (refused by its own checksum), and the rule that a real
+restore MOVES existing data aside rather than deleting it — the moment you
+restore the wrong backup is the moment you can least afford to lose what was
+there.
+
+Deployment (owner, 2026-08-13: VPS + Compose): one image serving the API and
+the built client, so client and API are same-origin and the session cookie
+needs no CORS and no header; Caddy terminating TLS as the only published
+port; the staff service reachable by SSH tunnel only (a shared token on the
+public internet is a password with no rate limit); a backup service that
+takes a backup daily AND drills it, exiting non-zero when it cannot. The two
+things TLS turns on are real code: `SmtpMailer` (the `Mailer` port's
+production adapter, refusing CR/LF in any address before it can become a
+forged header) and the session cookie's `Secure` flag, which is a
+per-DEPLOYMENT binding rather than a constant — on plain HTTP a Secure
+cookie is silently dropped, which reads as "the login did nothing".
+
+**And the finding that mattered most this pass.** P4.3's self-healing accept
+— added at the migration review's insistence, because consume and grant are
+two transactions and a crash between them burned a link with nothing granted
+— was far wider than its reason. Both the security and data-integrity
+reviews found it independently, measured end to end: a consumed invite was a
+PERMANENT re-entry ticket for the person who spent it. Remove a member and
+they replay the link from the family chat — a year later, past its 7-day
+expiry — and they are back, at the invite's original role, with no remedy
+anywhere in the product (a consumed invite is invisible to
+`list_open_invites` and refused by `revoke_invite`). Schema v17 adds
+`granted_at`: `consumed_at` says the link was spent, `granted_at` says the
+membership EXISTS, and the re-entry is allowed only while the latter is
+NULL, only for the consumer, and only inside the original expiry. Once
+stamped the link is inert for everyone, which is what makes `delete_member`
+final again.
+
+Two more from the same pass, both measured rather than reasoned: the
+last-admin rule was a TOCTOU — two admins demoting each other at the same
+moment each saw an admin beside them, and the account reached zero admins
+(the removal version reached zero MEMBERS, which makes every library that
+account owns permanently unreachable). It is one transaction in the store
+now, `BEGIN IMMEDIATE` before the read, with the domain rule applied inside
+it. And an admin demoting themselves was told 403 AFTER their change had
+committed, because the response re-entered the admin-gated list route.
+
+Test lesson worth keeping: the first version of the TOCTOU gate released two
+threads at a barrier, and the mutation deleting `BEGIN IMMEDIATE` survived it
+— the window is too narrow to hit by chance. Holding the FIRST caller inside
+the read-write window (the domain rule is called between the read and the
+writes) makes it deterministic. The first attempt at that deadlocked to its
+timeouts and cost the ring 34 seconds; waiting for the second caller to have
+STARTED rather than FINISHED is what makes it both correct and free.
