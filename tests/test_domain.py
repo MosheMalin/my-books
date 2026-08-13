@@ -2045,9 +2045,11 @@ def test_only_a_verified_address_from_the_right_issuer_signs_anyone_in():
     types your address into a provider account they control is you."""
     from app.domain.oauth import GOOGLE, OAuthError, identity_from_claims
 
+    import time
+
     good = {"iss": GOOGLE.issuer, "aud": "client-1", "nonce": "n1",
             "email": "Owner@Example.COM", "email_verified": True,
-            "sub": "sub-1"}
+            "sub": "sub-1", "exp": time.time() + 300}
     who = identity_from_claims(good, GOOGLE, "client-1", "n1")
     assert who.email == "owner@example.com", "the address was not normalized"
     assert who.subject == "sub-1" and who.provider == "google"
@@ -2065,6 +2067,11 @@ def test_only_a_verified_address_from_the_right_issuer_signs_anyone_in():
         ({**good, "email_verified": None}, "a missing verified flag"),
         ({**good, "email": ""}, "no address at all"),
         ({**good, "sub": ""}, "no subject"),
+        ({**good, "exp": time.time() - 1}, "an expired token"),
+        ({k: v for k, v in good.items() if k != "exp"}, "no expiry at all"),
+        ({**good, "exp": "soon"}, "an unreadable expiry"),
+        ({**good, "email": "a" + chr(13) + chr(10) + "Bcc: evil@x.test@b.co"}, "a CRLF address"),
+        ({**good, "email": "x" * 300 + "@b.co"}, "an absurd address"),
     ):
         try:
             identity_from_claims(broken, GOOGLE, "client-1", "n1")
@@ -2169,3 +2176,22 @@ def test_the_authorize_url_carries_what_the_provider_needs():
     assert parse_qs(urlparse(apple.authorize_url(
         state="s", nonce="n", challenge="c")).query)["response_mode"] == [
         "form_post"]
+
+
+def test_the_token_endpoint_cannot_redirect_us_somewhere_else():
+    """The whole no-signature-verification argument rests on "OUR TLS
+    connection to a PINNED endpoint". urllib's default opener follows
+    3xx — including to another host, and down to plain HTTP — which
+    would quietly move the answer somewhere unpinned, and the nonce that
+    gates it is not secret (it travels in the front channel). Measured at
+    review; the opener refuses redirects now."""
+    import urllib.request
+
+    from app.adapters.oidc import _PINNED, _NoRedirects
+
+    handlers = [type(h).__name__ for h in _PINNED.handlers]
+    assert "_NoRedirects" in handlers, handlers
+    assert _NoRedirects().redirect_request(
+        None, None, 302, "Found", {}, "https://evil.test/token") is None, (
+        "a redirect off the pinned token endpoint would be followed"
+    )

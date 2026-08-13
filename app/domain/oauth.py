@@ -23,17 +23,36 @@ the front channel, this reasoning evaporates and a JWKS check becomes
 mandatory.
 
 ⚠ Everything an attacker can hand us gets checked: the state (single-use,
-ours, unexpired), the nonce (bound to that state), the issuer, the audience
-and the email's verified flag.
+unexpired, and BOUND TO THE BROWSER that started the flow), the nonce
+(bound to that state), the issuer, the audience, the expiry and the
+email's verified flag.
+
+⚠⚠ The browser binding is the one that was missing, and "single-use and
+server-side" is not a substitute for it — that was this module's own
+first claim, and it was wrong. Single-use stops a REPLAY; nothing stopped
+FIXATION: an attacker began a flow as themselves, kept the code and
+state, and handed the victim the finished callback URL, whose browser was
+then issued a session for the ATTACKER's account (measured end to end,
+P4.2's security review — including the escalation where a victim with a
+pending invite spent it against that session and gave the attacker a
+standing membership in their own household). See `OAuthState.belongs_to`.
 """
 from __future__ import annotations
 
 import base64
 import hashlib
+import secrets
+import time
 from dataclasses import dataclass
 from datetime import timedelta
 
-from app.domain.auth import _at, _iso, hash_token, normalize_email
+from app.domain.auth import (
+    _at,
+    _iso,
+    hash_token,
+    normalize_email,
+    valid_email_shape,
+)
 
 #: A person clicking through a provider's consent screen — generous
 #: enough for a password manager and a second factor, short enough that a
@@ -109,9 +128,23 @@ class OAuthState:
     #: Where to send the person afterwards. Carried through the flow so a
     #: shared invite link survives a detour through Google.
     next_hash: str = ""
+    #: The hash of a secret handed to the STARTING browser as a cookie.
+    #: Single-use stops a replay; this is what stops FIXATION — without
+    #: it, an attacker who begins a flow can hand a victim the finished
+    #: callback and log that victim into the attacker's account (measured,
+    #: P4.2's security review). Empty means unbound, which
+    #: :meth:`belongs_to` refuses.
+    binding_hash: str = ""
 
     def live(self, now: str) -> bool:
         return self.consumed_at is None and now < self.expires_at
+
+    def belongs_to(self, binding: str) -> bool:
+        """Whether the browser presenting the callback is the one that
+        started the flow. Fails CLOSED on an unbound row."""
+        if not self.binding_hash or not binding:
+            return False
+        return secrets.compare_digest(self.binding_hash, hash_token(binding))
 
 
 @dataclass(frozen=True)
@@ -124,7 +157,7 @@ class VerifiedIdentity:
 
 
 def new_state(state: str, provider: str, nonce: str, verifier: str,
-              now: str, next_hash: str = "") -> OAuthState:
+              now: str, next_hash: str = "", binding: str = "") -> OAuthState:
     return OAuthState(
         state_hash=hash_token(state),
         provider=provider,
@@ -133,6 +166,7 @@ def new_state(state: str, provider: str, nonce: str, verifier: str,
         created_at=now,
         expires_at=_iso(_at(now) + STATE_LIFETIME),
         next_hash=next_hash,
+        binding_hash=hash_token(binding) if binding else "",
     )
 
 
@@ -148,14 +182,27 @@ def pkce_challenge(verifier: str) -> str:
 
 
 def identity_from_claims(claims: dict, provider: Provider,
-                         client_id: str, nonce: str) -> VerifiedIdentity:
+                         client_id: str, nonce: str,
+                         now: float | None = None) -> VerifiedIdentity:
     """Every check an attacker-influenced answer has to survive.
 
     Order matters only for what the log says; each is independently
     sufficient to refuse. The email's VERIFIED flag is the load-bearing
     one: without it, anyone who types your address into a provider account
     they control signs in as you.
+
+    ⚠ ``exp`` is checked HERE, not in the adapter. It lived there, and the
+    port's contract says this function IS the checklist — so a provider
+    written to that contract accepted an indefinitely stale token
+    (measured at review). One list, one place.
     """
+    expiry = claims.get("exp")
+    if not isinstance(expiry, (int, float)) or isinstance(expiry, bool):
+        raise OAuthError("the id_token has no expiry")
+    moment = time.time() if now is None else now
+    if moment > float(expiry):
+        raise OAuthError("the id_token has expired")
+
     if claims.get("iss") != provider.issuer:
         raise OAuthError(f"issuer {claims.get('iss')!r} is not {provider.issuer}")
 
@@ -172,6 +219,13 @@ def identity_from_claims(claims: dict, provider: Provider,
     email = normalize_email(str(claims.get("email") or ""))
     if not email:
         raise OAuthError("the provider returned no email address")
+    if not valid_email_shape(email):
+        # The same door the magic link uses. Neither Google nor Apple
+        # emits a CRLF address — but this token's signature is unchecked
+        # BY DESIGN, so "the provider would not" is the only thing
+        # standing here, and it stops standing the day a third provider
+        # is configured (P4.2's security review).
+        raise OAuthError("the provider returned an unusable email address")
 
     verified = claims.get("email_verified")
     # Apple sends the flag as a JSON string ("true"), Google as a bool.

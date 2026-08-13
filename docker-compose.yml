@@ -59,8 +59,12 @@ services:
       - --port
       - "8758"
       - --proxy-headers
+      # The same rule as the Dockerfile's, for the same reason —
+      # inert here (nothing in app/staff_api reads a forwarded header)
+      # but a line that disagrees with the reasoning beside it is a
+      # line somebody copies.
       - --forwarded-allow-ips
-      - "*"
+      - "172.16.0.0/12"
     volumes:
       # ⚠ NOT `:ro`, deliberately: app/staff_api/queries.py records that
       # this service opens the file read-WRITE because a WAL database has

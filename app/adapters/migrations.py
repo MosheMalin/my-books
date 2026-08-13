@@ -964,6 +964,27 @@ CREATE INDEX oauth_states_by_expiry ON oauth_states (expires_at);
 """
 
 
+# --- v19: an OAuth state belongs to ONE browser (P4.2's security review) ---
+#
+# Single-use stopped a replayed callback; it did not stop FIXATION. The
+# state lived in a global table with nothing tying it to the browser that
+# began the flow, so an attacker could start a sign-in as themselves, keep
+# the code+state, and hand the victim a completed callback URL: the
+# victim's browser then received a session for the ATTACKER's user, and
+# every photograph they took next landed in the attacker's library.
+# Measured end to end at review — and worse, a victim with a pending
+# invite spent it against that session, giving the attacker a standing
+# membership in the victim's own household.
+#
+# `binding_hash` is the hash of a secret set as a cookie at /start and
+# required to match at the callback. Empty means UNBOUND, which the
+# resolver refuses: a state minted before this step (15 minutes of them at
+# most) fails closed and the person simply signs in again.
+_V19 = """
+ALTER TABLE oauth_states ADD COLUMN binding_hash TEXT NOT NULL DEFAULT '';
+"""
+
+
 # A step is either SQL to execute or a callable to run — both inside the same
 # once-only transaction. Callables exist because a derived column whose rule
 # lives in the domain must be backfilled BY that rule, not by a re-statement
@@ -987,6 +1008,7 @@ MIGRATIONS: tuple[tuple[int, str | Step], ...] = (
     (16, _V16),
     (17, _V17),
     (18, _V18),
+    (19, _V19),
 )
 
 

@@ -35,6 +35,7 @@ import secrets
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 
+from app import API_PREFIX
 from app.api import deps
 from app.api.dto import (
     LoginLinkRequest,
@@ -56,7 +57,13 @@ from app.domain.auth import (
     rate_window_start,
     valid_email_shape,
 )
-from app.domain.oauth import OAuthError, new_state, pkce_challenge
+from app.domain.oauth import (
+    PROVIDERS,
+    STATE_LIFETIME,
+    OAuthError,
+    new_state,
+    pkce_challenge,
+)
 from app.ports import Clock, IdGen
 from app.ports.auth import AuthStore, Mailer
 from app.ports.oauth import IdentityProvider, OAuthStateStore
@@ -69,6 +76,19 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 #: be the product answering a human in a language it reserves for
 #: machines.
 OAUTH_FAILED = "#/login?error=provider"
+
+#: A `next` is one of this client's own routes; anything longer is not
+#: one. Capped because `/start` is an unauthenticated write.
+_MAX_NEXT = 200
+
+
+def _failed() -> RedirectResponse:
+    """One answer for every refusal, and the binding cookie cleared with
+    it — a flow that ended has no second attempt."""
+    answer = RedirectResponse(f"/{OAUTH_FAILED}",
+                              status_code=status.HTTP_303_SEE_OTHER)
+    answer.delete_cookie(deps.OAUTH_COOKIE, path=f"{API_PREFIX}/auth/oauth")
+    return answer
 
 
 def _source_hash(request: Request) -> str:
@@ -218,6 +238,17 @@ def sign_out(
 # --- Google and Apple (P4.2, VISION §3) -----------------------------------
 
 
+def _form_post(key: str) -> bool:
+    """Whether this provider posts its callback cross-site.
+
+    Read from the domain's registry, not off the adapter: the
+    response mode is a fact about Apple, and `IdentityProvider`
+    promises only `key`/`authorize_url`/`exchange`.
+    """
+    known = PROVIDERS.get(key)
+    return bool(known and known.form_post)
+
+
 def _provider(key: str, providers: dict) -> IdentityProvider:
     configured = providers.get(key)
     if configured is None:
@@ -253,6 +284,7 @@ def start_oauth(
     states: OAuthStateStore = Depends(deps.get_oauth_state_store),
     providers: dict = Depends(deps.get_identity_providers),
     clock: Clock = Depends(deps.get_clock),
+    secure: bool = Depends(deps.get_session_secure),
 ) -> RedirectResponse:
     """Mint the state, the nonce and the PKCE verifier, then redirect.
 
@@ -267,26 +299,52 @@ def start_oauth(
     state = secrets.token_urlsafe(32)
     nonce = secrets.token_urlsafe(16)
     verifier = secrets.token_urlsafe(64)
+    binding = secrets.token_urlsafe(32)
     # `next` is a HASH fragment of our own client, never a URL: an open
     # redirect is the classic hole in exactly this parameter, so nothing
     # that could name another origin is accepted — and the QUERY is
     # dropped, because a client that put an invite token there would have
     # us store a live grant in cleartext (measured at review; the client
     # no longer sends one, and this is why it could not matter if it did).
-    safe_next = next.split("?")[0] if (
+    # Capped, because this is an unauthenticated write.
+    safe_next = next.split("?")[0][:_MAX_NEXT] if (
         next.startswith("#/") and "//" not in next) else ""
     states.save_state(new_state(state, chosen.key, nonce, verifier, now,
-                                next_hash=safe_next))
-    return RedirectResponse(
+                                next_hash=safe_next, binding=binding))
+
+    answer = RedirectResponse(
         chosen.authorize_url(state=state, nonce=nonce,
                              challenge=pkce_challenge(verifier)),
         status_code=status.HTTP_307_TEMPORARY_REDIRECT,
     )
+    # ⚠ THE anti-fixation cookie. Without it, an attacker starts a flow as
+    # themselves, keeps code+state, and hands the victim the finished
+    # callback URL — the victim's browser is then issued a session for the
+    # ATTACKER's user, and everything they catalogue next lands in the
+    # attacker's library (measured end to end at review, including the
+    # escalation to a standing membership through a pending invite).
+    #
+    # SameSite: Apple's callback is a cross-site POST, which `lax` does
+    # not accompany — so a form_post provider needs `none`, which needs
+    # `Secure`, which Apple's own HTTPS-only redirect requirement
+    # guarantees. Google's is a top-level GET, where `lax` is enough and
+    # is the tighter choice.
+    answer.set_cookie(
+        deps.OAUTH_COOKIE,
+        binding,
+        max_age=int(STATE_LIFETIME.total_seconds()),
+        httponly=True,
+        samesite="none" if _form_post(chosen.key) else "lax",
+        secure=secure or _form_post(chosen.key),
+        path=f"{API_PREFIX}/auth/oauth",
+    )
+    return answer
 
 
 @router.get("/oauth/{provider}/callback", include_in_schema=False)
 def oauth_callback_get(
     provider: str,
+    request: Request,
     response: Response,
     code: str = "",
     state: str = "",
@@ -299,8 +357,9 @@ def oauth_callback_get(
     secure: bool = Depends(deps.get_session_secure),
 ) -> RedirectResponse:
     """Google's redirect back: a top-level GET."""
-    return _finish_oauth(provider, code, state, response, auth, tenancy,
-                         states, providers, clock, ids, secure)
+    return _finish_oauth(provider, code, state,
+                         request.cookies.get(deps.OAUTH_COOKIE, ""),
+                         auth, tenancy, states, providers, clock, ids, secure)
 
 
 @router.post("/oauth/{provider}/callback", include_in_schema=False)
@@ -325,11 +384,12 @@ async def oauth_callback_post(
     """
     form = await request.form()
     return _finish_oauth(provider, str(form.get("code") or ""),
-                         str(form.get("state") or ""), response, auth,
-                         tenancy, states, providers, clock, ids, secure)
+                         str(form.get("state") or ""),
+                         request.cookies.get(deps.OAUTH_COOKIE, ""),
+                         auth, tenancy, states, providers, clock, ids, secure)
 
 
-def _finish_oauth(provider: str, code: str, state: str, response: Response,
+def _finish_oauth(provider: str, code: str, state: str, binding: str,
                   auth: AuthStore, tenancy: TenancyStore,
                   states: OAuthStateStore, providers: dict, clock: Clock,
                   ids: IdGen, secure: bool) -> RedirectResponse:
@@ -343,17 +403,18 @@ def _finish_oauth(provider: str, code: str, state: str, response: Response,
     chosen = _provider(provider, providers)
     now = clock.now_iso()
     in_flight = states.consume_state(hash_token(state), now=now) if state else None
-    if in_flight is None or in_flight.provider != chosen.key or not code:
-        # Replayed, forged, expired, or for a different provider — one
-        # answer, like every other credential refusal here.
-        return RedirectResponse(f"/{OAUTH_FAILED}",
-                                status_code=status.HTTP_303_SEE_OTHER)
+    if (in_flight is None or in_flight.provider != chosen.key or not code
+            or not in_flight.belongs_to(binding)):
+        # Replayed, forged, expired, for a different provider, or — the
+        # one this list was missing — presented by a browser that did not
+        # start it. One answer for all of them, like every other
+        # credential refusal here.
+        return _failed()
     try:
         identity = chosen.exchange(code=code, verifier=in_flight.verifier,
                                    nonce=in_flight.nonce)
     except OAuthError:
-        return RedirectResponse(f"/{OAUTH_FAILED}",
-                                status_code=status.HTTP_303_SEE_OTHER)
+        return _failed()
 
     # THE anchor: a verified address is a verified address, whoever
     # confirmed it. Signing in with Google to the address that has been
@@ -373,6 +434,8 @@ def _finish_oauth(provider: str, code: str, state: str, response: Response,
     auth.save_session(new_session(session_token, user.id, now))
     landing = RedirectResponse(f"/{in_flight.next_hash or ''}",
                                status_code=status.HTTP_303_SEE_OTHER)
+    # The flow is over: the binding cookie has no second use.
+    landing.delete_cookie(deps.OAUTH_COOKIE, path=f"{API_PREFIX}/auth/oauth")
     landing.set_cookie(
         deps.SESSION_COOKIE,
         session_token,

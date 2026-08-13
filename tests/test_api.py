@@ -5289,10 +5289,16 @@ def test_a_refused_exchange_lands_on_the_login_screen_not_a_json_error():
 
 def test_apples_cross_site_form_post_callback_works():
     """Apple posts the callback from ITS origin, so no SameSite=Lax
-    cookie accompanies it — which is exactly why the state is
-    server-side. The POST route must work with no cookie at all."""
+    cookie accompanies it — which is why the state is server-side, and
+    why the anti-fixation binding cookie is `SameSite=None; Secure` for
+    this provider only.
+
+    ⚠ Driven over HTTPS, because that is not a test convenience: a
+    `Secure` cookie is not returned over http, and Apple refuses a
+    non-HTTPS redirect URI in the first place. The two constraints are
+    the same constraint."""
     app, provider, _states, _tenancy_store = _oauth_world(key="apple")
-    with TestClient(app) as c:
+    with TestClient(app, base_url="https://testserver") as c:
         start = c.get(f"{API_PREFIX}/auth/oauth/apple/start",
                       follow_redirects=False)
         assert start.status_code == 307
@@ -5336,3 +5342,83 @@ def test_the_next_hash_cannot_become_an_open_redirect():
                        params={"code": "c", "state": state},
                        follow_redirects=False)
         assert landed.headers["location"] == "/#/invite"
+
+
+def test_one_browser_cannot_finish_another_browsers_sign_in():
+    """THE fixation attack, in the shape it was measured (P4.2's security
+    review): the attacker starts a flow in THEIR browser, signs in as
+    themselves, keeps the code and state without ever hitting our
+    callback, then sends the victim that finished callback URL. Before
+    the binding cookie the victim's browser was issued a session for the
+    ATTACKER's user — so every book they catalogued next landed in the
+    attacker's library, and a pending invite spent against that session
+    handed the attacker a standing membership in the victim's household.
+
+    Two clients, because one TestClient carries the cookie for both
+    halves and cannot see this at all — which is exactly why the original
+    "single-use and ours" test passed while the hole was open.
+    """
+    app, _provider, _states, _tenancy_store = _oauth_world()
+    from urllib.parse import parse_qs, urlparse
+
+    with TestClient(app) as attacker:
+        start = attacker.get(f"{API_PREFIX}/auth/oauth/google/start",
+                             follow_redirects=False)
+        state = parse_qs(urlparse(start.headers["location"]).query)["state"][0]
+        assert "booksnap_oauth" in start.cookies, (
+            "the flow was not bound to the browser that started it"
+        )
+
+    with TestClient(app) as victim:      # a different browser: no binding
+        landed = victim.get(f"{API_PREFIX}/auth/oauth/google/callback",
+                            params={"code": "stolen", "state": state},
+                            follow_redirects=False)
+        assert landed.status_code == 303
+        assert "error=provider" in landed.headers["location"]
+        assert "booksnap_session" not in landed.cookies, (
+            "a browser that did not start the flow was signed in by it"
+        )
+        # …and the victim is still nobody.
+        assert victim.get(f"{API_PREFIX}/meta").status_code == 401
+
+    # The state is spent either way: a refused callback does not leave a
+    # live one behind for the attacker to finish properly.
+    with TestClient(app) as attacker:
+        again = attacker.get(f"{API_PREFIX}/auth/oauth/google/callback",
+                             params={"code": "c", "state": state},
+                             follow_redirects=False)
+        assert "booksnap_session" not in again.cookies
+
+
+def test_a_forged_binding_cookie_does_not_open_the_flow():
+    """The binding is compared against the stored HASH, so guessing the
+    cookie is guessing 256 bits — and an EMPTY one (the shape a pre-v19
+    row carries) fails closed rather than matching."""
+    app, _provider, _states, _tenancy_store = _oauth_world()
+    from urllib.parse import parse_qs, urlparse
+
+    with TestClient(app) as c:
+        start = c.get(f"{API_PREFIX}/auth/oauth/google/start",
+                      follow_redirects=False)
+        state = parse_qs(urlparse(start.headers["location"]).query)["state"][0]
+        c.cookies.set("booksnap_oauth", "not-the-binding")
+        landed = c.get(f"{API_PREFIX}/auth/oauth/google/callback",
+                       params={"code": "c", "state": state},
+                       follow_redirects=False)
+        assert "error=provider" in landed.headers["location"]
+        assert "booksnap_session" not in landed.cookies
+
+
+def test_a_next_that_is_absurdly_long_is_cut_down():
+    """`/start` is an unauthenticated write, so the one attacker-chosen
+    string it stores is capped — a route of this client's is short."""
+    from app.api.routers.auth import _MAX_NEXT
+
+    app, _provider, states, _tenancy_store = _oauth_world()
+    with TestClient(app) as c:
+        c.get(f"{API_PREFIX}/auth/oauth/google/start",
+              params={"next": "#/" + "x" * 5000}, follow_redirects=False)
+    stored = [s.next_hash for s in states._states.values()]
+    assert stored and all(len(s) <= _MAX_NEXT for s in stored), (
+        f"stored {max(len(s) for s in stored)} characters"
+    )

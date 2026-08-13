@@ -28,8 +28,6 @@ import json
 import time
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
-
 from app.domain.oauth import (
     APPLE,
     GOOGLE,
@@ -42,6 +40,21 @@ from app.domain.oauth import (
 #: Long enough for a slow mobile network, short enough that a stuck
 #: provider cannot pin a request thread for a minute.
 TIMEOUT = 15
+
+#: A token response is a small JSON object; anything larger is a provider
+#: having a bad day, and reading it all would be our problem too.
+_MAX_ANSWER = 256 * 1024
+
+
+class _NoRedirects(urllib.request.HTTPRedirectHandler):
+    """Refuse to be moved off the pinned token endpoint — see `exchange`."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+#: Built once: the opener that makes "pinned" mean pinned.
+_PINNED = urllib.request.build_opener(_NoRedirects)
 
 
 class OidcProvider:
@@ -84,22 +97,35 @@ class OidcProvider:
 
     def exchange(self, *, code: str, verifier: str,
                  nonce: str) -> VerifiedIdentity:
-        body = urllib.parse.urlencode({
-            "grant_type": "authorization_code",
-            "code": code,
-            "redirect_uri": self.redirect_uri,
-            "client_id": self.client_id,
-            "client_secret": self._client_secret(),
-            "code_verifier": verifier,
-        }).encode("ascii")
-        request = urllib.request.Request(
-            self.provider.token_endpoint, data=body,
-            headers={"Content-Type": "application/x-www-form-urlencoded",
-                     "Accept": "application/json"},
-        )
         try:
-            with urllib.request.urlopen(request, timeout=TIMEOUT) as answer:
-                payload = json.loads(answer.read().decode("utf-8"))
+            # INSIDE the try: `_client_secret` parses an operator-supplied
+            # PEM for Apple, and a rotated-away key answered 500 rather
+            # than the screen this flow promises (P4.2's review).
+            body = urllib.parse.urlencode({
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": self.redirect_uri,
+                "client_id": self.client_id,
+                "client_secret": self._client_secret(),
+                "code_verifier": verifier,
+            }).encode("ascii")
+            request = urllib.request.Request(
+                self.provider.token_endpoint, data=body,
+                headers={"Content-Type": "application/x-www-form-urlencoded",
+                         "Accept": "application/json"},
+            )
+            with _PINNED.open(request, timeout=TIMEOUT) as answer:
+                # ⚠ The whole no-signature argument rests on "OUR TLS
+                # connection to a pinned endpoint". urllib's default
+                # opener FOLLOWS redirects — including to another host,
+                # and down to plain HTTP — which would quietly move the
+                # answer somewhere unpinned (measured at review). The
+                # opener below refuses them; this asserts the result.
+                if answer.url != self.provider.token_endpoint:
+                    raise OAuthError("the token endpoint redirected")
+                payload = json.loads(answer.read(_MAX_ANSWER).decode("utf-8"))
+        except OAuthError:
+            raise
         except Exception as exc:                      # network, HTTP, JSON
             # The provider's own error text can carry the code we sent;
             # it goes in the log, never to the caller.
@@ -165,11 +191,16 @@ def _b64(raw: bytes) -> bytes:
 
 
 def _claims(id_token: str) -> dict:
-    """The ID Token's payload, decoded but NOT signature-verified.
+    """The ID Token's payload, DECODED — nothing more.
 
-    See `app/domain/oauth.py` for why that is sound here and nowhere
-    else. The `exp` check stays, because a provider replaying its own
-    stale token is a different question from who signed it.
+    Every check, `exp` included, lives in
+    :func:`app.domain.oauth.identity_from_claims`: the port's contract
+    says that function is the checklist, and a second copy of any part of
+    it is a copy that will drift (it already had — `exp` was here, so a
+    provider written to the stated contract accepted a stale token).
+
+    See `app/domain/oauth.py` for why the signature is not verified here
+    and would have to be anywhere else.
     """
     try:
         _header, payload, _signature = id_token.split(".")
@@ -177,10 +208,6 @@ def _claims(id_token: str) -> dict:
         claims = json.loads(base64.urlsafe_b64decode(padded))
     except Exception as exc:
         raise OAuthError("the id_token is not a readable JWT") from exc
-
-    expiry = claims.get("exp")
-    if not isinstance(expiry, (int, float)):
-        raise OAuthError("the id_token has no expiry")
-    if datetime.now(timezone.utc).timestamp() > float(expiry):
-        raise OAuthError("the id_token has expired")
+    if not isinstance(claims, dict):
+        raise OAuthError("the id_token payload is not an object")
     return claims
