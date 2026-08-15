@@ -2,12 +2,13 @@
  * The lab's own sheet. Deliberately NOT app/web's — the lab is disposable and
  * borrowing the product's design system would make it look decided.
  *
- * Dark, because a schematic reads best as light lines on a dark ground, and
- * because the phone check happens in a room with the lights off as often as
- * not.
+ * Black OR white background (owner, 2026-08-16). Both are real themes rather
+ * than an inverted filter: a schematic on white is a drawing, a schematic on
+ * black is a screen, and the line weights that read well differ.
  */
 
-:root {
+:root,
+:root[data-theme='dark'] {
   --bg: #14171c;
   --panel: #1b1f26;
   --line: #2b323c;
@@ -16,18 +17,49 @@
   --accent: #6fb1ff;
   --accent-dim: #2c4a6e;
   --warn: #ffb454;
+  --warn-bg: #3a2f1a;
+  --warn-ink: #ffe0b0;
   --danger: #ff7a7a;
-  --room: #232b36;
-  --case: #3d5a80;
+  --btn: #232833;
+  --input-bg: #14181f;
+  --grid-minor: #1e232b;
+  --grid-major: #29303a;
+  --room-fill: #232b36;
+  --room-stroke: #5561718c;
+  --case-fill: #3d5a80;
+  --case-stroke: #7ea2c9;
+  --case-front: #cfe4ff;
+  --case-ink: #eaf2ff;
   --font: ui-sans-serif, system-ui, 'Segoe UI', Arial, sans-serif;
+}
+
+:root[data-theme='light'] {
+  --bg: #ffffff;
+  --panel: #f4f6f9;
+  --line: #d3d9e2;
+  --ink: #17202b;
+  --dim: #5c6875;
+  --accent: #1668d0;
+  --accent-dim: #cfe2fb;
+  --warn: #b06a00;
+  --warn-bg: #fff5e2;
+  --warn-ink: #6b4200;
+  --danger: #b32020;
+  --btn: #ffffff;
+  --input-bg: #ffffff;
+  --grid-minor: #ecf0f5;
+  --grid-major: #d9e0ea;
+  --room-fill: #f2f5f9;
+  --room-stroke: #9aa7b6;
+  --case-fill: #b9d0ea;
+  --case-stroke: #4a6f9c;
+  --case-front: #14314f;
+  --case-ink: #14314f;
 }
 
 * { box-sizing: border-box; }
 
-html, body, #root {
-  height: 100%;
-  margin: 0;
-}
+html, body, #root { height: 100%; margin: 0; }
 
 body {
   background: var(--bg);
@@ -37,11 +69,7 @@ body {
   overscroll-behavior: none;
 }
 
-.app {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-}
+.app { display: flex; flex-direction: column; height: 100%; }
 
 /* --- toolbar ------------------------------------------------------------- */
 
@@ -71,65 +99,44 @@ button {
   font: inherit;
   font-size: 13px;
   color: var(--ink);
-  background: #232833;
+  background: var(--btn);
   border: 1px solid var(--line);
   border-radius: 7px;
   padding: 6px 10px;
   cursor: pointer;
   min-height: 34px;
 }
-button:hover:not(:disabled) { border-color: #3d4756; }
+button:hover:not(:disabled) { border-color: var(--accent); }
 button:disabled { opacity: 0.4; cursor: default; }
 button.on {
   background: var(--accent-dim);
   border-color: var(--accent);
-  color: #fff;
+  font-weight: 600;
 }
 button.danger { color: var(--danger); }
-
-kbd {
-  font: inherit;
-  font-size: 10px;
-  color: var(--dim);
-  border: 1px solid var(--line);
-  border-radius: 3px;
-  padding: 0 3px;
-  margin-inline-start: 3px;
-}
 
 .slider { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--dim); }
 .slider input { width: 84px; }
 
 /* --- layout -------------------------------------------------------------- */
 
-.body {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-}
-
-.canvas-wrap {
-  position: relative;
-  flex: 1;
-  min-width: 0;
-}
+.body { display: flex; flex: 1; min-height: 0; }
+.canvas-wrap { position: relative; flex: 1; min-width: 0; }
 
 .side {
-  width: 320px;
-  flex: 0 0 320px;
+  width: 330px;
+  flex: 0 0 330px;
   border-inline-start: 1px solid var(--line);
   background: var(--panel);
   overflow-y: auto;
 }
 
-/* Phone. The lab is judged on a phone, so the toolbar gives its space back to
- * the canvas rather than the other way round: measured at 375px the four
- * wrapped toolbar rows cost 139px of an 812px screen. */
+/* Phone. The toolbar gives its space back to the canvas rather than the other
+ * way round — the lab is judged on a phone. */
 @media (max-width: 820px) {
   .body { flex-direction: column; }
   .side { width: auto; flex: 0 0 38%; border-inline-start: none; border-top: 1px solid var(--line); }
   .toolbar { gap: 5px; padding: 5px 6px; }
-  .toolbar kbd { display: none; }
   .toolbar button { padding: 6px 9px; font-size: 12px; }
   .brand .tag { display: none; }
   .slider input { width: 60px; }
@@ -143,7 +150,7 @@ kbd {
   padding: 7px 10px;
   font-size: 12px;
   color: var(--dim);
-  background: rgba(20, 23, 28, 0.86);
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
   border: 1px solid var(--line);
   border-radius: 8px;
   pointer-events: none;
@@ -155,10 +162,10 @@ kbd {
   top: 14px;
   transform: translateX(-50%);
   padding: 8px 14px;
-  background: #3a2f1a;
+  background: var(--warn-bg);
   border: 1px solid var(--warn);
   border-radius: 8px;
-  color: #ffe0b0;
+  color: var(--warn-ink);
   font-size: 13px;
   pointer-events: none;
 }
@@ -173,85 +180,75 @@ svg.plan {
   user-select: none;
 }
 
-.grid-minor, .grid-major {
-  fill: none;
-  vector-effect: non-scaling-stroke;
-}
-.grid-minor { stroke: #1e232b; stroke-width: 1; }
-.grid-major { stroke: #29303a; stroke-width: 1; }
+.grid-minor, .grid-major { fill: none; vector-effect: non-scaling-stroke; }
+.grid-minor { stroke: var(--grid-minor); stroke-width: 1; }
+.grid-major { stroke: var(--grid-major); stroke-width: 1; }
 
-.room polygon {
-  fill: var(--room);
-  stroke: #55617180;
+.room rect {
+  fill: var(--room-fill);
+  stroke: var(--room-stroke);
   stroke-width: 3;
   vector-effect: non-scaling-stroke;
 }
-.room.selected polygon { stroke: var(--accent); }
+.room.selected rect { stroke: var(--accent); }
 
 .room-label {
   fill: var(--dim);
-  font-size: 1.4px;
+  font-size: 1.6px;
   font-family: var(--font);
   unicode-bidi: plaintext;
-  paint-order: stroke;
-  stroke: var(--bg);
-  stroke-width: 0.35px;
 }
 
-.case polygon {
-  fill: var(--case);
-  stroke: #7ea2c9;
+.case rect {
+  fill: var(--case-fill);
+  stroke: var(--case-stroke);
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
 }
-.case.selected polygon { stroke: var(--accent); stroke-width: 2; }
+.case.selected rect { stroke: var(--accent); stroke-width: 2.5; }
 
-.case-front {
-  stroke: #cfe4ff;
-  stroke-width: 3;
-  vector-effect: non-scaling-stroke;
-}
+.case-front { stroke: var(--case-front); stroke-width: 4; vector-effect: non-scaling-stroke; }
 .case-divider {
-  stroke: #ffffff55;
+  stroke: var(--case-stroke);
   stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+.case-depth {
+  stroke: var(--case-front);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  opacity: 0.7;
   vector-effect: non-scaling-stroke;
 }
 .case-label {
-  fill: #eaf2ff;
-  font-size: 1.1px;
+  fill: var(--case-ink);
+  font-size: 1.3px;
   font-family: var(--font);
   unicode-bidi: plaintext;
   pointer-events: none;
 }
 
-.handle {
-  fill: var(--accent);
-  stroke: #fff;
-  stroke-width: 1.5;
-  vector-effect: non-scaling-stroke;
-}
-
-.preview-room {
-  fill: #6fb1ff22;
+.preview-room, .preview-case {
+  fill: color-mix(in srgb, var(--accent) 18%, transparent);
   stroke: var(--accent);
   stroke-width: 2;
   stroke-dasharray: 6 4;
   vector-effect: non-scaling-stroke;
 }
-.preview-case line {
+
+.handles rect {
+  fill: var(--bg);
   stroke: var(--accent);
-  stroke-width: 5;
-  stroke-linecap: round;
+  stroke-width: 2;
   vector-effect: non-scaling-stroke;
 }
-.preview-case circle { fill: var(--accent); }
-.preview-stroke {
-  fill: none;
-  stroke: var(--warn);
-  stroke-width: 2.5;
-  stroke-linejoin: round;
-  stroke-linecap: round;
-  vector-effect: non-scaling-stroke;
+
+.size-badge rect { fill: var(--accent); }
+.size-badge text {
+  fill: #fff;
+  font-size: 12px;
+  font-family: var(--font);
+  font-variant-numeric: tabular-nums;
 }
 
 /* --- inspector ----------------------------------------------------------- */
@@ -263,46 +260,43 @@ svg.plan {
 .field > span { display: block; font-size: 12px; color: var(--dim); margin-bottom: 3px; }
 .field.inline { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .field.inline > span { margin: 0; }
+.size-inputs { display: flex; align-items: center; gap: 6px; color: var(--dim); }
 
-input[type='text'], input:not([type]), input[type='number'] {
+input:not([type]), input[type='text'], input[type='number'] {
   font: inherit;
   color: var(--ink);
-  background: #14181f;
+  background: var(--input-bg);
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 7px 8px;
   min-height: 34px;
 }
 .field > input:not([type='number']) { width: 100%; }
-input[type='number'] { width: 74px; }
+input[type='number'] { width: 68px; }
 
 .rtl-safe { unicode-bidi: plaintext; text-align: start; }
 
 .note { font-size: 12px; color: var(--dim); line-height: 1.5; margin: 8px 0; }
 .note code { font-size: 11px; }
 
+.steps { font-size: 12px; color: var(--dim); line-height: 1.6; padding-inline-start: 18px; }
+.steps strong { color: var(--ink); }
+
 .rule {
   font-size: 12px;
   line-height: 1.5;
-  color: #ffe0b0;
-  background: #3a2f1a66;
-  border: 1px solid #6b552c;
+  color: var(--warn-ink);
+  background: var(--warn-bg);
+  border: 1px solid var(--warn);
   border-radius: 8px;
   padding: 8px 10px;
   margin: 8px 0;
 }
 .rule button { margin-top: 8px; width: 100%; }
 
-fieldset {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 8px 10px 10px;
-  margin: 12px 0;
-}
+fieldset { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px 10px; margin: 12px 0; }
 legend { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.06em; }
 
-.row { display: flex; gap: 6px; margin: 10px 0; flex-wrap: wrap; }
-.row button { flex: 1; }
 .inspector > button.danger { width: 100%; }
 
 /* --- elevation ----------------------------------------------------------- */
@@ -322,13 +316,18 @@ legend { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-s
   min-height: 30px;
   padding: 2px;
   font-size: 11px;
-  background: #232833;
+  background: var(--btn);
   border: 1px dashed var(--line);
   border-radius: 5px;
   color: var(--dim);
 }
 .elev-cell.selected { border-style: solid; border-color: var(--accent); color: var(--ink); }
-.elev-cell.override { background: #3a2f1a; border-color: var(--warn); color: #ffe0b0; }
+.elev-cell.override {
+  background: var(--warn-bg);
+  border-color: var(--warn);
+  border-style: solid;
+  color: var(--warn-ink);
+}
 .elev-level { opacity: 0.7; }
 .elev-depth { font-weight: 600; }
 .elev-photos { font-size: 10px; }

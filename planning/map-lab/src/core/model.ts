@@ -3,16 +3,20 @@
  *
  * Two geometries, never one canvas (MAP_PLAN §3.2):
  *
- *   Plan       top-down, per Place: rooms as polygons, bookcases as a front
- *              baseline standing on (or off) a wall.
+ *   Plan       top-down, per Place: rooms and bookcases, both AXIS-ALIGNED
+ *              RECTANGLES on the grid.
  *   Elevation  front-on, per Bookcase: columns across x levels down.
  *
- * A length is not a column count. The two are linked only for DRAWING — a
- * deeper case is drawn thicker — never for deriving one from the other.
+ * A length is not a column count. The rectangle says where the furniture
+ * stands and how much wall it takes; the elevation says how it is divided.
+ * Neither is derived from the other — the plan only DRAWS the declared depth,
+ * it never infers it.
  */
 
 import type { Pt } from './geom'
-import { add, bbox, dist, mul, normal, pt, sub, unit } from './geom'
+import { pt } from './geom'
+import type { Rect, Side } from './rect'
+import { OPPOSITE, bottom, center, contains, flushSide, right } from './rect'
 
 // --- shelves ---------------------------------------------------------------
 
@@ -32,17 +36,24 @@ export type Shelf = {
   photos: number
 }
 
+export type Room = {
+  id: string
+  name: string
+  rect: Rect
+}
+
 export type Bookcase = {
   id: string
   name: string
-  /** The front baseline, in plan units. Length is relative — never cm. */
-  a: Pt
-  b: Pt
-  /** Which side of a→b the case body occupies. The user flips it; we do not
-   *  assert a handedness they cannot verify. */
-  side: 1 | -1
-  /** Set when the case is snapped onto a wall; null for an island. */
-  attach: { roomId: string; wall: number } | null
+  /** Footprint on the plan. The user draws it and drags its size; nothing is
+   *  computed from it. */
+  rect: Rect
+  /** Which edge the books face out of. Derived when the case is drawn flush
+   *  against a wall, and turnable by hand afterwards. */
+  front: Side
+  /** The room the case stands in, by containment of its centre. Null for a
+   *  case standing outside every room — legal, and drawn as such. */
+  roomId: string | null
   /** Defaults applied WHEN A SHELF IS CREATED. Editing them does not reach
    *  back into existing shelves — that is an explicit action. */
   defaultLevels: number
@@ -53,18 +64,10 @@ export type Bookcase = {
   shelves: Shelf[]
 }
 
-export type Room = {
-  id: string
-  name: string
-  /** Closed polygon. Walls are its edges — see `wallsOf`. */
-  points: Pt[]
-}
-
 export type Underlay = {
   /** Object URL or data URL. Not persisted across reloads by design: an
    *  underlay is scaffolding, not data. */
   src: string
-  /** Top-left corner, in plan units. */
   x: number
   y: number
   /** How many plan units WIDE the image is drawn. Height follows `aspect`, so
@@ -82,50 +85,71 @@ export type Plan = {
 
 export const emptyPlan = (): Plan => ({ rooms: [], cases: [], underlay: null })
 
-// --- rooms -----------------------------------------------------------------
-
-export type Wall = { index: number; a: Pt; b: Pt }
-
-/** A room's walls, in polygon order. Index is stable for `Bookcase.attach`
- *  only while the polygon's point count is unchanged — the editor re-attaches
- *  on reshape rather than pretending otherwise. */
-export function wallsOf(room: Room): Wall[] {
-  const out: Wall[] = []
-  const n = room.points.length
-  for (let i = 0; i < n; i++) {
-    out.push({ index: i, a: room.points[i]!, b: room.points[(i + 1) % n]! })
-  }
-  return out
-}
-
-/** The rectangle two dragged corners describe, as a 4-point polygon. */
-export function rectPoints(from: Pt, to: Pt): Pt[] {
-  const x0 = Math.min(from.x, to.x)
-  const x1 = Math.max(from.x, to.x)
-  const y0 = Math.min(from.y, to.y)
-  const y1 = Math.max(from.y, to.y)
-  return [pt(x0, y0), pt(x1, y0), pt(x1, y1), pt(x0, y1)]
-}
-
 // --- bookcases -------------------------------------------------------------
 
 export const DEFAULT_LEVELS = 5
 export const DEFAULT_DEPTH = 1
 export const MAX_DEPTH = 4
+/** Below this a drag is a mis-tap, not a rectangle. */
+export const MIN_SIZE = 1
 
-/** Plan thickness for drawing, in units. A 2-deep case IS visibly deeper than
- *  a 1-deep one; that is the only coupling between the two geometries, and it
- *  runs one way (MAP_PLAN §3.2). */
-export function caseThickness(bc: Bookcase): number {
-  return 0.8 + 0.5 * (maxDepth(bc) - 1)
+export function isTooSmall(r: Rect): boolean {
+  return r.w < MIN_SIZE || r.h < MIN_SIZE
 }
+
+/**
+ * Which way the books face, for a case drawn inside a room.
+ *
+ * Flush against the north wall means facing south. That is the only rule, and
+ * it is right often enough that *Turn* is a correction rather than a step.
+ */
+export function frontFor(rect: Rect, room: Room | null): Side {
+  const flush = room ? flushSide(rect, room.rect) : null
+  if (flush) return OPPOSITE[flush]
+  return rect.w >= rect.h ? 'S' : 'E'
+}
+
+/**
+ * Fix a front that is obviously wrong, and only then.
+ *
+ * A case standing flush against a wall with its books facing INTO that wall is
+ * never what anyone meant, so moving it there corrects it. Anything else is
+ * left alone — re-deriving the front on every move would silently undo the
+ * *Turn* button, and a tool that fights a deliberate choice is worse than one
+ * that occasionally needs a second tap.
+ */
+export function correctFront(bc: Bookcase, room: Room | null): Bookcase {
+  if (!room) return bc
+  const flush = flushSide(bc.rect, room.rect)
+  return flush === bc.front ? { ...bc, front: OPPOSITE[flush] } : bc
+}
+
+export function roomAt(plan: Plan, p: Pt): Room | null {
+  for (let i = plan.rooms.length - 1; i >= 0; i--) {
+    const r = plan.rooms[i]!
+    if (contains(r.rect, p)) return r
+  }
+  return null
+}
+
+export function roomFor(plan: Plan, rect: Rect): Room | null {
+  return roomAt(plan, center(rect))
+}
+
+/** True when the front edge runs left-right, so columns divide along x. */
+export const frontIsHorizontal = (bc: Bookcase): boolean =>
+  bc.front === 'N' || bc.front === 'S'
+
+/** The extent along the front — how much wall the case occupies. */
+export const caseLength = (bc: Bookcase): number =>
+  frontIsHorizontal(bc) ? bc.rect.w : bc.rect.h
+
+/** The extent front-to-back, as DRAWN. Not the declared depth. */
+export const caseThickness = (bc: Bookcase): number =>
+  frontIsHorizontal(bc) ? bc.rect.h : bc.rect.w
 
 export function maxDepth(bc: Bookcase): number {
   return bc.shelves.reduce((m, s) => Math.max(m, s.depth), bc.defaultDepth)
-}
-
-export function caseLength(bc: Bookcase): number {
-  return dist(bc.a, bc.b)
 }
 
 export function columnCount(bc: Bookcase): number {
@@ -139,19 +163,17 @@ export function shelfAt(bc: Bookcase, col: number, level: number): Shelf | null 
 export function newBookcase(
   id: string,
   name: string,
-  a: Pt,
-  b: Pt,
-  side: 1 | -1,
-  attach: Bookcase['attach'],
+  rect: Rect,
+  front: Side,
+  roomId: string | null,
   columns = 1,
 ): Bookcase {
   const base: Bookcase = {
     id,
     name,
-    a,
-    b,
-    side,
-    attach,
+    rect,
+    front,
+    roomId,
     defaultLevels: DEFAULT_LEVELS,
     defaultDepth: DEFAULT_DEPTH,
     columnLevels: [],
@@ -269,33 +291,71 @@ export function withShelfDepth(
 export const clampDepth = (d: number): number =>
   Math.max(1, Math.min(MAX_DEPTH, Math.round(d)))
 
-// --- the case's footprint, for drawing and for hit-testing -----------------
+/** Turn the case a quarter turn: N → E → S → W → N. */
+export const TURN: Record<Side, Side> = { N: 'E', E: 'S', S: 'W', W: 'N' }
 
-/** The four corners of the case's footprint: the front baseline a→b, pushed
- *  back by its thickness on `side`. Front face is always a→b. */
-export function casePolygon(bc: Bookcase): [Pt, Pt, Pt, Pt] {
-  const n = mul(normal(bc.a, bc.b), bc.side * caseThickness(bc))
-  return [bc.a, bc.b, add(bc.b, n), add(bc.a, n)]
+// --- drawing aids ----------------------------------------------------------
+
+/** The front edge as a segment — the face the books look out of. */
+export function frontEdge(bc: Bookcase): { a: Pt; b: Pt } {
+  const r = bc.rect
+  switch (bc.front) {
+    case 'N':
+      return { a: pt(r.x, r.y), b: pt(right(r), r.y) }
+    case 'S':
+      return { a: pt(r.x, bottom(r)), b: pt(right(r), bottom(r)) }
+    case 'W':
+      return { a: pt(r.x, r.y), b: pt(r.x, bottom(r)) }
+    case 'E':
+      return { a: pt(right(r), r.y), b: pt(right(r), bottom(r)) }
+  }
 }
 
-/** The internal column boundaries, as segments across the footprint. Purely
- *  a drawing aid — the plan never derives a column count from a length. */
+/** Column boundaries, drawn perpendicular to the front. A drawing aid only —
+ *  the plan never derives a column count from a length. */
 export function columnDividers(bc: Bookcase): { a: Pt; b: Pt }[] {
   const cols = columnCount(bc)
   if (cols < 2) return []
-  const dir = unit(sub(bc.b, bc.a))
-  const step = caseLength(bc) / cols
-  const n = mul(normal(bc.a, bc.b), bc.side * caseThickness(bc))
+  const r = bc.rect
   const out: { a: Pt; b: Pt }[] = []
   for (let i = 1; i < cols; i++) {
-    const base = add(bc.a, mul(dir, step * i))
-    out.push({ a: base, b: add(base, n) })
+    const f = i / cols
+    if (frontIsHorizontal(bc)) {
+      const x = r.x + r.w * f
+      out.push({ a: pt(x, r.y), b: pt(x, bottom(r)) })
+    } else {
+      const y = r.y + r.h * f
+      out.push({ a: pt(r.x, y), b: pt(right(r), y) })
+    }
   }
   return out
 }
 
-export function caseMidpoint(bc: Bookcase): Pt {
-  return pt((bc.a.x + bc.b.x) / 2, (bc.a.y + bc.b.y) / 2)
+/** One line per extra declared depth row, parallel to the front. This RENDERS
+ *  the declared depth; it does not derive it from the drawn thickness. */
+export function depthLines(bc: Bookcase): { a: Pt; b: Pt }[] {
+  const d = maxDepth(bc)
+  if (d < 2) return []
+  const r = bc.rect
+  const out: { a: Pt; b: Pt }[] = []
+  for (let i = 1; i < d; i++) {
+    const f = i / d
+    switch (bc.front) {
+      case 'N':
+        out.push({ a: pt(r.x, r.y + r.h * f), b: pt(right(r), r.y + r.h * f) })
+        break
+      case 'S':
+        out.push({ a: pt(r.x, bottom(r) - r.h * f), b: pt(right(r), bottom(r) - r.h * f) })
+        break
+      case 'W':
+        out.push({ a: pt(r.x + r.w * f, r.y), b: pt(r.x + r.w * f, bottom(r)) })
+        break
+      case 'E':
+        out.push({ a: pt(right(r) - r.w * f, r.y), b: pt(right(r) - r.w * f, bottom(r)) })
+        break
+    }
+  }
+  return out
 }
 
 // --- whole-plan queries ----------------------------------------------------
@@ -305,12 +365,17 @@ export function shelfCount(plan: Plan): number {
 }
 
 export function planBounds(plan: Plan): { min: Pt; max: Pt } {
-  const points: Pt[] = []
-  for (const r of plan.rooms) points.push(...r.points)
-  for (const c of plan.cases) points.push(c.a, c.b)
-  return bbox(points)
+  const rects = [...plan.rooms.map((r) => r.rect), ...plan.cases.map((c) => c.rect)]
+  if (rects.length === 0) return { min: pt(0, 0), max: pt(0, 0) }
+  return {
+    min: pt(
+      Math.min(...rects.map((r) => r.x)),
+      Math.min(...rects.map((r) => r.y)),
+    ),
+    max: pt(Math.max(...rects.map(right)), Math.max(...rects.map(bottom))),
+  }
 }
 
 export function casesInRoom(plan: Plan, roomId: string): Bookcase[] {
-  return plan.cases.filter((c) => c.attach?.roomId === roomId)
+  return plan.cases.filter((c) => c.roomId === roomId)
 }

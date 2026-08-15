@@ -12,9 +12,10 @@
 
 import type { Bookcase, Plan, Room, Shelf } from './model'
 import { emptyPlan } from './model'
+import type { Rect, Side } from './rect'
 
 export const FORMAT = 'booksnap.map-lab.plan'
-export const FORMAT_VERSION = 1
+export const FORMAT_VERSION = 2
 
 export type PlanFile = {
   format: typeof FORMAT
@@ -48,7 +49,9 @@ export function parsePlan(text: string): ParseResult {
   const rooms = asArray(body['rooms']).map(readRoom).filter(isPresent)
   const cases = asArray(body['cases']).map(readCase).filter(isPresent)
   if (rooms.length === 0 && cases.length === 0) {
-    return { ok: false, error: 'the file describes nothing' }
+    // A v1 file (polygon rooms, baseline bookcases) lands here rather than
+    // half-importing. The lab is pre-product; there is no migration to owe.
+    return { ok: false, error: 'the file describes nothing this version understands' }
   }
   return { ok: true, plan: { ...emptyPlan(), rooms, cases } }
 }
@@ -57,32 +60,30 @@ export function parsePlan(text: string): ParseResult {
 
 function readRoom(v: unknown): Room | null {
   if (!isRecord(v)) return null
-  const points = asArray(v['points']).map(readPt).filter(isPresent)
-  if (points.length < 3) return null
-  return { id: str(v['id'], 'room'), name: str(v['name'], ''), points }
+  const rect = readRect(v['rect'])
+  if (!rect) return null
+  return { id: str(v['id'], 'room'), name: str(v['name'], ''), rect }
 }
 
 function readCase(v: unknown): Bookcase | null {
   if (!isRecord(v)) return null
-  const a = readPt(v['a'])
-  const b = readPt(v['b'])
-  if (!a || !b) return null
+  const rect = readRect(v['rect'])
+  if (!rect) return null
   const columnLevels = asArray(v['columnLevels'])
     .map((n) => num(n, 1))
     .map((n) => Math.max(1, Math.round(n)))
   if (columnLevels.length === 0) return null
-  const shelves = asArray(v['shelves']).map(readShelf).filter(isPresent)
+  const roomId = v['roomId']
   return {
     id: str(v['id'], 'case'),
     name: str(v['name'], ''),
-    a,
-    b,
-    side: v['side'] === -1 ? -1 : 1,
-    attach: readAttach(v['attach']),
+    rect,
+    front: readSide(v['front']),
+    roomId: typeof roomId === 'string' ? roomId : null,
     defaultLevels: Math.max(1, Math.round(num(v['defaultLevels'], 5))),
     defaultDepth: Math.max(1, Math.round(num(v['defaultDepth'], 1))),
     columnLevels,
-    shelves,
+    shelves: asArray(v['shelves']).map(readShelf).filter(isPresent),
   }
 }
 
@@ -96,20 +97,19 @@ function readShelf(v: unknown): Shelf | null {
   }
 }
 
-function readAttach(v: unknown): Bookcase['attach'] {
+function readRect(v: unknown): Rect | null {
   if (!isRecord(v)) return null
-  const roomId = v['roomId']
-  if (typeof roomId !== 'string') return null
-  return { roomId, wall: Math.max(0, Math.round(num(v['wall'], 0))) }
+  const x = num(v['x'], NaN)
+  const y = num(v['y'], NaN)
+  const w = num(v['w'], NaN)
+  const h = num(v['h'], NaN)
+  if ([x, y, w, h].some((n) => !Number.isFinite(n))) return null
+  if (w <= 0 || h <= 0) return null
+  return { x, y, w, h }
 }
 
-function readPt(v: unknown): { x: number; y: number } | null {
-  if (!isRecord(v)) return null
-  const x = v['x']
-  const y = v['y']
-  if (typeof x !== 'number' || typeof y !== 'number') return null
-  if (!Number.isFinite(x) || !Number.isFinite(y)) return null
-  return { x, y }
+function readSide(v: unknown): Side {
+  return v === 'N' || v === 'S' || v === 'E' || v === 'W' ? v : 'S'
 }
 
 // --- primitives ------------------------------------------------------------

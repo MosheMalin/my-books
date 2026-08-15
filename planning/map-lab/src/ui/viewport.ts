@@ -16,10 +16,15 @@ export type View = {
   scale: number
 }
 
-export const MIN_SCALE = 4
+export const MIN_SCALE = 3
 export const MAX_SCALE = 90
 
-export const initialView = (): View => ({ cx: 12, cy: 9, scale: 22 })
+/** 11 px a cell — half the first build's 22 (owner, 2026-08-16: *"half of the
+ *  size of the grid is enough"*). A house fits on a phone screen at this
+ *  density, which is the point. */
+export const DEFAULT_SCALE = 11
+
+export const initialView = (): View => ({ cx: 20, cy: 14, scale: DEFAULT_SCALE })
 
 export type Rect = { left: number; top: number; width: number; height: number }
 

@@ -694,13 +694,17 @@ and it is how the drawing is authored:
   a bookcase snaps onto a wall and gains a length handle you pull. Snapping
   happens at input time, so there is never a wrong straightening to undo.
 
-D is the recommendation on record, for one reason: S can guess wrong about
-what the user meant, and offers no correction except redrawing. But that is a
-UX claim, so it is settled the way UX claims are settled here — the owner
-draws his real house in both, in a real browser, in the standalone lab
-(P6.0). *"Provide a sketch"* is answered without image understanding in either
-case: an uploaded floor plan becomes a **tracing underlay** at adjustable
-opacity, traced with the same tools.
+**[SETTLED 2026-08-16 — owner, after drawing on the lab.] Neither. Both were
+gestures, and the answer is not a gesture: the user drags a RECTANGLE on the
+grid, for rooms and for bookcases alike** — *"the free draw was too free"*.
+Rooms attach to one another edge to edge, so an L-shaped room is two
+rectangles and there is no polygon editor anywhere. S's code is deleted; the
+argument survives in `planning/MAP_PLAN.md` §4, which is authoritative for
+this section.
+
+*"Provide a sketch"* is answered without image understanding either way: an
+uploaded floor plan becomes a **tracing underlay** at adjustable opacity,
+drawn over with the same tools.
 
 Three model rules were taken with this revision and are argued in
 [`planning/MAP_PLAN.md`](planning/MAP_PLAN.md) §3: a **drawn shelf slot is a

@@ -1,5 +1,10 @@
 /**
- * The properties panel.
+ * The properties panel — "edit their settings" (owner, 2026-08-16).
+ *
+ * Size is editable BOTH ways: drag the handles on the plan, or type the
+ * numbers here. Dragging is faster and typing is exact, and a free-measurement
+ * plan needs both — the units are relative, so the only thing that matters is
+ * that this case is twice the width of that one.
  *
  * It is also where MAP_PLAN §3.3 becomes visible rather than merely true: the
  * case's depth is a DEFAULT, and when existing shelves disagree with it the
@@ -12,19 +17,23 @@ import type { Bookcase } from '../core/model'
 import {
   MAX_DEPTH,
   caseLength,
+  caseThickness,
   columnCount,
   shelfAt,
   shelvesDifferingFromDefaultDepth,
   shelvesInColumns,
 } from '../core/model'
 
+const SIDE_NAME = { N: 'up', S: 'down', E: 'right', W: 'left' } as const
+
 export type Actions = {
   renameRoom: (id: string, name: string) => void
+  resizeRoom: (id: string, w: number, h: number) => void
   deleteRoom: (id: string) => void
   renameCase: (id: string, name: string) => void
+  resizeCase: (id: string, w: number, h: number) => void
   deleteCase: (id: string) => void
-  flipCase: (id: string) => void
-  detachCase: (id: string) => void
+  turnCase: (id: string) => void
   setColumnCount: (id: string, n: number) => void
   setColumnLevels: (id: string, col: number, n: number) => void
   setDefaultLevels: (id: string, n: number) => void
@@ -49,7 +58,8 @@ export function Inspector({
 
   if (selection?.kind === 'room') {
     const room = plan.rooms.find((r) => r.id === selection.id)
-    if (!room) return <Empty plan={plan} />
+    if (!room) return <Empty doc={doc} />
+    const cases = plan.cases.filter((c) => c.roomId === room.id).length
     return (
       <div className="inspector">
         <h2>Room</h2>
@@ -62,8 +72,17 @@ export function Inspector({
             onChange={(e) => actions.renameRoom(room.id, e.target.value)}
           />
         </label>
+        <Size
+          w={room.rect.w}
+          h={room.rect.h}
+          labelW="room width"
+          labelH="room height"
+          onChange={(w, h) => actions.resizeRoom(room.id, w, h)}
+        />
         <p className="note">
-          {room.points.length} walls · bookcases snap onto them as you drag.
+          {cases === 0 ? 'No bookcases in here yet.' : `${cases} bookcase${cases > 1 ? 's' : ''}.`}{' '}
+          Drag this room and it takes them with it. Drag it near another room and
+          the two attach edge to edge.
         </p>
         <button type="button" className="danger" onClick={() => actions.deleteRoom(room.id)}>
           Delete this room
@@ -79,7 +98,8 @@ export function Inspector({
         ? selection.caseId
         : null
   const bc = caseId ? plan.cases.find((c) => c.id === caseId) ?? null : null
-  if (!bc) return <Empty plan={plan} />
+  if (!bc) return <Empty doc={doc} />
+  const room = plan.rooms.find((r) => r.id === bc.roomId) ?? null
 
   return (
     <div className="inspector">
@@ -94,10 +114,25 @@ export function Inspector({
         />
       </label>
 
+      <Size
+        w={bc.rect.w}
+        h={bc.rect.h}
+        labelW="bookcase width"
+        labelH="bookcase height"
+        onChange={(w, h) => actions.resizeCase(bc.id, w, h)}
+      />
+
+      <div className="field inline">
+        <span>Books face</span>
+        <button type="button" onClick={() => actions.turnCase(bc.id)} aria-label="turn the bookcase">
+          {SIDE_NAME[bc.front]} ⟳ turn
+        </button>
+      </div>
+
       <p className="note">
-        <strong>{caseLength(bc)} units</strong> long
-        {bc.attach ? ' · standing on a wall' : ' · free-standing island'} ·{' '}
-        {bc.shelves.length} shelves
+        <strong>{caseLength(bc)} units</strong> of wall, {caseThickness(bc)} deep as drawn
+        {room ? ` · in ${room.name || 'an unnamed room'}` : ' · not inside any room'} ·{' '}
+        {bc.shelves.length} shelves.
         <br />
         Free measurement — relative to this room's walls, never centimetres, and
         nothing here infers how many books fit.
@@ -111,8 +146,7 @@ export function Inspector({
         onColumnCount={(n) => {
           if (n < columnCount(bc)) {
             const losing = shelvesInColumns(bc, n)
-            const keeping = shelvesInColumns(bc, columnCount(bc) - 1)
-            if (losing > 0 && !confirm(`Remove the last column and its ${keeping} shelves?`)) return
+            if (losing > 0 && !confirm(`Remove the last column and its ${losing} shelves?`)) return
           }
           actions.setColumnCount(bc.id, n)
         }}
@@ -121,19 +155,48 @@ export function Inspector({
       <Defaults bc={bc} actions={actions} />
       <ShelfPanel bc={bc} selection={selection} actions={actions} />
 
-      <div className="row">
-        <button type="button" onClick={() => actions.flipCase(bc.id)}>
-          Flip which way it faces
-        </button>
-        {bc.attach && (
-          <button type="button" onClick={() => actions.detachCase(bc.id)}>
-            Detach from the wall
-          </button>
-        )}
-      </div>
       <button type="button" className="danger" onClick={() => actions.deleteCase(bc.id)}>
         Delete this bookcase
       </button>
+    </div>
+  )
+}
+
+function Size({
+  w,
+  h,
+  labelW,
+  labelH,
+  onChange,
+}: {
+  w: number
+  h: number
+  labelW: string
+  labelH: string
+  onChange: (w: number, h: number) => void
+}) {
+  return (
+    <div className="field inline size">
+      <span>Size (units)</span>
+      <span className="size-inputs">
+        <input
+          type="number"
+          min={1}
+          max={200}
+          value={w}
+          aria-label={labelW}
+          onChange={(e) => onChange(Number(e.target.value), h)}
+        />
+        <span aria-hidden="true">×</span>
+        <input
+          type="number"
+          min={1}
+          max={200}
+          value={h}
+          aria-label={labelH}
+          onChange={(e) => onChange(w, Number(e.target.value))}
+        />
+      </span>
     </div>
   )
 }
@@ -242,17 +305,28 @@ function ShelfPanel({
   )
 }
 
-function Empty({ plan }: { plan: { rooms: unknown[]; cases: unknown[] } }) {
+function Empty({ doc }: { doc: Doc }) {
+  const { plan } = doc
   return (
     <div className="inspector">
       <h2>Nothing selected</h2>
       <p className="note">
         {plan.rooms.length} rooms · {plan.cases.length} bookcases.
       </p>
-      <p className="note">
-        Draw a room, then drag a bookcase <em>along one of its walls</em>. Tap a
-        bookcase to open its columns, levels and depth.
-      </p>
+      <ol className="steps">
+        <li>
+          <strong>Draw room</strong> — drag a rectangle. Drag the next one near
+          it and they attach edge to edge.
+        </li>
+        <li>
+          <strong>Draw bookcase</strong> — drag a rectangle inside a room. It
+          snaps flush to the wall and the books face inwards.
+        </li>
+        <li>
+          <strong>Move &amp; edit</strong> — drag to move, drag a corner to
+          resize, tap to open its columns, levels and depth here.
+        </li>
+      </ol>
     </div>
   )
 }

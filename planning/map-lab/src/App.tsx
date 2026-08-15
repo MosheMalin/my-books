@@ -1,37 +1,41 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import type { Pt } from './core/geom'
 import type { Bookcase, Underlay } from './core/model'
 import {
+  TURN,
   applyDefaultDepth,
   applyDefaultLevels,
+  correctFront,
   emptyPlan,
+  frontFor,
   newBookcase,
   planBounds,
+  roomFor,
   withColumnCount,
   withColumnLevels,
   withDefaultDepth,
   withDefaultLevels,
   withShelfDepth,
 } from './core/model'
+import type { Rect } from './core/rect'
 import type { History } from './core/history'
 import { canRedo, canUndo, commit, initHistory, redo, undo } from './core/history'
 import { parsePlan, serializePlan } from './core/persist'
-import type { CasePlacement } from './core/snap'
 import { Inspector, type Actions } from './ui/Inspector'
 import { PlanCanvas } from './ui/PlanCanvas'
 import { Toolbar } from './ui/Toolbar'
-import type { Doc, Mode, Selection, Tool } from './ui/types'
+import type { Doc, Selection, Theme, Tool } from './ui/types'
 import { fitTo, initialView, type View } from './ui/viewport'
 
 const STORAGE_KEY = 'booksnap.map-lab.doc'
+const THEME_KEY = 'booksnap.map-lab.theme'
 
 const emptyDoc = (): Doc => ({ plan: emptyPlan(), seq: 0 })
 
 export default function App() {
   const [hist, setHist] = useState<History<Doc>>(() => initHistory(loadDoc()))
-  const [mode, setMode] = useState<Mode>('D')
   const [tool, setTool] = useState<Tool>('select')
+  const [theme, setTheme] = useState<Theme>(loadTheme)
   const [selection, setSelection] = useState<Selection>(null)
   const [view, setView] = useState<View>(initialView)
   const [message, setMessage] = useState<string | null>(null)
@@ -52,7 +56,14 @@ export default function App() {
     }
   }, [doc])
 
-  // --- transient message ---------------------------------------------------
+  useEffect(() => {
+    document.documentElement.dataset['theme'] = theme
+    try {
+      window.localStorage.setItem(THEME_KEY, theme)
+    } catch {
+      /* ignore */
+    }
+  }, [theme])
 
   const say = useCallback((text: string) => {
     setMessage(text)
@@ -76,58 +87,70 @@ export default function App() {
   )
 
   const createRoom = useCallback(
-    (points: Pt[]) =>
+    (rect: Rect) =>
       update((d) => {
         const seq = d.seq + 1
         return {
           seq,
-          plan: {
-            ...d.plan,
-            rooms: d.plan.rooms.concat({ id: `r${seq}`, name: '', points }),
-          },
+          plan: { ...d.plan, rooms: d.plan.rooms.concat({ id: `r${seq}`, name: '', rect }) },
         }
       }),
     [update],
   )
 
   const createCase = useCallback(
-    (p: CasePlacement) =>
+    (rect: Rect) =>
       update((d) => {
         const seq = d.seq + 1
-        const bc = newBookcase(`c${seq}`, '', p.a, p.b, p.side, p.attach)
+        const room = roomFor(d.plan, rect)
+        const bc = newBookcase(`c${seq}`, '', rect, frontFor(rect, room), room?.id ?? null)
         return { seq, plan: { ...d.plan, cases: d.plan.cases.concat(bc) } }
       }),
     [update],
   )
 
-  const replaceCase = useCallback(
-    (id: string, p: CasePlacement) =>
-      mapCase(id, (bc) => ({ ...bc, a: p.a, b: p.b, side: p.side, attach: p.attach })),
-    [mapCase],
+  /** Moving a room takes its bookcases with it: furniture does not stay behind
+   *  when a wall does not. Resizing it does not — the cases keep their places,
+   *  and one that ends up outside says so. */
+  const moveRoom = useCallback(
+    (id: string, rect: Rect) =>
+      update((d) => {
+        const prev = d.plan.rooms.find((r) => r.id === id)
+        if (!prev) return d
+        const sameSize = prev.rect.w === rect.w && prev.rect.h === rect.h
+        const dx = rect.x - prev.rect.x
+        const dy = rect.y - prev.rect.y
+        const rooms = d.plan.rooms.map((r) => (r.id === id ? { ...r, rect } : r))
+        const plan = { ...d.plan, rooms }
+        return {
+          ...d,
+          plan: {
+            ...plan,
+            cases: d.plan.cases.map((c) => {
+              const moved =
+                sameSize && c.roomId === id
+                  ? { ...c, rect: { ...c.rect, x: c.rect.x + dx, y: c.rect.y + dy } }
+                  : c
+              const room = roomFor(plan, moved.rect)
+              return correctFront({ ...moved, roomId: room?.id ?? null }, room)
+            }),
+          },
+        }
+      }),
+    [update],
   )
 
-  const moveRoom = useCallback(
-    (id: string, delta: Pt) =>
+  const moveCase = useCallback(
+    (id: string, rect: Rect) =>
       update((d) => ({
         ...d,
         plan: {
           ...d.plan,
-          rooms: d.plan.rooms.map((r) =>
-            r.id === id
-              ? { ...r, points: r.points.map((p) => ({ x: p.x + delta.x, y: p.y + delta.y })) }
-              : r,
-          ),
-          // A room that moves takes its wall-mounted cases with it: furniture
-          // does not stay behind when a wall does not.
-          cases: d.plan.cases.map((c) =>
-            c.attach?.roomId === id
-              ? {
-                  ...c,
-                  a: { x: c.a.x + delta.x, y: c.a.y + delta.y },
-                  b: { x: c.b.x + delta.x, y: c.b.y + delta.y },
-                }
-              : c,
-          ),
+          cases: d.plan.cases.map((c) => {
+            if (c.id !== id) return c
+            const room = roomFor(d.plan, rect)
+            return correctFront({ ...c, rect, roomId: room?.id ?? null }, room)
+          }),
         },
       })),
     [update],
@@ -137,9 +160,16 @@ export default function App() {
     renameRoom: (id, name) =>
       update((d) => ({
         ...d,
+        plan: { ...d.plan, rooms: d.plan.rooms.map((r) => (r.id === id ? { ...r, name } : r)) },
+      })),
+    resizeRoom: (id, w, h) =>
+      update((d) => ({
+        ...d,
         plan: {
           ...d.plan,
-          rooms: d.plan.rooms.map((r) => (r.id === id ? { ...r, name } : r)),
+          rooms: d.plan.rooms.map((r) =>
+            r.id === id ? { ...r, rect: { ...r.rect, w: size(w), h: size(h) } } : r,
+          ),
         },
       })),
     deleteRoom: (id) => {
@@ -148,22 +178,22 @@ export default function App() {
         plan: {
           ...d.plan,
           rooms: d.plan.rooms.filter((r) => r.id !== id),
-          // Deleting a room does NOT cascade into its bookcases — same rule
-          // the product already holds for shelves. They detach and stay.
-          cases: d.plan.cases.map((c) =>
-            c.attach?.roomId === id ? { ...c, attach: null } : c,
-          ),
+          // Deleting a room does NOT cascade into its bookcases — the same
+          // rule the product already holds for shelves. They stay where they
+          // stand and simply belong to no room.
+          cases: d.plan.cases.map((c) => (c.roomId === id ? { ...c, roomId: null } : c)),
         },
       }))
       setSelection(null)
     },
     renameCase: (id, name) => mapCase(id, (bc) => ({ ...bc, name })),
+    resizeCase: (id, w, h) =>
+      mapCase(id, (bc) => ({ ...bc, rect: { ...bc.rect, w: size(w), h: size(h) } })),
     deleteCase: (id) => {
       update((d) => ({ ...d, plan: { ...d.plan, cases: d.plan.cases.filter((c) => c.id !== id) } }))
       setSelection(null)
     },
-    flipCase: (id) => mapCase(id, (bc) => ({ ...bc, side: bc.side === 1 ? -1 : 1 })),
-    detachCase: (id) => mapCase(id, (bc) => ({ ...bc, attach: null })),
+    turnCase: (id) => mapCase(id, (bc) => ({ ...bc, front: TURN[bc.front] })),
     setColumnCount: (id, n) => mapCase(id, (bc) => withColumnCount(bc, n)),
     setColumnLevels: (id, col, n) => mapCase(id, (bc) => withColumnLevels(bc, col, n)),
     setDefaultLevels: (id, n) => mapCase(id, (bc) => withDefaultLevels(bc, n)),
@@ -175,9 +205,7 @@ export default function App() {
       mapCase(id, (bc) => ({
         ...bc,
         shelves: bc.shelves.map((s) =>
-          s.col === col && s.level === level
-            ? { ...s, photos: Math.max(0, Math.round(n)) }
-            : s,
+          s.col === col && s.level === level ? { ...s, photos: Math.max(0, Math.round(n)) } : s,
         ),
       })),
     select: setSelection,
@@ -198,7 +226,7 @@ export default function App() {
           src,
           x: 0,
           y: 0,
-          scale: 40,
+          scale: 60,
           aspect: img.naturalWidth / Math.max(1, img.naturalHeight),
           opacity: 0.45,
         })
@@ -250,16 +278,14 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return
-      const meta = e.metaKey || e.ctrlKey
-      if (meta && e.key.toLowerCase() === 'z') {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault()
         setHist((h) => (e.shiftKey ? redo(h) : undo(h)))
         return
       }
-      if (e.key === 'Escape') return setTool('select')
-      if (e.key === '1') return setTool('select')
-      if (e.key === '2') return setTool(mode === 'D' ? 'room' : 'draw')
-      if (e.key === '3' && mode === 'D') return setTool('case')
+      if (e.key === 'Escape' || e.key === '1') return setTool('select')
+      if (e.key === '2') return setTool('room')
+      if (e.key === '3') return setTool('case')
       if (e.key === '4') return setTool('pan')
       if (e.key === 'Delete' || e.key === 'Backspace') {
         if (selection?.kind === 'room') actions.deleteRoom(selection.id)
@@ -270,22 +296,16 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey)
   })
 
-  // Switching mode resets the tool: mode D has no Draw and mode S has no Room,
-  // so keeping the old tool would leave a dead pointer.
-  useEffect(() => {
-    setTool('select')
-  }, [mode])
-
   return (
     <div className="app">
       <Toolbar
-        mode={mode}
         tool={tool}
+        theme={theme}
         underlay={doc.plan.underlay}
         canUndo={canUndo(hist)}
         canRedo={canRedo(hist)}
-        onMode={setMode}
         onTool={setTool}
+        onTheme={setTheme}
         onUndo={() => setHist(undo)}
         onRedo={() => setHist(redo)}
         onFit={doFit}
@@ -305,8 +325,8 @@ export default function App() {
       />
 
       <main className="body">
-        {/* dir=ltr: the plan is pinned LTR (MAP_PLAN §3.5) — the furniture
-            does not move when the language flips. Labels inside it carry
+        {/* dir=ltr: the plan is pinned LTR (MAP_PLAN §3.5) — the furniture does
+            not move when the language flips. Labels inside it carry
             unicode-bidi: plaintext and resolve their own direction. */}
         <div className="canvas-wrap" ref={wrapRef} dir="ltr">
           <PlanCanvas
@@ -318,11 +338,11 @@ export default function App() {
             onSelect={setSelection}
             onCreateRoom={createRoom}
             onCreateCase={createCase}
-            onReplaceCase={replaceCase}
             onMoveRoom={moveRoom}
+            onMoveCase={moveCase}
             onRejected={say}
           />
-          <Hint mode={mode} tool={tool} />
+          <Hint tool={tool} />
           {message && <div className="toast">{message}</div>}
         </div>
         <aside className="side">
@@ -333,17 +353,17 @@ export default function App() {
   )
 }
 
-function Hint({ mode, tool }: { mode: Mode; tool: Tool }) {
+const size = (v: number): number => Math.max(1, Math.round(v))
+
+function Hint({ tool }: { tool: Tool }) {
   const text =
-    mode === 'S'
-      ? tool === 'draw'
-        ? 'Draw freehand. A stroke that closes becomes a room; one that does not becomes a bookcase — straightened when you lift.'
-        : 'Mode S: the stroke is read after you lift. Pick Draw.'
-      : tool === 'room'
-        ? 'Drag a room. Corners weld onto existing corners, so two rooms share a wall exactly.'
-        : tool === 'case'
-          ? 'Drag ALONG a wall. The case lands on it, as long as you dragged.'
-          : 'Tap a room or a bookcase. Drag a bookcase to slide it along its wall; drag an end handle to change its length.'
+    tool === 'room'
+      ? 'Drag a rectangle to draw a room. Its edges snap to the grid — and to any room already there, so rooms attach.'
+      : tool === 'case'
+        ? 'Drag a rectangle inside a room. It snaps flush against the wall, and the books face into the room.'
+        : tool === 'pan'
+          ? 'Drag to slide the plan. Scroll or pinch to zoom.'
+          : 'Drag a room or a bookcase to move it · drag a corner or an edge to resize · tap it to edit its settings.'
   return <p className="hint">{text}</p>
 }
 
@@ -351,13 +371,22 @@ function loadDoc(): Doc {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY)
     if (!raw) return emptyDoc()
+    const stored = JSON.parse(raw)
     const parsed = parsePlan(
-      JSON.stringify({ format: 'booksnap.map-lab.plan', version: 1, plan: JSON.parse(raw).plan }),
+      JSON.stringify({ format: 'booksnap.map-lab.plan', version: 2, plan: stored.plan }),
     )
     if (!parsed.ok) return emptyDoc()
-    const seq = Number(JSON.parse(raw).seq)
+    const seq = Number(stored.seq)
     return { plan: parsed.plan, seq: Number.isFinite(seq) ? seq : 0 }
   } catch {
     return emptyDoc()
+  }
+}
+
+function loadTheme(): Theme {
+  try {
+    return window.localStorage.getItem(THEME_KEY) === 'light' ? 'light' : 'dark'
+  } catch {
+    return 'dark'
   }
 }

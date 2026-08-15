@@ -1,24 +1,25 @@
 /**
- * The toolbar — and the mode switch that is the whole point of the lab.
+ * The toolbar.
  *
- * The two authoring models sit side by side rather than one being a setting
- * buried somewhere, because the owner is meant to draw the same house twice
- * and say which one to build (MAP_PLAN §4).
+ * Every tool is a VERB and says what it draws (owner, 2026-08-16: *"hard to
+ * understand from the command bars what to do — what is the meaning of the
+ * numbers?"*). The keyboard shortcuts still exist; they live in the tooltip,
+ * because a bare "1" next to a button is a puzzle, not a hint.
  */
 
 import { useRef } from 'react'
 
 import type { Underlay } from '../core/model'
-import type { Mode, Tool } from './types'
+import type { Theme, Tool } from './types'
 
 type Props = {
-  mode: Mode
   tool: Tool
+  theme: Theme
   underlay: Underlay | null
   canUndo: boolean
   canRedo: boolean
-  onMode: (m: Mode) => void
   onTool: (t: Tool) => void
+  onTheme: (t: Theme) => void
   onUndo: () => void
   onRedo: () => void
   onFit: () => void
@@ -30,19 +31,32 @@ type Props = {
   onClear: () => void
 }
 
-const TOOLS: Record<Mode, { tool: Tool; label: string; key: string }[]> = {
-  D: [
-    { tool: 'select', label: 'Select', key: '1' },
-    { tool: 'room', label: 'Room', key: '2' },
-    { tool: 'case', label: 'Bookcase', key: '3' },
-    { tool: 'pan', label: 'Pan', key: '4' },
-  ],
-  S: [
-    { tool: 'select', label: 'Select', key: '1' },
-    { tool: 'draw', label: 'Draw', key: '2' },
-    { tool: 'pan', label: 'Pan', key: '4' },
-  ],
-}
+const TOOLS: { tool: Tool; label: string; hint: string; key: string }[] = [
+  {
+    tool: 'select',
+    label: 'Move & edit',
+    hint: 'Drag a room or a bookcase to move it. Drag a corner to resize it. Tap it to edit its settings.',
+    key: '1',
+  },
+  {
+    tool: 'room',
+    label: 'Draw room',
+    hint: 'Drag a rectangle. Its edges snap to the grid, and to any room already drawn — so rooms attach.',
+    key: '2',
+  },
+  {
+    tool: 'case',
+    label: 'Draw bookcase',
+    hint: 'Drag a rectangle inside a room. It snaps flush to the wall, and the books face into the room.',
+    key: '3',
+  },
+  {
+    tool: 'pan',
+    label: 'Pan',
+    hint: 'Slide the plan. Nothing else moves the view: the middle mouse button and two fingers do the same.',
+    key: '4',
+  },
+]
 
 export function Toolbar(props: Props) {
   const importRef = useRef<HTMLInputElement | null>(null)
@@ -55,58 +69,48 @@ export function Toolbar(props: Props) {
         <span className="tag">P6.0</span>
       </div>
 
-      <div className="group" role="radiogroup" aria-label="authoring mode">
-        <button
-          type="button"
-          role="radio"
-          aria-checked={props.mode === 'D'}
-          className={props.mode === 'D' ? 'on' : ''}
-          onClick={() => props.onMode('D')}
-          title="Walls and bookcases snap while you drag. Nothing is guessed."
-        >
-          D · snap
-        </button>
-        <button
-          type="button"
-          role="radio"
-          aria-checked={props.mode === 'S'}
-          className={props.mode === 'S' ? 'on' : ''}
-          onClick={() => props.onMode('S')}
-          title="Draw freehand; the stroke is straightened when you lift. VISION §7 approach A."
-        >
-          S · straighten
-        </button>
-      </div>
-
-      <div className="group" role="radiogroup" aria-label="tool">
-        {TOOLS[props.mode].map((t) => (
+      <div className="group tools" role="radiogroup" aria-label="tool">
+        {TOOLS.map((t) => (
           <button
             key={t.tool}
             type="button"
             role="radio"
             aria-checked={props.tool === t.tool}
             className={props.tool === t.tool ? 'on' : ''}
+            title={`${t.hint}  (key ${t.key})`}
             onClick={() => props.onTool(t.tool)}
           >
-            {t.label} <kbd>{t.key}</kbd>
+            {t.label}
           </button>
         ))}
       </div>
 
       <div className="group">
-        <button type="button" onClick={props.onUndo} disabled={!props.canUndo} aria-label="undo">
-          ↶
+        <button type="button" onClick={props.onUndo} disabled={!props.canUndo} title="Undo (Ctrl+Z)">
+          Undo
         </button>
-        <button type="button" onClick={props.onRedo} disabled={!props.canRedo} aria-label="redo">
-          ↷
+        <button type="button" onClick={props.onRedo} disabled={!props.canRedo} title="Redo (Ctrl+Shift+Z)">
+          Redo
         </button>
-        <button type="button" onClick={props.onFit}>
+        <button type="button" onClick={props.onFit} title="Zoom so the whole plan fits">
           Fit
+        </button>
+        <button
+          type="button"
+          aria-label={props.theme === 'dark' ? 'switch to a white background' : 'switch to a black background'}
+          title="Black or white background"
+          onClick={() => props.onTheme(props.theme === 'dark' ? 'light' : 'dark')}
+        >
+          {props.theme === 'dark' ? 'White bg' : 'Black bg'}
         </button>
       </div>
 
       <div className="group">
-        <button type="button" onClick={() => underlayRef.current?.click()}>
+        <button
+          type="button"
+          onClick={() => underlayRef.current?.click()}
+          title="Put a photo of a floor plan behind the canvas and draw over it"
+        >
           Trace a sketch…
         </button>
         <input
@@ -124,7 +128,7 @@ export function Toolbar(props: Props) {
         {props.underlay && (
           <>
             <label className="slider">
-              <span>opacity</span>
+              <span>fade</span>
               <input
                 type="range"
                 min={5}
@@ -138,8 +142,8 @@ export function Toolbar(props: Props) {
               <span>size</span>
               <input
                 type="range"
-                min={5}
-                max={120}
+                min={10}
+                max={200}
                 value={Math.round(props.underlay.scale)}
                 aria-label="underlay size"
                 onChange={(e) => props.onUnderlayChange({ scale: Number(e.target.value) })}
@@ -153,7 +157,7 @@ export function Toolbar(props: Props) {
       </div>
 
       <div className="group right">
-        <button type="button" onClick={props.onExport}>
+        <button type="button" onClick={props.onExport} title="Download the plan as JSON">
           Export
         </button>
         <button type="button" onClick={() => importRef.current?.click()}>

@@ -1,9 +1,14 @@
 import type { Plan } from '../core/model'
 
-/** The two authoring models under comparison (MAP_PLAN §4). */
-export type Mode = 'D' | 'S'
+/**
+ * ⚠ There is no `Mode` any more. The freehand/straighten model (VISION §7
+ * approach A, "S") was built, drawn on, and REJECTED by the owner on
+ * 2026-08-16: *"the free draw was too free"*. Everything is a rectangle on the
+ * grid now — see MAP_PLAN §4.
+ */
+export type Tool = 'select' | 'room' | 'case' | 'pan'
 
-export type Tool = 'select' | 'room' | 'case' | 'draw' | 'pan'
+export type Theme = 'dark' | 'light'
 
 export type Selection =
   | { kind: 'room'; id: string }
@@ -17,5 +22,3 @@ export type Selection =
  * numbering without colliding, and nothing here calls Math.random.
  */
 export type Doc = { plan: Plan; seq: number }
-
-export const nextId = (doc: Doc, prefix: string): string => `${prefix}${doc.seq + 1}`

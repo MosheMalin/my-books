@@ -118,7 +118,78 @@ A floor plan does not mirror when the UI language flips — the furniture did
 not move. Same rule `UI_PLAN.md` §3 already pinned for the elevation grid.
 Labels inside the plan follow the UI language; the geometry does not.
 
-## 4. The live fork, and what the lab is for
+## 4. The fork, and how it was settled
+
+**[SETTLED 2026-08-16 — owner, after drawing on the first build.] Freehand
+loses. Everything is a rectangle on the grid.**
+
+> *"I would suggest a rectangular draw — users can draw a rectangle on the
+> grid, control its size, both for rooms and for bookcases. **The free draw was
+> too free.**"*
+
+The straightening worked — a wobbly stroke did come back as four clean walls —
+and it still lost, which is the outcome a lab exists to produce cheaply. The
+mode-S code is **deleted**, not disabled: it was a POC that was measured and
+beaten, and a disabled second editor is a second thing to maintain and a
+standing invitation to re-argue.
+
+What replaced it, and why each part is a rule rather than a preference:
+
+- **Rooms and bookcases are both axis-aligned rectangles.** An L-shaped room is
+  two rectangles attached — the *same* mechanism as two rooms attached — so
+  there is one snapping rule and no polygon editor.
+- **Rooms attach to each other.** Drag one near another and its edges weld to
+  that neighbour's edges, exactly, before the grid gets a say. A neighbour edge
+  beats a grid line: "flush against that wall" is a fact the user is
+  asserting, and rounding it to the nearest grid line leaves a hairline gap no
+  zoom level closes.
+- **Dragging empty space does nothing but deselect.** It used to pan, and
+  *"the grid moves when I drag it — it should not move"* is the correct
+  reaction: a background that slides out from under a mis-aimed drag reads as
+  broken even when nothing was damaged. Panning is the Pan tool, the middle
+  button, or two fingers.
+- **Every tool is a verb** — *Draw room*, *Draw bookcase*, *Move & edit*, *Pan*
+  — and the keyboard shortcuts moved into the tooltips. A bare "1" beside a
+  button is a puzzle, not a hint.
+- **Size is editable both ways:** drag the handles, or type the numbers. The
+  units are relative, so what matters is that this case is twice the width of
+  that one — and typing is how you say that exactly.
+- **Black or white background**, as two real themes rather than an inverted
+  filter: the line weights that read well on a screen and on a drawing differ.
+
+The bookcase-photo path (VISION §7's approach B) is untouched by this and is
+still P6.6 — it produces an *elevation*, and this section is about the *plan*.
+
+### 4a. What the lab caught, for the record
+
+Two rounds of building and driving it in a real browser produced six defects,
+each of which would have been argued about rather than found if this had been
+built straight into `app/web`:
+
+1. a bookcase's facing was computed against the *wall's* direction and consumed
+   against the *case's own* — drag right-to-left and the wood landed outside
+   the room;
+2. a burst of `pointermove` events overwrote itself, because continuous events
+   batch and every handler in the burst closes over the same stale state. On a
+   120 Hz phone that is most of a stroke discarded — and it reads as *"the
+   straightener is bad"* rather than as dropped input. It would have decided
+   the S-vs-D verdict on a bug;
+3. `pointerup` ignored its own coordinates, so a fast lift came out short;
+4. a traced rectangle came back with **five** walls: welding cannot see a
+   collinear triple across the polygon's seam;
+5. dragging empty space panned the view — the owner's first complaint;
+6. **on a thin rectangle the corner handles crowd out the edge handles**, and
+   the hit test took the first in reach rather than the nearest. A bookcase is
+   thin by nature, so dragging its end to make it longer collapsed its depth to
+   zero instead. Corners are a luxury of large rectangles; the fix drops them
+   when the rectangle cannot hold them apart.
+
+## 4b. The original fork, and what the lab was for
+
+*Kept for its argument — §4 is the answer. Worth reading because the winning
+option was not on this list: D was "snap the freehand gesture as it happens",
+and what the owner actually wanted was to stop gesturing and drag a rectangle.
+The recommendation was directionally right and still not the design.*
 
 The owner's brief says *draw **or provide** a sketch*, and "simple but elegant
 is the key for this feature". Two candidate interaction models:
@@ -150,7 +221,7 @@ this pillar.**
 
 | # | Item | Size | State |
 |---|---|---|---|
-| **P6.0** | **The map lab** — a standalone app, no backend, outside the gate. Both editors behind a switch; underlay tracing; the elevation editor. Exit: the owner draws his real house and picks. | M | |
+| **P6.0** | **The map lab** — a standalone app, no backend, outside the gate. Rectangle drawing for rooms and bookcases, room-to-room attachment, resize handles, the elevation editor, underlay tracing, black/white themes. Exit: the owner draws his real house in it and the interaction model is settled (§4 — done for the fork itself; the drawing is still owed). | M | **2nd pass** |
 | **P6.1** | **Address domain + migration** — `Place`, `Bookcase`, the shelf address, geometry in abstract units. Drawn slots create real empty `Shelf` rows. Naming lint. Schema vN with a real v(N-1) upgrade test. | L | |
 | **P6.2** | **API + policy** — places/bookcases through `current_library`, one capability each, contracts regenerated. | M | |
 | **P6.3** | **The port** — the chosen editor moves into `app/web`, wired to the API. **The lab is deleted in the same commit.** | M | |
@@ -164,6 +235,10 @@ this pillar.**
 piece most likely to need five throwaway attempts, and each attempt inside
 `app/web` drags the client ring, the shared package, the RTL rules and the
 i18n table behind it. The lab has none of that.
+
+It has already paid: two passes, six defects (§4a), and one whole interaction
+model deleted — none of which cost a migration, a contract regeneration, or a
+minute of either client's test ring.
 
 **Where:** `planning/map-lab/`. `planning/` is already the folder that "runs
 nothing in the product", and — checked against `tools/githooks/pre-commit` —
@@ -189,10 +264,17 @@ editor; `app/ui` is for what both clients need or must not disagree about
 (CLAUDE.md #6). If the console ever renders a plan read-only, the *core*
 moves to `app/ui` then — not pre-emptively.
 
-**Done when:** the owner draws his real house — rooms, bookcases along their
-walls, one case opened into columns × levels with a depth override on one
-shelf — on a phone-sized viewport, in both interaction models, and says which
-one to build.
+**Done when:** the owner draws his real house — rooms attached to each other,
+bookcases against their walls, one case opened into columns × levels with a
+depth override on one shelf — on a phone-sized viewport, and the drawing is
+exported. That export is P6.1's first fixture: a real plan, in abstract units,
+made by the person the feature is for.
+
+⚠ The lab has been through **two passes**. The first offered freehand against
+snap-while-dragging and was rejected wholesale (§4). Expect a third: the point
+of a disposable app is that rejecting it costs a day, not a sprint. It is
+finished when the owner stops finding things, not when the item list is
+ticked.
 
 ## 6. What P6.1 must not repeat
 
