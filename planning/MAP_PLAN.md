@@ -160,11 +160,42 @@ What replaced it, and why each part is a rule rather than a preference:
 The bookcase-photo path (VISION §7's approach B) is untouched by this and is
 still P6.6 — it produces an *elevation*, and this section is about the *plan*.
 
+**Third pass (2026-08-16), after the owner drew a house with it** — *"drawing
+the rooms and bookcases was very fluent"*. Five additions, and two of them are
+rules P6.1 inherits rather than lab conveniences:
+
+- **Multi-select** — Ctrl+click to add, drag a band across empty space to
+  catch everything it touches, one Delete for the lot. The band counts
+  *touching* as a hit, because a bookcase flush against a wall shares exactly
+  its edge with the room.
+- **Copy and paste** — the value is duplicating a *configured* bookcase, so
+  the clipboard is deep-cloned at copy time and a case copied together with
+  its room follows THAT copy, not the original room.
+- **⚠ Attachment is explicit and sticky.** A bookcase belongs to a room, moves
+  with it, and can be pointed at any room from the panel. Containment may only
+  ever *reassign* a case the user dragged — never orphan one, and never touch
+  a case that moved only because its room did. Both halves were found the hard
+  way: without the first, a case nudged half a unit past its wall silently
+  lost its room; without the second, an explicit attachment survived exactly
+  one move before the geometry handed the case back to the room it overlaps.
+  **P6.1 inherits this as a domain rule**, not as an editor behaviour — it is
+  the difference between a Place that owns its furniture and a rectangle drawn
+  behind it.
+- **Saving is visible.** Every edit is written immediately and the toolbar says
+  so, with the honest caveat on the same line: browser storage, and *Save to
+  file* is the copy that survives it. An autosave nobody can see is
+  indistinguishable from no autosave.
+- ***Fit* → *Show all***. The owner asked what it was for, which is the
+  answer: it is the recovery from having zoomed or panned somewhere
+  unfamiliar, and it now says so. Kept rather than dropped because it is the
+  ONLY recovery — but a control whose purpose has to be asked about was
+  mislabelled, not unnecessary.
+
 ### 4a. What the lab caught, for the record
 
-Two rounds of building and driving it in a real browser produced six defects,
-each of which would have been argued about rather than found if this had been
-built straight into `app/web`:
+Three rounds of building and driving it in a real browser produced eight
+defects, each of which would have been argued about rather than found if this
+had been built straight into `app/web`:
 
 1. a bookcase's facing was computed against the *wall's* direction and consumed
    against the *case's own* — drag right-to-left and the wood landed outside
@@ -182,7 +213,14 @@ built straight into `app/web`:
    the hit test took the first in reach rather than the nearest. A bookcase is
    thin by nature, so dragging its end to make it longer collapsed its depth to
    zero instead. Corners are a luxury of large rectangles; the fix drops them
-   when the rectangle cannot hold them apart.
+   when the rectangle cannot hold them apart;
+7. **halving the grid made the magnet wider than a bookcase is deep.** The
+   magnet is measured on SCREEN (a fingertip) and the plan in units, so at 11 px
+   a cell it reaches 1.3 units. Drawing a one-unit-deep case against a wall
+   pulled *both* its edges onto that wall and the case vanished. A snap that
+   annihilates the rectangle is never what anyone meant: the free corner now
+   ignores any neighbour edge within one unit of its anchor;
+8. **an explicit attachment survived exactly one move** — see §4's third pass.
 
 ## 4b. The original fork, and what the lab was for
 
@@ -221,7 +259,7 @@ this pillar.**
 
 | # | Item | Size | State |
 |---|---|---|---|
-| **P6.0** | **The map lab** — a standalone app, no backend, outside the gate. Rectangle drawing for rooms and bookcases, room-to-room attachment, resize handles, the elevation editor, underlay tracing, black/white themes. Exit: the owner draws his real house in it and the interaction model is settled (§4 — done for the fork itself; the drawing is still owed). | M | **2nd pass** |
+| **P6.0** | **The map lab** — a standalone app, no backend, outside the gate. Rectangle drawing for rooms and bookcases, room-to-room attachment, multi-select, copy/paste, explicit bookcase→room attachment, resize handles, the elevation editor, underlay tracing, black/white themes, visible autosave. Exit: the owner draws his real house in it and exports it (§4 — the interaction model is settled; the drawing is still owed). | M | **3rd pass** |
 | **P6.1** | **Address domain + migration** — `Place`, `Bookcase`, the shelf address, geometry in abstract units. Drawn slots create real empty `Shelf` rows. Naming lint. Schema vN with a real v(N-1) upgrade test. | L | |
 | **P6.2** | **API + policy** — places/bookcases through `current_library`, one capability each, contracts regenerated. | M | |
 | **P6.3** | **The port** — the chosen editor moves into `app/web`, wired to the API. **The lab is deleted in the same commit.** | M | |
@@ -270,8 +308,9 @@ depth override on one shelf — on a phone-sized viewport, and the drawing is
 exported. That export is P6.1's first fixture: a real plan, in abstract units,
 made by the person the feature is for.
 
-⚠ The lab has been through **two passes**. The first offered freehand against
-snap-while-dragging and was rejected wholesale (§4). Expect a third: the point
+⚠ The lab has been through **three passes**. The first offered freehand against
+snap-while-dragging and was rejected wholesale (§4); the third came back
+*"very fluent"* with five additions. Expect a fourth: the point
 of a disposable app is that rejecting it costs a day, not a sprint. It is
 finished when the owner stops finding things, not when the item list is
 ticked.

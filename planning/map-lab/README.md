@@ -7,7 +7,7 @@ look at.
 
 ```bash
 npm install --prefix planning/map-lab
-npm --prefix planning/map-lab test          # 29 core tests, ~0.7s
+npm --prefix planning/map-lab test          # 43 tests, ~0.7s
 ```
 
 The dev server is `map-lab` in `.claude/launch.json` (port 5175 — 5173 is the
@@ -17,10 +17,11 @@ the pre-commit hook, by design: `planning/` is outside `app/`, `tests/` and
 
 ## Where it stands
 
-**Second pass.** The first offered freehand-and-straighten against
+**Third pass.** The first offered freehand-and-straighten against
 snap-while-you-drag; the owner drew on it and rejected both — *"the free draw
 was too free"*. Everything is now a **rectangle on the grid**, for rooms and
-bookcases alike, and the freehand code is deleted rather than disabled.
+bookcases alike, and the freehand code is deleted rather than disabled. The
+second pass came back *"very fluent"*, with five additions built here.
 
 ## What to try
 
@@ -30,26 +31,35 @@ bookcases alike, and the freehand code is deleted rather than disabled.
 2. **Draw bookcase** — drag a rectangle inside a room. It snaps flush against
    the wall and the books face into the room. The thick line is the front.
 3. **Move & edit** — drag to move, drag a handle to resize, tap to open the
-   panel. A room takes its bookcases with it when it moves. Sizes are typeable
-   in the panel as well as draggable: the units are relative, so "twice as wide
-   as that one" is the only thing that matters, and typing is how you say it
-   exactly.
-4. **Watch the depth rule.** Set a case's *default* depth to 3. Its existing
+   panel. Sizes are typeable in the panel as well as draggable: the units are
+   relative, so "twice as wide as that one" is the only thing that matters, and
+   typing is how you say it exactly.
+4. **Select several** — Ctrl+click adds to the selection, or drag a band across
+   empty space to catch everything it touches. One Delete removes the lot.
+   **Ctrl+C / Ctrl+V** copies them, offset, with a bookcase's columns, levels
+   and depths intact.
+5. **Attachment** — a bookcase belongs to a room and moves with it. Drawing it
+   inside a room attaches it; the *Moves with* dropdown points it anywhere,
+   including nowhere. Dragging the case yourself can re-home it; a room moving
+   its own furniture never changes whose furniture it is.
+6. **Watch the depth rule.** Set a case's *default* depth to 3. Its existing
    shelves keep depth 1 and the panel says how many — changing a default never
    reaches back into shelves that already exist, because that would delete the
    location of every book standing in a back row. A **new** column takes the
    new default. Applying to existing shelves is a separate button.
-5. **Black or white** — two real themes, not an inverted filter.
-6. **Trace a sketch** — your floor-plan photo goes behind the canvas at
+7. **Black or white** — two real themes, not an inverted filter.
+8. **Trace a sketch** — your floor-plan photo goes behind the canvas at
    adjustable opacity. Draw over it, then remove it. That is the whole of "or
    provide a sketch": no image understanding, no paid call.
-7. **On a phone.** The layout stacks under 820px and the toolbar gives its
+9. **On a phone.** The layout stacks under 820px and the toolbar gives its
    space back to the canvas. This is the viewport the verdict should come from.
-8. **Export.** Integers in abstract units — no pixel, no viewport, no
-   centimetre. Send it over; that file is the artefact.
+10. **Save.** Every edit is written to this browser immediately and the
+   toolbar says so. *Save to file* is the copy that survives a cleared browser
+   — integers in abstract units, no pixel, no viewport, no centimetre. Send
+   that file over; it is the artefact.
 
 Panning is deliberate: the **Pan** tool, the middle mouse button, or two
-fingers. Dragging empty space deselects and does nothing else.
+fingers. Dragging empty space draws a selection band — it never moves the view.
 
 ## Shape
 
@@ -62,6 +72,7 @@ src/core/     framework-free, pure, ports VERBATIM at P6.3
   persist.ts      export/import, defensive on the way in
   core.test.ts    the rules that port with the core
 src/ui/       the thin, disposable shell (React + SVG)
+  types.ts        the selection set — pure, and tested (selection.test.ts)
 ```
 
 The split is the point: **the port is a folder move plus a data adapter**, not
@@ -88,6 +99,15 @@ a rewrite. Nothing in `core/` imports React, touches the DOM, or calls `fetch`.
   the hit test took the first in reach rather than the nearest. A bookcase is
   thin by nature, so dragging its end to lengthen it collapsed its depth to
   zero. Corners are now dropped when the rectangle cannot hold them apart.
+- **Halving the grid made the magnet wider than a bookcase is deep.** The
+  magnet is a fingertip on SCREEN and the plan is in units: at 11 px a cell it
+  reaches 1.3 units, so drawing a one-unit-deep case against a wall pulled both
+  its edges onto that wall and the case vanished. A snap that annihilates the
+  rectangle is never what anyone meant.
+- **An explicit attachment survived exactly one move.** A case pointed at a far
+  room, carried by that room, landed inside the room it physically overlaps and
+  was silently handed back to it. A room moving its own furniture must not
+  change whose furniture it is.
 
 ## What this lab is NOT
 

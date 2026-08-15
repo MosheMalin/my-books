@@ -16,10 +16,12 @@ import {
   flushSide,
   handleAt,
   handlePositions,
+  intersects,
   overlaps,
   rectFrom,
   right,
   snapCoord,
+  snapCorner,
   snapPoint,
   snapRect,
 } from './rect'
@@ -30,6 +32,7 @@ import {
   frontFor,
   isTooSmall,
   newBookcase,
+  reattach,
   roomFor,
   shelfAt,
   shelvesDifferingFromDefaultDepth,
@@ -89,6 +92,32 @@ describe('rectangles', () => {
     expect(overlaps(livingRoom.rect, rect(19, 0, 5, 5))).toBe(true)
   })
 
+  it('lets a selection band catch a bookcase flush against a wall', () => {
+    // A case standing on the wall shares exactly its edge with the room, so a
+    // band dragged along that wall must count touching as a hit.
+    const band = rect(0, 10, 6, 2)
+    const flushCase = rect(2, 12, 5, 1)
+    expect(overlaps(band, flushCase)).toBe(false)
+    expect(intersects(band, flushCase)).toBe(true)
+    expect(intersects(band, rect(2, 20, 5, 1))).toBe(false)
+  })
+
+  it('never lets a magnet collapse the rectangle being drawn', () => {
+    // The magnet is measured on SCREEN; at 11 px a cell a fingertip is 1.3
+    // units — wider than a bookcase is deep. Drawing a one-unit-deep case
+    // against the north wall pulled BOTH its edges onto y=0 and it vanished.
+    const anchor = pt(2, 0) // already snapped onto the wall
+    const free = snapCorner(pt(10, 1.2), anchor, [livingRoom.rect], 1.3)
+    expect(free.y).toBe(1)
+    expect(free.x).toBe(10)
+  })
+
+  it('still lets the far edge snap to a genuine neighbour', () => {
+    const anchor = pt(2, 0)
+    // the room's south wall is 12 away — nothing to do with collapsing
+    expect(snapCorner(pt(11.7, 4), anchor, [livingRoom.rect], 1.3).x).toBe(12)
+  })
+
   it('picks the wall along the case s LONG side when it is in a corner', () => {
     // a long thin case in the top-left corner is against the TOP wall
     expect(flushSide(rect(0, 0, 8, 1), livingRoom.rect)).toBe('N')
@@ -139,6 +168,38 @@ describe('the bookcase on the plan', () => {
   it('falls back to its long side when it stands free of every wall', () => {
     expect(frontFor(rect(5, 5, 6, 1), livingRoom)).toBe('S')
     expect(frontFor(rect(5, 5, 1, 6), livingRoom)).toBe('E')
+  })
+
+  it('re-attaches to the room it is moved INTO', () => {
+    const plan = planWith(livingRoom, room('r2', rect(20, 0, 14, 10)))
+    const bc = newBookcase('c1', '', rect(2, 0, 8, 1), 'S', 'r1')
+    const movedIntoR2 = reattach({ ...bc, rect: rect(22, 0, 8, 1) }, plan)
+    expect(movedIntoR2.roomId).toBe('r2')
+  })
+
+  it('KEEPS its room when moved outside every room — attachment is the point', () => {
+    // "Attach bookcases to a room so they move together" (owner, 2026-08-16).
+    // A case nudged half a unit past its wall silently losing its room is the
+    // bug this rule exists to prevent. Detaching is done on purpose, in the
+    // panel.
+    const plan = planWith(livingRoom)
+    const bc = newBookcase('c1', '', rect(2, 0, 8, 1), 'S', 'r1')
+    const outside = reattach({ ...bc, rect: rect(2, 40, 8, 1) }, plan)
+    expect(outside.roomId).toBe('r1')
+  })
+
+  it('turns a case that would otherwise face into the wall it just met', () => {
+    const plan = planWith(livingRoom)
+    const facingUp = newBookcase('c1', '', rect(2, 5, 8, 1), 'N', 'r1')
+    // slide it onto the north wall: facing N would be facing into the wall
+    const onWall = reattach({ ...facingUp, rect: rect(2, 0, 8, 1) }, plan)
+    expect(onWall.front).toBe('S')
+  })
+
+  it('leaves a deliberately turned case alone when it is not against a wall', () => {
+    const plan = planWith(livingRoom)
+    const turned = newBookcase('c1', '', rect(4, 5, 8, 1), 'N', 'r1')
+    expect(reattach({ ...turned, rect: rect(5, 6, 8, 1) }, plan).front).toBe('N')
   })
 
   it('knows which room it stands in, by its centre', () => {

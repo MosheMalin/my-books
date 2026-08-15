@@ -3,9 +3,8 @@
  * axis-aligned rectangle on the grid.
  *
  * ⚠ **Dragging empty space does NOT pan** (owner, 2026-08-16: *"the grid moves
- * when I drag it — it should not move"*). Panning is deliberate: the Pan tool,
- * the middle button, or two fingers. An editor whose background slides out
- * from under a mis-aimed drag feels broken even when nothing was damaged.
+ * when I drag it — it should not move"*). It draws a selection band. Panning is
+ * deliberate: the Pan tool, the middle button, or two fingers.
  *
  * Pinned LTR (MAP_PLAN §3.5): a floor plan does not mirror when the language
  * flips — the furniture did not move. Only labels follow the language, and
@@ -17,13 +16,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type { Pt } from '../core/geom'
 import { GRID, GRID_MAJOR, dist } from '../core/geom'
 import type { Bookcase, Plan, Room } from '../core/model'
-import {
-  columnDividers,
-  depthLines,
-  frontEdge,
-  isTooSmall,
-  maxDepth,
-} from '../core/model'
+import { columnDividers, depthLines, frontEdge, isTooSmall, maxDepth } from '../core/model'
 import type { Handle, Rect } from '../core/rect'
 import {
   bottom,
@@ -31,14 +24,19 @@ import {
   contains,
   handleAt,
   handlePositions,
+  intersects,
   rectFrom,
   right,
+  snapCorner,
   snapPoint,
   snapRect,
 } from '../core/rect'
 import type { Selection, Tool } from './types'
+import { EMPTY, count, hasCase, hasRoom, only, selectCase, selectRoom, toggle } from './types'
 import type { Rect as ScreenRect, View } from './viewport'
 import { groupTransform, magnetUnits, toWorld, visibleBounds, zoomAbout } from './viewport'
+
+type Kind = 'room' | 'case'
 
 type Props = {
   plan: Plan
@@ -49,17 +47,18 @@ type Props = {
   onSelect: (s: Selection) => void
   onCreateRoom: (r: Rect) => void
   onCreateCase: (r: Rect) => void
-  onMoveRoom: (id: string, r: Rect) => void
-  onMoveCase: (id: string, r: Rect) => void
+  onMoveSelection: (dx: number, dy: number) => void
+  onResize: (kind: Kind, id: string, r: Rect) => void
   onRejected: (reason: string) => void
 }
 
 type Drag =
   | null
   | { kind: 'pan'; from: Pt; view: View }
-  | { kind: 'draw'; what: 'room' | 'case'; from: Pt; to: Pt }
-  | { kind: 'move'; what: 'room' | 'case'; id: string; from: Pt; to: Pt; orig: Rect }
-  | { kind: 'resize'; what: 'room' | 'case'; id: string; handle: Handle; to: Pt; orig: Rect }
+  | { kind: 'draw'; what: Kind; from: Pt; to: Pt }
+  | { kind: 'move'; what: Kind; id: string; from: Pt; to: Pt; orig: Rect }
+  | { kind: 'resize'; what: Kind; id: string; handle: Handle; to: Pt; orig: Rect }
+  | { kind: 'band'; from: Pt; to: Pt; add: boolean }
 
 export function PlanCanvas(props: Props) {
   const { plan, tool, selection, view } = props
@@ -93,25 +92,18 @@ export function PlanCanvas(props: Props) {
   )
 
   const magnet = magnetUnits(view)
-  const selectedId = selection?.kind === 'room' ? selection.id : caseIdOf(selection)
-  const selectedRoom = plan.rooms.find((r) => r.id === selectedId) ?? null
-  const selectedCase = plan.cases.find((c) => c.id === selectedId) ?? null
-  const selectedRect = selectedRoom?.rect ?? selectedCase?.rect ?? null
+  /** Handles belong to a single selection. Eight grips on each of six selected
+   *  rooms is a field of dots, and every one of them is ambiguous. */
+  const lone = only(selection, plan)
+  const loneRect = lone?.rect ?? null
 
-  /** What a drawn or moved rectangle should snap to. A room attaches to rooms;
-   *  a bookcase attaches to the room it stands in and to its neighbours. */
-  const targetsFor = (what: 'room' | 'case', exceptId?: string): Rect[] =>
+  const targetsFor = (what: Kind, exceptId?: string): Rect[] =>
     what === 'room'
       ? plan.rooms.filter((r) => r.id !== exceptId).map((r) => r.rect)
       : [
           ...plan.rooms.map((r) => r.rect),
           ...plan.cases.filter((c) => c.id !== exceptId).map((c) => c.rect),
         ]
-
-  // --- picking -------------------------------------------------------------
-
-  const grabHandle = (p: Pt): Handle | null =>
-    selectedRect ? handleAt(selectedRect, p, magnet) : null
 
   const caseAt = (p: Pt): Bookcase | null => {
     for (let i = plan.cases.length - 1; i >= 0; i--) {
@@ -145,32 +137,35 @@ export function PlanCanvas(props: Props) {
       return
     }
     const p = world(e)
+    const add = e.ctrlKey || e.metaKey || e.shiftKey
 
-    // Middle button pans from anywhere — the one shortcut, and it is one
-    // nobody presses by accident.
     if (tool === 'pan' || e.button === 1) return setDrag({ kind: 'pan', from: p, view })
     if (tool === 'room') return setDrag({ kind: 'draw', what: 'room', from: p, to: p })
     if (tool === 'case') return setDrag({ kind: 'draw', what: 'case', from: p, to: p })
 
-    const h = grabHandle(p)
-    if (h && selectedRect) {
-      const what = selectedCase ? 'case' : 'room'
-      const id = selectedCase?.id ?? selectedRoom?.id
-      if (id) return setDrag({ kind: 'resize', what, id, handle: h, to: p, orig: selectedRect })
+    if (loneRect && !add) {
+      const h = handleAt(loneRect, p, magnet)
+      if (h) {
+        const what: Kind = plan.cases.some((c) => c.id === lone?.id) ? 'case' : 'room'
+        return setDrag({ kind: 'resize', what, id: lone!.id, handle: h, to: p, orig: loneRect })
+      }
     }
 
     const bc = caseAt(p)
     if (bc) {
-      props.onSelect({ kind: 'case', id: bc.id })
+      if (add) return props.onSelect(toggle(selection, 'case', bc.id))
+      if (!hasCase(selection, bc.id)) props.onSelect(selectCase(bc.id))
       return setDrag({ kind: 'move', what: 'case', id: bc.id, from: p, to: p, orig: bc.rect })
     }
     const room = roomAt(p)
     if (room) {
-      props.onSelect({ kind: 'room', id: room.id })
+      if (add) return props.onSelect(toggle(selection, 'room', room.id))
+      if (!hasRoom(selection, room.id)) props.onSelect(selectRoom(room.id))
       return setDrag({ kind: 'move', what: 'room', id: room.id, from: p, to: p, orig: room.rect })
     }
-    // Empty space: deselect, and NOTHING else. No pan (owner, 2026-08-16).
-    props.onSelect(null)
+    // Empty space: a selection band. Still never a pan.
+    if (!add) props.onSelect(EMPTY)
+    setDrag({ kind: 'band', from: p, to: p, add })
   }
 
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
@@ -210,7 +205,25 @@ export function PlanCanvas(props: Props) {
     setDrag(null)
     if (!d || d.kind === 'pan') return
 
-    const r = resolve(d, plan, magnet, targetsFor)
+    if (d.kind === 'band') {
+      const band = rectFrom(d.from, d.to)
+      // A band with no area is a click on nothing, which already cleared the
+      // selection on the way down. Selecting everything would be a surprise.
+      if (band.w < 0.3 && band.h < 0.3) return
+      const rooms = plan.rooms.filter((r) => intersects(band, r.rect)).map((r) => r.id)
+      const cases = plan.cases.filter((c) => intersects(band, c.rect)).map((c) => c.id)
+      return props.onSelect(
+        d.add
+          ? {
+              rooms: [...new Set([...selection.rooms, ...rooms])],
+              cases: [...new Set([...selection.cases, ...cases])],
+              shelf: null,
+            }
+          : { rooms, cases, shelf: null },
+      )
+    }
+
+    const r = resolve(d, magnet, targetsFor)
     if (!r) return
     if (isTooSmall(r)) {
       return props.onRejected(
@@ -222,8 +235,13 @@ export function PlanCanvas(props: Props) {
     if (d.kind === 'draw') {
       return d.what === 'room' ? props.onCreateRoom(r) : props.onCreateCase(r)
     }
-    if (d.what === 'room') props.onMoveRoom(d.id, r)
-    else props.onMoveCase(d.id, r)
+    if (d.kind === 'move') {
+      const dx = r.x - d.orig.x
+      const dy = r.y - d.orig.y
+      if (dx !== 0 || dy !== 0) props.onMoveSelection(dx, dy)
+      return
+    }
+    props.onResize(d.what, d.id, r)
   }
 
   const onWheel = (e: React.WheelEvent<SVGSVGElement>) => {
@@ -240,10 +258,31 @@ export function PlanCanvas(props: Props) {
 
   // --- preview -------------------------------------------------------------
 
-  const live = drag && drag.kind !== 'pan' ? resolve(drag, plan, magnet, targetsFor) : null
-  const liveId = drag && drag.kind !== 'pan' && drag.kind !== 'draw' ? drag.id : null
+  const live =
+    drag && drag.kind !== 'pan' && drag.kind !== 'band' ? resolve(drag, magnet, targetsFor) : null
+  const moveDelta =
+    drag?.kind === 'move' && live ? { dx: live.x - drag.orig.x, dy: live.y - drag.orig.y } : null
+  const band = drag?.kind === 'band' ? rectFrom(drag.from, drag.to) : null
   const bounds = visibleBounds(rect, view)
   const cursor = tool === 'pan' ? 'grab' : tool === 'select' ? 'default' : 'crosshair'
+
+  /** Where a rectangle sits RIGHT NOW, mid-drag. Everything that travels with
+   *  the selection previews together, or a multi-move looks broken until the
+   *  mouse comes up. */
+  const shown = (id: string, kind: Kind, r: Rect): Rect => {
+    if (drag?.kind === 'resize' && drag.id === id && live) return live
+    if (!moveDelta) return r
+    const travelling =
+      kind === 'room'
+        ? hasRoom(selection, id)
+        : hasCase(selection, id) ||
+          plan.rooms.some(
+            (room) =>
+              hasRoom(selection, room.id) &&
+              plan.cases.find((c) => c.id === id)?.roomId === room.id,
+          )
+    return travelling ? { ...r, x: r.x + moveDelta.dx, y: r.y + moveDelta.dy } : r
+  }
 
   return (
     <svg
@@ -279,16 +318,16 @@ export function PlanCanvas(props: Props) {
           <RoomShape
             key={r.id}
             room={r}
-            rect={liveId === r.id && live ? live : r.rect}
-            selected={selectedId === r.id}
+            rect={shown(r.id, 'room', r.rect)}
+            selected={hasRoom(selection, r.id)}
           />
         ))}
 
         {plan.cases.map((bc) => (
           <CaseShape
             key={bc.id}
-            bc={liveId === bc.id && live ? { ...bc, rect: live } : bc}
-            selected={selectedId === bc.id}
+            bc={{ ...bc, rect: shown(bc.id, 'case', bc.rect) }}
+            selected={hasCase(selection, bc.id)}
           />
         ))}
 
@@ -302,9 +341,13 @@ export function PlanCanvas(props: Props) {
           />
         )}
 
-        {selectedRect && !drag && (
+        {band && (
+          <rect className="band" x={band.x} y={band.y} width={band.w} height={band.h} />
+        )}
+
+        {loneRect && !drag && (
           <g className="handles">
-            {handlePositions(selectedRect, magnet).map(({ h, at }) => (
+            {handlePositions(loneRect, magnet).map(({ h, at }) => (
               <rect
                 key={`${h.hx},${h.hy}`}
                 x={at.x - magnet * 0.45}
@@ -318,8 +361,11 @@ export function PlanCanvas(props: Props) {
       </g>
 
       {/* The size readout lives in SCREEN space so it never scales away. */}
-      {live && (
-        <SizeBadge rect={live} screen={rect} view={view} />
+      {live && drag?.kind !== 'move' && <SizeBadge rect={live} screen={rect} view={view} />}
+      {count(selection) > 1 && !drag && (
+        <text className="multi-count" x={12} y={22}>
+          {count(selection)} selected · Delete removes them · Ctrl+C copies
+        </text>
       )}
     </svg>
   )
@@ -328,14 +374,14 @@ export function PlanCanvas(props: Props) {
 /** The rectangle a drag currently describes, snapped. One function for the
  *  live preview and for the commit, so what you see is what you get. */
 function resolve(
-  d: Exclude<Drag, null | { kind: 'pan'; from: Pt; view: View }>,
-  _plan: Plan,
+  d: Exclude<Drag, null | { kind: 'pan'; from: Pt; view: View } | { kind: 'band' }>,
   magnet: number,
-  targetsFor: (what: 'room' | 'case', exceptId?: string) => Rect[],
+  targetsFor: (what: Kind, exceptId?: string) => Rect[],
 ): Rect | null {
   if (d.kind === 'draw') {
     const targets = targetsFor(d.what)
-    return rectFrom(snapPoint(d.from, targets, magnet), snapPoint(d.to, targets, magnet))
+    const anchor = snapPoint(d.from, targets, magnet)
+    return rectFrom(anchor, snapCorner(d.to, anchor, targets, magnet))
   }
   if (d.kind === 'move') {
     const moved = {
@@ -346,16 +392,18 @@ function resolve(
     return snapRect(moved, targetsFor(d.what, d.id), magnet)
   }
   const targets = targetsFor(d.what, d.id)
-  const p = snapPoint(d.to, targets, magnet)
+  // The anchor is the edge that is NOT moving — the same collapse rule applies.
+  const anchor = {
+    x: d.handle.hx === -1 ? right(d.orig) : d.orig.x,
+    y: d.handle.hy === -1 ? bottom(d.orig) : d.orig.y,
+  }
+  const p = snapCorner(d.to, anchor, targets, magnet)
   const x0 = d.handle.hx === -1 ? p.x : d.orig.x
   const x1 = d.handle.hx === 1 ? p.x : right(d.orig)
   const y0 = d.handle.hy === -1 ? p.y : d.orig.y
   const y1 = d.handle.hy === 1 ? p.y : bottom(d.orig)
   return rectFrom({ x: x0, y: y0 }, { x: x1, y: y1 })
 }
-
-const caseIdOf = (s: Selection): string | null =>
-  s?.kind === 'case' ? s.id : s?.kind === 'shelf' ? s.caseId : null
 
 function Grid({ min, max, scale }: { min: Pt; max: Pt; scale: number }) {
   // Below ~7 px a cell the minor lines stop being a grid and become a texture.
@@ -425,7 +473,7 @@ function CaseShape({ bc, selected }: { bc: Bookcase; selected: boolean }) {
   )
 }
 
-/** "12 × 8" beside the rectangle being drawn or dragged — the feedback that
+/** "12 × 8" beside the rectangle being drawn or resized — the feedback that
  *  makes "control its size" true rather than aspirational. */
 function SizeBadge({ rect, screen, view }: { rect: Rect; screen: ScreenRect; view: View }) {
   const x = (rect.x + rect.w / 2 - view.cx) * view.scale + screen.width / 2

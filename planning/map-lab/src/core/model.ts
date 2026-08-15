@@ -16,7 +16,7 @@
 import type { Pt } from './geom'
 import { pt } from './geom'
 import type { Rect, Side } from './rect'
-import { OPPOSITE, bottom, center, contains, flushSide, right } from './rect'
+import { MIN_SIZE, OPPOSITE, bottom, center, contains, flushSide, right } from './rect'
 
 // --- shelves ---------------------------------------------------------------
 
@@ -90,8 +90,6 @@ export const emptyPlan = (): Plan => ({ rooms: [], cases: [], underlay: null })
 export const DEFAULT_LEVELS = 5
 export const DEFAULT_DEPTH = 1
 export const MAX_DEPTH = 4
-/** Below this a drag is a mis-tap, not a rectangle. */
-export const MIN_SIZE = 1
 
 export function isTooSmall(r: Rect): boolean {
   return r.w < MIN_SIZE || r.h < MIN_SIZE
@@ -122,6 +120,21 @@ export function correctFront(bc: Bookcase, room: Room | null): Bookcase {
   if (!room) return bc
   const flush = flushSide(bc.rect, room.rect)
   return flush === bc.front ? { ...bc, front: OPPOSITE[flush] } : bc
+}
+
+/**
+ * Re-derive which room a bookcase belongs to, and which way it faces.
+ *
+ * ⚠ Containment can only REASSIGN, never orphan: a case dragged out of every
+ * room keeps the room it had. That is deliberate — "attach bookcases to a room
+ * so they move together" is the point, and a case nudged half a unit past its
+ * wall silently losing its room is exactly the bug this prevents. Detaching is
+ * done on purpose, in the panel.
+ */
+export function reattach(bc: Bookcase, plan: Plan): Bookcase {
+  const room = roomFor(plan, bc.rect)
+  if (!room) return bc
+  return correctFront({ ...bc, roomId: room.id }, room)
 }
 
 export function roomAt(plan: Plan, p: Pt): Room | null {

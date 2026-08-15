@@ -21,7 +21,7 @@ type Props = {
 
 export function Elevation({ bc, selection, onSelectShelf, onColumnLevels, onColumnCount }: Props) {
   const cols = columnCount(bc)
-  const selected = selection?.kind === 'shelf' && selection.caseId === bc.id ? selection : null
+  const selected = selection.shelf?.caseId === bc.id ? selection.shelf : null
 
   return (
     <div className="elevation" dir="ltr">

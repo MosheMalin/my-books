@@ -13,7 +13,8 @@
 
 import { Elevation } from './Elevation'
 import type { Doc, Selection } from './types'
-import type { Bookcase } from '../core/model'
+import { count, only } from './types'
+import type { Bookcase, Plan, Room } from '../core/model'
 import {
   MAX_DEPTH,
   caseLength,
@@ -29,10 +30,9 @@ const SIDE_NAME = { N: 'up', S: 'down', E: 'right', W: 'left' } as const
 export type Actions = {
   renameRoom: (id: string, name: string) => void
   resizeRoom: (id: string, w: number, h: number) => void
-  deleteRoom: (id: string) => void
   renameCase: (id: string, name: string) => void
   resizeCase: (id: string, w: number, h: number) => void
-  deleteCase: (id: string) => void
+  setCaseRoom: (id: string, roomId: string | null) => void
   turnCase: (id: string) => void
   setColumnCount: (id: string, n: number) => void
   setColumnLevels: (id: string, col: number, n: number) => void
@@ -42,8 +42,13 @@ export type Actions = {
   applyDefaultDepth: (id: string) => void
   setShelfDepth: (id: string, col: number, level: number, n: number) => void
   setShelfPhotos: (id: string, col: number, level: number, n: number) => void
+  deleteSelection: () => void
+  copySelection: () => void
+  paste: () => void
   select: (s: Selection) => void
 }
+
+const isRoom = (o: Room | Bookcase): o is Room => !('front' in o)
 
 export function Inspector({
   doc,
@@ -55,52 +60,158 @@ export function Inspector({
   actions: Actions
 }) {
   const { plan } = doc
+  const n = count(selection)
 
-  if (selection?.kind === 'room') {
-    const room = plan.rooms.find((r) => r.id === selection.id)
-    if (!room) return <Empty doc={doc} />
-    const cases = plan.cases.filter((c) => c.roomId === room.id).length
-    return (
-      <div className="inspector">
-        <h2>Room</h2>
-        <label className="field">
-          <span>Name</span>
-          <input
-            className="rtl-safe"
-            value={room.name}
-            placeholder="סלון · living room"
-            onChange={(e) => actions.renameRoom(room.id, e.target.value)}
-          />
-        </label>
-        <Size
-          w={room.rect.w}
-          h={room.rect.h}
-          labelW="room width"
-          labelH="room height"
-          onChange={(w, h) => actions.resizeRoom(room.id, w, h)}
-        />
-        <p className="note">
-          {cases === 0 ? 'No bookcases in here yet.' : `${cases} bookcase${cases > 1 ? 's' : ''}.`}{' '}
-          Drag this room and it takes them with it. Drag it near another room and
-          the two attach edge to edge.
-        </p>
-        <button type="button" className="danger" onClick={() => actions.deleteRoom(room.id)}>
-          Delete this room
+  if (n === 0) return <Empty plan={plan} />
+  if (n > 1) return <Many plan={plan} selection={selection} actions={actions} />
+
+  const one = only(selection, plan)
+  if (!one) return <Empty plan={plan} />
+  return isRoom(one) ? (
+    <RoomPanel room={one} plan={plan} actions={actions} />
+  ) : (
+    <CasePanel bc={one} plan={plan} selection={selection} actions={actions} />
+  )
+}
+
+// --- many ------------------------------------------------------------------
+
+function Many({
+  plan,
+  selection,
+  actions,
+}: {
+  plan: Plan
+  selection: Selection
+  actions: Actions
+}) {
+  const rooms = plan.rooms.filter((r) => selection.rooms.includes(r.id))
+  const cases = plan.cases.filter((c) => selection.cases.includes(c.id))
+  const carried = plan.cases.filter(
+    (c) => c.roomId && selection.rooms.includes(c.roomId) && !selection.cases.includes(c.id),
+  )
+  return (
+    <div className="inspector">
+      <h2>{count(selection)} selected</h2>
+      <p className="note">
+        {rooms.length} room{rooms.length === 1 ? '' : 's'} · {cases.length} bookcase
+        {cases.length === 1 ? '' : 's'}. Drag any of them and they all move.
+        {carried.length > 0 && (
+          <>
+            {' '}
+            <strong>{carried.length}</strong> more bookcase
+            {carried.length === 1 ? '' : 's'} will travel along, attached to the
+            selected rooms.
+          </>
+        )}
+      </p>
+      <ul className="picked">
+        {rooms.map((r) => (
+          <li key={r.id} className="rtl-safe">
+            {r.name || `room ${r.rect.w}×${r.rect.h}`}
+          </li>
+        ))}
+        {cases.map((c) => (
+          <li key={c.id} className="rtl-safe">
+            {c.name || `bookcase ${c.rect.w}×${c.rect.h}`}
+          </li>
+        ))}
+      </ul>
+      <div className="row">
+        <button type="button" onClick={actions.copySelection}>
+          Copy
+        </button>
+        <button type="button" onClick={actions.paste}>
+          Paste
         </button>
       </div>
-    )
-  }
+      <button type="button" className="danger" onClick={actions.deleteSelection}>
+        Delete all {count(selection)}
+      </button>
+      <p className="note">
+        Deleting a room never deletes its bookcases — they stay where they stand
+        and belong to no room.
+      </p>
+    </div>
+  )
+}
 
-  const caseId =
-    selection?.kind === 'case'
-      ? selection.id
-      : selection?.kind === 'shelf'
-        ? selection.caseId
-        : null
-  const bc = caseId ? plan.cases.find((c) => c.id === caseId) ?? null : null
-  if (!bc) return <Empty doc={doc} />
+// --- room ------------------------------------------------------------------
+
+function RoomPanel({ room, plan, actions }: { room: Room; plan: Plan; actions: Actions }) {
+  const attached = plan.cases.filter((c) => c.roomId === room.id)
+  return (
+    <div className="inspector">
+      <h2>Room</h2>
+      <label className="field">
+        <span>Name</span>
+        <input
+          className="rtl-safe"
+          value={room.name}
+          placeholder="סלון · living room"
+          onChange={(e) => actions.renameRoom(room.id, e.target.value)}
+        />
+      </label>
+      <Size
+        w={room.rect.w}
+        h={room.rect.h}
+        labelW="room width"
+        labelH="room height"
+        onChange={(w, h) => actions.resizeRoom(room.id, w, h)}
+      />
+
+      <fieldset>
+        <legend>Bookcases attached</legend>
+        {attached.length === 0 ? (
+          <p className="note">
+            None yet. A bookcase drawn inside this room attaches to it
+            automatically, and then moves with it.
+          </p>
+        ) : (
+          <>
+            <ul className="picked">
+              {attached.map((c) => (
+                <li key={c.id}>
+                  <button
+                    type="button"
+                    className="link rtl-safe"
+                    aria-label={`select the bookcase ${c.name || c.id}`}
+                    onClick={() => actions.select({ rooms: [], cases: [c.id], shelf: null })}
+                  >
+                    {c.name || `bookcase ${c.rect.w}×${c.rect.h}`}
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <p className="note">
+              These move when this room moves — including any that now stand
+              outside its outline.
+            </p>
+          </>
+        )}
+      </fieldset>
+
+      <button type="button" className="danger" onClick={actions.deleteSelection}>
+        Delete this room
+      </button>
+    </div>
+  )
+}
+
+// --- bookcase --------------------------------------------------------------
+
+function CasePanel({
+  bc,
+  plan,
+  selection,
+  actions,
+}: {
+  bc: Bookcase
+  plan: Plan
+  selection: Selection
+  actions: Actions
+}) {
   const room = plan.rooms.find((r) => r.id === bc.roomId) ?? null
-
   return (
     <div className="inspector">
       <h2>Bookcase</h2>
@@ -122,6 +233,23 @@ export function Inspector({
         onChange={(w, h) => actions.resizeCase(bc.id, w, h)}
       />
 
+      <label className="field inline">
+        <span>Moves with</span>
+        <select
+          className="rtl-safe"
+          aria-label="the room this bookcase is attached to"
+          value={bc.roomId ?? ''}
+          onChange={(e) => actions.setCaseRoom(bc.id, e.target.value || null)}
+        >
+          <option value="">nothing — stands alone</option>
+          {plan.rooms.map((r) => (
+            <option key={r.id} value={r.id}>
+              {r.name || `room ${r.rect.w}×${r.rect.h}`}
+            </option>
+          ))}
+        </select>
+      </label>
+
       <div className="field inline">
         <span>Books face</span>
         <button type="button" onClick={() => actions.turnCase(bc.id)} aria-label="turn the bookcase">
@@ -131,7 +259,7 @@ export function Inspector({
 
       <p className="note">
         <strong>{caseLength(bc)} units</strong> of wall, {caseThickness(bc)} deep as drawn
-        {room ? ` · in ${room.name || 'an unnamed room'}` : ' · not inside any room'} ·{' '}
+        {room ? ` · in ${room.name || 'an unnamed room'}` : ' · attached to no room'} ·{' '}
         {bc.shelves.length} shelves.
         <br />
         Free measurement — relative to this room's walls, never centimetres, and
@@ -141,7 +269,9 @@ export function Inspector({
       <Elevation
         bc={bc}
         selection={selection}
-        onSelectShelf={(col, level) => actions.select({ kind: 'shelf', caseId: bc.id, col, level })}
+        onSelectShelf={(col, level) =>
+          actions.select({ rooms: [], cases: [bc.id], shelf: { caseId: bc.id, col, level } })
+        }
         onColumnLevels={(col, n) => actions.setColumnLevels(bc.id, col, n)}
         onColumnCount={(n) => {
           if (n < columnCount(bc)) {
@@ -155,7 +285,7 @@ export function Inspector({
       <Defaults bc={bc} actions={actions} />
       <ShelfPanel bc={bc} selection={selection} actions={actions} />
 
-      <button type="button" className="danger" onClick={() => actions.deleteCase(bc.id)}>
+      <button type="button" className="danger" onClick={actions.deleteSelection}>
         Delete this bookcase
       </button>
     </div>
@@ -260,10 +390,11 @@ function ShelfPanel({
   selection: Selection
   actions: Actions
 }) {
-  if (selection?.kind !== 'shelf' || selection.caseId !== bc.id) {
+  const sel = selection.shelf
+  if (!sel || sel.caseId !== bc.id) {
     return <p className="note">Pick a cell above to set one shelf's own depth.</p>
   }
-  const shelf = shelfAt(bc, selection.col, selection.level)
+  const shelf = shelfAt(bc, sel.col, sel.level)
   if (!shelf) return null
   return (
     <fieldset className="shelf-panel">
@@ -305,8 +436,7 @@ function ShelfPanel({
   )
 }
 
-function Empty({ doc }: { doc: Doc }) {
-  const { plan } = doc
+function Empty({ plan }: { plan: Plan }) {
   return (
     <div className="inspector">
       <h2>Nothing selected</h2>
@@ -320,11 +450,12 @@ function Empty({ doc }: { doc: Doc }) {
         </li>
         <li>
           <strong>Draw bookcase</strong> — drag a rectangle inside a room. It
-          snaps flush to the wall and the books face inwards.
+          snaps flush to the wall, attaches to that room, and moves with it.
         </li>
         <li>
-          <strong>Move &amp; edit</strong> — drag to move, drag a corner to
-          resize, tap to open its columns, levels and depth here.
+          <strong>Move &amp; edit</strong> — drag to move, drag a handle to
+          resize, tap to edit here. Ctrl+click adds to the selection, and
+          dragging empty space selects everything the band touches.
         </li>
       </ol>
     </div>

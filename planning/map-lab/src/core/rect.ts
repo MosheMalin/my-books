@@ -105,11 +105,34 @@ export const xEdges = (targets: readonly Rect[]): number[] =>
 export const yEdges = (targets: readonly Rect[]): number[] =>
   targets.flatMap((r) => [r.y, bottom(r)])
 
-/** Snap the free corner of a rectangle being DRAWN or RESIZED. */
+/** Below this a rectangle is a mis-tap, not a thing. */
+export const MIN_SIZE = 1
+
+/** Snap a point with no partner — the first corner of a drag. */
 export function snapPoint(p: Pt, targets: readonly Rect[], tol: number): Pt {
   return {
     x: snapCoord(p.x, xEdges(targets), tol),
     y: snapCoord(p.y, yEdges(targets), tol),
+  }
+}
+
+/**
+ * Snap the FREE corner of a rectangle whose opposite corner is `anchor`,
+ * ignoring any neighbour edge that would collapse it.
+ *
+ * ⚠ This exists because the magnet is measured on SCREEN and the plan is
+ * measured in units: at 11 px a cell a fingertip is 1.3 units, which is wider
+ * than a bookcase is deep. Drawing a one-unit-deep case against a wall then
+ * pulled *both* of its edges onto that same wall and the case vanished — a
+ * snap that annihilates the rectangle is never what anyone meant. The grid
+ * still gets its say, so a genuine mis-tap is still refused out loud.
+ */
+export function snapCorner(p: Pt, anchor: Pt, targets: readonly Rect[], tol: number): Pt {
+  const clear = (cands: number[], a: number) =>
+    cands.filter((c) => Math.abs(c - a) >= MIN_SIZE)
+  return {
+    x: snapCoord(p.x, clear(xEdges(targets), anchor.x), tol),
+    y: snapCoord(p.y, clear(yEdges(targets), anchor.y), tol),
   }
 }
 
@@ -196,6 +219,15 @@ export function handleAt(r: Rect, p: Pt, tol: number, minSide = tol): Handle | n
 /** Rectangles overlap if they share interior area — touching is not overlap. */
 export function overlaps(a: Rect, b: Rect): boolean {
   return a.x < right(b) && right(a) > b.x && a.y < bottom(b) && bottom(a) > b.y
+}
+
+/**
+ * Overlap OR touch. This is the one a rubber-band selection wants: a bookcase
+ * standing flush against a wall shares exactly its edge with the room, and a
+ * band dragged along that wall must be able to catch it.
+ */
+export function intersects(a: Rect, b: Rect): boolean {
+  return a.x <= right(b) && right(a) >= b.x && a.y <= bottom(b) && bottom(a) >= b.y
 }
 
 /**

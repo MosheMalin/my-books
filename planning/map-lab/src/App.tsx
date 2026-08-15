@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import type { Bookcase, Underlay } from './core/model'
+import type { Bookcase, Plan, Room, Underlay } from './core/model'
 import {
   TURN,
   applyDefaultDepth,
   applyDefaultLevels,
-  correctFront,
   emptyPlan,
   frontFor,
   newBookcase,
   planBounds,
+  reattach,
   roomFor,
   withColumnCount,
   withColumnLevels,
@@ -24,11 +24,15 @@ import { parsePlan, serializePlan } from './core/persist'
 import { Inspector, type Actions } from './ui/Inspector'
 import { PlanCanvas } from './ui/PlanCanvas'
 import { Toolbar } from './ui/Toolbar'
-import type { Doc, Selection, Theme, Tool } from './ui/types'
+import type { Clipboard, Doc, Selection, Theme, Tool } from './ui/types'
+import { EMPTY, count, hasCase, hasRoom } from './ui/types'
 import { fitTo, initialView, type View } from './ui/viewport'
 
 const STORAGE_KEY = 'booksnap.map-lab.doc'
 const THEME_KEY = 'booksnap.map-lab.theme'
+/** How far a pasted copy lands from its original, in units. Far enough to see
+ *  it, near enough to drag into place. */
+const PASTE_OFFSET = 2
 
 const emptyDoc = (): Doc => ({ plan: emptyPlan(), seq: 0 })
 
@@ -36,23 +40,34 @@ export default function App() {
   const [hist, setHist] = useState<History<Doc>>(() => initHistory(loadDoc()))
   const [tool, setTool] = useState<Tool>('select')
   const [theme, setTheme] = useState<Theme>(loadTheme)
-  const [selection, setSelection] = useState<Selection>(null)
+  const [selection, setSelection] = useState<Selection>(EMPTY)
+  const [clipboard, setClipboard] = useState<Clipboard>(null)
   const [view, setView] = useState<View>(initialView)
   const [message, setMessage] = useState<string | null>(null)
+  const [saved, setSaved] = useState<'saving' | 'saved' | 'failed'>('saved')
   const wrapRef = useRef<HTMLDivElement | null>(null)
 
   const doc = hist.present
 
   // --- persistence ---------------------------------------------------------
 
+  /**
+   * Every edit is written immediately (owner, 2026-08-16: *"allow to save, so
+   * work will not get lost"*). The toolbar SAYS so, because an autosave nobody
+   * can see is indistinguishable from no autosave — and the honest caveat is
+   * on the same line: this is browser storage, and *Save to file* is the copy
+   * that survives a cleared browser.
+   */
   useEffect(() => {
+    setSaved('saving')
     try {
       window.localStorage.setItem(
         STORAGE_KEY,
         JSON.stringify({ plan: { ...doc.plan, underlay: null }, seq: doc.seq }),
       )
+      setSaved('saved')
     } catch {
-      /* a full or blocked localStorage must not break the editor */
+      setSaved('failed')
     }
   }, [doc])
 
@@ -109,52 +124,138 @@ export default function App() {
     [update],
   )
 
-  /** Moving a room takes its bookcases with it: furniture does not stay behind
-   *  when a wall does not. Resizing it does not — the cases keep their places,
-   *  and one that ends up outside says so. */
-  const moveRoom = useCallback(
-    (id: string, rect: Rect) =>
+  /**
+   * Move everything that is selected — and every bookcase attached to a
+   * selected room, whether or not it was selected itself. That attachment is
+   * what makes a room a room rather than a rectangle drawn behind the
+   * furniture.
+   */
+  const moveSelection = useCallback(
+    (dx: number, dy: number) =>
       update((d) => {
-        const prev = d.plan.rooms.find((r) => r.id === id)
-        if (!prev) return d
-        const sameSize = prev.rect.w === rect.w && prev.rect.h === rect.h
-        const dx = rect.x - prev.rect.x
-        const dy = rect.y - prev.rect.y
-        const rooms = d.plan.rooms.map((r) => (r.id === id ? { ...r, rect } : r))
-        const plan = { ...d.plan, rooms }
+        const rooms = d.plan.rooms.map((r) =>
+          hasRoom(selection, r.id) ? { ...r, rect: { ...r.rect, x: r.rect.x + dx, y: r.rect.y + dy } } : r,
+        )
+        // ⚠ Two populations, and they are treated differently.
+        //
+        // DRAGGED — the user picked this case up, so where it lands decides
+        // which room it belongs to.
+        //
+        // CARRIED — it moved only because its room did. Re-deriving its room
+        // here is what made an explicit attachment last exactly one move: a
+        // case attached to the far room, carried by that room, landed inside
+        // the room it physically overlaps and was silently handed back to it.
+        // A room moving its own furniture must not change whose furniture it
+        // is.
+        const dragged = new Set(d.plan.cases.filter((c) => hasCase(selection, c.id)).map((c) => c.id))
+        const carried = new Set(
+          d.plan.cases
+            .filter((c) => !dragged.has(c.id) && c.roomId && hasRoom(selection, c.roomId))
+            .map((c) => c.id),
+        )
+        const plan: Plan = { ...d.plan, rooms }
         return {
           ...d,
           plan: {
             ...plan,
             cases: d.plan.cases.map((c) => {
-              const moved =
-                sameSize && c.roomId === id
-                  ? { ...c, rect: { ...c.rect, x: c.rect.x + dx, y: c.rect.y + dy } }
-                  : c
-              const room = roomFor(plan, moved.rect)
-              return correctFront({ ...moved, roomId: room?.id ?? null }, room)
+              if (!dragged.has(c.id) && !carried.has(c.id)) return c
+              const rect = { ...c.rect, x: c.rect.x + dx, y: c.rect.y + dy }
+              return dragged.has(c.id) ? reattach({ ...c, rect }, plan) : { ...c, rect }
             }),
+          },
+        }
+      }),
+    [update, selection],
+  )
+
+  const resizeItem = useCallback(
+    (kind: 'room' | 'case', id: string, rect: Rect) =>
+      update((d) => {
+        if (kind === 'room') {
+          return {
+            ...d,
+            plan: {
+              ...d.plan,
+              rooms: d.plan.rooms.map((r) => (r.id === id ? { ...r, rect } : r)),
+            },
+          }
+        }
+        return {
+          ...d,
+          plan: {
+            ...d.plan,
+            cases: d.plan.cases.map((c) => (c.id === id ? reattach({ ...c, rect }, d.plan) : c)),
           },
         }
       }),
     [update],
   )
 
-  const moveCase = useCallback(
-    (id: string, rect: Rect) =>
-      update((d) => ({
-        ...d,
-        plan: {
-          ...d.plan,
-          cases: d.plan.cases.map((c) => {
-            if (c.id !== id) return c
-            const room = roomFor(d.plan, rect)
-            return correctFront({ ...c, rect, roomId: room?.id ?? null }, room)
-          }),
-        },
-      })),
-    [update],
-  )
+  const deleteSelection = useCallback(() => {
+    if (count(selection) === 0) return
+    update((d) => ({
+      ...d,
+      plan: {
+        ...d.plan,
+        rooms: d.plan.rooms.filter((r) => !hasRoom(selection, r.id)),
+        // Deleting a room does NOT cascade into its bookcases — the same rule
+        // the product already holds for shelves. They stay where they stand
+        // and belong to no room.
+        cases: d.plan.cases
+          .filter((c) => !hasCase(selection, c.id))
+          .map((c) => (c.roomId && hasRoom(selection, c.roomId) ? { ...c, roomId: null } : c)),
+      },
+    }))
+    setSelection(EMPTY)
+  }, [selection, update])
+
+  // --- copy / paste --------------------------------------------------------
+
+  const copySelection = useCallback(() => {
+    const rooms = doc.plan.rooms.filter((r) => hasRoom(selection, r.id))
+    const cases = doc.plan.cases.filter((c) => hasCase(selection, c.id))
+    if (rooms.length + cases.length === 0) return
+    // Deep-cloned at COPY time: a later edit to the original must not reach
+    // into the clipboard, and a paste must not alias the shelves it came from.
+    setClipboard(JSON.parse(JSON.stringify({ rooms, cases })) as Clipboard)
+    say(`Copied ${rooms.length + cases.length} item${rooms.length + cases.length > 1 ? 's' : ''}.`)
+  }, [doc.plan, selection, say])
+
+  const paste = useCallback(() => {
+    if (!clipboard) return
+    let seq = doc.seq
+    const roomIdMap = new Map<string, string>()
+    const rooms: Room[] = clipboard.rooms.map((r) => {
+      seq += 1
+      const id = `r${seq}`
+      roomIdMap.set(r.id, id)
+      return { ...r, id, rect: offset(r.rect) }
+    })
+    const cases: Bookcase[] = clipboard.cases.map((c) => {
+      seq += 1
+      return {
+        ...c,
+        id: `c${seq}`,
+        rect: offset(c.rect),
+        // A case copied together with its room stays with THAT copy, not with
+        // the original room — otherwise pasting a room-and-its-cases produces
+        // furniture that moves when the wrong room moves.
+        roomId: c.roomId ? roomIdMap.get(c.roomId) ?? c.roomId : null,
+      }
+    })
+    update((d) => ({
+      seq,
+      plan: {
+        ...d.plan,
+        rooms: d.plan.rooms.concat(rooms),
+        cases: d.plan.cases
+          .concat(cases)
+          .map((c) => (cases.some((n) => n.id === c.id) && !c.roomId ? reattach(c, d.plan) : c)),
+      },
+    }))
+    setSelection({ rooms: rooms.map((r) => r.id), cases: cases.map((c) => c.id), shelf: null })
+  }, [clipboard, doc.seq, update])
 
   const actions: Actions = {
     renameRoom: (id, name) =>
@@ -172,27 +273,10 @@ export default function App() {
           ),
         },
       })),
-    deleteRoom: (id) => {
-      update((d) => ({
-        ...d,
-        plan: {
-          ...d.plan,
-          rooms: d.plan.rooms.filter((r) => r.id !== id),
-          // Deleting a room does NOT cascade into its bookcases — the same
-          // rule the product already holds for shelves. They stay where they
-          // stand and simply belong to no room.
-          cases: d.plan.cases.map((c) => (c.roomId === id ? { ...c, roomId: null } : c)),
-        },
-      }))
-      setSelection(null)
-    },
     renameCase: (id, name) => mapCase(id, (bc) => ({ ...bc, name })),
     resizeCase: (id, w, h) =>
       mapCase(id, (bc) => ({ ...bc, rect: { ...bc.rect, w: size(w), h: size(h) } })),
-    deleteCase: (id) => {
-      update((d) => ({ ...d, plan: { ...d.plan, cases: d.plan.cases.filter((c) => c.id !== id) } }))
-      setSelection(null)
-    },
+    setCaseRoom: (id, roomId) => mapCase(id, (bc) => ({ ...bc, roomId })),
     turnCase: (id) => mapCase(id, (bc) => ({ ...bc, front: TURN[bc.front] })),
     setColumnCount: (id, n) => mapCase(id, (bc) => withColumnCount(bc, n)),
     setColumnLevels: (id, col, n) => mapCase(id, (bc) => withColumnLevels(bc, col, n)),
@@ -208,6 +292,9 @@ export default function App() {
           s.col === col && s.level === level ? { ...s, photos: Math.max(0, Math.round(n)) } : s,
         ),
       })),
+    deleteSelection,
+    copySelection,
+    paste,
     select: setSelection,
   }
 
@@ -249,18 +336,19 @@ export default function App() {
     a.download = 'house.map-lab.json'
     a.click()
     URL.revokeObjectURL(url)
+    say('Saved to your downloads folder.')
   }
 
   const doImport = async (file: File) => {
     const result = parsePlan(await file.text())
-    if (!result.ok) return say(`Not imported: ${result.error}.`)
+    if (!result.ok) return say(`Not opened: ${result.error}.`)
     const maxSeq = [...result.plan.rooms, ...result.plan.cases].reduce((m, o) => {
       const n = Number(o.id.replace(/\D/g, ''))
       return Number.isFinite(n) ? Math.max(m, n) : m
     }, 0)
     setHist((h) => commit(h, { plan: result.plan, seq: maxSeq }))
-    setSelection(null)
-    say('Imported.')
+    setSelection(EMPTY)
+    say('Opened.')
   }
 
   const doFit = useCallback(() => {
@@ -278,18 +366,32 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+      const meta = e.metaKey || e.ctrlKey
+      if (meta && e.key.toLowerCase() === 'z') {
         e.preventDefault()
         setHist((h) => (e.shiftKey ? redo(h) : undo(h)))
         return
       }
-      if (e.key === 'Escape' || e.key === '1') return setTool('select')
+      if (meta && e.key.toLowerCase() === 'c') {
+        e.preventDefault()
+        return copySelection()
+      }
+      if (meta && e.key.toLowerCase() === 'v') {
+        e.preventDefault()
+        return paste()
+      }
+      if (meta) return
+      if (e.key === 'Escape') {
+        setSelection(EMPTY)
+        return setTool('select')
+      }
+      if (e.key === '1') return setTool('select')
       if (e.key === '2') return setTool('room')
       if (e.key === '3') return setTool('case')
       if (e.key === '4') return setTool('pan')
       if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (selection?.kind === 'room') actions.deleteRoom(selection.id)
-        if (selection?.kind === 'case') actions.deleteCase(selection.id)
+        e.preventDefault()
+        deleteSelection()
       }
     }
     window.addEventListener('keydown', onKey)
@@ -301,14 +403,20 @@ export default function App() {
       <Toolbar
         tool={tool}
         theme={theme}
+        saved={saved}
         underlay={doc.plan.underlay}
         canUndo={canUndo(hist)}
         canRedo={canRedo(hist)}
+        canPaste={clipboard !== null}
+        selectedCount={count(selection)}
         onTool={setTool}
         onTheme={setTheme}
         onUndo={() => setHist(undo)}
         onRedo={() => setHist(redo)}
         onFit={doFit}
+        onCopy={copySelection}
+        onPaste={paste}
+        onDelete={deleteSelection}
         onExport={doExport}
         onImport={doImport}
         onUnderlay={loadUnderlay}
@@ -319,7 +427,7 @@ export default function App() {
         onClear={() => {
           if (confirm('Throw away this drawing?')) {
             setHist((h) => commit(h, emptyDoc()))
-            setSelection(null)
+            setSelection(EMPTY)
           }
         }}
       />
@@ -338,8 +446,8 @@ export default function App() {
             onSelect={setSelection}
             onCreateRoom={createRoom}
             onCreateCase={createCase}
-            onMoveRoom={moveRoom}
-            onMoveCase={moveCase}
+            onMoveSelection={moveSelection}
+            onResize={resizeItem}
             onRejected={say}
           />
           <Hint tool={tool} />
@@ -355,6 +463,8 @@ export default function App() {
 
 const size = (v: number): number => Math.max(1, Math.round(v))
 
+const offset = (r: Rect): Rect => ({ ...r, x: r.x + PASTE_OFFSET, y: r.y + PASTE_OFFSET })
+
 function Hint({ tool }: { tool: Tool }) {
   const text =
     tool === 'room'
@@ -363,7 +473,7 @@ function Hint({ tool }: { tool: Tool }) {
         ? 'Drag a rectangle inside a room. It snaps flush against the wall, and the books face into the room.'
         : tool === 'pan'
           ? 'Drag to slide the plan. Scroll or pinch to zoom.'
-          : 'Drag a room or a bookcase to move it · drag a corner or an edge to resize · tap it to edit its settings.'
+          : 'Drag to move · drag a handle to resize · Ctrl+click adds to the selection · drag empty space to select several · Ctrl+C / Ctrl+V / Delete.'
   return <p className="hint">{text}</p>
 }
 

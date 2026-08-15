@@ -15,14 +15,20 @@ import type { Theme, Tool } from './types'
 type Props = {
   tool: Tool
   theme: Theme
+  saved: 'saving' | 'saved' | 'failed'
   underlay: Underlay | null
   canUndo: boolean
   canRedo: boolean
+  canPaste: boolean
+  selectedCount: number
   onTool: (t: Tool) => void
   onTheme: (t: Theme) => void
   onUndo: () => void
   onRedo: () => void
   onFit: () => void
+  onCopy: () => void
+  onPaste: () => void
+  onDelete: () => void
   onExport: () => void
   onImport: (file: File) => void
   onUnderlay: (file: File) => void
@@ -35,7 +41,7 @@ const TOOLS: { tool: Tool; label: string; hint: string; key: string }[] = [
   {
     tool: 'select',
     label: 'Move & edit',
-    hint: 'Drag a room or a bookcase to move it. Drag a corner to resize it. Tap it to edit its settings.',
+    hint: 'Drag a room or a bookcase to move it. Drag a handle to resize. Ctrl+click adds to the selection; drag empty space to select several.',
     key: '1',
   },
   {
@@ -58,9 +64,16 @@ const TOOLS: { tool: Tool; label: string; hint: string; key: string }[] = [
   },
 ]
 
+const SAVED_TEXT = {
+  saving: 'saving…',
+  saved: 'saved in this browser',
+  failed: 'NOT saved — use Save to file',
+} as const
+
 export function Toolbar(props: Props) {
   const importRef = useRef<HTMLInputElement | null>(null)
   const underlayRef = useRef<HTMLInputElement | null>(null)
+  const nothingSelected = props.selectedCount === 0
 
   return (
     <header className="toolbar">
@@ -89,15 +102,63 @@ export function Toolbar(props: Props) {
         <button type="button" onClick={props.onUndo} disabled={!props.canUndo} title="Undo (Ctrl+Z)">
           Undo
         </button>
-        <button type="button" onClick={props.onRedo} disabled={!props.canRedo} title="Redo (Ctrl+Shift+Z)">
+        <button
+          type="button"
+          onClick={props.onRedo}
+          disabled={!props.canRedo}
+          title="Redo (Ctrl+Shift+Z)"
+        >
           Redo
         </button>
-        <button type="button" onClick={props.onFit} title="Zoom so the whole plan fits">
-          Fit
+      </div>
+
+      <div className="group">
+        {/* Copy and Paste are hidden on a phone: there is no Ctrl there to
+            explain them, the panel offers both when something is selected,
+            and every toolbar row costs the canvas 30 px of an 812 px screen.
+            Delete stays — it is the one of the three you cannot do without. */}
+        <button
+          type="button"
+          className="wide-only"
+          onClick={props.onCopy}
+          disabled={nothingSelected}
+          title="Copy the selection (Ctrl+C)"
+        >
+          Copy
         </button>
         <button
           type="button"
-          aria-label={props.theme === 'dark' ? 'switch to a white background' : 'switch to a black background'}
+          className="wide-only"
+          onClick={props.onPaste}
+          disabled={!props.canPaste}
+          title="Paste a copy, offset from the original (Ctrl+V)"
+        >
+          Paste
+        </button>
+        <button
+          type="button"
+          className="danger"
+          onClick={props.onDelete}
+          disabled={nothingSelected}
+          title="Delete everything selected (Delete)"
+        >
+          Delete{props.selectedCount > 1 ? ` ${props.selectedCount}` : ''}
+        </button>
+      </div>
+
+      <div className="group">
+        <button
+          type="button"
+          onClick={props.onFit}
+          title="Zoom and centre so the whole plan is on screen. This is how you get back when you have zoomed or panned somewhere unfamiliar."
+        >
+          Show all
+        </button>
+        <button
+          type="button"
+          aria-label={
+            props.theme === 'dark' ? 'switch to a white background' : 'switch to a black background'
+          }
           title="Black or white background"
           onClick={() => props.onTheme(props.theme === 'dark' ? 'light' : 'dark')}
         >
@@ -157,18 +218,25 @@ export function Toolbar(props: Props) {
       </div>
 
       <div className="group right">
-        <button type="button" onClick={props.onExport} title="Download the plan as JSON">
-          Export
+        <span
+          className={`saved saved-${props.saved}`}
+          role="status"
+          title="Every change is written to this browser's storage immediately. Clearing site data loses it — Save to file is the copy that survives."
+        >
+          {SAVED_TEXT[props.saved]}
+        </span>
+        <button type="button" onClick={props.onExport} title="Download the plan as a JSON file">
+          Save to file
         </button>
         <button type="button" onClick={() => importRef.current?.click()}>
-          Import
+          Open file
         </button>
         <input
           ref={importRef}
           type="file"
           accept="application/json,.json"
           hidden
-          aria-label="import a plan file"
+          aria-label="open a plan file"
           onChange={(e) => {
             const f = e.target.files?.[0]
             if (f) props.onImport(f)
