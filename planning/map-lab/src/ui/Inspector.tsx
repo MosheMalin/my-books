@@ -18,12 +18,12 @@ import { useSticky } from './useSticky'
 import type { Bookcase, Plan, Room } from '../core/model'
 import {
   MAX_DEPTH,
+  allShelves,
   caseLength,
   caseThickness,
-  columnCount,
+  sectionById,
+  sectionIndex,
   shelfAt,
-  shelvesDifferingFromDefaultDepth,
-  shelvesInColumns,
 } from '../core/model'
 
 const SIDE_NAME = { N: 'up', S: 'down', E: 'right', W: 'left' } as const
@@ -35,14 +35,16 @@ export type Actions = {
   resizeCase: (id: string, w: number, h: number) => void
   setCaseRoom: (id: string, roomId: string | null) => void
   turnCase: (id: string) => void
-  setColumnCount: (id: string, n: number) => void
-  setColumnLevels: (id: string, col: number, n: number) => void
-  setDefaultLevels: (id: string, n: number) => void
-  applyDefaultLevels: (id: string) => void
-  setDefaultDepth: (id: string, n: number) => void
-  applyDefaultDepth: (id: string) => void
-  setShelfDepth: (id: string, col: number, level: number, n: number) => void
-  setShelfPhotos: (id: string, col: number, level: number, n: number) => void
+  setColumnCount: (id: string, sectionId: string, n: number) => void
+  setColumnLevels: (id: string, sectionId: string, col: number, n: number) => void
+  setDefaultLevels: (id: string, sectionId: string, n: number) => void
+  applyDefaultLevels: (id: string, sectionId: string) => void
+  setDefaultDepth: (id: string, sectionId: string, n: number) => void
+  applyDefaultDepth: (id: string, sectionId: string) => void
+  setShelfDepth: (id: string, sectionId: string, col: number, level: number, n: number) => void
+  setShelfPhotos: (id: string, sectionId: string, col: number, level: number, n: number) => void
+  addSection: (id: string, where: 'top' | 'bottom') => void
+  removeSection: (id: string, sectionId: string) => void
   deleteSelection: () => void
   copySelection: () => void
   paste: () => void
@@ -274,7 +276,8 @@ function CasePanel({
         <p className="note">
           <strong>{caseLength(bc)} units</strong> of wall, {caseThickness(bc)} deep as drawn
           {room ? ` · in ${room.name || 'an unnamed room'}` : ' · attached to no room'} ·{' '}
-          {bc.shelves.length} shelves.
+          {allShelves(bc).length} shelves
+          {bc.sections.length > 1 ? ` in ${bc.sections.length} sections` : ''}.
           <br />
           Free measurement — relative to this room's walls, never centimetres,
           and nothing here infers how many books fit.
@@ -284,20 +287,23 @@ function CasePanel({
       <Elevation
         bc={bc}
         selection={selection}
-        onSelectShelf={(col, level) =>
-          actions.select({ rooms: [], cases: [bc.id], shelf: { caseId: bc.id, col, level } })
+        onSelectShelf={(sectionId, col, level) =>
+          actions.select({
+            rooms: [],
+            cases: [bc.id],
+            shelf: { caseId: bc.id, sectionId, col, level },
+          })
         }
-        onColumnLevels={(col, n) => actions.setColumnLevels(bc.id, col, n)}
-        onColumnCount={(n) => {
-          if (n < columnCount(bc)) {
-            const losing = shelvesInColumns(bc, n)
-            if (losing > 0 && !confirm(`Remove the last column and its ${losing} shelves?`)) return
-          }
-          actions.setColumnCount(bc.id, n)
-        }}
+        onColumnLevels={(sectionId, col, n) => actions.setColumnLevels(bc.id, sectionId, col, n)}
+        onColumnCount={(sectionId, n) => actions.setColumnCount(bc.id, sectionId, n)}
+        onDefaultLevels={(sectionId, n) => actions.setDefaultLevels(bc.id, sectionId, n)}
+        onDefaultDepth={(sectionId, n) => actions.setDefaultDepth(bc.id, sectionId, n)}
+        onApplyDefaultLevels={(sectionId) => actions.applyDefaultLevels(bc.id, sectionId)}
+        onApplyDefaultDepth={(sectionId) => actions.applyDefaultDepth(bc.id, sectionId)}
+        onAddSection={(where) => actions.addSection(bc.id, where)}
+        onRemoveSection={(sectionId) => actions.removeSection(bc.id, sectionId)}
       />
 
-      <Defaults bc={bc} actions={actions} />
       <ShelfPanel bc={bc} selection={selection} actions={actions} />
 
       <button type="button" className="danger" onClick={actions.deleteSelection}>
@@ -384,56 +390,6 @@ function Size({
   )
 }
 
-function Defaults({ bc, actions }: { bc: Bookcase; actions: Actions }) {
-  const differing = shelvesDifferingFromDefaultDepth(bc)
-  return (
-    <fieldset className="defaults">
-      <legend>Defaults for NEW shelves</legend>
-
-      <label className="field inline">
-        <span>Levels per column</span>
-        <input
-          type="number"
-          min={1}
-          max={12}
-          value={bc.defaultLevels}
-          aria-label="default levels per column"
-          onChange={(e) => actions.setDefaultLevels(bc.id, Number(e.target.value))}
-        />
-      </label>
-      <button type="button" onClick={() => actions.applyDefaultLevels(bc.id)}>
-        Apply to every existing column
-      </button>
-
-      <label className="field inline">
-        <span>Depth (rows front-to-back)</span>
-        <input
-          type="number"
-          min={1}
-          max={MAX_DEPTH}
-          value={bc.defaultDepth}
-          aria-label="default depth"
-          onChange={(e) => actions.setDefaultDepth(bc.id, Number(e.target.value))}
-        />
-      </label>
-
-      {differing > 0 ? (
-        <p className="rule">
-          <strong>{differing}</strong> existing{' '}
-          {differing === 1 ? 'shelf keeps its own depth' : 'shelves keep their own depth'}.
-          Changing the default never reaches back into them — that would delete
-          the location of every book standing in a back row.
-          <button type="button" onClick={() => actions.applyDefaultDepth(bc.id)}>
-            Apply the default to all {bc.shelves.length} shelves
-          </button>
-        </p>
-      ) : (
-        <p className="note">Every existing shelf currently matches this default.</p>
-      )}
-    </fieldset>
-  )
-}
-
 function ShelfPanel({
   bc,
   selection,
@@ -447,12 +403,17 @@ function ShelfPanel({
   if (!sel || sel.caseId !== bc.id) {
     return <p className="note">Pick a cell above to set one shelf's own depth.</p>
   }
-  const shelf = shelfAt(bc, sel.col, sel.level)
-  if (!shelf) return null
+  const sec = sectionById(bc, sel.sectionId)
+  const shelf = sec ? shelfAt(sec, sel.col, sel.level) : null
+  if (!sec || !shelf) return null
+  // The address prints only what DISCRIMINATES: a one-section case never says
+  // "section 1", because saying it would imply there is a section 2.
+  const where =
+    bc.sections.length > 1 ? `section ${sectionIndex(bc, sec.id) + 1} · ` : ''
   return (
     <fieldset className="shelf-panel">
       <legend>
-        Shelf · col {shelf.col + 1} · level {shelf.level + 1}
+        Shelf · {where}col {shelf.col + 1} · level {shelf.level + 1}
       </legend>
       <label className="field inline">
         <span>Its own depth</span>
@@ -463,7 +424,7 @@ function ShelfPanel({
           value={shelf.depth}
           aria-label="this shelf's depth"
           onChange={(e) =>
-            actions.setShelfDepth(bc.id, shelf.col, shelf.level, Number(e.target.value))
+            actions.setShelfDepth(bc.id, sec.id, shelf.col, shelf.level, Number(e.target.value))
           }
         />
       </label>
@@ -476,7 +437,7 @@ function ShelfPanel({
           value={shelf.photos}
           aria-label="photos attached to this shelf"
           onChange={(e) =>
-            actions.setShelfPhotos(bc.id, shelf.col, shelf.level, Number(e.target.value))
+            actions.setShelfPhotos(bc.id, sec.id, shelf.col, shelf.level, Number(e.target.value))
           }
         />
       </label>
@@ -488,6 +449,7 @@ function ShelfPanel({
     </fieldset>
   )
 }
+
 
 function Empty({ plan }: { plan: Plan }) {
   return (

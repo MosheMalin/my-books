@@ -26,14 +26,23 @@ import {
   snapRect,
 } from './rect'
 import {
+  addSection,
+  allShelves,
   applyDefaultDepth,
+  columnCount,
   columnDividers,
   depthLines,
   frontFor,
   isTooSmall,
+  mapSection,
+  maxDepth,
   newBookcase,
+  newSection,
   reattach,
+  removeSection,
   roomFor,
+  sectionIndex,
+  sectionsTopDown,
   shelfAt,
   shelvesDifferingFromDefaultDepth,
   withColumnCount,
@@ -233,39 +242,40 @@ describe('the bookcase on the plan', () => {
   })
 
   it('divides columns ACROSS the front, whichever way it faces', () => {
-    const wide = withColumnCount(newBookcase('c1', '', rect(2, 0, 9, 1), 'S', 'r1'), 3)
+    const wide = newBookcase('c1', '', rect(2, 0, 9, 1), 'S', 'r1', 3)
     expect(columnDividers(wide).every((d) => d.a.x === d.b.x)).toBe(true)
-    const tall = withColumnCount(newBookcase('c2', '', rect(0, 2, 1, 9), 'E', 'r1'), 3)
+    const tall = newBookcase('c2', '', rect(0, 2, 1, 9), 'E', 'r1', 3)
     expect(columnDividers(tall).every((d) => d.a.y === d.b.y)).toBe(true)
   })
 
   it('draws one line per extra DECLARED depth row, not per drawn thickness', () => {
     const bc = newBookcase('c1', '', rect(2, 0, 8, 3), 'S', 'r1')
+    const deep = mapSection(bc, bc.sections[0]!.id, (s) => withDefaultDepth(s, 3))
     expect(depthLines(bc)).toHaveLength(0)
-    expect(depthLines(withDefaultDepth(bc, 3))).toHaveLength(2)
+    expect(depthLines(deep)).toHaveLength(2)
     // the drawn rectangle is unchanged: depth is declared, never derived
-    expect(withDefaultDepth(bc, 3).rect).toEqual(bc.rect)
+    expect(deep.rect).toEqual(bc.rect)
   })
 })
 
-describe('columns, levels, and the depth rule', () => {
-  const base = () => newBookcase('c1', 'case', rect(2, 0, 8, 1), 'S', 'r1')
+describe('columns, levels, and the depth rule (per section)', () => {
+  const base = () => newSection('s1')
 
   it('materializes a shelf per column per level, at the default depth', () => {
-    const bc = withColumnCount(base(), 3)
-    expect(bc.columnLevels).toEqual([5, 5, 5])
-    expect(bc.shelves).toHaveLength(15)
-    expect(shelfAt(bc, 2, 4)?.depth).toBe(1)
+    const sec = withColumnCount(base(), 3)
+    expect(sec.columnLevels).toEqual([5, 5, 5])
+    expect(sec.shelves).toHaveLength(15)
+    expect(shelfAt(sec, 2, 4)?.depth).toBe(1)
   })
 
   it('gives one column its own level count without touching the others', () => {
-    const bc = withColumnLevels(withColumnCount(base(), 3), 1, 2)
-    expect(bc.columnLevels).toEqual([5, 2, 5])
-    expect(bc.shelves.filter((s) => s.col === 1)).toHaveLength(2)
-    expect(bc.shelves.filter((s) => s.col === 0)).toHaveLength(5)
+    const sec = withColumnLevels(withColumnCount(base(), 3), 1, 2)
+    expect(sec.columnLevels).toEqual([5, 2, 5])
+    expect(sec.shelves.filter((s) => s.col === 1)).toHaveLength(2)
+    expect(sec.shelves.filter((s) => s.col === 0)).toHaveLength(5)
   })
 
-  it('MAP_PLAN §3.3 — changing the case default leaves existing shelves alone', () => {
+  it('MAP_PLAN §3.3 — changing the default leaves existing shelves alone', () => {
     const deepened = withDefaultDepth(base(), 3)
     expect(deepened.defaultDepth).toBe(3)
     expect(deepened.shelves.every((s) => s.depth === 1)).toBe(true)
@@ -273,22 +283,83 @@ describe('columns, levels, and the depth rule', () => {
   })
 
   it('MAP_PLAN §3.3 — a NEW column takes the default; the old ones do not', () => {
-    const bc = withColumnCount(withDefaultDepth(base(), 2), 2)
-    expect(bc.shelves.filter((s) => s.col === 0).every((s) => s.depth === 1)).toBe(true)
-    expect(bc.shelves.filter((s) => s.col === 1).every((s) => s.depth === 2)).toBe(true)
+    const sec = withColumnCount(withDefaultDepth(base(), 2), 2)
+    expect(sec.shelves.filter((s) => s.col === 0).every((s) => s.depth === 1)).toBe(true)
+    expect(sec.shelves.filter((s) => s.col === 1).every((s) => s.depth === 2)).toBe(true)
   })
 
   it('applies the default to existing shelves only when asked', () => {
-    const bc = applyDefaultDepth(withDefaultDepth(base(), 3))
-    expect(bc.shelves.every((s) => s.depth === 3)).toBe(true)
+    const sec = applyDefaultDepth(withDefaultDepth(base(), 3))
+    expect(sec.shelves.every((s) => s.depth === 3)).toBe(true)
   })
 
-  it('keeps a per-shelf override when the case default moves under it', () => {
-    let bc = base()
-    bc = withShelfDepth(bc, 0, 2, 3)
-    bc = withDefaultDepth(bc, 2)
-    expect(shelfAt(bc, 0, 2)?.depth).toBe(3)
-    expect(shelfAt(bc, 0, 1)?.depth).toBe(1)
+  it('keeps a per-shelf override when the default moves under it', () => {
+    let sec = base()
+    sec = withShelfDepth(sec, 0, 2, 3)
+    sec = withDefaultDepth(sec, 2)
+    expect(shelfAt(sec, 0, 2)?.depth).toBe(3)
+    expect(shelfAt(sec, 0, 1)?.depth).toBe(1)
+  })
+})
+
+describe('sections — a bookcase built of two, one on the other', () => {
+  const base = () => newBookcase('c1', 'case', rect(2, 0, 8, 1), 'S', 'r1', 3)
+
+  it('starts as ONE section, so the ordinary bookcase costs nothing', () => {
+    const bc = base()
+    expect(bc.sections).toHaveLength(1)
+    expect(columnCount(bc.sections[0]!)).toBe(3)
+    expect(allShelves(bc)).toHaveLength(15)
+  })
+
+  it('stacks a second section on top, keeping index 0 on the floor', () => {
+    const bc = addSection(base(), 'top')
+    expect(bc.sections).toHaveLength(2)
+    // stored bottom-first, drawn top-first — one reversal, in one place
+    expect(sectionsTopDown(bc)[0]!.id).toBe(bc.sections[1]!.id)
+    expect(sectionIndex(bc, bc.sections[0]!.id)).toBe(0)
+  })
+
+  it('lets the two sections divide DIFFERENTLY — the whole point', () => {
+    let bc = addSection(base(), 'top')
+    const top = bc.sections[1]!.id
+    bc = mapSection(bc, top, (s) => withColumnCount(s, 2))
+    expect(columnCount(bc.sections[0]!)).toBe(3)
+    expect(columnCount(bc.sections[1]!)).toBe(2)
+    expect(allShelves(bc)).toHaveLength(15 + 10)
+  })
+
+  it('seeds a new section from its neighbour rather than from nothing', () => {
+    // a hutch has about as many columns as the base it stands on; starting
+    // from a blank 1x5 would mean re-entering what is already on screen
+    const bc = addSection(mapSection(base(), 'c1:s1', (s) => withDefaultDepth(s, 2)), 'top')
+    expect(columnCount(bc.sections[1]!)).toBe(3)
+    expect(bc.sections[1]!.shelves.every((s) => s.depth === 2)).toBe(true)
+  })
+
+  it('gives every section a distinct id, including after a removal', () => {
+    let bc = addSection(addSection(base(), 'top'), 'top')
+    bc = removeSection(bc, bc.sections[1]!.id)
+    bc = addSection(bc, 'top')
+    expect(new Set(bc.sections.map((s) => s.id)).size).toBe(bc.sections.length)
+  })
+
+  it('refuses to remove the last section', () => {
+    const bc = base()
+    expect(removeSection(bc, bc.sections[0]!.id).sections).toHaveLength(1)
+  })
+
+  it('reports the deepest declared depth across every section', () => {
+    let bc = addSection(base(), 'top')
+    bc = mapSection(bc, bc.sections[1]!.id, (s) => applyDefaultDepth(withDefaultDepth(s, 3)))
+    expect(maxDepth(bc)).toBe(3)
+    expect(depthLines(bc)).toHaveLength(2)
+  })
+
+  it('draws the plan dividers from the BOTTOM section — the footprint', () => {
+    let bc = addSection(base(), 'top')
+    bc = mapSection(bc, bc.sections[1]!.id, (s) => withColumnCount(s, 5))
+    expect(columnDividers(bc)).toHaveLength(2) // 3 columns on the floor
   })
 })
 
@@ -304,8 +375,55 @@ describe('the exported file', () => {
       expect(back.plan.rooms[0]!.rect).toEqual(livingRoom.rect)
       expect(back.plan.cases[0]!.name).toBe('ארון הסלון')
       expect(back.plan.cases[0]!.front).toBe('S')
-      expect(back.plan.cases[0]!.shelves).toHaveLength(5)
+      expect(allShelves(back.plan.cases[0]!)).toHaveLength(5)
     }
+  })
+
+  it('reads a v2 bookcase as ONE section, so a saved drawing survives', () => {
+    // The owner had a real plan in a real browser when sections landed.
+    // Dropping it to a lab refactor would be exactly the "work will not get
+    // lost" failure the autosave exists to prevent.
+    const v2 = {
+      format: 'booksnap.map-lab.plan',
+      version: 2,
+      plan: {
+        rooms: [{ id: 'r1', name: 'סלון', rect: { x: 0, y: 0, w: 20, h: 12 } }],
+        cases: [
+          {
+            id: 'c2',
+            name: 'ארון',
+            rect: { x: 2, y: 0, w: 8, h: 1 },
+            front: 'S',
+            roomId: 'r1',
+            defaultLevels: 4,
+            defaultDepth: 2,
+            columnLevels: [4, 4],
+            shelves: [{ col: 0, level: 0, depth: 3, photos: 1 }],
+          },
+        ],
+      },
+    }
+    const back = parsePlan(JSON.stringify(v2))
+    expect(back.ok).toBe(true)
+    if (!back.ok) return
+    const bc = back.plan.cases[0]!
+    expect(bc.sections).toHaveLength(1)
+    expect(bc.sections[0]!.id).toBe('c2:s1') // rebuilt, so "add a section" cannot collide
+    expect(bc.sections[0]!.columnLevels).toEqual([4, 4])
+    expect(bc.sections[0]!.defaultDepth).toBe(2)
+    expect(shelfAt(bc.sections[0]!, 0, 0)?.depth).toBe(3)
+    expect(bc.name).toBe('ארון')
+  })
+
+  it('gives an imported case ids the section editor can extend', () => {
+    const plan: Plan = {
+      ...planWith(livingRoom),
+      cases: [addSection(newBookcase('c1', '', rect(2, 0, 8, 1), 'S', 'r1'), 'top')],
+    }
+    const back = parsePlan(serializePlan(plan))
+    if (!back.ok) throw new Error('should parse')
+    const grown = addSection(back.plan.cases[0]!, 'top')
+    expect(new Set(grown.sections.map((s) => s.id)).size).toBe(3)
   })
 
   it('never exports the tracing underlay', () => {

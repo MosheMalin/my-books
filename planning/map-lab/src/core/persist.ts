@@ -10,13 +10,17 @@
  * is an object URL that means nothing in another session.
  */
 
-import type { Bookcase, Plan, Room, Shelf } from './model'
-import { emptyPlan } from './model'
+import type { Bookcase, Plan, Room, Section, Shelf } from './model'
+import { DEFAULT_DEPTH, DEFAULT_LEVELS, emptyPlan } from './model'
 import type { Rect, Side } from './rect'
 import { integral } from './rect'
 
 export const FORMAT = 'booksnap.map-lab.plan'
-export const FORMAT_VERSION = 2
+/** 3: bookcases hold SECTIONS. A v2 case — `columnLevels`/`shelves` directly
+ *  on the bookcase — is read as a single section, because the owner has a real
+ *  drawing in a real browser and losing it to a lab refactor would be exactly
+ *  the "work will not get lost" failure this file exists to prevent. */
+export const FORMAT_VERSION = 3
 
 export type PlanFile = {
   format: typeof FORMAT
@@ -70,20 +74,46 @@ function readCase(v: unknown): Bookcase | null {
   if (!isRecord(v)) return null
   const rect = readRect(v['rect'])
   if (!rect) return null
-  const columnLevels = asArray(v['columnLevels'])
-    .map((n) => num(n, 1))
-    .map((n) => Math.max(1, Math.round(n)))
-  if (columnLevels.length === 0) return null
+  const id = str(v['id'], 'case')
   const roomId = v['roomId']
+  const sections = readSections(v, id)
+  if (sections.length === 0) return null
   return {
-    id: str(v['id'], 'case'),
+    id,
     name: str(v['name'], ''),
     rect,
     front: readSide(v['front']),
     roomId: typeof roomId === 'string' ? roomId : null,
-    defaultLevels: Math.max(1, Math.round(num(v['defaultLevels'], 5))),
-    defaultDepth: Math.max(1, Math.round(num(v['defaultDepth'], 1))),
+    sections,
+  }
+}
+
+/**
+ * v3 sections if present; otherwise the v2 shape, read as one section.
+ *
+ * Section ids are REBUILT as `<caseId>:s<n>` rather than trusted from the
+ * file: `nextSectionId` derives the next number from that pattern, so a file
+ * carrying ids in any other shape would hand out a colliding id on the first
+ * *add a section*. They are internal handles — nothing outside the document
+ * refers to one.
+ */
+function readSections(v: Record<string, unknown>, caseId: string): Section[] {
+  const listed = asArray(v['sections']).map(readSection).filter(isPresent)
+  const sections = listed.length > 0 ? listed : [readSection(v)].filter(isPresent)
+  return sections.map((s, i) => ({ ...s, id: `${caseId}:s${i + 1}` }))
+}
+
+function readSection(v: unknown): Section | null {
+  if (!isRecord(v)) return null
+  const columnLevels = asArray(v['columnLevels'])
+    .map((n) => num(n, 1))
+    .map((n) => Math.max(1, Math.round(n)))
+  if (columnLevels.length === 0) return null
+  return {
+    id: '', // assigned by readSections
     columnLevels,
+    defaultLevels: Math.max(1, Math.round(num(v['defaultLevels'], DEFAULT_LEVELS))),
+    defaultDepth: Math.max(1, Math.round(num(v['defaultDepth'], DEFAULT_DEPTH))),
     shelves: asArray(v['shelves']).map(readShelf).filter(isPresent),
   }
 }

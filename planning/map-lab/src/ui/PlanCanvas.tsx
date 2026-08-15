@@ -467,7 +467,7 @@ function CaseShape({ bc, selected }: { bc: Bookcase; selected: boolean }) {
         {bc.name}
       </text>
       <title>
-        {`${bc.name || 'bookcase'} · ${r.w}×${r.h} · ${bc.columnLevels.length} col · depth ≤${maxDepth(bc)}`}
+        {`${bc.name || 'bookcase'} · ${r.w}×${r.h} · ${bc.sections.length} section${bc.sections.length > 1 ? 's' : ''} · depth ≤${maxDepth(bc)}`}
       </title>
     </g>
   )

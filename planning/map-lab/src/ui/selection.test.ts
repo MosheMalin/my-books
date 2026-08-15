@@ -51,7 +51,7 @@ describe('the selection set', () => {
     // A shelf belongs INSIDE one bookcase. Keeping it while the selection
     // moves to a different object would leave the panel editing a cell of
     // something nobody has selected.
-    const withShelf = { rooms: [], cases: ['c1'], shelf: { caseId: 'c1', col: 0, level: 0 } }
+    const withShelf = { rooms: [], cases: ['c1'], shelf: { caseId: 'c1', sectionId: 'c1:s1', col: 0, level: 0 } }
     expect(toggle(withShelf, 'room', 'r1').shelf).toBeNull()
   })
 

@@ -7,7 +7,7 @@ look at.
 
 ```bash
 npm install --prefix planning/map-lab
-npm --prefix planning/map-lab test          # 53 tests, ~1s
+npm --prefix planning/map-lab test          # 63 tests, ~1s
 ```
 
 The dev server is `map-lab` in `.claude/launch.json` (port 5175 — 5173 is the
@@ -47,18 +47,22 @@ into a menu.
    inside a room attaches it; the *Moves with* dropdown points it anywhere,
    including nowhere. Dragging the case yourself can re-home it; a room moving
    its own furniture never changes whose furniture it is.
-7. **Watch the depth rule.** Set a case's *default* depth to 3. Its existing
+7. **Stack two bookcases.** A low base with a taller unit on top is ONE
+   bookcase with two **sections**: press *a second section on top*, then give
+   it its own column count. Sections divide independently and carry their own
+   depth; with one section the editor shows no section chrome at all.
+8. **Watch the depth rule.** Set a case's *default* depth to 3. Its existing
    shelves keep depth 1 and the panel says how many — changing a default never
    reaches back into shelves that already exist, because that would delete the
    location of every book standing in a back row. A **new** column takes the
    new default. Applying to existing shelves is a separate button.
-8. **Black or white** — two real themes, not an inverted filter.
-9. **Trace a sketch** — your floor-plan photo goes behind the canvas at
+9. **Black or white** — two real themes, not an inverted filter.
+10. **Trace a sketch** — your floor-plan photo goes behind the canvas at
    adjustable opacity. Draw over it, then remove it. That is the whole of "or
    provide a sketch": no image understanding, no paid call.
-10. **On a phone.** The layout stacks under 820px and the toolbar gives its
+11. **On a phone.** The layout stacks under 820px and the toolbar gives its
    space back to the canvas. This is the viewport the verdict should come from.
-11. **Save.** Every edit is written to this browser immediately and the
+12. **Save.** Every edit is written to this browser immediately and the
    toolbar says so. *Save to file* is the copy that survives a cleared browser
    — integers in abstract units, no pixel, no viewport, no centimetre. Send
    that file over; it is the artefact.
@@ -72,7 +76,7 @@ fingers. Dragging empty space draws a selection band — it never moves the view
 src/core/     framework-free, pure, ports VERBATIM at P6.3
   geom.ts         points, the grid, snapping one coordinate
   rect.ts         rectangles, edge-to-edge attachment, resize handles
-  model.ts        Plan / Room / Bookcase / Shelf + the pure edits
+  model.ts        Plan / Room / Bookcase / Section / Shelf + the pure edits
   history.ts      undo stack (tagged commits collapse a run of keystrokes)
   persist.ts      export/import, defensive on the way in
   core.test.ts    the rules that port with the core

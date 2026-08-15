@@ -5,7 +5,8 @@
  *
  *   Plan       top-down, per Place: rooms and bookcases, both AXIS-ALIGNED
  *              RECTANGLES on the grid.
- *   Elevation  front-on, per Bookcase: columns across x levels down.
+ *   Elevation  front-on, per Bookcase: SECTIONS stacked bottom to top, each
+ *              divided into columns across x levels down.
  *
  * A length is not a column count. The rectangle says where the furniture
  * stands and how much wall it takes; the elevation says how it is divided.
@@ -21,7 +22,7 @@ import { MIN_SIZE, OPPOSITE, bottom, center, contains, flushSide, right } from '
 // --- shelves ---------------------------------------------------------------
 
 /**
- * One cell of a bookcase's elevation — and, in the product, one `Shelf` row.
+ * One cell of a section's elevation — and, in the product, one `Shelf` row.
  *
  * MAP_PLAN §3.1: a drawn slot IS a Shelf, created empty, carrying an address.
  * `photos` is the lab's stand-in for the captures that would hang off it, and
@@ -30,10 +31,35 @@ import { MIN_SIZE, OPPOSITE, bottom, center, contains, flushSide, right } from '
 export type Shelf = {
   col: number
   level: number
-  /** ITS OWN depth. Copied from the case default at creation — never read
+  /** ITS OWN depth. Copied from the section default at creation — never read
    *  through to the parent afterwards (MAP_PLAN §3.3). */
   depth: number
   photos: number
+}
+
+/**
+ * One built unit of a bookcase: a low base, or the taller case standing on it
+ * (owner, 2026-08-16 — *"sometimes a bookcase is built of 2 bookcases one on
+ * top the other"*).
+ *
+ * ⚠ **Called a SECTION, deliberately.** Not a "unit" — the plan's measurements
+ * are already units. Not a "tier" — too close to `level`, which is the shelf
+ * row inside a column. This project has been bitten by exactly this before
+ * (depth ≠ row ≠ band), so the name is part of the design.
+ *
+ * A plain bookcase has ONE section, so the ordinary case costs nothing: the
+ * editor hides the section header entirely until a second one exists.
+ */
+export type Section = {
+  id: string
+  /** One entry per column, holding that column's level count. The column count
+   *  is this array's length; there is no second field to disagree. */
+  columnLevels: number[]
+  /** Applied WHEN A SHELF IS CREATED. Editing them does not reach back into
+   *  existing shelves — that is an explicit action (MAP_PLAN §3.3). */
+  defaultLevels: number
+  defaultDepth: number
+  shelves: Shelf[]
 }
 
 export type Room = {
@@ -51,17 +77,12 @@ export type Bookcase = {
   /** Which edge the books face out of. Derived when the case is drawn flush
    *  against a wall, and turnable by hand afterwards. */
   front: Side
-  /** The room the case stands in, by containment of its centre. Null for a
-   *  case standing outside every room — legal, and drawn as such. */
+  /** The room the case stands in. Null for a case attached to no room. */
   roomId: string | null
-  /** Defaults applied WHEN A SHELF IS CREATED. Editing them does not reach
-   *  back into existing shelves — that is an explicit action. */
-  defaultLevels: number
-  defaultDepth: number
-  /** One entry per column, holding that column's level count. The column
-   *  count is this array's length; there is no second field to disagree. */
-  columnLevels: number[]
-  shelves: Shelf[]
+  /** **Bottom first.** Index 0 is what stands on the floor. The elevation
+   *  renders them in reverse, because a screen draws downwards and furniture
+   *  stacks upwards — see `sectionsTopDown`. */
+  sections: Section[]
 }
 
 export type Underlay = {
@@ -85,7 +106,7 @@ export type Plan = {
 
 export const emptyPlan = (): Plan => ({ rooms: [], cases: [], underlay: null })
 
-// --- bookcases -------------------------------------------------------------
+// --- constants -------------------------------------------------------------
 
 export const DEFAULT_LEVELS = 5
 export const DEFAULT_DEPTH = 1
@@ -95,16 +116,231 @@ export function isTooSmall(r: Rect): boolean {
   return r.w < MIN_SIZE || r.h < MIN_SIZE
 }
 
+export const clampDepth = (d: number): number =>
+  Math.max(1, Math.min(MAX_DEPTH, Math.round(d)))
+
+/** Turn the case a quarter turn: N → E → S → W → N. */
+export const TURN: Record<Side, Side> = { N: 'E', E: 'S', S: 'W', W: 'N' }
+
+// --- sections --------------------------------------------------------------
+
+export function newSection(id: string, columns = 1): Section {
+  const base: Section = {
+    id,
+    columnLevels: [],
+    defaultLevels: DEFAULT_LEVELS,
+    defaultDepth: DEFAULT_DEPTH,
+    shelves: [],
+  }
+  return withColumnCount(base, Math.max(1, columns))
+}
+
+/** Bottom-up index of a section, or -1. The panel numbers sections this way
+ *  because that is how they are built: section 1 stands on the floor. */
+export const sectionIndex = (bc: Bookcase, sectionId: string): number =>
+  bc.sections.findIndex((s) => s.id === sectionId)
+
+export const sectionById = (bc: Bookcase, sectionId: string): Section | null =>
+  bc.sections.find((s) => s.id === sectionId) ?? null
+
+/** Sections as the ELEVATION draws them: topmost first. */
+export const sectionsTopDown = (bc: Bookcase): Section[] => bc.sections.slice().reverse()
+
+/** A stable id, derived from the case's existing sections — no clock, no
+ *  randomness, so the same edits always produce the same document. */
+function nextSectionId(bc: Bookcase): string {
+  const used = bc.sections
+    .map((s) => Number(s.id.split(':s')[1]))
+    .filter((n) => Number.isFinite(n))
+  return `${bc.id}:s${Math.max(0, ...used) + 1}`
+}
+
 /**
- * Which way the books face, for a case drawn inside a room.
- *
- * Flush against the north wall means facing south. That is the only rule, and
- * it is right often enough that *Turn* is a correction rather than a step.
+ * Add a section. A new one copies the NEIGHBOURING section's shape — a hutch
+ * usually has about as many columns as the base it stands on, and starting
+ * from a blank 1×5 would mean re-entering what is already on screen.
  */
-export function frontFor(rect: Rect, room: Room | null): Side {
-  const flush = room ? flushSide(rect, room.rect) : null
-  if (flush) return OPPOSITE[flush]
-  return rect.w >= rect.h ? 'S' : 'E'
+export function addSection(bc: Bookcase, where: 'top' | 'bottom'): Bookcase {
+  const neighbour = where === 'top' ? bc.sections[bc.sections.length - 1] : bc.sections[0]
+  const blank: Section = {
+    id: nextSectionId(bc),
+    columnLevels: [],
+    defaultLevels: neighbour?.defaultLevels ?? DEFAULT_LEVELS,
+    defaultDepth: neighbour?.defaultDepth ?? DEFAULT_DEPTH,
+    shelves: [],
+  }
+  const made = withColumnCount(blank, neighbour ? columnCount(neighbour) : 1)
+  return {
+    ...bc,
+    sections: where === 'top' ? bc.sections.concat(made) : [made, ...bc.sections],
+  }
+}
+
+/** Remove a section — never the last one. A bookcase with no sections is not a
+ *  simpler bookcase, it is an unaddressable one. */
+export function removeSection(bc: Bookcase, sectionId: string): Bookcase {
+  if (bc.sections.length <= 1) return bc
+  return { ...bc, sections: bc.sections.filter((s) => s.id !== sectionId) }
+}
+
+export function mapSection(
+  bc: Bookcase,
+  sectionId: string,
+  fn: (s: Section) => Section,
+): Bookcase {
+  return { ...bc, sections: bc.sections.map((s) => (s.id === sectionId ? fn(s) : s)) }
+}
+
+// --- section edits (pure, one section at a time) ---------------------------
+
+export function columnCount(sec: Section): number {
+  return sec.columnLevels.length
+}
+
+export function shelfAt(sec: Section, col: number, level: number): Shelf | null {
+  return sec.shelves.find((s) => s.col === col && s.level === level) ?? null
+}
+
+/**
+ * Add or remove trailing columns. New columns get the section's CURRENT
+ * default level count and their shelves the current default depth — the
+ * creation-time copy of §3.3.
+ */
+export function withColumnCount(sec: Section, count: number): Section {
+  const n = Math.max(1, Math.round(count))
+  if (n === sec.columnLevels.length) return sec
+  if (n < sec.columnLevels.length) {
+    return {
+      ...sec,
+      columnLevels: sec.columnLevels.slice(0, n),
+      shelves: sec.shelves.filter((s) => s.col < n),
+    }
+  }
+  const columnLevels = sec.columnLevels.slice()
+  const shelves = sec.shelves.slice()
+  for (let col = sec.columnLevels.length; col < n; col++) {
+    columnLevels.push(sec.defaultLevels)
+    for (let level = 0; level < sec.defaultLevels; level++) {
+      shelves.push({ col, level, depth: sec.defaultDepth, photos: 0 })
+    }
+  }
+  return { ...sec, columnLevels, shelves }
+}
+
+/** Change ONE column's level count. Growing creates shelves at the section's
+ *  current default depth; shrinking drops the bottom ones. */
+export function withColumnLevels(sec: Section, col: number, levels: number): Section {
+  if (col < 0 || col >= sec.columnLevels.length) return sec
+  const n = Math.max(1, Math.round(levels))
+  const current = sec.columnLevels[col]!
+  if (n === current) return sec
+  const columnLevels = sec.columnLevels.slice()
+  columnLevels[col] = n
+  let shelves = sec.shelves.filter((s) => s.col !== col || s.level < n)
+  if (n > current) {
+    for (let level = current; level < n; level++) {
+      shelves = shelves.concat({ col, level, depth: sec.defaultDepth, photos: 0 })
+    }
+  }
+  return { ...sec, columnLevels, shelves }
+}
+
+/** How many shelves live in columns at or beyond `from` — what a "remove
+ *  column" confirmation has to be able to say. */
+export function shelvesInColumns(sec: Section, from: number): number {
+  return sec.shelves.filter((s) => s.col >= from).length
+}
+
+/**
+ * Set the section's default depth. **Existing shelves are untouched** — that
+ * is the rule (MAP_PLAN §3.3), and the reason it is a rule: reading the parent
+ * live would delete the location of every book standing at depth 2 the moment
+ * someone edits the section to 1.
+ */
+export function withDefaultDepth(sec: Section, depth: number): Section {
+  return { ...sec, defaultDepth: clampDepth(depth) }
+}
+
+export function withDefaultLevels(sec: Section, levels: number): Section {
+  return { ...sec, defaultLevels: Math.max(1, Math.round(levels)) }
+}
+
+/** How many existing shelves would CHANGE if the default were applied — the
+ *  number the confirmation shows. */
+export function shelvesDifferingFromDefaultDepth(sec: Section): number {
+  return sec.shelves.filter((s) => s.depth !== sec.defaultDepth).length
+}
+
+/**
+ * The explicit, opt-in application of the default to existing shelves.
+ *
+ * In the product this must additionally refuse to take a shelf below its
+ * deepest OCCUPIED row. The lab has no books, so it carries the signature and
+ * the note rather than a fake occupancy check — the clamp belongs to P6.1,
+ * where copies exist.
+ */
+export function applyDefaultDepth(sec: Section): Section {
+  return { ...sec, shelves: sec.shelves.map((s) => ({ ...s, depth: sec.defaultDepth })) }
+}
+
+export function applyDefaultLevels(sec: Section): Section {
+  let out = sec
+  for (let col = 0; col < sec.columnLevels.length; col++) {
+    out = withColumnLevels(out, col, sec.defaultLevels)
+  }
+  return out
+}
+
+export function withShelfDepth(
+  sec: Section,
+  col: number,
+  level: number,
+  depth: number,
+): Section {
+  const d = clampDepth(depth)
+  return {
+    ...sec,
+    shelves: sec.shelves.map((s) =>
+      s.col === col && s.level === level ? { ...s, depth: d } : s,
+    ),
+  }
+}
+
+export function withShelfPhotos(
+  sec: Section,
+  col: number,
+  level: number,
+  photos: number,
+): Section {
+  const n = Math.max(0, Math.round(photos))
+  return {
+    ...sec,
+    shelves: sec.shelves.map((s) =>
+      s.col === col && s.level === level ? { ...s, photos: n } : s,
+    ),
+  }
+}
+
+// --- bookcase aggregates ---------------------------------------------------
+
+export function newBookcase(
+  id: string,
+  name: string,
+  rect: Rect,
+  front: Side,
+  roomId: string | null,
+  columns = 1,
+): Bookcase {
+  return { id, name, rect, front, roomId, sections: [newSection(`${id}:s1`, columns)] }
+}
+
+export const allShelves = (bc: Bookcase): Shelf[] => bc.sections.flatMap((s) => s.shelves)
+
+export function maxDepth(bc: Bookcase): number {
+  return bc.sections.reduce(
+    (m, sec) => sec.shelves.reduce((n, s) => Math.max(n, s.depth), Math.max(m, sec.defaultDepth)),
+    1,
+  )
 }
 
 /**
@@ -137,6 +373,18 @@ export function reattach(bc: Bookcase, plan: Plan): Bookcase {
   return correctFront({ ...bc, roomId: room.id }, room)
 }
 
+/**
+ * Which way the books face, for a case drawn inside a room.
+ *
+ * Flush against the north wall means facing south. That is the only rule, and
+ * it is right often enough that *Turn* is a correction rather than a step.
+ */
+export function frontFor(rect: Rect, room: Room | null): Side {
+  const flush = room ? flushSide(rect, room.rect) : null
+  if (flush) return OPPOSITE[flush]
+  return rect.w >= rect.h ? 'S' : 'E'
+}
+
 export function roomAt(plan: Plan, p: Pt): Room | null {
   for (let i = plan.rooms.length - 1; i >= 0; i--) {
     const r = plan.rooms[i]!
@@ -161,152 +409,6 @@ export const caseLength = (bc: Bookcase): number =>
 export const caseThickness = (bc: Bookcase): number =>
   frontIsHorizontal(bc) ? bc.rect.h : bc.rect.w
 
-export function maxDepth(bc: Bookcase): number {
-  return bc.shelves.reduce((m, s) => Math.max(m, s.depth), bc.defaultDepth)
-}
-
-export function columnCount(bc: Bookcase): number {
-  return bc.columnLevels.length
-}
-
-export function shelfAt(bc: Bookcase, col: number, level: number): Shelf | null {
-  return bc.shelves.find((s) => s.col === col && s.level === level) ?? null
-}
-
-export function newBookcase(
-  id: string,
-  name: string,
-  rect: Rect,
-  front: Side,
-  roomId: string | null,
-  columns = 1,
-): Bookcase {
-  const base: Bookcase = {
-    id,
-    name,
-    rect,
-    front,
-    roomId,
-    defaultLevels: DEFAULT_LEVELS,
-    defaultDepth: DEFAULT_DEPTH,
-    columnLevels: [],
-    shelves: [],
-  }
-  return withColumnCount(base, Math.max(1, columns))
-}
-
-/**
- * Add or remove trailing columns. New columns get the case's CURRENT default
- * level count and their shelves get the current default depth — the creation
- * -time copy of §3.3. Removing a column drops its shelves; the caller is
- * expected to have said how many (`shelvesInColumns`).
- */
-export function withColumnCount(bc: Bookcase, count: number): Bookcase {
-  const n = Math.max(1, Math.round(count))
-  if (n === bc.columnLevels.length) return bc
-  if (n < bc.columnLevels.length) {
-    return {
-      ...bc,
-      columnLevels: bc.columnLevels.slice(0, n),
-      shelves: bc.shelves.filter((s) => s.col < n),
-    }
-  }
-  const columnLevels = bc.columnLevels.slice()
-  const shelves = bc.shelves.slice()
-  for (let col = bc.columnLevels.length; col < n; col++) {
-    columnLevels.push(bc.defaultLevels)
-    for (let level = 0; level < bc.defaultLevels; level++) {
-      shelves.push({ col, level, depth: bc.defaultDepth, photos: 0 })
-    }
-  }
-  return { ...bc, columnLevels, shelves }
-}
-
-/** Change ONE column's level count. Growing creates shelves at the case's
- *  current default depth; shrinking drops the bottom ones. */
-export function withColumnLevels(bc: Bookcase, col: number, levels: number): Bookcase {
-  if (col < 0 || col >= bc.columnLevels.length) return bc
-  const n = Math.max(1, Math.round(levels))
-  const current = bc.columnLevels[col]!
-  if (n === current) return bc
-  const columnLevels = bc.columnLevels.slice()
-  columnLevels[col] = n
-  let shelves = bc.shelves.filter((s) => s.col !== col || s.level < n)
-  if (n > current) {
-    for (let level = current; level < n; level++) {
-      shelves = shelves.concat({ col, level, depth: bc.defaultDepth, photos: 0 })
-    }
-  }
-  return { ...bc, columnLevels, shelves }
-}
-
-/** How many shelves live in columns at or beyond `from` — what a "remove
- *  column" confirmation has to be able to say. */
-export function shelvesInColumns(bc: Bookcase, from: number): number {
-  return bc.shelves.filter((s) => s.col >= from).length
-}
-
-/**
- * Set the case's default depth. **Existing shelves are untouched** — that is
- * the rule (MAP_PLAN §3.3), and the reason it is a rule: reading the parent
- * live would delete the location of every book standing at depth 2 the moment
- * someone edits the case to 1.
- */
-export function withDefaultDepth(bc: Bookcase, depth: number): Bookcase {
-  return { ...bc, defaultDepth: clampDepth(depth) }
-}
-
-export function withDefaultLevels(bc: Bookcase, levels: number): Bookcase {
-  return { ...bc, defaultLevels: Math.max(1, Math.round(levels)) }
-}
-
-/** How many existing shelves would CHANGE if the default were applied — the
- *  number the confirmation shows. */
-export function shelvesDifferingFromDefaultDepth(bc: Bookcase): number {
-  return bc.shelves.filter((s) => s.depth !== bc.defaultDepth).length
-}
-
-/**
- * The explicit, opt-in application of the default to existing shelves.
- *
- * In the product this must additionally refuse to take a shelf below its
- * deepest OCCUPIED row. The lab has no books, so it carries the signature and
- * the note rather than a fake occupancy check — the clamp belongs to P6.1,
- * where copies exist.
- */
-export function applyDefaultDepth(bc: Bookcase): Bookcase {
-  return { ...bc, shelves: bc.shelves.map((s) => ({ ...s, depth: bc.defaultDepth })) }
-}
-
-export function applyDefaultLevels(bc: Bookcase): Bookcase {
-  let out = bc
-  for (let col = 0; col < bc.columnLevels.length; col++) {
-    out = withColumnLevels(out, col, bc.defaultLevels)
-  }
-  return out
-}
-
-export function withShelfDepth(
-  bc: Bookcase,
-  col: number,
-  level: number,
-  depth: number,
-): Bookcase {
-  const d = clampDepth(depth)
-  return {
-    ...bc,
-    shelves: bc.shelves.map((s) =>
-      s.col === col && s.level === level ? { ...s, depth: d } : s,
-    ),
-  }
-}
-
-export const clampDepth = (d: number): number =>
-  Math.max(1, Math.min(MAX_DEPTH, Math.round(d)))
-
-/** Turn the case a quarter turn: N → E → S → W → N. */
-export const TURN: Record<Side, Side> = { N: 'E', E: 'S', S: 'W', W: 'N' }
-
 // --- drawing aids ----------------------------------------------------------
 
 /** The front edge as a segment — the face the books look out of. */
@@ -324,10 +426,17 @@ export function frontEdge(bc: Bookcase): { a: Pt; b: Pt } {
   }
 }
 
-/** Column boundaries, drawn perpendicular to the front. A drawing aid only —
- *  the plan never derives a column count from a length. */
+/**
+ * Column boundaries, drawn perpendicular to the front.
+ *
+ * ⚠ From the BOTTOM section only. Once sections can divide differently there
+ * is no single honest answer, and the bottom one is the least arbitrary: the
+ * plan rectangle is a footprint, and the footprint is what stands on the
+ * floor. A drawing aid either way — the plan never derives a column count from
+ * a length.
+ */
 export function columnDividers(bc: Bookcase): { a: Pt; b: Pt }[] {
-  const cols = columnCount(bc)
+  const cols = bc.sections[0] ? columnCount(bc.sections[0]) : 0
   if (cols < 2) return []
   const r = bc.rect
   const out: { a: Pt; b: Pt }[] = []
@@ -374,17 +483,14 @@ export function depthLines(bc: Bookcase): { a: Pt; b: Pt }[] {
 // --- whole-plan queries ----------------------------------------------------
 
 export function shelfCount(plan: Plan): number {
-  return plan.cases.reduce((n, bc) => n + bc.shelves.length, 0)
+  return plan.cases.reduce((n, bc) => n + allShelves(bc).length, 0)
 }
 
 export function planBounds(plan: Plan): { min: Pt; max: Pt } {
   const rects = [...plan.rooms.map((r) => r.rect), ...plan.cases.map((c) => c.rect)]
   if (rects.length === 0) return { min: pt(0, 0), max: pt(0, 0) }
   return {
-    min: pt(
-      Math.min(...rects.map((r) => r.x)),
-      Math.min(...rects.map((r) => r.y)),
-    ),
+    min: pt(Math.min(...rects.map((r) => r.x)), Math.min(...rects.map((r) => r.y))),
     max: pt(Math.max(...rects.map(right)), Math.max(...rects.map(bottom))),
   }
 }

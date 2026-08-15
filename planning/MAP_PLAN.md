@@ -57,7 +57,7 @@ the owner named that appear nowhere:
 
 ## 3. The model, decided before any code
 
-Four rules, each of which is cheap now and expensive later.
+Six rules, each of which is cheap now and expensive later.
 
 ### 3.1 A drawn shelf slot IS a `Shelf`
 
@@ -81,7 +81,7 @@ wrong today.
 | | what it is | what it carries |
 |---|---|---|
 | **Plan** | top-down, per Place | walls; where a case stands, along which wall, how long, facing which way |
-| **Elevation** | front-on, per Bookcase | columns across × levels down; the shelf photo in each cell |
+| **Elevation** | front-on, per Bookcase | sections stacked bottom to top (§3.6), each columns across × levels down; the shelf photo in each cell |
 
 They are related — a longer case usually has more columns — but they are not
 the same picture, and a length is not a column count. The moment one canvas
@@ -117,6 +117,61 @@ canvas resize, a phone rotation or a zoom must not be able to corrupt a plan.
 A floor plan does not mirror when the UI language flips — the furniture did
 not move. Same rule `UI_PLAN.md` §3 already pinned for the elevation grid.
 Labels inside the plan follow the UI language; the geometry does not.
+
+### 3.6 A bookcase is one or more **sections**
+
+**[DECIDED 2026-08-16 — owner]** *"Sometimes a bookcase is built of 2
+bookcases one on top the other: a low one with X columns, and a higher one on
+top of it with Y columns."*
+
+That is **one piece of furniture** — one footprint on the floor, one name, one
+room it moves with — so it stays **one Bookcase on the plan** and gains
+structure in the *elevation*:
+
+```
+Bookcase ──> sections (bottom → top)
+               section 1 (on the floor)   X columns × levels, its own depth
+               section 2 (on top)         Y columns × levels, its own depth
+```
+
+The shelf address becomes **(section, column, level)**. A plain bookcase has
+**one** section, so the ordinary case costs nothing — the editor renders no
+section chrome at all until a second one exists, the way the library switcher
+stays a plain label until a second library does.
+
+**Why not two Bookcases stacked.** The plan is top-down: two cases sharing one
+footprint puts two objects in one place, so a tap is ambiguous, *"where is my
+book"* answers *case 2* about something that is visibly one bookcase, and
+moving the room has to keep two records in step. That is VISION §5.7's
+argument against making "shelf 3, back row" its own Shelf — *"two shelves
+occupying one physical slot… it loses the fact that they are one piece of
+furniture"* — turned vertical.
+
+**Why not per-column level counts** (which already exist): those give a ragged
+top edge on one grid. They cannot say *above this height the case is divided
+differently*, which is exactly what a hutch on a base is.
+
+Three rules that come with it:
+
+- **the address prints only what discriminates.** A one-section case never says
+  "section 1", because saying it would imply there is a section 2. Same for
+  every accessible name in the editor;
+- **depth is per section**, seeded into each shelf at creation exactly as §3.3
+  requires. A deep base under a shallow top is the common build;
+- **the plan rectangle is the footprint**, so it is the *deepest* section's
+  outline — the thing you would trip over — and the plan's column dividers are
+  drawn from the **bottom** section. Once sections divide differently there is
+  no single honest answer, and the one standing on the floor is the least
+  arbitrary.
+
+⚠ **Naming, and it is part of the design.** Not a *unit* — the plan's
+measurements are already units. Not a *tier* — too close to `level`, the shelf
+row inside a column. **Section**, which is what modular shelving is sold as.
+This project has been bitten by exactly this before (depth ≠ row ≠ band).
+
+The general form — free-form blocks placed anywhere in the elevation grid,
+which would also express a desk niche or an L — is a layout editor, and is
+deliberately **not** built until something asks for it.
 
 ## 4. The fork, and how it was settled
 

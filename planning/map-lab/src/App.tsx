@@ -3,19 +3,23 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Bookcase, Plan, Room, Underlay } from './core/model'
 import {
   TURN,
+  addSection,
   applyDefaultDepth,
   applyDefaultLevels,
   emptyPlan,
   frontFor,
+  mapSection,
   newBookcase,
   planBounds,
   reattach,
+  removeSection,
   roomFor,
   withColumnCount,
   withColumnLevels,
   withDefaultDepth,
   withDefaultLevels,
   withShelfDepth,
+  withShelfPhotos,
 } from './core/model'
 import type { Rect } from './core/rect'
 import type { History } from './core/history'
@@ -293,26 +297,34 @@ export default function App() {
       mapCase(id, (bc) => ({ ...bc, rect: { ...bc.rect, w: size(w), h: size(h) } }), `size:${id}`),
     setCaseRoom: (id, roomId) => mapCase(id, (bc) => ({ ...bc, roomId })),
     turnCase: (id) => mapCase(id, (bc) => ({ ...bc, front: TURN[bc.front] })),
-    setColumnCount: (id, n) => mapCase(id, (bc) => withColumnCount(bc, n)),
-    setColumnLevels: (id, col, n) => mapCase(id, (bc) => withColumnLevels(bc, col, n)),
-    setDefaultLevels: (id, n) =>
-      mapCase(id, (bc) => withDefaultLevels(bc, n), `deflevels:${id}`),
-    applyDefaultLevels: (id) => mapCase(id, applyDefaultLevels),
-    setDefaultDepth: (id, n) => mapCase(id, (bc) => withDefaultDepth(bc, n), `defdepth:${id}`),
-    applyDefaultDepth: (id) => mapCase(id, applyDefaultDepth),
-    setShelfDepth: (id, col, level, n) =>
-      mapCase(id, (bc) => withShelfDepth(bc, col, level, n), `shelfdepth:${id}:${col}:${level}`),
-    setShelfPhotos: (id, col, level, n) =>
+    setColumnCount: (id, sid, n) => mapCase(id, (bc) => mapSection(bc, sid, (s) => withColumnCount(s, n))),
+    setColumnLevels: (id, sid, col, n) =>
+      mapCase(id, (bc) => mapSection(bc, sid, (s) => withColumnLevels(s, col, n))),
+    setDefaultLevels: (id, sid, n) =>
+      mapCase(id, (bc) => mapSection(bc, sid, (s) => withDefaultLevels(s, n)), `deflevels:${sid}`),
+    applyDefaultLevels: (id, sid) => mapCase(id, (bc) => mapSection(bc, sid, applyDefaultLevels)),
+    setDefaultDepth: (id, sid, n) =>
+      mapCase(id, (bc) => mapSection(bc, sid, (s) => withDefaultDepth(s, n)), `defdepth:${sid}`),
+    applyDefaultDepth: (id, sid) => mapCase(id, (bc) => mapSection(bc, sid, applyDefaultDepth)),
+    setShelfDepth: (id, sid, col, level, n) =>
       mapCase(
         id,
-        (bc) => ({
-          ...bc,
-          shelves: bc.shelves.map((s) =>
-            s.col === col && s.level === level ? { ...s, photos: Math.max(0, Math.round(n)) } : s,
-          ),
-        }),
-        `shelfphotos:${id}:${col}:${level}`,
+        (bc) => mapSection(bc, sid, (s) => withShelfDepth(s, col, level, n)),
+        `shelfdepth:${sid}:${col}:${level}`,
       ),
+    setShelfPhotos: (id, sid, col, level, n) =>
+      mapCase(
+        id,
+        (bc) => mapSection(bc, sid, (s) => withShelfPhotos(s, col, level, n)),
+        `shelfphotos:${sid}:${col}:${level}`,
+      ),
+    addSection: (id, where) => mapCase(id, (bc) => addSection(bc, where)),
+    removeSection: (id, sid) => {
+      mapCase(id, (bc) => removeSection(bc, sid))
+      // The selected cell may have been inside it. Dropping the shelf while
+      // keeping the case selected is the least surprising landing.
+      setSelection((sel) => (sel.shelf?.sectionId === sid ? { ...sel, shelf: null } : sel))
+    },
     deleteSelection,
     copySelection,
     paste,

@@ -416,6 +416,44 @@ legend { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-s
 /* --- elevation ----------------------------------------------------------- */
 
 .elevation { margin: 10px 0; }
+
+/* Sections read as stacked units: a rule between them, and the one on top is
+ * drawn on top. With a single section none of this chrome renders at all. */
+.elev-section { padding: 8px 0; }
+.elev-section + .elev-section { border-top: 2px solid var(--line); }
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.section-name { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+.section-where { color: var(--dim); text-transform: none; letter-spacing: 0; }
+.section-head button { min-height: 26px; padding: 2px 8px; }
+
+.section-add {
+  width: 100%;
+  margin: 4px 0;
+  font-size: 12px;
+  color: var(--dim);
+  border-style: dashed;
+}
+.section-add:hover:not(:disabled) { color: var(--ink); }
+
+.section-defaults {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--dim);
+}
+.section-defaults label { display: flex; align-items: center; gap: 4px; }
+.section-defaults input { width: 52px; min-height: 28px; padding: 4px 6px; }
+.section-defaults button { min-height: 28px; padding: 2px 8px; font-size: 11px; }
+
 .elevation-grid { display: grid; gap: 6px; }
 .elev-col { display: flex; flex-direction: column; gap: 3px; }
 .elev-col-head { font-size: 11px; color: var(--dim); text-align: center; }

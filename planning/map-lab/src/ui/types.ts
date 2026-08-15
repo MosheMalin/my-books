@@ -23,7 +23,10 @@ export type Theme = 'dark' | 'light'
 export type Selection = {
   rooms: string[]
   cases: string[]
-  shelf: { caseId: string; col: number; level: number } | null
+  /** The cell selected INSIDE a bookcase. Its address is (section, column,
+   *  level) — a case may be built of a base and a taller unit standing on it,
+   *  and those divide differently. */
+  shelf: { caseId: string; sectionId: string; col: number; level: number } | null
 }
 
 export const EMPTY: Selection = { rooms: [], cases: [], shelf: null }
