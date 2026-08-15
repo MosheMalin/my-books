@@ -10,6 +10,7 @@
 import { useRef } from 'react'
 
 import type { Underlay } from '../core/model'
+import { Menu } from './Menu'
 import type { Theme, Tool } from './types'
 
 type Props = {
@@ -98,52 +99,40 @@ export function Toolbar(props: Props) {
         ))}
       </div>
 
+      {/* All five edit commands live here now that every one of them has a
+          working shortcut — five toolbar slots returned to the canvas. */}
       <div className="group">
-        <button type="button" onClick={props.onUndo} disabled={!props.canUndo} title="Undo (Ctrl+Z)">
-          Undo
-        </button>
-        <button
-          type="button"
-          onClick={props.onRedo}
-          disabled={!props.canRedo}
-          title="Redo (Ctrl+Shift+Z)"
-        >
-          Redo
-        </button>
-      </div>
-
-      <div className="group">
-        {/* Copy and Paste are hidden on a phone: there is no Ctrl there to
-            explain them, the panel offers both when something is selected,
-            and every toolbar row costs the canvas 30 px of an 812 px screen.
-            Delete stays — it is the one of the three you cannot do without. */}
-        <button
-          type="button"
-          className="wide-only"
-          onClick={props.onCopy}
-          disabled={nothingSelected}
-          title="Copy the selection (Ctrl+C)"
-        >
-          Copy
-        </button>
-        <button
-          type="button"
-          className="wide-only"
-          onClick={props.onPaste}
-          disabled={!props.canPaste}
-          title="Paste a copy, offset from the original (Ctrl+V)"
-        >
-          Paste
-        </button>
-        <button
-          type="button"
-          className="danger"
-          onClick={props.onDelete}
-          disabled={nothingSelected}
-          title="Delete everything selected (Delete)"
-        >
-          Delete{props.selectedCount > 1 ? ` ${props.selectedCount}` : ''}
-        </button>
+        <Menu
+          label="Edit"
+          items={[
+            { label: 'Undo', shortcut: 'Ctrl+Z', disabled: !props.canUndo, onSelect: props.onUndo },
+            {
+              label: 'Redo',
+              shortcut: 'Ctrl+Y',
+              disabled: !props.canRedo,
+              onSelect: props.onRedo,
+            },
+            {
+              label: 'Copy',
+              shortcut: 'Ctrl+C',
+              disabled: nothingSelected,
+              onSelect: props.onCopy,
+            },
+            {
+              label: 'Paste',
+              shortcut: 'Ctrl+V',
+              disabled: !props.canPaste,
+              onSelect: props.onPaste,
+            },
+            {
+              label: props.selectedCount > 1 ? `Delete ${props.selectedCount}` : 'Delete',
+              shortcut: 'Del',
+              disabled: nothingSelected,
+              danger: true,
+              onSelect: props.onDelete,
+            },
+          ]}
+        />
       </div>
 
       <div className="group">

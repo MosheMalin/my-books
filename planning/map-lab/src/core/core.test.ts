@@ -55,6 +55,29 @@ describe('rectangles', () => {
     expect(rectFrom(pt(10, 8), pt(2, 3))).toEqual(rect(2, 3, 8, 5))
   })
 
+  it('keeps every rectangle on WHOLE units', () => {
+    // Rendered on screen as "11.000000000000004×9". `snapRect` moves by adding
+    // a correction, and x + (round(x) - x) is not exactly round(x); the dust
+    // then became a snap candidate and spread to the next rectangle.
+    expect(rectFrom(pt(0.0000001, 0), pt(11.000000000000004, 9))).toEqual(rect(0, 0, 11, 9))
+    const drifted = { x: 9.000000000000002, y: 0, w: 11, h: 9 }
+    expect(snapRect(drifted, [], 1.2)).toEqual(rect(9, 0, 11, 9))
+    expect(Number.isInteger(right(snapRect(drifted, [], 1.2)))).toBe(true)
+  })
+
+  it('sweeps float dust out of a file on the way in', () => {
+    const file = {
+      format: 'booksnap.map-lab.plan',
+      plan: {
+        rooms: [{ id: 'r1', name: '', rect: { x: 9.000000000000002, y: 0, w: 11.000000000000004, h: 9 } }],
+        cases: [],
+      },
+    }
+    const back = parsePlan(JSON.stringify(file))
+    expect(back.ok).toBe(true)
+    if (back.ok) expect(back.plan.rooms[0]!.rect).toEqual(rect(9, 0, 11, 9))
+  })
+
   it('snaps to the grid when nothing is near', () => {
     expect(snapToGrid(3.4)).toBe(3)
     expect(snapCoord(3.4, [], 1)).toBe(3)

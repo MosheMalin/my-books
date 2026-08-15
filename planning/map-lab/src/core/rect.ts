@@ -20,12 +20,33 @@ export type Side = 'N' | 'S' | 'E' | 'W'
 
 export const OPPOSITE: Record<Side, Side> = { N: 'S', S: 'N', E: 'W', W: 'E' }
 
-export const rectFrom = (a: Pt, b: Pt): Rect => ({
-  x: Math.min(a.x, b.x),
-  y: Math.min(a.y, b.y),
-  w: Math.abs(b.x - a.x),
-  h: Math.abs(b.y - a.y),
+/**
+ * Force a rectangle onto whole units. **Every rectangle that enters the
+ * document goes through here**, and it is the two constructors below that do
+ * it — not their callers, who would each have to remember.
+ *
+ * ⚠ This is not defensive tidying, it is a bug fix. `snapRect` moves a
+ * rectangle by ADDING a correction, and `x + (round(x) - x)` is not exactly
+ * `round(x)` in floating point. One rectangle came out at 9.000000000000002;
+ * its right edge became a snap candidate for the next one, which inherited the
+ * error and rendered as **11.000000000000004×9** on screen. Float dust
+ * propagates through the magnet, so it has to be swept where rectangles are
+ * built rather than where they are displayed.
+ */
+export const integral = (r: Rect): Rect => ({
+  x: Math.round(r.x),
+  y: Math.round(r.y),
+  w: Math.round(r.w),
+  h: Math.round(r.h),
 })
+
+export const rectFrom = (a: Pt, b: Pt): Rect =>
+  integral({
+    x: Math.min(a.x, b.x),
+    y: Math.min(a.y, b.y),
+    w: Math.abs(b.x - a.x),
+    h: Math.abs(b.y - a.y),
+  })
 
 export const right = (r: Rect): number => r.x + r.w
 export const bottom = (r: Rect): number => r.y + r.h
@@ -148,7 +169,7 @@ export function snapCorner(p: Pt, anchor: Pt, targets: readonly Rect[], tol: num
 export function snapRect(r: Rect, targets: readonly Rect[], tol: number): Rect {
   const dx = bestShift([r.x, right(r)], xEdges(targets), tol)
   const dy = bestShift([r.y, bottom(r)], yEdges(targets), tol)
-  return translate(r, dx, dy)
+  return integral(translate(r, dx, dy))
 }
 
 function bestShift(edges: number[], candidates: readonly number[], tol: number): number {

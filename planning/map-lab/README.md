@@ -7,7 +7,7 @@ look at.
 
 ```bash
 npm install --prefix planning/map-lab
-npm --prefix planning/map-lab test          # 43 tests, ~0.7s
+npm --prefix planning/map-lab test          # 53 tests, ~1s
 ```
 
 The dev server is `map-lab` in `.claude/launch.json` (port 5175 — 5173 is the
@@ -17,11 +17,13 @@ the pre-commit hook, by design: `planning/` is outside `app/`, `tests/` and
 
 ## Where it stands
 
-**Third pass.** The first offered freehand-and-straighten against
+**Fourth pass.** The first offered freehand-and-straighten against
 snap-while-you-drag; the owner drew on it and rejected both — *"the free draw
 was too free"*. Everything is now a **rectangle on the grid**, for rooms and
 bookcases alike, and the freehand code is deleted rather than disabled. The
-second pass came back *"very fluent"*, with five additions built here.
+second pass came back *"very fluent"*; the third added selection, copy/paste
+and attachment; the fourth fixed two real bugs and moved the edit commands
+into a menu.
 
 ## What to try
 
@@ -37,23 +39,26 @@ second pass came back *"very fluent"*, with five additions built here.
 4. **Select several** — Ctrl+click adds to the selection, or drag a band across
    empty space to catch everything it touches. One Delete removes the lot.
    **Ctrl+C / Ctrl+V** copies them, offset, with a bookcase's columns, levels
-   and depths intact.
-5. **Attachment** — a bookcase belongs to a room and moves with it. Drawing it
+   and depths intact. Everything is also under **Edit ▾**, which prints each
+   shortcut beside its command.
+5. **Undo a lot.** Ctrl+Z steps back 200 edits; Ctrl+Y (or Ctrl+Shift+Z) steps
+   forward again. Typing a room name is ONE undo, not one per letter.
+6. **Attachment** — a bookcase belongs to a room and moves with it. Drawing it
    inside a room attaches it; the *Moves with* dropdown points it anywhere,
    including nowhere. Dragging the case yourself can re-home it; a room moving
    its own furniture never changes whose furniture it is.
-6. **Watch the depth rule.** Set a case's *default* depth to 3. Its existing
+7. **Watch the depth rule.** Set a case's *default* depth to 3. Its existing
    shelves keep depth 1 and the panel says how many — changing a default never
    reaches back into shelves that already exist, because that would delete the
    location of every book standing in a back row. A **new** column takes the
    new default. Applying to existing shelves is a separate button.
-7. **Black or white** — two real themes, not an inverted filter.
-8. **Trace a sketch** — your floor-plan photo goes behind the canvas at
+8. **Black or white** — two real themes, not an inverted filter.
+9. **Trace a sketch** — your floor-plan photo goes behind the canvas at
    adjustable opacity. Draw over it, then remove it. That is the whole of "or
    provide a sketch": no image understanding, no paid call.
-9. **On a phone.** The layout stacks under 820px and the toolbar gives its
+10. **On a phone.** The layout stacks under 820px and the toolbar gives its
    space back to the canvas. This is the viewport the verdict should come from.
-10. **Save.** Every edit is written to this browser immediately and the
+11. **Save.** Every edit is written to this browser immediately and the
    toolbar says so. *Save to file* is the copy that survives a cleared browser
    — integers in abstract units, no pixel, no viewport, no centimetre. Send
    that file over; it is the artefact.
@@ -68,7 +73,7 @@ src/core/     framework-free, pure, ports VERBATIM at P6.3
   geom.ts         points, the grid, snapping one coordinate
   rect.ts         rectangles, edge-to-edge attachment, resize handles
   model.ts        Plan / Room / Bookcase / Shelf + the pure edits
-  history.ts      undo stack
+  history.ts      undo stack (tagged commits collapse a run of keystrokes)
   persist.ts      export/import, defensive on the way in
   core.test.ts    the rules that port with the core
 src/ui/       the thin, disposable shell (React + SVG)
@@ -108,6 +113,14 @@ a rewrite. Nothing in `core/` imports React, touches the DOM, or calls `fetch`.
   room, carried by that room, landed inside the room it physically overlaps and
   was silently handed back to it. A room moving its own furniture must not
   change whose furniture it is.
+- **Rectangles drifted off whole units, visibly.** `snapRect` moves by ADDING a
+  correction, and `x + (round(x) - x)` is not exactly `round(x)`; the dust
+  became a snap candidate and spread. A room rendered as
+  **11.000000000000004×9**. Both rectangle constructors now round.
+- **Every keyboard shortcut was dead on the owner's keyboard.** They matched
+  `event.key`, and on a Hebrew layout the C key reports `'ב'` — so Ctrl+C did
+  nothing while the *Copy* button worked. Match `event.code`, the physical key.
+  Now a trap in CLAUDE.md, because this is a Hebrew-first product.
 
 ## What this lab is NOT
 

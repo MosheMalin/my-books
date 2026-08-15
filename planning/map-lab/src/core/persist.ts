@@ -13,6 +13,7 @@
 import type { Bookcase, Plan, Room, Shelf } from './model'
 import { emptyPlan } from './model'
 import type { Rect, Side } from './rect'
+import { integral } from './rect'
 
 export const FORMAT = 'booksnap.map-lab.plan'
 export const FORMAT_VERSION = 2
@@ -105,7 +106,9 @@ function readRect(v: unknown): Rect | null {
   const h = num(v['h'], NaN)
   if ([x, y, w, h].some((n) => !Number.isFinite(n))) return null
   if (w <= 0 || h <= 0) return null
-  return { x, y, w, h }
+  // Whole units on the way in too: a file written before `integral` existed
+  // carries float dust, and importing it would seed the magnet with it again.
+  return integral({ x, y, w, h })
 }
 
 function readSide(v: unknown): Side {

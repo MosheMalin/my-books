@@ -87,17 +87,26 @@ export default function App() {
 
   // --- document edits ------------------------------------------------------
 
+  /**
+   * `tag` collapses a run of the same edit into ONE undo step: typing a
+   * fourteen-letter room name is one Ctrl+Z, not fourteen. Discrete actions —
+   * a drag, a create, a turn — pass none and therefore always stack.
+   */
   const update = useCallback(
-    (fn: (d: Doc) => Doc) => setHist((h) => commit(h, fn(h.present))),
+    (fn: (d: Doc) => Doc, tag: string | null = null) =>
+      setHist((h) => commit(h, fn(h.present), tag)),
     [],
   )
 
   const mapCase = useCallback(
-    (id: string, fn: (bc: Bookcase) => Bookcase) =>
-      update((d) => ({
-        ...d,
-        plan: { ...d.plan, cases: d.plan.cases.map((c) => (c.id === id ? fn(c) : c)) },
-      })),
+    (id: string, fn: (bc: Bookcase) => Bookcase, tag: string | null = null) =>
+      update(
+        (d) => ({
+          ...d,
+          plan: { ...d.plan, cases: d.plan.cases.map((c) => (c.id === id ? fn(c) : c)) },
+        }),
+        tag,
+      ),
     [update],
   )
 
@@ -259,39 +268,51 @@ export default function App() {
 
   const actions: Actions = {
     renameRoom: (id, name) =>
-      update((d) => ({
-        ...d,
-        plan: { ...d.plan, rooms: d.plan.rooms.map((r) => (r.id === id ? { ...r, name } : r)) },
-      })),
+      update(
+        (d) => ({
+          ...d,
+          plan: { ...d.plan, rooms: d.plan.rooms.map((r) => (r.id === id ? { ...r, name } : r)) },
+        }),
+        `rename:${id}`,
+      ),
     resizeRoom: (id, w, h) =>
-      update((d) => ({
-        ...d,
-        plan: {
-          ...d.plan,
-          rooms: d.plan.rooms.map((r) =>
-            r.id === id ? { ...r, rect: { ...r.rect, w: size(w), h: size(h) } } : r,
-          ),
-        },
-      })),
-    renameCase: (id, name) => mapCase(id, (bc) => ({ ...bc, name })),
+      update(
+        (d) => ({
+          ...d,
+          plan: {
+            ...d.plan,
+            rooms: d.plan.rooms.map((r) =>
+              r.id === id ? { ...r, rect: { ...r.rect, w: size(w), h: size(h) } } : r,
+            ),
+          },
+        }),
+        `size:${id}`,
+      ),
+    renameCase: (id, name) => mapCase(id, (bc) => ({ ...bc, name }), `rename:${id}`),
     resizeCase: (id, w, h) =>
-      mapCase(id, (bc) => ({ ...bc, rect: { ...bc.rect, w: size(w), h: size(h) } })),
+      mapCase(id, (bc) => ({ ...bc, rect: { ...bc.rect, w: size(w), h: size(h) } }), `size:${id}`),
     setCaseRoom: (id, roomId) => mapCase(id, (bc) => ({ ...bc, roomId })),
     turnCase: (id) => mapCase(id, (bc) => ({ ...bc, front: TURN[bc.front] })),
     setColumnCount: (id, n) => mapCase(id, (bc) => withColumnCount(bc, n)),
     setColumnLevels: (id, col, n) => mapCase(id, (bc) => withColumnLevels(bc, col, n)),
-    setDefaultLevels: (id, n) => mapCase(id, (bc) => withDefaultLevels(bc, n)),
+    setDefaultLevels: (id, n) =>
+      mapCase(id, (bc) => withDefaultLevels(bc, n), `deflevels:${id}`),
     applyDefaultLevels: (id) => mapCase(id, applyDefaultLevels),
-    setDefaultDepth: (id, n) => mapCase(id, (bc) => withDefaultDepth(bc, n)),
+    setDefaultDepth: (id, n) => mapCase(id, (bc) => withDefaultDepth(bc, n), `defdepth:${id}`),
     applyDefaultDepth: (id) => mapCase(id, applyDefaultDepth),
-    setShelfDepth: (id, col, level, n) => mapCase(id, (bc) => withShelfDepth(bc, col, level, n)),
+    setShelfDepth: (id, col, level, n) =>
+      mapCase(id, (bc) => withShelfDepth(bc, col, level, n), `shelfdepth:${id}:${col}:${level}`),
     setShelfPhotos: (id, col, level, n) =>
-      mapCase(id, (bc) => ({
-        ...bc,
-        shelves: bc.shelves.map((s) =>
-          s.col === col && s.level === level ? { ...s, photos: Math.max(0, Math.round(n)) } : s,
-        ),
-      })),
+      mapCase(
+        id,
+        (bc) => ({
+          ...bc,
+          shelves: bc.shelves.map((s) =>
+            s.col === col && s.level === level ? { ...s, photos: Math.max(0, Math.round(n)) } : s,
+          ),
+        }),
+        `shelfphotos:${id}:${col}:${level}`,
+      ),
     deleteSelection,
     copySelection,
     paste,
@@ -365,30 +386,50 @@ export default function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null
-      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT')) {
+        return
+      }
       const meta = e.metaKey || e.ctrlKey
-      if (meta && e.key.toLowerCase() === 'z') {
+
+      // ⚠ Shortcuts key off `event.code` — the PHYSICAL key — never
+      // `event.key`. On a Hebrew layout the C key reports `key: 'ב'`, so
+      // `key.toLowerCase() === 'c'` is false and Ctrl+C silently does nothing.
+      // That is not an edge case in a Hebrew-first product: it is the owner's
+      // own keyboard, and it is why the buttons worked and the shortcuts did
+      // not. `code` is layout-independent; `key` is kept only as a fallback
+      // for anything that reports no code.
+      const is = (code: string, latin: string) =>
+        e.code === code || (!e.code && e.key.toLowerCase() === latin)
+
+      if (meta && is('KeyZ', 'z')) {
         e.preventDefault()
         setHist((h) => (e.shiftKey ? redo(h) : undo(h)))
         return
       }
-      if (meta && e.key.toLowerCase() === 'c') {
+      // Ctrl+Y is redo on Windows; Ctrl+Shift+Z is the same thing everywhere
+      // else. Both, because the owner asked for Ctrl+Y by name.
+      if (meta && is('KeyY', 'y')) {
+        e.preventDefault()
+        setHist(redo)
+        return
+      }
+      if (meta && is('KeyC', 'c')) {
         e.preventDefault()
         return copySelection()
       }
-      if (meta && e.key.toLowerCase() === 'v') {
+      if (meta && is('KeyV', 'v')) {
         e.preventDefault()
         return paste()
       }
       if (meta) return
-      if (e.key === 'Escape') {
+      if (e.code === 'Escape' || e.key === 'Escape') {
         setSelection(EMPTY)
         return setTool('select')
       }
-      if (e.key === '1') return setTool('select')
-      if (e.key === '2') return setTool('room')
-      if (e.key === '3') return setTool('case')
-      if (e.key === '4') return setTool('pan')
+      if (is('Digit1', '1')) return setTool('select')
+      if (is('Digit2', '2')) return setTool('room')
+      if (is('Digit3', '3')) return setTool('case')
+      if (is('Digit4', '4')) return setTool('pan')
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault()
         deleteSelection()

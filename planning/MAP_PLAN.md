@@ -185,6 +185,14 @@ rules P6.1 inherits rather than lab conveniences:
   so, with the honest caveat on the same line: browser storage, and *Save to
   file* is the copy that survives it. An autosave nobody can see is
   indistinguishable from no autosave.
+- **A real undo stack**, 200 edits deep both ways, reachable by Ctrl+Z /
+  Ctrl+Y / Ctrl+Shift+Z. Consecutive edits of the same field COLLAPSE into one
+  entry, so typing a room name is one undo rather than one per keystroke — and
+  stepping back clears that collapsing key, or the next keystroke would merge
+  into a state the user has already undone past. The five edit commands then
+  moved into an **Edit menu**, since every one of them has a working shortcut
+  and each printed its own: the toolbar dropped from 162 px to 123 px on a
+  phone.
 - ***Fit* → *Show all***. The owner asked what it was for, which is the
   answer: it is the recovery from having zoomed or panned somewhere
   unfamiliar, and it now says so. Kept rather than dropped because it is the
@@ -193,9 +201,9 @@ rules P6.1 inherits rather than lab conveniences:
 
 ### 4a. What the lab caught, for the record
 
-Three rounds of building and driving it in a real browser produced eight
-defects, each of which would have been argued about rather than found if this
-had been built straight into `app/web`:
+Four rounds of building and driving it in a real browser produced ten defects,
+each of which would have been argued about rather than found if this had been
+built straight into `app/web`:
 
 1. a bookcase's facing was computed against the *wall's* direction and consumed
    against the *case's own* — drag right-to-left and the wood landed outside
@@ -220,7 +228,18 @@ had been built straight into `app/web`:
    pulled *both* its edges onto that wall and the case vanished. A snap that
    annihilates the rectangle is never what anyone meant: the free corner now
    ignores any neighbour edge within one unit of its anchor;
-8. **an explicit attachment survived exactly one move** — see §4's third pass.
+8. **an explicit attachment survived exactly one move** — see §4's third pass;
+9. **rectangles drifted off whole units and it showed on screen.** `snapRect`
+   moves by ADDING a correction, and `x + (round(x) - x)` is not exactly
+   `round(x)` in floating point; the dust then became a snap candidate for the
+   next rectangle, which inherited it. A room rendered as
+   **11.000000000000004×9**. The model already promised integers — it just was
+   not enforcing them, so both rectangle constructors now do;
+10. **every keyboard shortcut was dead on the owner's own keyboard.** They were
+    matched on `event.key`, and on a Hebrew layout the C key reports `'ב'` — so
+    Ctrl+C did nothing while the *Copy* button worked. Match `event.code`, the
+    physical key. Now a one-line trap in CLAUDE.md: it will bite `app/web` the
+    day it grows a shortcut, and this is a Hebrew-first product.
 
 ## 4b. The original fork, and what the lab was for
 
@@ -259,7 +278,7 @@ this pillar.**
 
 | # | Item | Size | State |
 |---|---|---|---|
-| **P6.0** | **The map lab** — a standalone app, no backend, outside the gate. Rectangle drawing for rooms and bookcases, room-to-room attachment, multi-select, copy/paste, explicit bookcase→room attachment, resize handles, the elevation editor, underlay tracing, black/white themes, visible autosave. Exit: the owner draws his real house in it and exports it (§4 — the interaction model is settled; the drawing is still owed). | M | **3rd pass** |
+| **P6.0** | **The map lab** — a standalone app, no backend, outside the gate. Rectangle drawing for rooms and bookcases, room-to-room attachment, multi-select, copy/paste, explicit bookcase→room attachment, resize handles, the elevation editor, underlay tracing, black/white themes, visible autosave, a real undo stack. Exit: the owner draws his real house in it and exports it (§4 — the interaction model is settled; the drawing is still owed). | M | **4th pass** |
 | **P6.1** | **Address domain + migration** — `Place`, `Bookcase`, the shelf address, geometry in abstract units. Drawn slots create real empty `Shelf` rows. Naming lint. Schema vN with a real v(N-1) upgrade test. | L | |
 | **P6.2** | **API + policy** — places/bookcases through `current_library`, one capability each, contracts regenerated. | M | |
 | **P6.3** | **The port** — the chosen editor moves into `app/web`, wired to the API. **The lab is deleted in the same commit.** | M | |
@@ -308,9 +327,10 @@ depth override on one shelf — on a phone-sized viewport, and the drawing is
 exported. That export is P6.1's first fixture: a real plan, in abstract units,
 made by the person the feature is for.
 
-⚠ The lab has been through **three passes**. The first offered freehand against
+⚠ The lab has been through **four passes**. The first offered freehand against
 snap-while-dragging and was rejected wholesale (§4); the third came back
-*"very fluent"* with five additions. Expect a fourth: the point
+*"very fluent"* with five additions; the fourth was polish plus two real bugs.
+Expect a fifth: the point
 of a disposable app is that rejecting it costs a day, not a sprint. It is
 finished when the owner stops finding things, not when the item list is
 ticked.

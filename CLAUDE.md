@@ -392,6 +392,12 @@ different world — the product never reads it.
   Anchor both ends, skip test files, and gate the detector on a synthetic
   corpus — against the real table the rule is unobservable once the dead keys
   are gone, so the loose check passes either way.
+- **A keyboard shortcut keyed off `event.key` is dead on a Hebrew layout**: the
+  C key reports `key: 'ב'`, so `key.toLowerCase() === 'c'` never matches and
+  Ctrl+C silently does nothing while the toolbar button works. Match
+  `event.code` (`KeyC`, `KeyZ`, `Digit1`) — the physical key, layout
+  independent. Found in the P6.0 map lab on the owner's own keyboard; it will
+  bite `app/web` the day it grows a shortcut.
 - A drawer is `min(720px, 100%)`: a trailing actions column falls outside it
   and out of the accessibility tree at `scrollLeft: 0`. Stack per-row actions
   inside the name cell.
