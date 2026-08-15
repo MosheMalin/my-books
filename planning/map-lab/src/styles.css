@@ -1,0 +1,337 @@
+/*
+ * The lab's own sheet. Deliberately NOT app/web's — the lab is disposable and
+ * borrowing the product's design system would make it look decided.
+ *
+ * Dark, because a schematic reads best as light lines on a dark ground, and
+ * because the phone check happens in a room with the lights off as often as
+ * not.
+ */
+
+:root {
+  --bg: #14171c;
+  --panel: #1b1f26;
+  --line: #2b323c;
+  --ink: #e7ecf3;
+  --dim: #97a1af;
+  --accent: #6fb1ff;
+  --accent-dim: #2c4a6e;
+  --warn: #ffb454;
+  --danger: #ff7a7a;
+  --room: #232b36;
+  --case: #3d5a80;
+  --font: ui-sans-serif, system-ui, 'Segoe UI', Arial, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: 14px;
+  overscroll-behavior: none;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* --- toolbar ------------------------------------------------------------- */
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.brand { display: flex; align-items: baseline; gap: 6px; }
+.brand .tag {
+  font-size: 11px;
+  color: var(--dim);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+.group { display: flex; align-items: center; gap: 4px; }
+.group.right { margin-inline-start: auto; }
+
+button {
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: #232833;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 6px 10px;
+  cursor: pointer;
+  min-height: 34px;
+}
+button:hover:not(:disabled) { border-color: #3d4756; }
+button:disabled { opacity: 0.4; cursor: default; }
+button.on {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: #fff;
+}
+button.danger { color: var(--danger); }
+
+kbd {
+  font: inherit;
+  font-size: 10px;
+  color: var(--dim);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0 3px;
+  margin-inline-start: 3px;
+}
+
+.slider { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--dim); }
+.slider input { width: 84px; }
+
+/* --- layout -------------------------------------------------------------- */
+
+.body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.canvas-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.side {
+  width: 320px;
+  flex: 0 0 320px;
+  border-inline-start: 1px solid var(--line);
+  background: var(--panel);
+  overflow-y: auto;
+}
+
+/* Phone. The lab is judged on a phone, so the toolbar gives its space back to
+ * the canvas rather than the other way round: measured at 375px the four
+ * wrapped toolbar rows cost 139px of an 812px screen. */
+@media (max-width: 820px) {
+  .body { flex-direction: column; }
+  .side { width: auto; flex: 0 0 38%; border-inline-start: none; border-top: 1px solid var(--line); }
+  .toolbar { gap: 5px; padding: 5px 6px; }
+  .toolbar kbd { display: none; }
+  .toolbar button { padding: 6px 9px; font-size: 12px; }
+  .brand .tag { display: none; }
+  .slider input { width: 60px; }
+}
+
+.hint {
+  position: absolute;
+  inset-inline: 10px;
+  bottom: 10px;
+  margin: 0;
+  padding: 7px 10px;
+  font-size: 12px;
+  color: var(--dim);
+  background: rgba(20, 23, 28, 0.86);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  pointer-events: none;
+}
+
+.toast {
+  position: absolute;
+  inset-inline-start: 50%;
+  top: 14px;
+  transform: translateX(-50%);
+  padding: 8px 14px;
+  background: #3a2f1a;
+  border: 1px solid var(--warn);
+  border-radius: 8px;
+  color: #ffe0b0;
+  font-size: 13px;
+  pointer-events: none;
+}
+
+/* --- the plan ------------------------------------------------------------ */
+
+svg.plan {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+  user-select: none;
+}
+
+.grid-minor, .grid-major {
+  fill: none;
+  vector-effect: non-scaling-stroke;
+}
+.grid-minor { stroke: #1e232b; stroke-width: 1; }
+.grid-major { stroke: #29303a; stroke-width: 1; }
+
+.room polygon {
+  fill: var(--room);
+  stroke: #55617180;
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+}
+.room.selected polygon { stroke: var(--accent); }
+
+.room-label {
+  fill: var(--dim);
+  font-size: 1.4px;
+  font-family: var(--font);
+  unicode-bidi: plaintext;
+  paint-order: stroke;
+  stroke: var(--bg);
+  stroke-width: 0.35px;
+}
+
+.case polygon {
+  fill: var(--case);
+  stroke: #7ea2c9;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+.case.selected polygon { stroke: var(--accent); stroke-width: 2; }
+
+.case-front {
+  stroke: #cfe4ff;
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+}
+.case-divider {
+  stroke: #ffffff55;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+.case-label {
+  fill: #eaf2ff;
+  font-size: 1.1px;
+  font-family: var(--font);
+  unicode-bidi: plaintext;
+  pointer-events: none;
+}
+
+.handle {
+  fill: var(--accent);
+  stroke: #fff;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.preview-room {
+  fill: #6fb1ff22;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+  vector-effect: non-scaling-stroke;
+}
+.preview-case line {
+  stroke: var(--accent);
+  stroke-width: 5;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+.preview-case circle { fill: var(--accent); }
+.preview-stroke {
+  fill: none;
+  stroke: var(--warn);
+  stroke-width: 2.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+/* --- inspector ----------------------------------------------------------- */
+
+.inspector { padding: 12px 14px 40px; }
+.inspector h2 { margin: 0 0 10px; font-size: 15px; }
+
+.field { display: block; margin-bottom: 10px; }
+.field > span { display: block; font-size: 12px; color: var(--dim); margin-bottom: 3px; }
+.field.inline { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.field.inline > span { margin: 0; }
+
+input[type='text'], input:not([type]), input[type='number'] {
+  font: inherit;
+  color: var(--ink);
+  background: #14181f;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 7px 8px;
+  min-height: 34px;
+}
+.field > input:not([type='number']) { width: 100%; }
+input[type='number'] { width: 74px; }
+
+.rtl-safe { unicode-bidi: plaintext; text-align: start; }
+
+.note { font-size: 12px; color: var(--dim); line-height: 1.5; margin: 8px 0; }
+.note code { font-size: 11px; }
+
+.rule {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #ffe0b0;
+  background: #3a2f1a66;
+  border: 1px solid #6b552c;
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 8px 0;
+}
+.rule button { margin-top: 8px; width: 100%; }
+
+fieldset {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px 10px;
+  margin: 12px 0;
+}
+legend { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.06em; }
+
+.row { display: flex; gap: 6px; margin: 10px 0; flex-wrap: wrap; }
+.row button { flex: 1; }
+.inspector > button.danger { width: 100%; }
+
+/* --- elevation ----------------------------------------------------------- */
+
+.elevation { margin: 10px 0; }
+.elevation-grid { display: grid; gap: 6px; }
+.elev-col { display: flex; flex-direction: column; gap: 3px; }
+.elev-col-head { font-size: 11px; color: var(--dim); text-align: center; }
+.elev-col-foot { display: flex; gap: 3px; }
+.elev-col-foot button { flex: 1; min-height: 26px; padding: 2px; font-size: 12px; }
+
+.elev-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 30px;
+  padding: 2px;
+  font-size: 11px;
+  background: #232833;
+  border: 1px dashed var(--line);
+  border-radius: 5px;
+  color: var(--dim);
+}
+.elev-cell.selected { border-style: solid; border-color: var(--accent); color: var(--ink); }
+.elev-cell.override { background: #3a2f1a; border-color: var(--warn); color: #ffe0b0; }
+.elev-level { opacity: 0.7; }
+.elev-depth { font-weight: 600; }
+.elev-photos { font-size: 10px; }
+
+.elevation-cols { display: flex; gap: 6px; margin-top: 8px; }
+.elevation-cols button { flex: 1; }

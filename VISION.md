@@ -682,6 +682,36 @@ scripts are baseline requirements, not internationalisation polish.
 
 ## 7. Physical library mapping
 
+**[REVISED 2026-08-15 — owner]** The fork below is not the fork. A and B do
+not compete: **A produces a room plan (top-down), B produces a bookcase
+elevation (front-on)**, and the product needs both — they are the first two of
+`UI_PLAN.md` §3's drill levels. What is genuinely undecided lives *inside* A,
+and it is how the drawing is authored:
+
+- **S — straighten:** freehand strokes, snapped afterwards into a clean
+  orthogonal schematic (approach A as written below);
+- **D — direct, constrained:** walls snap to a grid and to 90° *as you drag*;
+  a bookcase snaps onto a wall and gains a length handle you pull. Snapping
+  happens at input time, so there is never a wrong straightening to undo.
+
+D is the recommendation on record, for one reason: S can guess wrong about
+what the user meant, and offers no correction except redrawing. But that is a
+UX claim, so it is settled the way UX claims are settled here — the owner
+draws his real house in both, in a real browser, in the standalone lab
+(P6.0). *"Provide a sketch"* is answered without image understanding in either
+case: an uploaded floor plan becomes a **tracing underlay** at adjustable
+opacity, traced with the same tools.
+
+Three model rules were taken with this revision and are argued in
+[`planning/MAP_PLAN.md`](planning/MAP_PLAN.md) §3: a **drawn shelf slot is a
+`Shelf`** (so a Shelf may now exist with no capture and no books); a
+bookcase's depth is a **creation-time default**, never a live parent value
+(reading it live would delete the location of every book at depth 2 when the
+case is edited to 1); and because measurements are **free — relative, never
+centimetres** — nothing may infer shelf capacity from geometry, anywhere.
+
+The original text stands below for its argument:
+
 **[DECIDED]** Build POCs for **both** approaches and pick on evidence of which
 is simpler in practice:
 

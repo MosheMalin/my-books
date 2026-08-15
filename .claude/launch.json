@@ -71,6 +71,18 @@
       "autoPort": true
     },
     {
+      "_comment": [
+        "P6.0 — the standalone map editor lab. No backend, no product code,",
+        "outside every gate. Deleted at P6.3 when the chosen editor is ported",
+        "into app/web; this entry goes with it."
+      ],
+      "name": "map-lab",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "planning/map-lab", "run", "dev"],
+      "port": 5175,
+      "autoPort": true
+    },
+    {
       "name": "ui-mock",
       "runtimeExecutable": "python",
       "runtimeArgs": ["-m", "http.server", "8790", "--directory", "planning/mockup"],

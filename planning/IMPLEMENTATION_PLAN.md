@@ -527,6 +527,17 @@ batches the open questions.
 
 ### Pillar 6 — The physical map (and shelf addresses)
 
+⚠⚠ **SUPERSEDED by [`MAP_PLAN.md`](MAP_PLAN.md)** (owner, 2026-08-15). The
+four items below covered about half of what the owner wants and forked on the
+wrong question — A-vs-B is not a fork, because approach A produces a *room
+plan* and approach B a *bookcase elevation*, and the plan needs both. The live
+decomposition is P6.0 → P6.6 there; it starts with a **standalone map lab**
+outside the gate, and it makes shelf merge (P6.1b below) a first-class item
+rather than a footnote, because the binding — not the drawing — is where a
+silent data-loss bug would live. **Pillar 5 is skipped ahead of it and is not
+a prerequisite: nothing in the map spends money.** The table below is kept for
+the argument in its cells, not as the work list.
+
 | # | Item | Size |
 |---|---|---|
 | **P6.1** | **Address domain**: Place → Bookcase → `col` / `level`, shelves bound to addresses, `Copy` location rendered as `place · case · col · shelf · row` (§1.1). The naming lint (H5) lands here. Existing shelves keep their labels and gain addresses; nothing migrates twice because the fields were null, not absent. ⚠ Per the settled tenancy rule (§4.1, owner 2026-08-10): a **Place is any location within one tenant — a room AND a whole other site** (office, shelves at the parents') — so the Place level must comfortably hold "אצל ההורים" next to "סלון". P6.1 is also the exit for any room-or-site that was modelled as a second Library before Place existed: its shelves/books move back into the main Library under a Place, and the extra Library is retired. | M |

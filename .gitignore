@@ -30,6 +30,9 @@ app/admin/dist/
 app/admin/.vite/
 app/admin/vite.config.ts.timestamp-*
 app/ui/.vite/
+# the P6.0 map lab — build output only; its source and lockfile are committed
+planning/map-lab/dist/
+planning/map-lab/.vite/
 app/ui/vite.config.ts.timestamp-*
 
 # --- Python ---
