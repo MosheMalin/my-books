@@ -335,6 +335,36 @@ input[type='number'] { width: 68px; }
 .steps { font-size: 12px; color: var(--dim); line-height: 1.6; padding-inline-start: 18px; }
 .steps strong { color: var(--ink); }
 
+/* --- collapsible fold ---------------------------------------------------- */
+
+.fold { margin: 0 0 10px; }
+.fold-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  min-height: 30px;
+  padding: 5px 6px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: none;
+  text-align: start;
+}
+.fold-head:hover { border-color: var(--accent); }
+.fold-caret { color: var(--dim); font-size: 11px; }
+.fold-label { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.06em; }
+.fold-summary {
+  flex: 1;
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: end;
+}
+.fold-body { padding-top: 10px; }
+
 .picked { font-size: 12px; line-height: 1.7; margin: 6px 0; padding-inline-start: 18px; }
 .picked li { color: var(--dim); }
 

@@ -14,6 +14,7 @@
 import { Elevation } from './Elevation'
 import type { Doc, Selection } from './types'
 import { count, only } from './types'
+import { useSticky } from './useSticky'
 import type { Bookcase, Plan, Room } from '../core/model'
 import {
   MAX_DEPTH,
@@ -215,56 +216,70 @@ function CasePanel({
   return (
     <div className="inspector">
       <h2>Bookcase</h2>
-      <label className="field">
-        <span>Name</span>
-        <input
-          className="rtl-safe"
-          value={bc.name}
-          placeholder="ארון הסלון"
-          onChange={(e) => actions.renameCase(bc.id, e.target.value)}
+
+      {/* Where the case IS collapses; what is ON it does not. The shelf editor
+          is the part you come back to, and on a phone the panel is 38% of the
+          screen — four fields above it push the grid off the bottom. */}
+      <Fold
+        storageKey="booksnap.map-lab.fold.caseDetails"
+        label="Name, size, room, facing"
+        summary={`${bc.name || 'unnamed'} · ${bc.rect.w}×${bc.rect.h} · faces ${SIDE_NAME[bc.front]}`}
+      >
+        <label className="field">
+          <span>Name</span>
+          <input
+            className="rtl-safe"
+            value={bc.name}
+            placeholder="ארון הסלון"
+            onChange={(e) => actions.renameCase(bc.id, e.target.value)}
+          />
+        </label>
+
+        <Size
+          w={bc.rect.w}
+          h={bc.rect.h}
+          labelW="bookcase width"
+          labelH="bookcase height"
+          onChange={(w, h) => actions.resizeCase(bc.id, w, h)}
         />
-      </label>
 
-      <Size
-        w={bc.rect.w}
-        h={bc.rect.h}
-        labelW="bookcase width"
-        labelH="bookcase height"
-        onChange={(w, h) => actions.resizeCase(bc.id, w, h)}
-      />
+        <label className="field inline">
+          <span>Moves with</span>
+          <select
+            className="rtl-safe"
+            aria-label="the room this bookcase is attached to"
+            value={bc.roomId ?? ''}
+            onChange={(e) => actions.setCaseRoom(bc.id, e.target.value || null)}
+          >
+            <option value="">nothing — stands alone</option>
+            {plan.rooms.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.name || `room ${r.rect.w}×${r.rect.h}`}
+              </option>
+            ))}
+          </select>
+        </label>
 
-      <label className="field inline">
-        <span>Moves with</span>
-        <select
-          className="rtl-safe"
-          aria-label="the room this bookcase is attached to"
-          value={bc.roomId ?? ''}
-          onChange={(e) => actions.setCaseRoom(bc.id, e.target.value || null)}
-        >
-          <option value="">nothing — stands alone</option>
-          {plan.rooms.map((r) => (
-            <option key={r.id} value={r.id}>
-              {r.name || `room ${r.rect.w}×${r.rect.h}`}
-            </option>
-          ))}
-        </select>
-      </label>
+        <div className="field inline">
+          <span>Books face</span>
+          <button
+            type="button"
+            onClick={() => actions.turnCase(bc.id)}
+            aria-label="turn the bookcase"
+          >
+            {SIDE_NAME[bc.front]} ⟳ turn
+          </button>
+        </div>
 
-      <div className="field inline">
-        <span>Books face</span>
-        <button type="button" onClick={() => actions.turnCase(bc.id)} aria-label="turn the bookcase">
-          {SIDE_NAME[bc.front]} ⟳ turn
-        </button>
-      </div>
-
-      <p className="note">
-        <strong>{caseLength(bc)} units</strong> of wall, {caseThickness(bc)} deep as drawn
-        {room ? ` · in ${room.name || 'an unnamed room'}` : ' · attached to no room'} ·{' '}
-        {bc.shelves.length} shelves.
-        <br />
-        Free measurement — relative to this room's walls, never centimetres, and
-        nothing here infers how many books fit.
-      </p>
+        <p className="note">
+          <strong>{caseLength(bc)} units</strong> of wall, {caseThickness(bc)} deep as drawn
+          {room ? ` · in ${room.name || 'an unnamed room'}` : ' · attached to no room'} ·{' '}
+          {bc.shelves.length} shelves.
+          <br />
+          Free measurement — relative to this room's walls, never centimetres,
+          and nothing here infers how many books fit.
+        </p>
+      </Fold>
 
       <Elevation
         bc={bc}
@@ -289,6 +304,44 @@ function CasePanel({
         Delete this bookcase
       </button>
     </div>
+  )
+}
+
+/**
+ * A collapsible block that says what it is hiding.
+ *
+ * The summary line is not decoration: a fold whose closed state reads only
+ * "Details ▸" makes you open it to find out whether you needed it, which
+ * costs more than it saved.
+ */
+function Fold({
+  storageKey,
+  label,
+  summary,
+  children,
+}: {
+  storageKey: string
+  label: string
+  summary: string
+  children: React.ReactNode
+}) {
+  const [open, setOpen] = useSticky(storageKey, true)
+  return (
+    <section className={open ? 'fold open' : 'fold'}>
+      <button
+        type="button"
+        className="fold-head"
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+      >
+        <span className="fold-caret" aria-hidden="true">
+          {open ? '▾' : '▸'}
+        </span>
+        <span className="fold-label">{label}</span>
+        {!open && <span className="fold-summary rtl-safe">{summary}</span>}
+      </button>
+      {open && <div className="fold-body">{children}</div>}
+    </section>
   )
 }
 
