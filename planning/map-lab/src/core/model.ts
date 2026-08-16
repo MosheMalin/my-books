@@ -582,21 +582,23 @@ export function planBounds(plan: Plan, floorId?: string): { min: Pt; max: Pt } {
 export function overviewLayout(
   plan: Plan,
   gap = 6,
-): { floor: Floor; dx: number; band: number; bandStart: number; height: number }[] {
-  // EQUAL bands, one per storey (owner, 2026-08-16: *"three floors — divide
-  // the board to 3, each has one floor"*). Packing them at their natural
-  // widths made a small storey look squeezed next to a large one, when what
-  // the view is for is comparing them.
+): { floor: Floor; dx: number; dy: number; band: number; bandStart: number; width: number }[] {
+  // EQUAL bands, one per storey, STACKED — three floors make three rows
+  // (owner, 2026-08-16). Rows rather than columns because that is how a
+  // building is: the storey above is above. Equal rather than natural size
+  // because comparing them is what the view is for, and a small storey packed
+  // beside a large one just looks squeezed.
   const bounds = plan.floors.map((f) => planBounds(plan, f.id))
-  const band = Math.max(gap, ...bounds.map((b) => b.max.x - b.min.x))
-  const height = Math.max(gap, ...bounds.map((b) => b.max.y - b.min.y))
+  const width = Math.max(gap, ...bounds.map((b) => b.max.x - b.min.x))
+  const band = Math.max(gap, ...bounds.map((b) => b.max.y - b.min.y))
   return plan.floors.map((floor, i) => {
     const b = bounds[i]!
     const bandStart = i * (band + gap)
-    // centred in its band, so a narrow storey sits under its own label rather
-    // than hard against the divider
-    const dx = bandStart + (band - (b.max.x - b.min.x)) / 2 - b.min.x
-    return { floor, dx, band, bandStart, height }
+    // centred in its band both ways, so a small storey sits under its own
+    // label rather than hard against a divider
+    const dx = (width - (b.max.x - b.min.x)) / 2 - b.min.x
+    const dy = bandStart + (band - (b.max.y - b.min.y)) / 2 - b.min.y
+    return { floor, dx, dy, band, bandStart, width }
   })
 }
 
@@ -605,7 +607,7 @@ export function overviewBounds(plan: Plan, gap = 6): { min: Pt; max: Pt } {
   const cells = overviewLayout(plan, gap)
   const last = cells[cells.length - 1]
   if (!last) return { min: pt(0, 0), max: pt(0, 0) }
-  return { min: pt(0, -4), max: pt(last.bandStart + last.band, last.height) }
+  return { min: pt(0, -4), max: pt(last.width, last.bandStart + last.band) }
 }
 
 export function casesInRoom(plan: Plan, roomId: string): Bookcase[] {

@@ -262,6 +262,24 @@ button.icon {
   pointer-events: none;
 }
 
+.readonly-bar {
+  position: absolute;
+  inset-inline-start: 50%;
+  top: 10px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 6px 5px 12px;
+  font-size: 12px;
+  color: var(--warn-ink);
+  background: var(--warn-bg);
+  border: 1px solid var(--warn);
+  border-radius: 8px;
+  white-space: nowrap;
+}
+.readonly-bar button { min-height: 28px; padding: 3px 10px; font-size: 12px; }
+
 .toast {
   position: absolute;
   inset-inline-start: 50%;

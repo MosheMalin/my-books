@@ -455,6 +455,24 @@ describe('floors', () => {
     expect(back.plan.rooms[0]!.floorId).toBe('f1')
   })
 
+  it('stacks storeys as ROWS — three floors, three rows', () => {
+    // Rows rather than columns because that is how a building is: the storey
+    // above is above (owner, 2026-08-16).
+    const plan: Plan = {
+      ...emptyPlan(),
+      floors: [{ id: 'f1', name: 'g' }, { id: 'f2', name: 'u' }, { id: 'f3', name: 't' }],
+      rooms: [
+        room('r1', rect(0, 0, 20, 12)),
+        { ...room('r2', rect(0, 0, 10, 8)), floorId: 'f2' },
+        { ...room('r3', rect(0, 0, 14, 6)), floorId: 'f3' },
+      ],
+    }
+    const cells = overviewLayout(plan, 6)
+    expect(cells.map((c) => c.bandStart)).toEqual([0, 18, 36]) // band 12 + gap 6
+    expect(new Set(cells.map((c) => c.band)).size).toBe(1) // equal rows
+    expect(new Set(cells.map((c) => c.width)).size).toBe(1) // and one column
+  })
+
   it('gives every storey an EQUAL band, whatever its own size', () => {
     // "Three floors — divide the board to 3, each has one floor" (owner,
     // 2026-08-16). Packing them at their natural widths made a small storey
@@ -468,10 +486,10 @@ describe('floors', () => {
       ],
     }
     const [ground, upstairs] = overviewLayout(plan, 6)
-    expect(ground!.band).toBe(20)
-    expect(upstairs!.band).toBe(20) // equal, though its plan is half as wide
+    expect(ground!.band).toBe(12) // the tallest storey sets the row height
+    expect(upstairs!.band).toBe(12) // equal, though its plan is shorter
     expect(ground!.bandStart).toBe(0)
-    expect(upstairs!.bandStart).toBe(26)
+    expect(upstairs!.bandStart).toBe(18)
   })
 
   it('centres a narrow storey in its band rather than jamming it against the rule', () => {
@@ -484,8 +502,10 @@ describe('floors', () => {
       ],
     }
     const [, upstairs] = overviewLayout(plan, 6)
-    // band 26..46, plan 10 wide, so it starts 5 in
-    expect(upstairs!.dx).toBe(31)
+    // the column is 20 wide and this plan is 10, so it starts 5 in; its row
+    // runs 18..30 and the plan is 8 tall, so it starts 2 down
+    expect(upstairs!.dx).toBe(5)
+    expect(upstairs!.dy).toBe(20)
   })
 
   it('shifts a storey that does not start at the origin back into its band', () => {
@@ -494,8 +514,9 @@ describe('floors', () => {
       floors: [{ id: 'f1', name: 'g' }],
       rooms: [room('r1', rect(40, 30, 10, 10))],
     }
-    // otherwise a plan drawn far from 0,0 would sit outside the band entirely
+    // otherwise a plan drawn far from 0,0 would sit outside its band entirely
     expect(overviewLayout(plan)[0]!.dx).toBe(-40)
+    expect(overviewLayout(plan)[0]!.dy).toBe(-30)
   })
 
   it('turns a bookcase when a resize makes it wider than it is tall', () => {

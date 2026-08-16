@@ -7,7 +7,7 @@ look at.
 
 ```bash
 npm install --prefix planning/map-lab
-npm --prefix planning/map-lab test          # 79 tests, ~1s
+npm --prefix planning/map-lab test          # 80 tests, ~1s
 ```
 
 The dev server is `map-lab` in `.claude/launch.json` (port 5175 — 5173 is the
@@ -29,11 +29,13 @@ seventh moved the storey onto the board and drew the icons properly.
 
 ## What to try
 
-1. **Just draw.** The arrow (➤) is the default and reads your starting point:
+1. **Just draw.** The arrow is the default and reads your starting point:
    outside every room a drag draws a **room**, inside one it draws a
    **bookcase**, and on a room's **border** it moves the room. Existing
    furniture always wins. Ctrl+drag selects several; double-click names
-   whatever you hit. ▭ and ▬ overrule the guess when you want to.
+   whatever you hit. The two drawing tools overrule the guess — but even while
+   you hold one, **a border is still a handle**: press an edge and you move
+   that room instead of drawing.
 2. **Draw room** — drag a rectangle. Then drag a second one so it lands near
    the first: its edges **weld onto the neighbour**, exactly, so rooms attach
    and an L-shaped room is two rectangles.
@@ -57,8 +59,10 @@ seventh moved the storey onto the board and drew the icons properly.
 8. **Change floors.** The storey lives in the **top corner of the board**, not
    the toolbar: its name is the label (double-click to rename), and the ▾
    behind it switches, adds and removes. It keeps its size through any zoom.
-   *All floors, side by side* gives each storey an **equal band** with a rule
-   between them; double-click one to work on it. A floor is **not** part of a
+   *All floors* stacks the storeys as **equal rows** with a rule between them —
+   rows, because the storey above is above. It is a reading view: the drawing
+   tools go dim and a bar says so, with the way back on it. Double-click a row
+   to work on that floor. A floor is **not** part of a
    shelf's address; it is a grouping over rooms.
 9. **Stack two bookcases.** A low base with a taller unit on top is ONE
    bookcase with two **sections**: press *a second section on top*, then give

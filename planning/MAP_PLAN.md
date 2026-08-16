@@ -231,6 +231,12 @@ Three amendments the idea needs, and each is a rule rather than a detail:
   selecting several moved to Ctrl+drag. Selecting several is the rarer act, so
   it is the one that pays.
 
+**An edge is a handle in every tool.** Holding *Draw room* does not make the
+walls already on the plan stop existing: pressing on a room's border moves it,
+and only a press away from every border draws. Otherwise nudging a room means
+putting a tool down first, which is exactly the friction the arrow was meant to
+remove.
+
 **Columns follow the long side.** A bookcase IS long and thin, and the columns
 divide across its front — so a resize that changes which side is longer turns
 the case with it, or the elevation stops describing the furniture. It fires
@@ -325,7 +331,7 @@ rules P6.1 inherits rather than lab conveniences:
 
 ### 4a. What the lab caught, for the record
 
-Six rounds of building and driving it in a real browser produced thirteen
+Seven rounds of building and driving it in a real browser produced fifteen
 defects, each of which would have been argued about rather than found if this
 had been built straight into `app/web`:
 
@@ -374,7 +380,16 @@ had been built straight into `app/web`:
 12. **the panel stacked under the plan on a half-width window.** The breakpoint
     was 820 px, which a laptop browser at half screen hits — and the settings
     belong at the side;
-13. **`setPointerCapture` threw the whole handler away, a second time.** The
+13. **the all-floors view had no door.** The way out was a menu item in a
+    corner, and *"I could not get rid of it no matter which button I clicked"*
+    is what that costs. A mode with no visible exit is a trap however few
+    keystrokes it really takes — it now carries a bar saying it is read-only
+    with the way back in it, and the drawing tools are visibly disabled;
+14. **the cursor read the tool, not the intent.** Once an edge became grabbable
+    in every tool the behaviour was right, but the pointer still showed a
+    crosshair over it — the one thing telling the user about a rule was the
+    thing that had not been updated;
+15. **`setPointerCapture` threw the whole handler away, a second time.** The
     new panel divider called it without the guard the canvas already had, so
     the exception escaped *before* the move listeners were attached and the
     drag did nothing whatsoever. The first fix was a comment in one file; the
@@ -467,12 +482,13 @@ depth override on one shelf — on a phone-sized viewport, and the drawing is
 exported. That export is P6.1's first fixture: a real plan, in abstract units,
 made by the person the feature is for.
 
-⚠ The lab has been through **seven passes**. The first offered freehand against
+⚠ The lab has been through **eight passes**. The first offered freehand against
 snap-while-dragging and was rejected wholesale (§4); the third came back
 *"very fluent"* with five additions; the fourth and fifth were polish plus four
 real bugs; the sixth cut the toolbar to eight controls and made the arrow
-guess; the seventh moved the storey onto the board and drew the icons. Expect
-an eighth: the point
+guess; the seventh moved the storey onto the board and drew the icons;
+the eighth stacked the floors as rows and gave the read-only view a door.
+Expect a ninth: the point
 of a disposable app is that rejecting it costs a day, not a sprint. It is
 finished when the owner stops finding things, not when the item list is
 ticked.

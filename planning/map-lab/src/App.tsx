@@ -614,6 +614,7 @@ export default function App() {
         ghosts={ghosts}
         allFloors={allFloors}
         manyFloors={doc.plan.floors.length > 1}
+        readOnly={overview}
         onAllFloors={setAllFloors}
         onZoom={doZoom}
         onGhosts={setGhosts}
@@ -679,6 +680,18 @@ export default function App() {
             }
           />
           <Hint tool={tool} overview={overview} />
+          {/* ⚠ The overview had no visible exit: the way out was a menu item
+              in the corner, and "I could not get rid of it no matter which
+              button I clicked" is what that costs. A mode with no door on
+              screen is a trap, however few keystrokes it really takes. */}
+          {overview && (
+            <div className="readonly-bar" role="status">
+              <span>Every floor — viewing only, nothing can be edited</span>
+              <button type="button" onClick={() => setAllFloors(false)}>
+                Back to {doc.plan.floors.find((f) => f.id === floorId)?.name ?? 'the plan'}
+              </button>
+            </div>
+          )}
           <FloorBadge
             floors={doc.plan.floors}
             floorId={floorId}

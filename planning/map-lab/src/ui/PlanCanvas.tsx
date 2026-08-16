@@ -127,13 +127,22 @@ export function PlanCanvas(props: Props) {
    * and the pointer handler can never disagree about it.
    */
   const intentAt = (p: Pt): 'move' | 'room' | 'case' => {
-    if (tool !== 'auto') return tool === 'pan' ? 'move' : tool
-    if (caseAt(p)) return 'move'
+    if (tool === 'pan') return 'move'
+    // ⚠ An EDGE is a handle in every tool (owner, 2026-08-16: *"even when draw
+    // room or draw bookcase is selected, hovering on the border should switch
+    // to move"*). Otherwise the tool you are holding decides whether existing
+    // walls exist, and nudging a room means putting a tool down first.
+    if (loneRect && handleAt(loneRect, p, magnet)) return 'move'
+    const bc = caseAt(p)
+    if (bc) {
+      // In the arrow the whole case is grabbable; in a drawing tool only its
+      // edge is, so you can still draw a case flush beside this one.
+      if (tool === 'auto' || onBorder(bc.rect, p, magnet)) return 'move'
+    }
     const room = roomAt(p)
-    if (!room) return 'room'
-    // The border belongs to the room itself — but only where no furniture is
-    // standing on it, which `caseAt` above has already settled.
-    return onBorder(room.rect, p, magnet) ? 'move' : 'case'
+    if (room && onBorder(room.rect, p, magnet)) return 'move'
+    if (tool !== 'auto') return tool
+    return room ? 'case' : 'room'
   }
 
   const caseAt = (p: Pt): Bookcase | null => {
@@ -172,15 +181,42 @@ export function PlanCanvas(props: Props) {
 
     if (tool === 'pan' || e.button === 1) return setDrag({ kind: 'pan', from: p, view })
     if (props.overview) return setDrag({ kind: 'pan', from: p, view })
-    if (tool === 'room') return setDrag({ kind: 'draw', what: 'room', from: p, to: p })
-    if (tool === 'case') return setDrag({ kind: 'draw', what: 'case', from: p, to: p })
 
+    // Handles and borders come FIRST, whatever tool is held.
     if (loneRect && !add) {
       const h = handleAt(loneRect, p, magnet)
       if (h) {
         const what: Kind = plan.cases.some((c) => c.id === lone?.id) ? 'case' : 'room'
-        return setDrag({ kind: 'resize', what, id: lone!.id, handle: h, to: p, orig: loneRect })
+        const id = lone?.id
+        if (id) return setDrag({ kind: 'resize', what, id, handle: h, to: p, orig: loneRect })
       }
+    }
+    if (tool !== 'auto') {
+      const edgeCase = caseAt(p)
+      if (edgeCase && onBorder(edgeCase.rect, p, magnet)) {
+        props.onSelect(selectCase(edgeCase.id))
+        return setDrag({
+          kind: 'move',
+          what: 'case',
+          id: edgeCase.id,
+          from: p,
+          to: p,
+          orig: edgeCase.rect,
+        })
+      }
+      const edgeRoom = roomAt(p)
+      if (edgeRoom && onBorder(edgeRoom.rect, p, magnet)) {
+        props.onSelect(selectRoom(edgeRoom.id))
+        return setDrag({
+          kind: 'move',
+          what: 'room',
+          id: edgeRoom.id,
+          from: p,
+          to: p,
+          orig: edgeRoom.rect,
+        })
+      }
+      return setDrag({ kind: 'draw', what: tool, from: p, to: p })
     }
 
     const bc = caseAt(p)
@@ -222,7 +258,7 @@ export function PlanCanvas(props: Props) {
     if (!drag) {
       // Only when the ANSWER changes, not on every pixel: this runs on every
       // pointermove and a re-render per pixel is a lot of nothing.
-      if (tool === 'auto' && !props.overview) {
+      if (tool !== 'pan' && !props.overview) {
         const next = intentAt(world(e))
         setHover((h) => (h === next ? h : next))
       }
@@ -319,15 +355,17 @@ export function PlanCanvas(props: Props) {
     drag?.kind === 'move' && live ? { dx: live.x - drag.orig.x, dy: live.y - drag.orig.y } : null
   const band = drag?.kind === 'band' ? rectFrom(drag.from, drag.to) : null
   const bounds = visibleBounds(rect, view)
+  // ⚠ `hover` decides in EVERY drawing tool, not only the arrow. It read the
+  // tool first, so an edge that was genuinely grabbable still showed a
+  // crosshair — the behaviour was right and the only thing telling the user
+  // about it was wrong.
   const cursor = props.overview
-    ? 'zoom-in'
+    ? 'pointer'
     : tool === 'pan'
       ? 'grab'
-      : tool !== 'auto'
-        ? 'crosshair'
-        : hover === 'move'
-          ? 'move'
-          : 'crosshair'
+      : hover === 'move'
+        ? 'move'
+        : 'crosshair'
 
   /** Where a rectangle sits RIGHT NOW, mid-drag. Everything that travels with
    *  the selection previews together, or a multi-move looks broken until the
@@ -361,7 +399,7 @@ export function PlanCanvas(props: Props) {
         const p = world(e)
         if (props.overview) {
           const hit = overviewLayout(props.overview.plan).find(
-            (f) => p.x >= f.bandStart - 3 && p.x <= f.bandStart + f.band + 3,
+            (f) => p.y >= f.bandStart - 3 && p.y <= f.bandStart + f.band + 3,
           )
           if (hit) props.overview.onFocus(hit.floor.id)
           return
@@ -392,26 +430,21 @@ export function PlanCanvas(props: Props) {
         )}
 
         {props.overview &&
-          overviewLayout(props.overview.plan).map(({ floor, dx, band, bandStart, height }, i) => (
+          overviewLayout(props.overview.plan).map(({ floor, dx, dy, bandStart, width }, i) => (
             <g key={floor.id} className="storey">
-              <text
-                className="storey-label"
-                x={bandStart + band / 2}
-                y={-2}
-                textAnchor="middle"
-              >
+              <text className="storey-label" x={0} y={bandStart - 1} textAnchor="start">
                 {floor.name}
               </text>
               {i > 0 && (
                 <line
                   className="storey-rule"
-                  x1={bandStart - 3}
-                  y1={-5}
-                  x2={bandStart - 3}
-                  y2={height + 4}
+                  x1={-4}
+                  y1={bandStart - 3}
+                  x2={width + 4}
+                  y2={bandStart - 3}
                 />
               )}
-              <g transform={`translate(${dx} 0)`}>
+              <g transform={`translate(${dx} ${dy})`}>
                 {roomsOn(props.overview!.plan, floor.id).map((r) => (
                   <RoomShape key={r.id} room={r} rect={r.rect} selected={false} />
                 ))}
@@ -464,7 +497,7 @@ export function PlanCanvas(props: Props) {
           <rect className="band" x={band.x} y={band.y} width={band.w} height={band.h} />
         )}
 
-        {loneRect && !drag && tool === 'auto' && !props.overview && (
+        {loneRect && !drag && tool !== 'pan' && !props.overview && (
           <g className="handles">
             {handlePositions(loneRect, magnet).map(({ h, at }) => (
               <rect

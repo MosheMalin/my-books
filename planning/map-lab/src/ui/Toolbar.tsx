@@ -21,6 +21,9 @@ type Props = {
   ghosts: boolean
   allFloors: boolean
   manyFloors: boolean
+  /** True while the read-only overview is up: nothing can be drawn, so the
+   *  tools say so rather than looking available and doing nothing. */
+  readOnly: boolean
   saved: 'saving' | 'saved' | 'failed'
   underlay: Underlay | null
   canUndo: boolean
@@ -102,8 +105,9 @@ export function Toolbar(props: Props) {
             role="radio"
             aria-checked={props.tool === t.tool}
             aria-label={t.label}
-            className={`icon${props.tool === t.tool ? ' on' : ''}`}
-            title={t.hint}
+            disabled={props.readOnly && t.tool !== 'pan'}
+            className={`icon${props.tool === t.tool && !props.readOnly ? ' on' : ''}`}
+            title={props.readOnly ? 'Viewing every floor — nothing can be drawn' : t.hint}
             onClick={() => props.onTool(t.tool)}
           >
             <t.icon />
