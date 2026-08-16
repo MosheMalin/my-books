@@ -6,6 +6,11 @@ product** — `booksnap/` is untouched by everything in this folder.
 - [`UI_PLAN.md`](UI_PLAN.md) — the proposed layout, tab by tab, with the
   `VISION.md` decision each part implements and the calls the mock takes on its
   own.
+- [`MAP_PLAN.md`](MAP_PLAN.md) — pillar 6, the physical map: the decomposition
+  that supersedes `IMPLEMENTATION_PLAN.md` §Pillar 6.
+- `map-lab/` — the standalone map editor lab (P6.0). A real Vite + React + TS
+  app with **no backend**, deliberately outside every gate, and **deleted at
+  P6.3** when the chosen editor is ported into `app/web`. See its own README.
 - `mockup/` — a clickable mock of that layout. Vanilla ES modules, no build
   step, no CDN, no backend. Fake data lives in `mockup/js/data.js`, shaped like
   the target `Book` / `Copy` / `Shelf` records in VISION §5.2–§5.7 so the mock
