@@ -1329,6 +1329,16 @@ class SectionPatch(BaseModel):
     default_depth: int | None = Field(default=None, ge=1, le=MAX_DEPTH)
 
 
+class SlotDepthPatch(BaseModel):
+    """One shelf's OWN depth — the per-shelf override §3.3 promises.
+
+    Not clamped to the section's default in either direction: the whole point
+    is that a shelf may differ from the case it stands in.
+    """
+
+    depth_count: int = Field(ge=1, le=MAX_DEPTH)
+
+
 class SlotRemovalDTO(BaseModel):
     """What a structural edit did to the shelves standing in the slots.
 

@@ -6067,3 +6067,46 @@ def test_a_detached_case_can_change_storey_but_an_attached_one_may_not():
         assert moved.status_code == 200, moved.text
         assert moved.json()["floor_id"] == upstairs["id"]
         assert moved.json()["place_id"] is None
+
+
+def test_one_shelf_may_be_deeper_than_the_case_it_stands_in():
+    """The owner's own words (MAP_PLAN §1): *"depth — default for the whole
+    bookcase, overridable per shelf"*. The override is addressed by SLOT,
+    because that is what the elevation has in hand: the cell that was tapped.
+
+    ⚠ It cannot go BELOW what stands there. A copy recorded at depth 2 of a
+    shelf declaring one row is a location `check_depth` then refuses, and no
+    foreign key can see it — the same clamp the section default has, one
+    level down.
+    """
+    store = MemoryBookStore()
+    with TestClient(_app(store=store)) as client:
+        _drawn_map(client, columns=2, levels=2, depth=1)
+        section = client.get("/api/v1/map").json()["sections"][0]
+        path = f"/api/v1/map/sections/{section['id']}/shelves"
+
+        deeper = client.patch(f"{path}/2/1", json={"depth_count": 3})
+        assert deeper.status_code == 200, deeper.text
+        assert deeper.json()["depth_count"] == 3
+        assert deeper.json()["address"] == {
+            "section_id": section["id"], "col": 2, "level": 1}
+        # …and its neighbours are untouched: this is a PER-SHELF override.
+        assert [s["depth_count"] for s in
+                client.get("/api/v1/shelves").json()].count(1) == 3
+
+        # A book in the back row pins the floor.
+        target = client.patch(f"{path}/1/1", json={"depth_count": 2}).json()
+        store.save(TEST_LIBRARY, new_book(
+            id="b-back", library_id=TEST_LIBRARY.id, title="ספר",
+            author="סופר", copy_id="c-back", shelf_id=target["id"], depth=2))
+        refused = client.patch(f"{path}/1/1", json={"depth_count": 1})
+        assert refused.status_code == 409, refused.text
+        assert "depth 2" in refused.json()["detail"]
+        assert client.get(
+            f"/api/v1/shelves/{target['id']}").json()["depth_count"] == 2
+
+        # A slot that is not there, and a 0-based caller, are both refused.
+        assert client.patch(f"{path}/9/9",
+                            json={"depth_count": 2}).status_code == 404
+        assert client.patch(f"{path}/0/1",
+                            json={"depth_count": 2}).status_code in (400, 404, 422)

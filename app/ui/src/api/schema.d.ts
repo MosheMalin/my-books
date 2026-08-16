@@ -1008,6 +1008,37 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/map/sections/{section_id}/shelves/{col}/{level}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Set Shelf Depth
+         * @description The per-shelf depth override — *"default for the whole bookcase,
+         *     overridable per shelf"*, in the owner's own words (MAP_PLAN §1).
+         *
+         *     Addressed by SLOT rather than by shelf id, because that is what the
+         *     elevation has in its hand: the cell the owner tapped. Both indices are
+         *     1-based, like every address on the wire.
+         *
+         *     ⚠ It cannot take a shelf below its deepest occupied depth, for the reason
+         *     §3.3 gives about the section default one level up: a copy recorded at
+         *     depth 2 of a shelf declaring one row is a location `check_depth` then
+         *     refuses, and no foreign key can see it. Deepening is never refused —
+         *     there is nothing behind a shelf to protect.
+         */
+        patch: operations["set_shelf_depth_api_v1_map_sections__section_id__shelves__col___level__patch"];
+        trace?: never;
+    };
     "/api/v1/map/sections/{section_id}/slots": {
         parameters: {
             query?: never;
@@ -3141,6 +3172,17 @@ export interface components {
             order?: number | null;
         };
         /**
+         * SlotDepthPatch
+         * @description One shelf's OWN depth — the per-shelf override §3.3 promises.
+         *
+         *     Not clamped to the section's default in either direction: the whole point
+         *     is that a shelf may differ from the case it stands in.
+         */
+        SlotDepthPatch: {
+            /** Depth Count */
+            depth_count: number;
+        };
+        /**
          * SlotRemovalDTO
          * @description What a structural edit did to the shelves standing in the slots.
          *
@@ -4757,6 +4799,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SectionEditDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_shelf_depth_api_v1_map_sections__section_id__shelves__col___level__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                section_id: string;
+                col: number;
+                level: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SlotDepthPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShelfDTO"];
                 };
             };
             /** @description Validation Error */

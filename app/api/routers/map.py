@@ -43,6 +43,7 @@ nothing here has been shown to anybody yet.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import replace
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
@@ -69,9 +70,11 @@ from app.api.dto import (
     SectionDTO,
     SectionEditDTO,
     SectionPatch,
+    ShelfDTO,
     SiteCreate,
     SiteDTO,
     SitePatch,
+    SlotDepthPatch,
     SlotRemovalDTO,
 )
 from app.api.policy import require
@@ -84,6 +87,7 @@ from app.domain import (
     NotEmpty,
     Place,
     Section,
+    ShelfAddress,
     Site,
     TooManySlots,
     apply_default_levels,
@@ -103,6 +107,7 @@ from app.domain import (
 from app.domain.place import NotOnThisFloor
 from app.map_edit import (
     apply_depth_default,
+    deepest_occupied_depths,
     apply_slot_change,
     attach_case_to_room,
     clear_bookcase_slots,
@@ -566,6 +571,51 @@ def patch_section(
             store.save_section(library, section)
         return SectionEditDTO(section=SectionDTO.of(section))
     return _edit(store, shelves, books, library, change, ids=ids, clock=clock)
+
+
+@router.patch("/sections/{section_id}/shelves/{col}/{level}",
+              response_model=ShelfDTO)
+def set_shelf_depth(
+    section_id: str,
+    col: int,
+    level: int,
+    body: SlotDepthPatch,
+    library: LibraryRef = Depends(require(EDIT)),
+    store: MapStore = Depends(get_map_store),
+    shelves: ShelfStore = Depends(get_shelf_store),
+    books: BookStore = Depends(get_book_store),
+) -> ShelfDTO:
+    """The per-shelf depth override — *"default for the whole bookcase,
+    overridable per shelf"*, in the owner's own words (MAP_PLAN §1).
+
+    Addressed by SLOT rather than by shelf id, because that is what the
+    elevation has in its hand: the cell the owner tapped. Both indices are
+    1-based, like every address on the wire.
+
+    ⚠ It cannot take a shelf below its deepest occupied depth, for the reason
+    §3.3 gives about the section default one level up: a copy recorded at
+    depth 2 of a shelf declaring one row is a location `check_depth` then
+    refuses, and no foreign key can see it. Deepening is never refused —
+    there is nothing behind a shelf to protect.
+    """
+    _section(store, library, section_id)
+    with _translated():
+        address = ShelfAddress(section_id, col, level)
+    shelf = shelves.get_shelf_at(library, address)
+    if shelf is None:
+        raise _gone("shelf at that slot")
+    floor = deepest_occupied_depths(shelves, books, library, [shelf]).get(
+        shelf.id, 1)
+    if body.depth_count < floor:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"something stands at depth {floor} on this shelf, so it cannot "
+            f"become {body.depth_count} row(s) deep (§5.7)",
+        )
+    with _translated():
+        shelves.save_shelf(library, replace(shelf, depth_count=body.depth_count))
+    return ShelfDTO.of(shelves.get_shelf(library, shelf.id),
+                       capture_count=len(shelves.list_captures(library, shelf.id)))
 
 
 @router.post("/sections/{section_id}/levels", response_model=SectionEditDTO)

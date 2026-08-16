@@ -2754,6 +2754,22 @@
         "title": "SitePatch",
         "type": "object"
       },
+      "SlotDepthPatch": {
+        "description": "One shelf's OWN depth — the per-shelf override §3.3 promises.\n\nNot clamped to the section's default in either direction: the whole point\nis that a shelf may differ from the case it stands in.",
+        "properties": {
+          "depth_count": {
+            "maximum": 4.0,
+            "minimum": 1.0,
+            "title": "Depth Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "depth_count"
+        ],
+        "title": "SlotDepthPatch",
+        "type": "object"
+      },
       "SlotRemovalDTO": {
         "description": "What a structural edit did to the shelves standing in the slots.\n\nTwo outcomes, never one — and the API returns both because the owner is\nentitled to know that a shelf survived rather than vanished.",
         "properties": {
@@ -5083,6 +5099,77 @@
           }
         },
         "summary": "Apply Levels",
+        "tags": [
+          "map"
+        ]
+      }
+    },
+    "/api/v1/map/sections/{section_id}/shelves/{col}/{level}": {
+      "patch": {
+        "description": "The per-shelf depth override — *\"default for the whole bookcase,\noverridable per shelf\"*, in the owner's own words (MAP_PLAN §1).\n\nAddressed by SLOT rather than by shelf id, because that is what the\nelevation has in its hand: the cell the owner tapped. Both indices are\n1-based, like every address on the wire.\n\n⚠ It cannot take a shelf below its deepest occupied depth, for the reason\n§3.3 gives about the section default one level up: a copy recorded at\ndepth 2 of a shelf declaring one row is a location `check_depth` then\nrefuses, and no foreign key can see it. Deepening is never refused —\nthere is nothing behind a shelf to protect.",
+        "operationId": "set_shelf_depth_api_v1_map_sections__section_id__shelves__col___level__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "section_id",
+            "required": true,
+            "schema": {
+              "title": "Section Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "col",
+            "required": true,
+            "schema": {
+              "title": "Col",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "level",
+            "required": true,
+            "schema": {
+              "title": "Level",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SlotDepthPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShelfDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Shelf Depth",
         "tags": [
           "map"
         ]

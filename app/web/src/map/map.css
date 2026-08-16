@@ -1,0 +1,596 @@
+/*
+ * The lab's own sheet. Deliberately NOT app/web's — the lab is disposable and
+ * borrowing the product's design system would make it look decided.
+ *
+ * Black OR white background (owner, 2026-08-16). Both are real themes rather
+ * than an inverted filter: a schematic on white is a drawing, a schematic on
+ * black is a screen, and the line weights that read well differ.
+ */
+
+:root,
+:root[data-theme='dark'] {
+  --bg: #14171c;
+  --panel: #1b1f26;
+  --line: #2b323c;
+  --ink: #e7ecf3;
+  --dim: #97a1af;
+  --accent: #6fb1ff;
+  --accent-dim: #2c4a6e;
+  --warn: #ffb454;
+  --warn-bg: #3a2f1a;
+  --warn-ink: #ffe0b0;
+  --danger: #ff7a7a;
+  --btn: #232833;
+  --input-bg: #14181f;
+  --grid-minor: #1e232b;
+  --grid-major: #29303a;
+  --room-fill: #232b36;
+  --room-stroke: #5561718c;
+  --case-fill: #3d5a80;
+  --case-stroke: #7ea2c9;
+  --case-front: #cfe4ff;
+  --case-ink: #eaf2ff;
+  --font: ui-sans-serif, system-ui, 'Segoe UI', Arial, sans-serif;
+}
+
+:root[data-theme='light'] {
+  --bg: #ffffff;
+  --panel: #f4f6f9;
+  --line: #d3d9e2;
+  --ink: #17202b;
+  --dim: #5c6875;
+  --accent: #1668d0;
+  --accent-dim: #cfe2fb;
+  --warn: #b06a00;
+  --warn-bg: #fff5e2;
+  --warn-ink: #6b4200;
+  --danger: #b32020;
+  --btn: #ffffff;
+  --input-bg: #ffffff;
+  --grid-minor: #ecf0f5;
+  --grid-major: #d9e0ea;
+  --room-fill: #f2f5f9;
+  --room-stroke: #9aa7b6;
+  --case-fill: #b9d0ea;
+  --case-stroke: #4a6f9c;
+  --case-front: #14314f;
+  --case-ink: #14314f;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; margin: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: 14px;
+  overscroll-behavior: none;
+}
+
+.app { display: flex; flex-direction: column; height: 100%; }
+
+/* --- toolbar ------------------------------------------------------------- */
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.brand { display: flex; align-items: baseline; gap: 6px; }
+.brand .tag {
+  font-size: 11px;
+  color: var(--dim);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+.group { display: flex; align-items: center; gap: 4px; }
+.group.right { margin-inline-start: auto; }
+
+button {
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--btn);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 6px 10px;
+  cursor: pointer;
+  min-height: 34px;
+}
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: 0.4; cursor: default; }
+button.on {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+button.danger { color: var(--danger); }
+
+button.icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  padding: 4px;
+}
+.icons { gap: 3px; }
+
+.ic { fill: currentColor; }
+.ic.stroke {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.menu-pop .tick { display: inline-block; width: 14px; }
+
+.slider { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--dim); }
+.slider input { width: 84px; }
+
+/* --- menu ---------------------------------------------------------------- */
+
+.menu { position: relative; }
+.menu-pop {
+  position: absolute;
+  inset-inline-start: 0;
+  top: calc(100% + 4px);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 190px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+.menu-pop button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  text-align: start;
+}
+.menu-pop button:hover:not(:disabled) { background: var(--accent-dim); }
+.menu-pop kbd {
+  font: inherit;
+  font-size: 11px;
+  color: var(--dim);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+
+/* --- layout -------------------------------------------------------------- */
+
+.body { display: flex; flex: 1; min-height: 0; }
+.canvas-wrap { position: relative; flex: 1; min-width: 0; }
+
+.resizer {
+  flex: 0 0 6px;
+  cursor: col-resize;
+  background: var(--line);
+  opacity: 0.35;
+  touch-action: none;
+}
+.resizer:hover { opacity: 1; background: var(--accent); }
+
+.side {
+  width: 330px;
+  flex: 0 0 330px;
+  border-inline-start: 1px solid var(--line);
+  background: var(--panel);
+  overflow-y: auto;
+}
+
+/* The panel stays AT THE SIDE for anything laptop-shaped (owner, 2026-08-16:
+ * *"having the settings at the bottom — better as it was before, at the
+ * side"*). It was stacking below 820px, which a half-width browser window hits
+ * easily. It only stacks on a real phone now, and narrows before it does. */
+@media (max-width: 1040px) {
+  .side { width: 280px; flex: 0 0 280px; }
+}
+
+/* Phone. The toolbar gives its space back to the canvas rather than the other
+ * way round — the lab is judged on a phone. */
+@media (max-width: 640px) {
+  .body { flex-direction: column; }
+  /* !important: the drag handle writes an inline width, which means nothing
+     once the panel is stacked under the plan rather than beside it. */
+  .side {
+    width: auto !important;
+    flex: 0 0 38% !important;
+    border-inline-start: none;
+    border-top: 1px solid var(--line);
+  }
+  .resizer { display: none; }
+  .toolbar { gap: 5px; padding: 5px 6px; }
+  .toolbar button { padding: 6px 9px; font-size: 12px; }
+  .brand { display: none; }
+  .saved { font-size: 10px; }
+  .slider input { width: 60px; }
+}
+
+/* The storey, in the corner of the BOARD rather than the control line. An HTML
+ * overlay, so it keeps its size through any zoom — a label that shrinks when
+ * you zoom out is unreadable exactly when you need it. */
+.floor-badge {
+  position: absolute;
+  inset-inline-start: 10px;
+  top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 2px 2px 8px;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.floor-badge .floor-name {
+  font-size: 13px;
+  font-weight: 600;
+  cursor: text;
+  white-space: nowrap;
+}
+.floor-badge input { min-height: 28px; padding: 3px 6px; width: 140px; font-size: 13px; }
+.floor-badge .menu > button { min-height: 28px; padding: 2px 6px; }
+
+.hint {
+  position: absolute;
+  inset-inline: 10px;
+  bottom: 10px;
+  margin: 0;
+  padding: 7px 10px;
+  font-size: 12px;
+  color: var(--dim);
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  pointer-events: none;
+}
+
+.readonly-bar {
+  position: absolute;
+  inset-inline-start: 50%;
+  top: 10px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 6px 5px 12px;
+  font-size: 12px;
+  color: var(--warn-ink);
+  background: var(--warn-bg);
+  border: 1px solid var(--warn);
+  border-radius: 8px;
+  white-space: nowrap;
+}
+.readonly-bar button { min-height: 28px; padding: 3px 10px; font-size: 12px; }
+
+.toast {
+  position: absolute;
+  inset-inline-start: 50%;
+  top: 14px;
+  transform: translateX(-50%);
+  padding: 8px 14px;
+  background: var(--warn-bg);
+  border: 1px solid var(--warn);
+  border-radius: 8px;
+  color: var(--warn-ink);
+  font-size: 13px;
+  pointer-events: none;
+}
+
+/* --- the plan ------------------------------------------------------------ */
+
+svg.plan {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+  user-select: none;
+}
+
+.grid-minor, .grid-major { fill: none; vector-effect: non-scaling-stroke; }
+.grid-minor { stroke: var(--grid-minor); stroke-width: 1; }
+.grid-major { stroke: var(--grid-major); stroke-width: 1; }
+
+.room rect {
+  fill: var(--room-fill);
+  stroke: var(--room-stroke);
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+}
+.room.selected rect { stroke: var(--accent); }
+
+.room-label {
+  fill: var(--dim);
+  font-size: 1.6px;
+  font-family: var(--font);
+  unicode-bidi: plaintext;
+}
+
+.case rect {
+  fill: var(--case-fill);
+  stroke: var(--case-stroke);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+.case.selected rect { stroke: var(--accent); stroke-width: 2.5; }
+
+.case-front { stroke: var(--case-front); stroke-width: 4; vector-effect: non-scaling-stroke; }
+.case-divider {
+  stroke: var(--case-stroke);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+.case-depth {
+  stroke: var(--case-front);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  opacity: 0.7;
+  vector-effect: non-scaling-stroke;
+}
+.case-label {
+  fill: var(--case-ink);
+  font-size: 1.3px;
+  font-family: var(--font);
+  unicode-bidi: plaintext;
+  pointer-events: none;
+}
+
+.preview-room, .preview-case {
+  fill: color-mix(in srgb, var(--accent) 18%, transparent);
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+  vector-effect: non-scaling-stroke;
+}
+
+.handles rect {
+  fill: var(--bg);
+  stroke: var(--accent);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.band {
+  fill: color-mix(in srgb, var(--accent) 12%, transparent);
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.multi-count {
+  fill: var(--accent);
+  font-size: 12px;
+  font-family: var(--font);
+}
+
+.storey-label {
+  fill: var(--dim);
+  font-size: 2.2px;
+  font-family: var(--font);
+  unicode-bidi: plaintext;
+}
+.storey-rule {
+  stroke: var(--line);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 4;
+  vector-effect: non-scaling-stroke;
+}
+
+.ghost {
+  fill: none;
+  stroke: var(--dim);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 5;
+  opacity: 0.4;
+  vector-effect: non-scaling-stroke;
+}
+
+.size-badge rect { fill: var(--accent); }
+.size-badge text {
+  fill: #fff;
+  font-size: 12px;
+  font-family: var(--font);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- inspector ----------------------------------------------------------- */
+
+.inspector { padding: 12px 14px 40px; }
+.inspector h2 { margin: 0 0 10px; font-size: 15px; }
+
+.field { display: block; margin-bottom: 10px; }
+.field > span { display: block; font-size: 12px; color: var(--dim); margin-bottom: 3px; }
+.field.inline { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.field.inline > span { margin: 0; }
+.size-inputs { display: flex; align-items: center; gap: 6px; color: var(--dim); }
+
+input:not([type]), input[type='text'], input[type='number'] {
+  font: inherit;
+  color: var(--ink);
+  background: var(--input-bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 7px 8px;
+  min-height: 34px;
+}
+.field > input:not([type='number']) { width: 100%; }
+input[type='number'] { width: 68px; }
+
+.rtl-safe { unicode-bidi: plaintext; text-align: start; }
+
+.note { font-size: 12px; color: var(--dim); line-height: 1.5; margin: 8px 0; }
+.note code { font-size: 11px; }
+
+.steps { font-size: 12px; color: var(--dim); line-height: 1.6; padding-inline-start: 18px; }
+.steps strong { color: var(--ink); }
+
+/* --- collapsible fold ---------------------------------------------------- */
+
+.fold { margin: 0 0 10px; }
+.fold-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  min-height: 30px;
+  padding: 5px 6px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: none;
+  text-align: start;
+}
+.fold-head:hover { border-color: var(--accent); }
+.fold-caret { color: var(--dim); font-size: 11px; }
+.fold-label { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.06em; }
+.fold-summary {
+  flex: 1;
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: end;
+}
+.fold-body { padding-top: 10px; }
+
+.picked { font-size: 12px; line-height: 1.7; margin: 6px 0; padding-inline-start: 18px; }
+.picked li { color: var(--dim); }
+
+button.link {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-size: 12px;
+  text-align: start;
+  text-decoration: underline;
+}
+
+select {
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--input-bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  min-height: 34px;
+  max-width: 62%;
+}
+
+.saved { font-size: 11px; color: var(--dim); }
+.saved-failed { color: var(--danger); font-weight: 600; }
+.row { display: flex; gap: 6px; margin: 10px 0; }
+.row button { flex: 1; }
+
+.rule {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--warn-ink);
+  background: var(--warn-bg);
+  border: 1px solid var(--warn);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 8px 0;
+}
+.rule button { margin-top: 8px; width: 100%; }
+
+fieldset { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px 10px; margin: 12px 0; }
+legend { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.06em; }
+
+.inspector > button.danger { width: 100%; }
+
+/* --- elevation ----------------------------------------------------------- */
+
+.elevation { margin: 10px 0; }
+
+/* Sections read as stacked units: a rule between them, and the one on top is
+ * drawn on top. With a single section none of this chrome renders at all. */
+.elev-section { padding: 8px 0; }
+.elev-section + .elev-section { border-top: 2px solid var(--line); }
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.section-name { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+.section-where { color: var(--dim); text-transform: none; letter-spacing: 0; }
+.section-head button { min-height: 26px; padding: 2px 8px; }
+
+.section-add {
+  width: 100%;
+  margin: 4px 0;
+  font-size: 12px;
+  color: var(--dim);
+  border-style: dashed;
+}
+.section-add:hover:not(:disabled) { color: var(--ink); }
+
+.section-defaults {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--dim);
+}
+.section-defaults label { display: flex; align-items: center; gap: 4px; }
+.section-defaults input { width: 52px; min-height: 28px; padding: 4px 6px; }
+.section-defaults button { min-height: 28px; padding: 2px 8px; font-size: 11px; }
+
+.elev-scroll { overflow-x: auto; overflow-y: hidden; padding-bottom: 2px; }
+.elevation-grid { display: grid; gap: 6px; min-width: max-content; }
+.elev-col { display: flex; flex-direction: column; gap: 3px; }
+.elev-col-head { font-size: 11px; color: var(--dim); text-align: center; }
+.elev-col-foot { display: flex; gap: 3px; }
+.elev-col-foot button { flex: 1; min-height: 26px; padding: 2px; font-size: 12px; }
+
+.elev-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 30px;
+  padding: 2px;
+  font-size: 11px;
+  background: var(--btn);
+  border: 1px dashed var(--line);
+  border-radius: 5px;
+  color: var(--dim);
+}
+.elev-cell.selected { border-style: solid; border-color: var(--accent); color: var(--ink); }
+.elev-cell.override {
+  background: var(--warn-bg);
+  border-color: var(--warn);
+  border-style: solid;
+  color: var(--warn-ink);
+}
+.elev-level { opacity: 0.7; }
+.elev-depth { font-weight: 600; }
+.elev-photos { font-size: 10px; }
+
+.elevation-cols { display: flex; gap: 6px; margin-top: 8px; }
+.elevation-cols button { flex: 1; }
