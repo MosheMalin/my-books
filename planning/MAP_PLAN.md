@@ -231,6 +231,12 @@ Three amendments the idea needs, and each is a rule rather than a detail:
   selecting several moved to Ctrl+drag. Selecting several is the rarer act, so
   it is the one that pays.
 
+**Columns follow the long side.** A bookcase IS long and thin, and the columns
+divide across its front — so a resize that changes which side is longer turns
+the case with it, or the elevation stops describing the furniture. It fires
+only on the flip, so a one-unit nudge never undoes a deliberate *Turn*, and a
+case flush against a wall still faces into the room.
+
 And a fourth thing that only shows up once you build it: **a tap is not a
 failed drawing.** In the arrow, a click that produces a zero-size rectangle
 selects whatever is under it and says nothing — complaining about it would
@@ -461,11 +467,12 @@ depth override on one shelf — on a phone-sized viewport, and the drawing is
 exported. That export is P6.1's first fixture: a real plan, in abstract units,
 made by the person the feature is for.
 
-⚠ The lab has been through **six passes**. The first offered freehand against
+⚠ The lab has been through **seven passes**. The first offered freehand against
 snap-while-dragging and was rejected wholesale (§4); the third came back
 *"very fluent"* with five additions; the fourth and fifth were polish plus four
 real bugs; the sixth cut the toolbar to eight controls and made the arrow
-guess. Expect a seventh: the point
+guess; the seventh moved the storey onto the board and drew the icons. Expect
+an eighth: the point
 of a disposable app is that rejecting it costs a day, not a sprint. It is
 finished when the owner stops finding things, not when the item list is
 ticked.

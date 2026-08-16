@@ -20,7 +20,15 @@ export type MenuItem = {
   onSelect: () => void
 }
 
-export function Menu({ label, items }: { label: string; items: MenuItem[] }) {
+export function Menu({
+  label,
+  items,
+  title,
+}: {
+  label: string
+  items: MenuItem[]
+  title?: string
+}) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement | null>(null)
 
@@ -49,6 +57,8 @@ export function Menu({ label, items }: { label: string; items: MenuItem[] }) {
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
+        aria-label={label || title}
+        title={title}
         className={open ? 'on' : ''}
         onClick={() => setOpen((o) => !o)}
       >

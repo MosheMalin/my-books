@@ -176,6 +176,15 @@ function useRenameFocus(active: boolean, done: () => void) {
   return ref
 }
 
+/**
+ * Enter — and Escape — hand the keyboard back to the board (owner,
+ * 2026-08-16). A name box that keeps focus is one you have to click your way
+ * out of, and every single-key shortcut is dead while it holds it.
+ */
+const finishOnEnter = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  if (e.key === 'Enter' || e.key === 'Escape') e.currentTarget.blur()
+}
+
 function RoomPanel({
   room,
   plan,
@@ -201,6 +210,7 @@ function RoomPanel({
           className="rtl-safe"
           value={room.name}
           placeholder="סלון · living room"
+          onKeyDown={finishOnEnter}
           onChange={(e) => actions.renameRoom(room.id, e.target.value)}
         />
       </label>
@@ -292,6 +302,7 @@ function CasePanel({
             className="rtl-safe"
             value={bc.name}
             placeholder="ארון הסלון"
+            onKeyDown={finishOnEnter}
             onChange={(e) => actions.renameCase(bc.id, e.target.value)}
           />
         </label>

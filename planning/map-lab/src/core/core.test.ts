@@ -51,6 +51,7 @@ import {
   withColumnCount,
   withColumnLevels,
   withDefaultDepth,
+  withRect,
   withShelfDepth,
 } from './model'
 import type { Plan, Room } from './model'
@@ -454,7 +455,10 @@ describe('floors', () => {
     expect(back.plan.rooms[0]!.floorId).toBe('f1')
   })
 
-  it('lays every storey out side by side, each at its own size', () => {
+  it('gives every storey an EQUAL band, whatever its own size', () => {
+    // "Three floors — divide the board to 3, each has one floor" (owner,
+    // 2026-08-16). Packing them at their natural widths made a small storey
+    // look squeezed beside a large one, when comparing them is the point.
     const plan: Plan = {
       ...emptyPlan(),
       floors: [{ id: 'f1', name: 'g' }, { id: 'f2', name: 'u' }],
@@ -464,22 +468,59 @@ describe('floors', () => {
       ],
     }
     const [ground, upstairs] = overviewLayout(plan, 6)
-    // the ground floor keeps its own coordinates; the next one is pushed clear
-    expect(ground!.dx).toBe(0)
-    expect(ground!.width).toBe(20)
-    expect(upstairs!.dx).toBe(26)
-    expect(upstairs!.width).toBe(10)
+    expect(ground!.band).toBe(20)
+    expect(upstairs!.band).toBe(20) // equal, though its plan is half as wide
+    expect(ground!.bandStart).toBe(0)
+    expect(upstairs!.bandStart).toBe(26)
   })
 
-  it('shifts a storey that does not start at the origin back to its own left edge', () => {
+  it('centres a narrow storey in its band rather than jamming it against the rule', () => {
+    const plan: Plan = {
+      ...emptyPlan(),
+      floors: [{ id: 'f1', name: 'g' }, { id: 'f2', name: 'u' }],
+      rooms: [
+        room('r1', rect(0, 0, 20, 12)),
+        { ...room('r2', rect(0, 0, 10, 8)), floorId: 'f2' },
+      ],
+    }
+    const [, upstairs] = overviewLayout(plan, 6)
+    // band 26..46, plan 10 wide, so it starts 5 in
+    expect(upstairs!.dx).toBe(31)
+  })
+
+  it('shifts a storey that does not start at the origin back into its band', () => {
     const plan: Plan = {
       ...emptyPlan(),
       floors: [{ id: 'f1', name: 'g' }],
       rooms: [room('r1', rect(40, 30, 10, 10))],
     }
-    // otherwise a plan drawn far from 0,0 would leave a gap the width of its
-    // own offset before it
+    // otherwise a plan drawn far from 0,0 would sit outside the band entirely
     expect(overviewLayout(plan)[0]!.dx).toBe(-40)
+  })
+
+  it('turns a bookcase when a resize makes it wider than it is tall', () => {
+    // Columns divide across the FRONT, and the front is the long face — that
+    // is what a bookcase is. Making a tall narrow case wide has to move the
+    // columns with it (owner, 2026-08-16).
+    const tall = newBookcase('c1', '', rect(5, 4, 1, 8), 'E', null, F)
+    const wide = withRect(tall, rect(5, 4, 8, 1), null)
+    expect(tall.front).toBe('E')
+    expect(wide.front).toBe('S')
+  })
+
+  it('leaves the facing alone when the resize does not flip which side is longer', () => {
+    // so a one-unit nudge never undoes a deliberate Turn
+    const bc = newBookcase('c1', '', rect(5, 4, 8, 1), 'N', null, F)
+    expect(withRect(bc, rect(5, 4, 9, 1), null).front).toBe('N')
+  })
+
+  it('still faces into the room when the flipped case is against a wall', () => {
+    const flipped = withRect(
+      newBookcase('c1', '', rect(0, 2, 1, 8), 'E', 'r1', F),
+      rect(0, 0, 8, 1),
+      livingRoom,
+    )
+    expect(flipped.front).toBe('S') // north wall, so the books look south
   })
 
   it('round-trips several floors', () => {

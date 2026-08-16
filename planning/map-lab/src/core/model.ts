@@ -389,6 +389,23 @@ export function newBookcase(
 
 export const allShelves = (bc: Bookcase): Shelf[] => bc.sections.flatMap((s) => s.shelves)
 
+/**
+ * Resize a bookcase, turning it when the resize changed which side is LONGER
+ * (owner, 2026-08-16: *"if the new width is larger than the new length, change
+ * the columns orientation"*).
+ *
+ * Columns divide across the front, and the front is the long face — that is
+ * what a bookcase IS. So making a tall narrow case wide has to move the
+ * columns with it, or the elevation stops describing the furniture. It fires
+ * only on the flip, so a one-unit nudge never undoes a deliberate *Turn*, and
+ * a case flush against a wall still faces into the room: `frontFor` asks the
+ * wall first.
+ */
+export function withRect(bc: Bookcase, rect: Rect, room: Room | null): Bookcase {
+  const flipped = bc.rect.w >= bc.rect.h !== rect.w >= rect.h
+  return { ...bc, rect, front: flipped ? frontFor(rect, room) : bc.front }
+}
+
 export function maxDepth(bc: Bookcase): number {
   return bc.sections.reduce(
     (m, sec) => sec.shelves.reduce((n, s) => Math.max(n, s.depth), Math.max(m, sec.defaultDepth)),
@@ -565,16 +582,30 @@ export function planBounds(plan: Plan, floorId?: string): { min: Pt; max: Pt } {
 export function overviewLayout(
   plan: Plan,
   gap = 6,
-): { floor: Floor; dx: number; width: number; height: number }[] {
-  let x = 0
-  return plan.floors.map((floor) => {
-    const b = planBounds(plan, floor.id)
-    const width = Math.max(b.max.x - b.min.x, gap)
-    const height = Math.max(b.max.y - b.min.y, gap)
-    const dx = x - b.min.x
-    x += width + gap
-    return { floor, dx, width, height }
+): { floor: Floor; dx: number; band: number; bandStart: number; height: number }[] {
+  // EQUAL bands, one per storey (owner, 2026-08-16: *"three floors — divide
+  // the board to 3, each has one floor"*). Packing them at their natural
+  // widths made a small storey look squeezed next to a large one, when what
+  // the view is for is comparing them.
+  const bounds = plan.floors.map((f) => planBounds(plan, f.id))
+  const band = Math.max(gap, ...bounds.map((b) => b.max.x - b.min.x))
+  const height = Math.max(gap, ...bounds.map((b) => b.max.y - b.min.y))
+  return plan.floors.map((floor, i) => {
+    const b = bounds[i]!
+    const bandStart = i * (band + gap)
+    // centred in its band, so a narrow storey sits under its own label rather
+    // than hard against the divider
+    const dx = bandStart + (band - (b.max.x - b.min.x)) / 2 - b.min.x
+    return { floor, dx, band, bandStart, height }
   })
+}
+
+/** The whole overview's extent, for *Show all* while it is on screen. */
+export function overviewBounds(plan: Plan, gap = 6): { min: Pt; max: Pt } {
+  const cells = overviewLayout(plan, gap)
+  const last = cells[cells.length - 1]
+  if (!last) return { min: pt(0, 0), max: pt(0, 0) }
+  return { min: pt(0, -4), max: pt(last.bandStart + last.band, last.height) }
 }
 
 export function casesInRoom(plan: Plan, roomId: string): Bookcase[] {

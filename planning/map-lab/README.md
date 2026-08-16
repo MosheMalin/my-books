@@ -7,7 +7,7 @@ look at.
 
 ```bash
 npm install --prefix planning/map-lab
-npm --prefix planning/map-lab test          # 75 tests, ~1s
+npm --prefix planning/map-lab test          # 79 tests, ~1s
 ```
 
 The dev server is `map-lab` in `.claude/launch.json` (port 5175 — 5173 is the
@@ -24,7 +24,8 @@ bookcases alike, and the freehand code is deleted rather than disabled. The
 second pass came back *"very fluent"*; the third added selection, copy/paste
 and attachment; the fourth fixed two real bugs and moved the edit commands into
 a menu; the fifth added sections and floors and fixed two more; the sixth cut
-the toolbar to eight controls and made the arrow guess what you meant.
+the toolbar to eight controls and made the arrow guess what you meant; the
+seventh moved the storey onto the board and drew the icons properly.
 
 ## What to try
 
@@ -53,11 +54,12 @@ the toolbar to eight controls and made the arrow guess what you meant.
    inside a room attaches it; the *Moves with* dropdown points it anywhere,
    including nowhere. Dragging the case yourself can re-home it; a room moving
    its own furniture never changes whose furniture it is.
-8. **Change floors.** The dropdown in the toolbar switches storey; ＋ adds
-   one. Each floor has its own rooms — two storeys both start at 0,0, so only
-   one is drawn at a time — and *other floors* ghosts the rest behind it, which
-   is how you line a bookcase up over the stairwell below. A floor is **not**
-   part of a shelf's address; it is a grouping over rooms.
+8. **Change floors.** The storey lives in the **top corner of the board**, not
+   the toolbar: its name is the label (double-click to rename), and the ▾
+   behind it switches, adds and removes. It keeps its size through any zoom.
+   *All floors, side by side* gives each storey an **equal band** with a rule
+   between them; double-click one to work on it. A floor is **not** part of a
+   shelf's address; it is a grouping over rooms.
 9. **Stack two bookcases.** A low base with a taller unit on top is ONE
    bookcase with two **sections**: press *a second section on top*, then give
    it its own column count. Sections divide independently and carry their own

@@ -361,7 +361,7 @@ export function PlanCanvas(props: Props) {
         const p = world(e)
         if (props.overview) {
           const hit = overviewLayout(props.overview.plan).find(
-            (f) => p.x >= f.dx && p.x <= f.dx + f.width,
+            (f) => p.x >= f.bandStart - 3 && p.x <= f.bandStart + f.band + 3,
           )
           if (hit) props.overview.onFocus(hit.floor.id)
           return
@@ -392,18 +392,33 @@ export function PlanCanvas(props: Props) {
         )}
 
         {props.overview &&
-          overviewLayout(props.overview.plan).map(({ floor, dx, width, height }) => (
-            <g key={floor.id} className="storey" transform={`translate(${dx} 0)`}>
-              <text className="storey-label" x={width / 2} y={-2} textAnchor="middle">
+          overviewLayout(props.overview.plan).map(({ floor, dx, band, bandStart, height }, i) => (
+            <g key={floor.id} className="storey">
+              <text
+                className="storey-label"
+                x={bandStart + band / 2}
+                y={-2}
+                textAnchor="middle"
+              >
                 {floor.name}
               </text>
-              <line className="storey-rule" x1={width + 3} y1={-4} x2={width + 3} y2={height + 4} />
-              {roomsOn(props.overview!.plan, floor.id).map((r) => (
-                <RoomShape key={r.id} room={r} rect={r.rect} selected={false} />
-              ))}
-              {casesOn(props.overview!.plan, floor.id).map((bc) => (
-                <CaseShape key={bc.id} bc={bc} selected={false} />
-              ))}
+              {i > 0 && (
+                <line
+                  className="storey-rule"
+                  x1={bandStart - 3}
+                  y1={-5}
+                  x2={bandStart - 3}
+                  y2={height + 4}
+                />
+              )}
+              <g transform={`translate(${dx} 0)`}>
+                {roomsOn(props.overview!.plan, floor.id).map((r) => (
+                  <RoomShape key={r.id} room={r} rect={r.rect} selected={false} />
+                ))}
+                {casesOn(props.overview!.plan, floor.id).map((bc) => (
+                  <CaseShape key={bc.id} bc={bc} selected={false} />
+                ))}
+              </g>
             </g>
           ))}
 

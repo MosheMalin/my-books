@@ -10,17 +10,17 @@
 
 import { useRef } from 'react'
 
-import type { Floor, Underlay } from '../core/model'
+import type { Underlay } from '../core/model'
+import { ArrowIcon, CaseIcon, PanIcon, RoomIcon } from './icons'
 import { Menu } from './Menu'
 import type { Theme, Tool } from './types'
 
 type Props = {
   tool: Tool
   theme: Theme
-  floors: Floor[]
-  floorId: string
   ghosts: boolean
   allFloors: boolean
+  manyFloors: boolean
   saved: 'saving' | 'saved' | 'failed'
   underlay: Underlay | null
   canUndo: boolean
@@ -29,10 +29,6 @@ type Props = {
   selectedCount: number
   onTool: (t: Tool) => void
   onTheme: (t: Theme) => void
-  onFloor: (id: string) => void
-  onAddFloor: () => void
-  onRenameFloor: (id: string, name: string) => void
-  onRemoveFloor: () => void
   onGhosts: (on: boolean) => void
   onAllFloors: (on: boolean) => void
   onUndo: () => void
@@ -50,28 +46,39 @@ type Props = {
   onClear: () => void
 }
 
-/** The four tools, as icons. `auto` is the arrow and it is the default: it
- *  guesses from where you press, and the other two are how you overrule it. */
-const TOOLS: { tool: Tool; icon: string; label: string; hint: string }[] = [
+/**
+ * The four tools, as drawn icons. `auto` is the arrow and it is the default: it
+ * guesses from where you press, and the other two are how you overrule it.
+ *
+ * ⚠ No key numbers in the tooltips (owner, 2026-08-16). They still work; a
+ * tooltip is for what the control DOES, and "(2)" was the same meaningless
+ * digit that got the labels rewritten two passes ago.
+ */
+const TOOLS: { tool: Tool; icon: () => React.ReactElement; label: string; hint: string }[] = [
   {
     tool: 'auto',
-    icon: '➤',
+    icon: ArrowIcon,
     label: 'Arrow',
-    hint: 'Arrow (1) — guesses from where you press: a room’s border moves it, inside a room draws a bookcase, outside every room draws a room. Ctrl+drag selects several.',
+    hint: 'Arrow — guesses from where you press: a room’s border moves it, inside a room draws a bookcase, outside every room draws a room. Ctrl+drag selects several.',
   },
   {
     tool: 'room',
-    icon: '▭',
+    icon: RoomIcon,
     label: 'Draw room',
-    hint: 'Draw room (2) — always draws a room, wherever you start.',
+    hint: 'Draw room — always draws a room, wherever you start.',
   },
   {
     tool: 'case',
-    icon: '▬',
+    icon: CaseIcon,
     label: 'Draw bookcase',
-    hint: 'Draw bookcase (3) — always draws a bookcase, wherever you start.',
+    hint: 'Draw bookcase — always draws a bookcase, wherever you start.',
   },
-  { tool: 'pan', icon: '✋', label: 'Pan', hint: 'Pan (4) — slide the plan. So do the middle button and two fingers.' },
+  {
+    tool: 'pan',
+    icon: PanIcon,
+    label: 'Pan',
+    hint: 'Pan — slide the plan. So do the middle button and two fingers.',
+  },
 ]
 
 const SAVED_TEXT = {
@@ -84,7 +91,6 @@ export function Toolbar(props: Props) {
   const importRef = useRef<HTMLInputElement | null>(null)
   const underlayRef = useRef<HTMLInputElement | null>(null)
   const nothingSelected = props.selectedCount === 0
-  const onlyFloor = props.floors.length <= 1
 
   return (
     <header className="toolbar">
@@ -100,7 +106,7 @@ export function Toolbar(props: Props) {
             title={t.hint}
             onClick={() => props.onTool(t.tool)}
           >
-            {t.icon}
+            <t.icon />
           </button>
         ))}
       </div>
@@ -137,15 +143,9 @@ export function Toolbar(props: Props) {
             { label: 'Zoom out', shortcut: '−', onSelect: () => props.onZoom(1 / 1.25) },
             { label: 'Show all', onSelect: props.onFit },
             {
-              label: 'Every floor at once',
-              checked: props.allFloors,
-              disabled: onlyFloor,
-              onSelect: () => props.onAllFloors(!props.allFloors),
-            },
-            {
               label: 'Ghost the other floors',
               checked: props.ghosts,
-              disabled: onlyFloor,
+              disabled: !props.manyFloors,
               onSelect: () => props.onGhosts(!props.ghosts),
             },
             {
@@ -157,39 +157,10 @@ export function Toolbar(props: Props) {
         <Menu
           label="Apartment"
           items={[
-            { label: 'Draw a room', shortcut: '2', onSelect: () => props.onTool('room') },
-            { label: 'Draw a bookcase', shortcut: '3', onSelect: () => props.onTool('case') },
-            { label: 'Add a floor', onSelect: props.onAddFloor },
-            {
-              label: 'Remove this floor',
-              disabled: onlyFloor,
-              danger: true,
-              onSelect: props.onRemoveFloor,
-            },
+            { label: 'Draw a room', onSelect: () => props.onTool('room') },
+            { label: 'Draw a bookcase', onSelect: () => props.onTool('case') },
             { label: 'Trace a sketch…', onSelect: () => underlayRef.current?.click() },
           ]}
-        />
-      </div>
-
-      <div className="group floors">
-        <select
-          className="rtl-safe"
-          aria-label="which floor is shown"
-          value={props.floorId}
-          onChange={(e) => props.onFloor(e.target.value)}
-          disabled={props.allFloors}
-        >
-          {props.floors.map((f) => (
-            <option key={f.id} value={f.id}>
-              {f.name}
-            </option>
-          ))}
-        </select>
-        <input
-          className="rtl-safe floor-name"
-          aria-label="rename this floor"
-          value={props.floors.find((f) => f.id === props.floorId)?.name ?? ''}
-          onChange={(e) => props.onRenameFloor(props.floorId, e.target.value)}
         />
       </div>
 

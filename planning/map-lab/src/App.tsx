@@ -12,6 +12,7 @@ import {
   frontFor,
   mapSection,
   newBookcase,
+  overviewBounds,
   planBounds,
   reattach,
   removeSection,
@@ -21,6 +22,7 @@ import {
   withColumnLevels,
   withDefaultDepth,
   withDefaultLevels,
+  withRect,
   withShelfDepth,
   withShelfPhotos,
 } from './core/model'
@@ -28,6 +30,7 @@ import type { Rect } from './core/rect'
 import type { History } from './core/history'
 import { canRedo, canUndo, commit, initHistory, redo, undo } from './core/history'
 import { parsePlan, serializePlan } from './core/persist'
+import { FloorBadge } from './ui/FloorBadge'
 import { Inspector, type Actions } from './ui/Inspector'
 import { PlanCanvas } from './ui/PlanCanvas'
 import { Toolbar } from './ui/Toolbar'
@@ -83,6 +86,9 @@ export default function App() {
     rooms: roomsOn(doc.plan, floorId),
     cases: casesOn(doc.plan, floorId),
   }
+
+  /** The overview needs a second storey to be an overview at all. */
+  const overview = allFloors && doc.plan.floors.length > 1
 
   // --- persistence ---------------------------------------------------------
 
@@ -265,7 +271,11 @@ export default function App() {
           ...d,
           plan: {
             ...d.plan,
-            cases: d.plan.cases.map((c) => (c.id === id ? reattach({ ...c, rect }, d.plan) : c)),
+            cases: d.plan.cases.map((c) =>
+              c.id === id
+                ? reattach(withRect(c, rect, roomFor(d.plan, rect, c.floorId)), d.plan)
+                : c,
+            ),
           },
         }
       }),
@@ -364,7 +374,20 @@ export default function App() {
       ),
     renameCase: (id, name) => mapCase(id, (bc) => ({ ...bc, name }), `rename:${id}`),
     resizeCase: (id, w, h) =>
-      mapCase(id, (bc) => ({ ...bc, rect: { ...bc.rect, w: size(w), h: size(h) } }), `size:${id}`),
+      update(
+        (d) => ({
+          ...d,
+          plan: {
+            ...d.plan,
+            cases: d.plan.cases.map((c) => {
+              if (c.id !== id) return c
+              const rect = { ...c.rect, w: size(w), h: size(h) }
+              return withRect(c, rect, roomFor(d.plan, rect, c.floorId))
+            }),
+          },
+        }),
+        `size:${id}`,
+      ),
     setCaseRoom: (id, roomId) => mapCase(id, (bc) => ({ ...bc, roomId })),
     turnCase: (id) => mapCase(id, (bc) => ({ ...bc, front: TURN[bc.front] })),
     setColumnCount: (id, sid, n) => mapCase(id, (bc) => mapSection(bc, sid, (s) => withColumnCount(s, n))),
@@ -518,10 +541,10 @@ export default function App() {
     const el = wrapRef.current
     if (!el) return
     const r = el.getBoundingClientRect()
-    const b = planBounds(doc.plan, floorId)
+    const b = overview ? overviewBounds(doc.plan) : planBounds(doc.plan, floorId)
     if (b.min.x === b.max.x && b.min.y === b.max.y) return setView(initialView())
     setView(fitTo(b.min, b.max, { left: r.left, top: r.top, width: r.width, height: r.height }))
-  }, [doc.plan, floorId])
+  }, [doc.plan, floorId, overview])
 
   // --- keyboard ------------------------------------------------------------
 
@@ -588,19 +611,11 @@ export default function App() {
       <Toolbar
         tool={tool}
         theme={theme}
-        floors={doc.plan.floors}
-        floorId={floorId}
         ghosts={ghosts}
         allFloors={allFloors}
+        manyFloors={doc.plan.floors.length > 1}
         onAllFloors={setAllFloors}
         onZoom={doZoom}
-        onFloor={(id) => {
-          setFloorPick(id)
-          setSelection(EMPTY)
-        }}
-        onAddFloor={addFloor}
-        onRenameFloor={renameFloor}
-        onRemoveFloor={removeFloor}
         onGhosts={setGhosts}
         saved={saved}
         underlay={doc.plan.underlay}
@@ -651,7 +666,7 @@ export default function App() {
             onRejected={say}
             onRename={beginRename}
             overview={
-              allFloors && doc.plan.floors.length > 1
+              overview
                 ? {
                     plan: doc.plan,
                     onFocus: (id) => {
@@ -663,7 +678,20 @@ export default function App() {
                 : null
             }
           />
-          <Hint tool={tool} overview={allFloors && doc.plan.floors.length > 1} />
+          <Hint tool={tool} overview={overview} />
+          <FloorBadge
+            floors={doc.plan.floors}
+            floorId={floorId}
+            allFloors={overview}
+            onFloor={(id) => {
+              setFloorPick(id)
+              setSelection(EMPTY)
+            }}
+            onAllFloors={setAllFloors}
+            onAdd={addFloor}
+            onRename={renameFloor}
+            onRemove={removeFloor}
+          />
           {message && <div className="toast">{message}</div>}
         </div>
         {/* Drag to widen the settings. The elevation of a wide bookcase wants
