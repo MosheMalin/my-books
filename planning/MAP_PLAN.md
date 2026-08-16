@@ -510,7 +510,7 @@ this pillar.**
 | # | Item | Size | State |
 |---|---|---|---|
 | **P6.0** | **The map lab** — a standalone app, no backend, outside the gate. Rectangle drawing for rooms and bookcases, room-to-room attachment, multi-select, copy/paste, explicit bookcase→room attachment, resize handles, sections, floors, the elevation editor, underlay tracing, black/white themes, visible autosave, a real undo stack. | M | ✅ nine passes |
-| **P6.1** | **Address domain + migration** — `Site`, `Floor`, `Place`, `Bookcase`, `Section`, the shelf address, geometry in abstract units. Drawn slots create real empty `Shelf` rows. Naming lint. Schema **v20** with a real v19→v20 upgrade test. | L | |
+| **P6.1** | **Address domain + migration** — `Site`, `Floor`, `Place`, `Bookcase`, `Section`, the shelf address, geometry in abstract units. Drawn slots create real empty `Shelf` rows. Naming lint. Schema **v20** with a real v19→v20 upgrade test. | L | ✅ |
 | **P6.2** | **API + policy** — the map through `current_library`, one capability each, contracts regenerated. | M | |
 | **P6.3** | **The port** — the lab's editor moves into `app/web/src/map/` **verbatim** where it is framework-free, wired to the API by an adapter. **The lab is deleted in the same commit.** Behaviour identical to the lab's ninth pass — that is the acceptance test, not a rewrite. | M | |
 | **P6.3b** | **The site picker** — the one thing the lab never had (§3.9). Sites and their floors become manageable in the ported editor; a single site renders no chrome. Deliberately AFTER P6.3, so "behaves the same" is verifiable before anything new is added. | S | |
@@ -581,6 +581,37 @@ ninth tuned what the pointer grabs. Expect a tenth: the point
 of a disposable app is that rejecting it costs a day, not a sprint. It is
 finished when the owner stops finding things, not when the item list is
 ticked.
+
+### What P6.1 landed, and what it hands P6.3
+
+Three reviews (`review-migration` before the commit, `review-data-integrity`
+and `review-quality` after) turned one item into two commits. The findings
+worth carrying forward:
+
+- **the danger is a defaulted argument, and "required" is only half a fix.**
+  `occupied_ids` defaulting to empty meant *delete everything*; making it
+  required stopped a caller FORGETTING but not the answer going STALE, and a
+  book added from a phone mid-edit still lost its shelf. The destructive
+  functions compute occupancy themselves now, immediately before the write,
+  through one function that asks both copies and captures;
+- **an occupied shelf is DETACHED, never deleted** — and "occupied" includes a
+  shelf with books and no photograph, which is the half a reasonable person
+  leaves out;
+- **v20 corrected in place** rather than amended by a v21, because the owner's
+  database was verified still at v19. That window closes the moment anything
+  in the primary tree imports `app.main` on a branch carrying the step.
+
+**Two conventions P6.3 must honour**, pinned by `fixtures/map/lab_plan_v4.json`
+and a test:
+
+1. **col and level are 0-based in the lab document, 1-based in the domain.**
+   `ShelfAddress` REFUSES a 0 rather than re-basing silently, so a forgotten
+   `+1` raises instead of filing every book one shelf over;
+2. **section ids must be carried across, not rebuilt.** `persist.ts`
+   regenerates them from array position on the stated grounds that *"nothing
+   outside the document refers to one"* — a sentence that stopped being true
+   when `shelves.section_id` did. Rebuilding by position also renumbers
+   everything above a section inserted at the bottom.
 
 ## 6. What P6.1 must not repeat
 
