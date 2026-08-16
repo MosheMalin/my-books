@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import type { Bookcase, Plan, Room, Underlay } from './core/model'
+import type { Bookcase, Floor, Plan, Room, Underlay } from './core/model'
 import {
   TURN,
   addSection,
+  casesOn,
+  floorContents,
   applyDefaultDepth,
   applyDefaultLevels,
   emptyPlan,
@@ -14,6 +16,7 @@ import {
   reattach,
   removeSection,
   roomFor,
+  roomsOn,
   withColumnCount,
   withColumnLevels,
   withDefaultDepth,
@@ -29,11 +32,12 @@ import { Inspector, type Actions } from './ui/Inspector'
 import { PlanCanvas } from './ui/PlanCanvas'
 import { Toolbar } from './ui/Toolbar'
 import type { Clipboard, Doc, Selection, Theme, Tool } from './ui/types'
-import { EMPTY, count, hasCase, hasRoom } from './ui/types'
+import { EMPTY, count, hasCase, hasRoom, selectCase, selectRoom } from './ui/types'
 import { fitTo, initialView, type View } from './ui/viewport'
 
 const STORAGE_KEY = 'booksnap.map-lab.doc'
 const THEME_KEY = 'booksnap.map-lab.theme'
+const FLOOR_KEY = 'booksnap.map-lab.floor'
 /** How far a pasted copy lands from its original, in units. Far enough to see
  *  it, near enough to drag into place. */
 const PASTE_OFFSET = 2
@@ -45,13 +49,31 @@ export default function App() {
   const [tool, setTool] = useState<Tool>('select')
   const [theme, setTheme] = useState<Theme>(loadTheme)
   const [selection, setSelection] = useState<Selection>(EMPTY)
+  const [floorPick, setFloorPick] = useState<string>(loadFloor)
   const [clipboard, setClipboard] = useState<Clipboard>(null)
   const [view, setView] = useState<View>(initialView)
   const [message, setMessage] = useState<string | null>(null)
+  const [ghosts, setGhosts] = useState(false)
   const [saved, setSaved] = useState<'saving' | 'saved' | 'failed'>('saved')
   const wrapRef = useRef<HTMLDivElement | null>(null)
 
   const doc = hist.present
+
+  /**
+   * Which storey is on screen. Validated against the document every render, so
+   * an undo that removes a floor cannot leave the editor pointed at one that
+   * no longer exists — and a plan always has at least one.
+   */
+  const floorId = doc.plan.floors.some((f) => f.id === floorPick)
+    ? floorPick
+    : doc.plan.floors[0]!.id
+  /** What the canvas may see and touch: one storey. Two floors both start at
+   *  0,0, so drawing them together would put the bedroom on the kitchen. */
+  const visible: Plan = {
+    ...doc.plan,
+    rooms: roomsOn(doc.plan, floorId),
+    cases: casesOn(doc.plan, floorId),
+  }
 
   // --- persistence ---------------------------------------------------------
 
@@ -74,6 +96,14 @@ export default function App() {
       setSaved('failed')
     }
   }, [doc])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(FLOOR_KEY, floorId)
+    } catch {
+      /* ignore */
+    }
+  }, [floorId])
 
   useEffect(() => {
     document.documentElement.dataset['theme'] = theme
@@ -114,27 +144,47 @@ export default function App() {
     [update],
   )
 
+  /**
+   * A newly drawn thing is SELECTED (owner, 2026-08-16: *"allow to delete or
+   * copy once an item is drawn, without needing to switch to Move & edit"*).
+   * The drawing tool stays active so you can keep drawing, but Delete, Ctrl+C
+   * and the panel all now act on what you just made — which is what "without
+   * switching" actually requires, since none of them were tool-scoped.
+   */
   const createRoom = useCallback(
-    (rect: Rect) =>
-      update((d) => {
-        const seq = d.seq + 1
-        return {
-          seq,
-          plan: { ...d.plan, rooms: d.plan.rooms.concat({ id: `r${seq}`, name: '', rect }) },
-        }
-      }),
-    [update],
+    (rect: Rect) => {
+      const id = `r${doc.seq + 1}`
+      update((d) => ({
+        seq: d.seq + 1,
+        plan: {
+          ...d.plan,
+          rooms: d.plan.rooms.concat({ id: `r${d.seq + 1}`, name: '', rect, floorId }),
+        },
+      }))
+      setSelection(selectRoom(id))
+    },
+    [update, doc.seq, floorId],
   )
 
   const createCase = useCallback(
-    (rect: Rect) =>
+    (rect: Rect) => {
+      const id = `c${doc.seq + 1}`
       update((d) => {
         const seq = d.seq + 1
-        const room = roomFor(d.plan, rect)
-        const bc = newBookcase(`c${seq}`, '', rect, frontFor(rect, room), room?.id ?? null)
+        const room = roomFor(d.plan, rect, floorId)
+        const bc = newBookcase(
+          `c${seq}`,
+          '',
+          rect,
+          frontFor(rect, room),
+          room?.id ?? null,
+          floorId,
+        )
         return { seq, plan: { ...d.plan, cases: d.plan.cases.concat(bc) } }
-      }),
-    [update],
+      })
+      setSelection(selectCase(id))
+    },
+    [update, doc.seq, floorId],
   )
 
   /**
@@ -243,7 +293,9 @@ export default function App() {
       seq += 1
       const id = `r${seq}`
       roomIdMap.set(r.id, id)
-      return { ...r, id, rect: offset(r.rect) }
+      // Onto the storey you are LOOKING at — copying the ground floor's layout
+      // as a starting point for the first floor is the obvious use.
+      return { ...r, id, rect: offset(r.rect), floorId }
     })
     const cases: Bookcase[] = clipboard.cases.map((c) => {
       seq += 1
@@ -251,6 +303,7 @@ export default function App() {
         ...c,
         id: `c${seq}`,
         rect: offset(c.rect),
+        floorId,
         // A case copied together with its room stays with THAT copy, not with
         // the original room — otherwise pasting a room-and-its-cases produces
         // furniture that moves when the wrong room moves.
@@ -268,7 +321,7 @@ export default function App() {
       },
     }))
     setSelection({ rooms: rooms.map((r) => r.id), cases: cases.map((c) => c.id), shelf: null })
-  }, [clipboard, doc.seq, update])
+  }, [clipboard, doc.seq, update, floorId])
 
   const actions: Actions = {
     renameRoom: (id, name) =>
@@ -331,6 +384,47 @@ export default function App() {
     select: setSelection,
   }
 
+  // --- floors --------------------------------------------------------------
+
+  const addFloor = useCallback(() => {
+    const n = doc.plan.floors.length + 1
+    const floor: Floor = { id: `f${n}`, name: `Floor ${n}` }
+    update((d) => ({ ...d, plan: { ...d.plan, floors: d.plan.floors.concat(floor) } }))
+    setFloorPick(floor.id)
+    setSelection(EMPTY)
+  }, [doc.plan.floors.length, update])
+
+  const renameFloor = useCallback(
+    (id: string, name: string) =>
+      update(
+        (d) => ({
+          ...d,
+          plan: {
+            ...d.plan,
+            floors: d.plan.floors.map((f) => (f.id === id ? { ...f, name } : f)),
+          },
+        }),
+        `floor:${id}`,
+      ),
+    [update],
+  )
+
+  /** Refuses to take a storey down with the house still on it. Nothing here
+   *  auto-removes: the count says what is in the way. */
+  const removeFloor = useCallback(() => {
+    if (doc.plan.floors.length <= 1) return say('A plan has at least one floor.')
+    const { rooms, cases } = floorContents(doc.plan, floorId)
+    if (rooms + cases > 0) {
+      const parts = [
+        rooms > 0 ? `${rooms} room${rooms > 1 ? 's' : ''}` : '',
+        cases > 0 ? `${cases} bookcase${cases > 1 ? 's' : ''}` : '',
+      ].filter(Boolean)
+      return say(`Not removed — ${parts.join(' and ')} still on this floor.`)
+    }
+    update((d) => ({ ...d, plan: { ...d.plan, floors: d.plan.floors.filter((f) => f.id !== floorId) } }))
+    setFloorPick(doc.plan.floors.find((f) => f.id !== floorId)!.id)
+  }, [doc.plan, floorId, update, say])
+
   // --- underlay ------------------------------------------------------------
 
   const setUnderlay = (u: Underlay | null) =>
@@ -388,10 +482,10 @@ export default function App() {
     const el = wrapRef.current
     if (!el) return
     const r = el.getBoundingClientRect()
-    const b = planBounds(doc.plan)
+    const b = planBounds(doc.plan, floorId)
     if (b.min.x === b.max.x && b.min.y === b.max.y) return setView(initialView())
     setView(fitTo(b.min, b.max, { left: r.left, top: r.top, width: r.width, height: r.height }))
-  }, [doc.plan])
+  }, [doc.plan, floorId])
 
   // --- keyboard ------------------------------------------------------------
 
@@ -456,6 +550,17 @@ export default function App() {
       <Toolbar
         tool={tool}
         theme={theme}
+        floors={doc.plan.floors}
+        floorId={floorId}
+        ghosts={ghosts}
+        onFloor={(id) => {
+          setFloorPick(id)
+          setSelection(EMPTY)
+        }}
+        onAddFloor={addFloor}
+        onRenameFloor={renameFloor}
+        onRemoveFloor={removeFloor}
+        onGhosts={setGhosts}
         saved={saved}
         underlay={doc.plan.underlay}
         canUndo={canUndo(hist)}
@@ -491,7 +596,8 @@ export default function App() {
             unicode-bidi: plaintext and resolve their own direction. */}
         <div className="canvas-wrap" ref={wrapRef} dir="ltr">
           <PlanCanvas
-            plan={doc.plan}
+            plan={visible}
+            ghosts={ghosts ? doc.plan.rooms.filter((r) => r.floorId !== floorId) : []}
             tool={tool}
             selection={selection}
             view={view}
@@ -507,7 +613,7 @@ export default function App() {
           {message && <div className="toast">{message}</div>}
         </div>
         <aside className="side">
-          <Inspector doc={doc} selection={selection} actions={actions} />
+          <Inspector doc={doc} floorId={floorId} selection={selection} actions={actions} />
         </aside>
       </main>
     </div>
@@ -543,6 +649,14 @@ function loadDoc(): Doc {
     return { plan: parsed.plan, seq: Number.isFinite(seq) ? seq : 0 }
   } catch {
     return emptyDoc()
+  }
+}
+
+function loadFloor(): string {
+  try {
+    return window.localStorage.getItem(FLOOR_KEY) ?? 'f1'
+  } catch {
+    return 'f1'
   }
 }
 

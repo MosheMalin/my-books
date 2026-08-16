@@ -62,10 +62,25 @@ export type Section = {
   shelves: Shelf[]
 }
 
+/**
+ * A storey. Rooms belong to one; nothing else does.
+ *
+ * ⚠ **A floor is NOT part of a shelf's address** (owner, 2026-08-16: *"it can
+ * be simply just another name for a room — no need to change the address
+ * structure"*). It is a grouping over rooms so the MAP can show one storey at
+ * a time, and that is all it is: two floors both start at 0,0, so drawing them
+ * on one canvas puts the bedroom on top of the kitchen.
+ */
+export type Floor = {
+  id: string
+  name: string
+}
+
 export type Room = {
   id: string
   name: string
   rect: Rect
+  floorId: string
 }
 
 export type Bookcase = {
@@ -79,6 +94,10 @@ export type Bookcase = {
   front: Side
   /** The room the case stands in. Null for a case attached to no room. */
   roomId: string | null
+  /** Which storey it stands on. Kept in step with its room's floor whenever it
+   *  attaches to one; carried on the case as well so an unattached bookcase is
+   *  still somewhere rather than everywhere. */
+  floorId: string
   /** **Bottom first.** Index 0 is what stands on the floor. The elevation
    *  renders them in reverse, because a screen draws downwards and furniture
    *  stacks upwards — see `sectionsTopDown`. */
@@ -99,17 +118,42 @@ export type Underlay = {
 }
 
 export type Plan = {
+  floors: Floor[]
   rooms: Room[]
   cases: Bookcase[]
   underlay: Underlay | null
 }
 
-export const emptyPlan = (): Plan => ({ rooms: [], cases: [], underlay: null })
+/** Every plan has at least one floor, so nothing has to handle "no floor". */
+export const GROUND_FLOOR: Floor = { id: 'f1', name: 'Ground floor' }
+
+export const emptyPlan = (): Plan => ({
+  floors: [GROUND_FLOOR],
+  rooms: [],
+  cases: [],
+  underlay: null,
+})
+
+export const roomsOn = (plan: Plan, floorId: string): Room[] =>
+  plan.rooms.filter((r) => r.floorId === floorId)
+
+export const casesOn = (plan: Plan, floorId: string): Bookcase[] =>
+  plan.cases.filter((c) => c.floorId === floorId)
+
+/** How much would be lost with this storey — what a delete has to be able to
+ *  say before it refuses. */
+export const floorContents = (plan: Plan, floorId: string): { rooms: number; cases: number } => ({
+  rooms: roomsOn(plan, floorId).length,
+  cases: casesOn(plan, floorId).length,
+})
 
 // --- constants -------------------------------------------------------------
 
 export const DEFAULT_LEVELS = 5
 export const DEFAULT_DEPTH = 1
+/** Two, because most bookcases are (owner, 2026-08-16). One was a modelling
+ *  minimum masquerading as a default. */
+export const DEFAULT_COLUMNS = 2
 export const MAX_DEPTH = 4
 
 export function isTooSmall(r: Rect): boolean {
@@ -329,9 +373,18 @@ export function newBookcase(
   rect: Rect,
   front: Side,
   roomId: string | null,
-  columns = 1,
+  floorId: string,
+  columns = DEFAULT_COLUMNS,
 ): Bookcase {
-  return { id, name, rect, front, roomId, sections: [newSection(`${id}:s1`, columns)] }
+  return {
+    id,
+    name,
+    rect,
+    front,
+    roomId,
+    floorId,
+    sections: [newSection(`${id}:s1`, columns)],
+  }
 }
 
 export const allShelves = (bc: Bookcase): Shelf[] => bc.sections.flatMap((s) => s.shelves)
@@ -368,9 +421,9 @@ export function correctFront(bc: Bookcase, room: Room | null): Bookcase {
  * done on purpose, in the panel.
  */
 export function reattach(bc: Bookcase, plan: Plan): Bookcase {
-  const room = roomFor(plan, bc.rect)
+  const room = roomFor(plan, bc.rect, bc.floorId)
   if (!room) return bc
-  return correctFront({ ...bc, roomId: room.id }, room)
+  return correctFront({ ...bc, roomId: room.id, floorId: room.floorId }, room)
 }
 
 /**
@@ -385,16 +438,19 @@ export function frontFor(rect: Rect, room: Room | null): Side {
   return rect.w >= rect.h ? 'S' : 'E'
 }
 
-export function roomAt(plan: Plan, p: Pt): Room | null {
-  for (let i = plan.rooms.length - 1; i >= 0; i--) {
-    const r = plan.rooms[i]!
+/** Rooms are only ever found on ONE storey: the kitchen is not under your feet
+ *  when you are drawing the bedroom. */
+export function roomAt(plan: Plan, p: Pt, floorId: string): Room | null {
+  const rooms = roomsOn(plan, floorId)
+  for (let i = rooms.length - 1; i >= 0; i--) {
+    const r = rooms[i]!
     if (contains(r.rect, p)) return r
   }
   return null
 }
 
-export function roomFor(plan: Plan, rect: Rect): Room | null {
-  return roomAt(plan, center(rect))
+export function roomFor(plan: Plan, rect: Rect, floorId: string): Room | null {
+  return roomAt(plan, center(rect), floorId)
 }
 
 /** True when the front edge runs left-right, so columns divide along x. */
@@ -486,8 +542,10 @@ export function shelfCount(plan: Plan): number {
   return plan.cases.reduce((n, bc) => n + allShelves(bc).length, 0)
 }
 
-export function planBounds(plan: Plan): { min: Pt; max: Pt } {
-  const rects = [...plan.rooms.map((r) => r.rect), ...plan.cases.map((c) => c.rect)]
+export function planBounds(plan: Plan, floorId?: string): { min: Pt; max: Pt } {
+  const rooms = floorId ? roomsOn(plan, floorId) : plan.rooms
+  const cases = floorId ? casesOn(plan, floorId) : plan.cases
+  const rects = [...rooms.map((r) => r.rect), ...cases.map((c) => c.rect)]
   if (rects.length === 0) return { min: pt(0, 0), max: pt(0, 0) }
   return {
     min: pt(Math.min(...rects.map((r) => r.x)), Math.min(...rects.map((r) => r.y))),

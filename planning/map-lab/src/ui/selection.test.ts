@@ -12,8 +12,8 @@ import type { Plan } from '../core/model'
 
 const plan: Plan = {
   ...emptyPlan(),
-  rooms: [{ id: 'r1', name: 'salon', rect: { x: 0, y: 0, w: 20, h: 12 } }],
-  cases: [newBookcase('c1', 'case', { x: 2, y: 0, w: 8, h: 1 }, 'S', 'r1')],
+  rooms: [{ id: 'r1', name: 'salon', rect: { x: 0, y: 0, w: 20, h: 12 }, floorId: 'f1' }],
+  cases: [newBookcase('c1', 'case', { x: 2, y: 0, w: 8, h: 1 }, 'S', 'r1', 'f1')],
 }
 
 describe('the selection set', () => {

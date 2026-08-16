@@ -57,7 +57,7 @@ the owner named that appear nowhere:
 
 ## 3. The model, decided before any code
 
-Six rules, each of which is cheap now and expensive later.
+Seven rules, each of which is cheap now and expensive later.
 
 ### 3.1 A drawn shelf slot IS a `Shelf`
 
@@ -173,6 +173,33 @@ The general form — free-form blocks placed anywhere in the elevation grid,
 which would also express a desk niche or an L — is a layout editor, and is
 deliberately **not** built until something asks for it.
 
+### 3.7 Floors group rooms — they are **not** part of an address
+
+**[DECIDED 2026-08-16 — owner]** *"We should also support multiple floors, each
+with a different room structure. It can be simply just another name for a room
+— no need to change the address structure. Just want it to be easy reflected
+in the map."*
+
+So a `Floor` is a **grouping over rooms**, and nothing else. A shelf's address
+stays `place · case · section · column · level`; a floor never enters it, and
+`P6.1`'s schema does not grow a level for it.
+
+What it buys is the MAP, and the reason is geometric rather than conceptual:
+**two storeys both start at 0,0**, so drawing them on one canvas puts the
+bedroom on top of the kitchen. One storey is shown at a time; the others can be
+ghosted behind, which is how you line a bookcase up over the stairwell below.
+
+Three consequences that are rules, not conveniences:
+
+- **a room is found only on its own storey.** Without that, a bookcase drawn
+  upstairs attaches to the kitchen underneath it;
+- **a bookcase carries its own floor** as well as its room, so an unattached
+  case is *somewhere* rather than everywhere. It takes its room's floor
+  whenever it attaches to one;
+- **removing a storey with anything on it is refused**, and says what is in the
+  way. Nothing here auto-removes — the same instinct as *never auto-remove a
+  not-seen book*.
+
 ## 4. The fork, and how it was settled
 
 **[SETTLED 2026-08-16 — owner, after drawing on the first build.] Freehand
@@ -256,9 +283,9 @@ rules P6.1 inherits rather than lab conveniences:
 
 ### 4a. What the lab caught, for the record
 
-Four rounds of building and driving it in a real browser produced ten defects,
-each of which would have been argued about rather than found if this had been
-built straight into `app/web`:
+Five rounds of building and driving it in a real browser produced twelve
+defects, each of which would have been argued about rather than found if this
+had been built straight into `app/web`:
 
 1. a bookcase's facing was computed against the *wall's* direction and consumed
    against the *case's own* — drag right-to-left and the wood landed outside
@@ -294,7 +321,17 @@ built straight into `app/web`:
     matched on `event.key`, and on a Hebrew layout the C key reports `'ב'` — so
     Ctrl+C did nothing while the *Copy* button worked. Match `event.code`, the
     physical key. Now a one-line trap in CLAUDE.md: it will bite `app/web` the
-    day it grows a shortcut, and this is a Hebrew-first product.
+    day it grows a shortcut, and this is a Hebrew-first product;
+11. **a rectangle could not be resized by ONE unit next to a neighbour.** The
+    magnet won whenever a neighbour edge was within tolerance — even when the
+    pointer sat *exactly* on a grid line and the neighbour was a whole unit
+    away, so the edge jumped two. A magnet that overrides a perfect grid hit is
+    not helping: a neighbour now wins only when it is at least as near as the
+    grid. The same arithmetic existed twice, on the draw path and the move
+    path, and only the first would have been found by testing one of them;
+12. **the panel stacked under the plan on a half-width window.** The breakpoint
+    was 820 px, which a laptop browser at half screen hits — and the settings
+    belong at the side.
 
 ## 4b. The original fork, and what the lab was for
 
@@ -333,7 +370,7 @@ this pillar.**
 
 | # | Item | Size | State |
 |---|---|---|---|
-| **P6.0** | **The map lab** — a standalone app, no backend, outside the gate. Rectangle drawing for rooms and bookcases, room-to-room attachment, multi-select, copy/paste, explicit bookcase→room attachment, resize handles, the elevation editor, underlay tracing, black/white themes, visible autosave, a real undo stack. Exit: the owner draws his real house in it and exports it (§4 — the interaction model is settled; the drawing is still owed). | M | **4th pass** |
+| **P6.0** | **The map lab** — a standalone app, no backend, outside the gate. Rectangle drawing for rooms and bookcases, room-to-room attachment, multi-select, copy/paste, explicit bookcase→room attachment, resize handles, sections, floors, the elevation editor, underlay tracing, black/white themes, visible autosave, a real undo stack. Exit: the owner draws his real house in it and exports it (§4 — the interaction model is settled; the drawing is still owed). | M | **5th pass** |
 | **P6.1** | **Address domain + migration** — `Place`, `Bookcase`, the shelf address, geometry in abstract units. Drawn slots create real empty `Shelf` rows. Naming lint. Schema vN with a real v(N-1) upgrade test. | L | |
 | **P6.2** | **API + policy** — places/bookcases through `current_library`, one capability each, contracts regenerated. | M | |
 | **P6.3** | **The port** — the chosen editor moves into `app/web`, wired to the API. **The lab is deleted in the same commit.** | M | |
@@ -382,10 +419,10 @@ depth override on one shelf — on a phone-sized viewport, and the drawing is
 exported. That export is P6.1's first fixture: a real plan, in abstract units,
 made by the person the feature is for.
 
-⚠ The lab has been through **four passes**. The first offered freehand against
+⚠ The lab has been through **five passes**. The first offered freehand against
 snap-while-dragging and was rejected wholesale (§4); the third came back
-*"very fluent"* with five additions; the fourth was polish plus two real bugs.
-Expect a fifth: the point
+*"very fluent"* with five additions; the fourth and fifth were polish plus four
+real bugs. Expect a sixth: the point
 of a disposable app is that rejecting it costs a day, not a sprint. It is
 finished when the owner stops finding things, not when the item list is
 ticked.

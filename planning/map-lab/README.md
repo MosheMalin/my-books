@@ -7,7 +7,7 @@ look at.
 
 ```bash
 npm install --prefix planning/map-lab
-npm --prefix planning/map-lab test          # 63 tests, ~1s
+npm --prefix planning/map-lab test          # 73 tests, ~1s
 ```
 
 The dev server is `map-lab` in `.claude/launch.json` (port 5175 — 5173 is the
@@ -22,8 +22,8 @@ snap-while-you-drag; the owner drew on it and rejected both — *"the free draw
 was too free"*. Everything is now a **rectangle on the grid**, for rooms and
 bookcases alike, and the freehand code is deleted rather than disabled. The
 second pass came back *"very fluent"*; the third added selection, copy/paste
-and attachment; the fourth fixed two real bugs and moved the edit commands
-into a menu.
+and attachment; the fourth fixed two real bugs and moved the edit commands into
+a menu; the fifth added sections and floors and fixed two more.
 
 ## What to try
 
@@ -47,22 +47,27 @@ into a menu.
    inside a room attaches it; the *Moves with* dropdown points it anywhere,
    including nowhere. Dragging the case yourself can re-home it; a room moving
    its own furniture never changes whose furniture it is.
-7. **Stack two bookcases.** A low base with a taller unit on top is ONE
+7. **Change floors.** The dropdown in the toolbar switches storey; ＋ adds
+   one. Each floor has its own rooms — two storeys both start at 0,0, so only
+   one is drawn at a time — and *other floors* ghosts the rest behind it, which
+   is how you line a bookcase up over the stairwell below. A floor is **not**
+   part of a shelf's address; it is a grouping over rooms.
+8. **Stack two bookcases.** A low base with a taller unit on top is ONE
    bookcase with two **sections**: press *a second section on top*, then give
    it its own column count. Sections divide independently and carry their own
    depth; with one section the editor shows no section chrome at all.
-8. **Watch the depth rule.** Set a case's *default* depth to 3. Its existing
+9. **Watch the depth rule.** Set a case's *default* depth to 3. Its existing
    shelves keep depth 1 and the panel says how many — changing a default never
    reaches back into shelves that already exist, because that would delete the
    location of every book standing in a back row. A **new** column takes the
    new default. Applying to existing shelves is a separate button.
-9. **Black or white** — two real themes, not an inverted filter.
-10. **Trace a sketch** — your floor-plan photo goes behind the canvas at
+10. **Black or white** — two real themes, not an inverted filter.
+11. **Trace a sketch** — your floor-plan photo goes behind the canvas at
    adjustable opacity. Draw over it, then remove it. That is the whole of "or
    provide a sketch": no image understanding, no paid call.
-11. **On a phone.** The layout stacks under 820px and the toolbar gives its
+12. **On a phone.** The layout stacks under 820px and the toolbar gives its
    space back to the canvas. This is the viewport the verdict should come from.
-12. **Save.** Every edit is written to this browser immediately and the
+13. **Save.** Every edit is written to this browser immediately and the
    toolbar says so. *Save to file* is the copy that survives a cleared browser
    — integers in abstract units, no pixel, no viewport, no centimetre. Send
    that file over; it is the artefact.
@@ -113,6 +118,13 @@ a rewrite. Nothing in `core/` imports React, touches the DOM, or calls `fetch`.
   reaches 1.3 units, so drawing a one-unit-deep case against a wall pulled both
   its edges onto that wall and the case vanished. A snap that annihilates the
   rectangle is never what anyone meant.
+- **A rectangle could not be resized by one unit next to a neighbour.** The
+  magnet won whenever a neighbour edge was within tolerance — even with the
+  pointer exactly on a grid line and the neighbour a whole unit away, so the
+  edge jumped two. A neighbour now wins only when it is at least as near as the
+  grid. The same arithmetic existed twice, on the draw path and the move path.
+- **A newly drawn room or bookcase was not selected**, so Delete and Ctrl+C did
+  nothing until you switched tools — even though neither was ever tool-scoped.
 - **An explicit attachment survived exactly one move.** A case pointed at a far
   room, carried by that room, landed inside the room it physically overlaps and
   was silently handed back to it. A room moving its own furniture must not

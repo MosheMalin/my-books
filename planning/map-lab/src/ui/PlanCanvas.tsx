@@ -40,6 +40,9 @@ type Kind = 'room' | 'case'
 
 type Props = {
   plan: Plan
+  /** Rooms on the OTHER storeys, drawn faintly and untouchable. Aligning a
+   *  bookcase over the stairwell below is the whole reason to want them. */
+  ghosts: Room[]
   tool: Tool
   selection: Selection
   view: View
@@ -314,6 +317,17 @@ export function PlanCanvas(props: Props) {
           />
         )}
 
+        {props.ghosts.map((r) => (
+          <rect
+            key={`ghost-${r.id}`}
+            className="ghost"
+            x={r.rect.x}
+            y={r.rect.y}
+            width={r.rect.w}
+            height={r.rect.h}
+          />
+        ))}
+
         {plan.rooms.map((r) => (
           <RoomShape
             key={r.id}
@@ -345,7 +359,7 @@ export function PlanCanvas(props: Props) {
           <rect className="band" x={band.x} y={band.y} width={band.w} height={band.h} />
         )}
 
-        {loneRect && !drag && (
+        {loneRect && !drag && tool === 'select' && (
           <g className="handles">
             {handlePositions(loneRect, magnet).map(({ h, at }) => (
               <rect

@@ -26,7 +26,9 @@ import {
   snapRect,
 } from './rect'
 import {
+  DEFAULT_COLUMNS,
   addSection,
+  floorContents,
   allShelves,
   applyDefaultDepth,
   columnCount,
@@ -55,9 +57,10 @@ import { emptyPlan } from './model'
 import { parsePlan, serializePlan } from './persist'
 
 const rect = (x: number, y: number, w: number, h: number): Rect => ({ x, y, w, h })
-const room = (id: string, r: Rect): Room => ({ id, name: id, rect: r })
+const room = (id: string, r: Rect): Room => ({ id, name: id, rect: r, floorId: 'f1' })
 const livingRoom = room('r1', rect(0, 0, 20, 12))
 const planWith = (...rooms: Room[]): Plan => ({ ...emptyPlan(), rooms })
+const F = 'f1'
 
 describe('rectangles', () => {
   it('normalizes a drag in any direction', () => {
@@ -90,6 +93,25 @@ describe('rectangles', () => {
   it('snaps to the grid when nothing is near', () => {
     expect(snapToGrid(3.4)).toBe(3)
     expect(snapCoord(3.4, [], 1)).toBe(3)
+  })
+
+  it('lets a rectangle change by ONE unit next to a neighbour', () => {
+    // "In some cases I could not increase/decrease bookcases in 1 unit, only
+    // by 2" (owner, 2026-08-16). With a neighbour edge at 12, aiming at
+    // exactly 11 put the pointer 1.0 units away — inside the 1.3 magnet — so
+    // the magnet dragged it to 12 while the grid line it sat exactly on was
+    // ignored. A magnet that overrides a perfect grid hit is not helping.
+    expect(snapCoord(11, [12], 1.3)).toBe(11)
+    expect(snapCoord(11.1, [12], 1.3)).toBe(11)
+    // still snaps once the neighbour really is the nearer thing
+    expect(snapCoord(11.8, [12], 1.3)).toBe(12)
+  })
+
+  it('moves a rectangle by ONE unit next to a neighbour too', () => {
+    // same rule on the move path, which has its own shift arithmetic
+    const moved = snapRect(rect(11, 0, 4, 4), [rect(16, 0, 4, 4)], 1.3)
+    expect(moved.x).toBe(11)
+    expect(right(moved)).toBe(15)
   })
 
   it('prefers a neighbour edge OVER the grid', () => {
@@ -204,7 +226,7 @@ describe('the bookcase on the plan', () => {
 
   it('re-attaches to the room it is moved INTO', () => {
     const plan = planWith(livingRoom, room('r2', rect(20, 0, 14, 10)))
-    const bc = newBookcase('c1', '', rect(2, 0, 8, 1), 'S', 'r1')
+    const bc = newBookcase('c1', '', rect(2, 0, 8, 1), 'S', 'r1', F)
     const movedIntoR2 = reattach({ ...bc, rect: rect(22, 0, 8, 1) }, plan)
     expect(movedIntoR2.roomId).toBe('r2')
   })
@@ -215,14 +237,14 @@ describe('the bookcase on the plan', () => {
     // bug this rule exists to prevent. Detaching is done on purpose, in the
     // panel.
     const plan = planWith(livingRoom)
-    const bc = newBookcase('c1', '', rect(2, 0, 8, 1), 'S', 'r1')
+    const bc = newBookcase('c1', '', rect(2, 0, 8, 1), 'S', 'r1', F)
     const outside = reattach({ ...bc, rect: rect(2, 40, 8, 1) }, plan)
     expect(outside.roomId).toBe('r1')
   })
 
   it('turns a case that would otherwise face into the wall it just met', () => {
     const plan = planWith(livingRoom)
-    const facingUp = newBookcase('c1', '', rect(2, 5, 8, 1), 'N', 'r1')
+    const facingUp = newBookcase('c1', '', rect(2, 5, 8, 1), 'N', 'r1', F)
     // slide it onto the north wall: facing N would be facing into the wall
     const onWall = reattach({ ...facingUp, rect: rect(2, 0, 8, 1) }, plan)
     expect(onWall.front).toBe('S')
@@ -230,26 +252,26 @@ describe('the bookcase on the plan', () => {
 
   it('leaves a deliberately turned case alone when it is not against a wall', () => {
     const plan = planWith(livingRoom)
-    const turned = newBookcase('c1', '', rect(4, 5, 8, 1), 'N', 'r1')
+    const turned = newBookcase('c1', '', rect(4, 5, 8, 1), 'N', 'r1', F)
     expect(reattach({ ...turned, rect: rect(5, 6, 8, 1) }, plan).front).toBe('N')
   })
 
   it('knows which room it stands in, by its centre', () => {
     const plan = planWith(livingRoom, room('r2', rect(20, 0, 14, 10)))
-    expect(roomFor(plan, rect(2, 0, 8, 1))?.id).toBe('r1')
-    expect(roomFor(plan, rect(22, 0, 8, 1))?.id).toBe('r2')
-    expect(roomFor(plan, rect(60, 60, 2, 2))).toBeNull()
+    expect(roomFor(plan, rect(2, 0, 8, 1), F)?.id).toBe('r1')
+    expect(roomFor(plan, rect(22, 0, 8, 1), F)?.id).toBe('r2')
+    expect(roomFor(plan, rect(60, 60, 2, 2), F)).toBeNull()
   })
 
   it('divides columns ACROSS the front, whichever way it faces', () => {
-    const wide = newBookcase('c1', '', rect(2, 0, 9, 1), 'S', 'r1', 3)
+    const wide = newBookcase('c1', '', rect(2, 0, 9, 1), 'S', 'r1', F, 3)
     expect(columnDividers(wide).every((d) => d.a.x === d.b.x)).toBe(true)
-    const tall = newBookcase('c2', '', rect(0, 2, 1, 9), 'E', 'r1', 3)
+    const tall = newBookcase('c2', '', rect(0, 2, 1, 9), 'E', 'r1', F, 3)
     expect(columnDividers(tall).every((d) => d.a.y === d.b.y)).toBe(true)
   })
 
   it('draws one line per extra DECLARED depth row, not per drawn thickness', () => {
-    const bc = newBookcase('c1', '', rect(2, 0, 8, 3), 'S', 'r1')
+    const bc = newBookcase('c1', '', rect(2, 0, 8, 3), 'S', 'r1', F)
     const deep = mapSection(bc, bc.sections[0]!.id, (s) => withDefaultDepth(s, 3))
     expect(depthLines(bc)).toHaveLength(0)
     expect(depthLines(deep)).toHaveLength(2)
@@ -303,7 +325,13 @@ describe('columns, levels, and the depth rule (per section)', () => {
 })
 
 describe('sections — a bookcase built of two, one on the other', () => {
-  const base = () => newBookcase('c1', 'case', rect(2, 0, 8, 1), 'S', 'r1', 3)
+  const base = () => newBookcase('c1', 'case', rect(2, 0, 8, 1), 'S', 'r1', F, 3)
+
+  it('gives a new bookcase TWO columns, because most bookcases have two', () => {
+    const bc = newBookcase('c1', '', rect(2, 0, 8, 1), 'S', 'r1', F)
+    expect(columnCount(bc.sections[0]!)).toBe(DEFAULT_COLUMNS)
+    expect(DEFAULT_COLUMNS).toBe(2)
+  })
 
   it('starts as ONE section, so the ordinary bookcase costs nothing', () => {
     const bc = base()
@@ -363,11 +391,86 @@ describe('sections — a bookcase built of two, one on the other', () => {
   })
 })
 
+describe('floors', () => {
+  it('starts with exactly one, so nothing handles "no floor"', () => {
+    expect(emptyPlan().floors).toHaveLength(1)
+  })
+
+  it('finds a room only on ITS OWN storey', () => {
+    // Two floors both start at 0,0. Without this the kitchen is under your
+    // feet while you draw the bedroom, and a bookcase attaches downwards.
+    const ground = { ...room('r1', rect(0, 0, 20, 12)), floorId: 'f1' }
+    const upstairs = { ...room('r2', rect(0, 0, 20, 12)), floorId: 'f2' }
+    const plan: Plan = { ...emptyPlan(), floors: [{ id: 'f1', name: 'g' }, { id: 'f2', name: 'u' }], rooms: [ground, upstairs] }
+    expect(roomFor(plan, rect(2, 0, 8, 1), 'f1')?.id).toBe('r1')
+    expect(roomFor(plan, rect(2, 0, 8, 1), 'f2')?.id).toBe('r2')
+  })
+
+  it('never attaches a bookcase to a room on another storey', () => {
+    const upstairs = { ...room('r2', rect(0, 0, 20, 12)), floorId: 'f2' }
+    const plan: Plan = { ...emptyPlan(), floors: [{ id: 'f1', name: 'g' }, { id: 'f2', name: 'u' }], rooms: [upstairs] }
+    const bc = newBookcase('c1', '', rect(2, 0, 8, 1), 'S', null, 'f1')
+    expect(reattach(bc, plan).roomId).toBeNull()
+  })
+
+  it('counts what is standing on a storey, for a delete that refuses', () => {
+    const plan: Plan = {
+      ...emptyPlan(),
+      rooms: [room('r1', rect(0, 0, 20, 12))],
+      cases: [newBookcase('c1', '', rect(2, 0, 8, 1), 'S', 'r1', F)],
+    }
+    expect(floorContents(plan, F)).toEqual({ rooms: 1, cases: 1 })
+    expect(floorContents(plan, 'f2')).toEqual({ rooms: 0, cases: 0 })
+  })
+
+  it('reads a file with no floors as one floor holding everything', () => {
+    const older = {
+      format: 'booksnap.map-lab.plan',
+      version: 3,
+      plan: {
+        rooms: [{ id: 'r1', name: 'סלון', rect: { x: 0, y: 0, w: 20, h: 12 } }],
+        cases: [],
+      },
+    }
+    const back = parsePlan(JSON.stringify(older))
+    expect(back.ok).toBe(true)
+    if (!back.ok) return
+    expect(back.plan.floors).toHaveLength(1)
+    expect(back.plan.rooms[0]!.floorId).toBe(back.plan.floors[0]!.id)
+  })
+
+  it('rehomes anything pointing at a floor the file does not contain', () => {
+    const broken = {
+      format: 'booksnap.map-lab.plan',
+      plan: {
+        floors: [{ id: 'f1', name: 'Ground floor' }],
+        rooms: [{ id: 'r1', name: '', rect: { x: 0, y: 0, w: 4, h: 4 }, floorId: 'f9' }],
+        cases: [],
+      },
+    }
+    const back = parsePlan(JSON.stringify(broken))
+    if (!back.ok) throw new Error('should parse')
+    expect(back.plan.rooms[0]!.floorId).toBe('f1')
+  })
+
+  it('round-trips several floors', () => {
+    const plan: Plan = {
+      ...emptyPlan(),
+      floors: [{ id: 'f1', name: 'קרקע' }, { id: 'f2', name: 'עליה' }],
+      rooms: [room('r1', rect(0, 0, 20, 12)), { ...room('r2', rect(0, 0, 10, 10)), floorId: 'f2' }],
+    }
+    const back = parsePlan(serializePlan(plan))
+    if (!back.ok) throw new Error('should parse')
+    expect(back.plan.floors.map((f) => f.name)).toEqual(['קרקע', 'עליה'])
+    expect(back.plan.rooms[1]!.floorId).toBe('f2')
+  })
+})
+
 describe('the exported file', () => {
   it('round-trips rooms and cases', () => {
     const plan: Plan = {
       ...planWith(livingRoom),
-      cases: [newBookcase('c1', 'ארון הסלון', rect(2, 0, 8, 1), 'S', 'r1')],
+      cases: [newBookcase('c1', 'ארון הסלון', rect(2, 0, 8, 1), 'S', 'r1', F)],
     }
     const back = parsePlan(serializePlan(plan))
     expect(back.ok).toBe(true)
@@ -375,7 +478,7 @@ describe('the exported file', () => {
       expect(back.plan.rooms[0]!.rect).toEqual(livingRoom.rect)
       expect(back.plan.cases[0]!.name).toBe('ארון הסלון')
       expect(back.plan.cases[0]!.front).toBe('S')
-      expect(allShelves(back.plan.cases[0]!)).toHaveLength(5)
+      expect(allShelves(back.plan.cases[0]!)).toHaveLength(10) // 2 columns x 5
     }
   })
 
@@ -418,7 +521,7 @@ describe('the exported file', () => {
   it('gives an imported case ids the section editor can extend', () => {
     const plan: Plan = {
       ...planWith(livingRoom),
-      cases: [addSection(newBookcase('c1', '', rect(2, 0, 8, 1), 'S', 'r1'), 'top')],
+      cases: [addSection(newBookcase('c1', '', rect(2, 0, 8, 1), 'S', 'r1', F), 'top')],
     }
     const back = parsePlan(serializePlan(plan))
     if (!back.ok) throw new Error('should parse')
@@ -451,7 +554,7 @@ describe('the exported file', () => {
   it('keeps a room and a bookcase that were drawn flush EXACTLY flush', () => {
     const plan: Plan = {
       ...planWith(livingRoom),
-      cases: [newBookcase('c1', '', rect(2, 0, 8, 1), 'S', 'r1')],
+      cases: [newBookcase('c1', '', rect(2, 0, 8, 1), 'S', 'r1', F)],
     }
     const back = parsePlan(serializePlan(plan))
     if (!back.ok) throw new Error('should parse')

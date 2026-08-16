@@ -9,13 +9,16 @@
 
 import { useRef } from 'react'
 
-import type { Underlay } from '../core/model'
+import type { Floor, Underlay } from '../core/model'
 import { Menu } from './Menu'
 import type { Theme, Tool } from './types'
 
 type Props = {
   tool: Tool
   theme: Theme
+  floors: Floor[]
+  floorId: string
+  ghosts: boolean
   saved: 'saving' | 'saved' | 'failed'
   underlay: Underlay | null
   canUndo: boolean
@@ -24,6 +27,11 @@ type Props = {
   selectedCount: number
   onTool: (t: Tool) => void
   onTheme: (t: Theme) => void
+  onFloor: (id: string) => void
+  onAddFloor: () => void
+  onRenameFloor: (id: string, name: string) => void
+  onRemoveFloor: () => void
+  onGhosts: (on: boolean) => void
   onUndo: () => void
   onRedo: () => void
   onFit: () => void
@@ -81,6 +89,53 @@ export function Toolbar(props: Props) {
       <div className="brand">
         <strong>map lab</strong>
         <span className="tag">P6.0</span>
+      </div>
+
+      {/* The storey. A house with one floor still shows it, because that is
+          how you discover you can add another — and it costs one control. */}
+      <div className="group floors">
+        <select
+          className="rtl-safe"
+          aria-label="which floor is shown"
+          value={props.floorId}
+          onChange={(e) => props.onFloor(e.target.value)}
+        >
+          {props.floors.map((f) => (
+            <option key={f.id} value={f.id}>
+              {f.name}
+            </option>
+          ))}
+        </select>
+        <input
+          className="rtl-safe floor-name"
+          aria-label="rename this floor"
+          value={props.floors.find((f) => f.id === props.floorId)?.name ?? ''}
+          onChange={(e) => props.onRenameFloor(props.floorId, e.target.value)}
+        />
+        <button type="button" onClick={props.onAddFloor} aria-label="add a floor" title="Add a floor">
+          ＋
+        </button>
+        <button
+          type="button"
+          className="danger"
+          onClick={props.onRemoveFloor}
+          aria-label="remove this floor"
+          title="Remove this floor — only when nothing is on it"
+          disabled={props.floors.length <= 1}
+        >
+          ✕
+        </button>
+        {props.floors.length > 1 && (
+          <label className="ghosts">
+            <input
+              type="checkbox"
+              checked={props.ghosts}
+              aria-label="show the other floors faintly"
+              onChange={(e) => props.onGhosts(e.target.checked)}
+            />
+            <span>other floors</span>
+          </label>
+        )}
       </div>
 
       <div className="group tools" role="radiogroup" aria-label="tool">

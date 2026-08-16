@@ -55,10 +55,12 @@ const isRoom = (o: Room | Bookcase): o is Room => !('front' in o)
 
 export function Inspector({
   doc,
+  floorId,
   selection,
   actions,
 }: {
   doc: Doc
+  floorId: string
   selection: Selection
   actions: Actions
 }) {
@@ -73,7 +75,7 @@ export function Inspector({
   return isRoom(one) ? (
     <RoomPanel room={one} plan={plan} actions={actions} />
   ) : (
-    <CasePanel bc={one} plan={plan} selection={selection} actions={actions} />
+    <CasePanel bc={one} plan={plan} floorId={floorId} selection={selection} actions={actions} />
   )
 }
 
@@ -206,11 +208,13 @@ function RoomPanel({ room, plan, actions }: { room: Room; plan: Plan; actions: A
 function CasePanel({
   bc,
   plan,
+  floorId,
   selection,
   actions,
 }: {
   bc: Bookcase
   plan: Plan
+  floorId: string
   selection: Selection
   actions: Actions
 }) {
@@ -254,11 +258,15 @@ function CasePanel({
             onChange={(e) => actions.setCaseRoom(bc.id, e.target.value || null)}
           >
             <option value="">nothing — stands alone</option>
-            {plan.rooms.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.name || `room ${r.rect.w}×${r.rect.h}`}
-              </option>
-            ))}
+            {/* Only rooms on THIS storey: a bookcase cannot move with a room on
+                another floor, and offering it would be offering a broken link. */}
+            {plan.rooms
+              .filter((r) => r.floorId === floorId)
+              .map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name || `room ${r.rect.w}×${r.rect.h}`}
+                </option>
+              ))}
           </select>
         </label>
 

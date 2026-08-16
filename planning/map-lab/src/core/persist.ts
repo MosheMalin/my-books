@@ -10,17 +10,23 @@
  * is an object URL that means nothing in another session.
  */
 
-import type { Bookcase, Plan, Room, Section, Shelf } from './model'
-import { DEFAULT_DEPTH, DEFAULT_LEVELS, emptyPlan } from './model'
+import type { Bookcase, Floor, Plan, Room, Section, Shelf } from './model'
+import { DEFAULT_DEPTH, DEFAULT_LEVELS, GROUND_FLOOR, emptyPlan } from './model'
 import type { Rect, Side } from './rect'
 import { integral } from './rect'
 
 export const FORMAT = 'booksnap.map-lab.plan'
-/** 3: bookcases hold SECTIONS. A v2 case — `columnLevels`/`shelves` directly
- *  on the bookcase — is read as a single section, because the owner has a real
- *  drawing in a real browser and losing it to a lab refactor would be exactly
- *  the "work will not get lost" failure this file exists to prevent. */
-export const FORMAT_VERSION = 3
+/**
+ * 3: bookcases hold SECTIONS — a v2 case (`columnLevels`/`shelves` directly on
+ *    the bookcase) is read as a single section.
+ * 4: plans hold FLOORS — a file without them gets one, and everything in it
+ *    lands on that floor.
+ *
+ * Older shapes are read rather than refused because the owner keeps a real
+ * drawing in a real browser, and losing it to a lab refactor would be exactly
+ * the "work will not get lost" failure this file exists to prevent.
+ */
+export const FORMAT_VERSION = 4
 
 export type PlanFile = {
   format: typeof FORMAT
@@ -51,23 +57,50 @@ export function parsePlan(text: string): ParseResult {
   const body = raw['plan']
   if (!isRecord(body)) return { ok: false, error: 'no plan' }
 
-  const rooms = asArray(body['rooms']).map(readRoom).filter(isPresent)
-  const cases = asArray(body['cases']).map(readCase).filter(isPresent)
+  const floors = readFloors(body)
+  const home = floors[0]!.id
+  const known = new Set(floors.map((f) => f.id))
+  const onKnownFloor = (id: string) => (known.has(id) ? id : home)
+
+  const rooms = asArray(body['rooms'])
+    .map(readRoom)
+    .filter(isPresent)
+    .map((r) => ({ ...r, floorId: onKnownFloor(r.floorId) }))
+  const cases = asArray(body['cases'])
+    .map(readCase)
+    .filter(isPresent)
+    .map((c) => ({ ...c, floorId: onKnownFloor(c.floorId) }))
   if (rooms.length === 0 && cases.length === 0) {
     // A v1 file (polygon rooms, baseline bookcases) lands here rather than
     // half-importing. The lab is pre-product; there is no migration to owe.
     return { ok: false, error: 'the file describes nothing this version understands' }
   }
-  return { ok: true, plan: { ...emptyPlan(), rooms, cases } }
+  return { ok: true, plan: { ...emptyPlan(), floors, rooms, cases } }
 }
 
 // --- readers ---------------------------------------------------------------
+
+/** At least one floor, always — a plan with none would make every room
+ *  homeless and every screen handle a case that cannot happen. */
+function readFloors(body: Record<string, unknown>): Floor[] {
+  const listed = asArray(body['floors'])
+    .map((f, i) =>
+      isRecord(f) ? { id: str(f['id'], `f${i + 1}`), name: str(f['name'], `Floor ${i + 1}`) } : null,
+    )
+    .filter(isPresent)
+  return listed.length > 0 ? listed : [GROUND_FLOOR]
+}
 
 function readRoom(v: unknown): Room | null {
   if (!isRecord(v)) return null
   const rect = readRect(v['rect'])
   if (!rect) return null
-  return { id: str(v['id'], 'room'), name: str(v['name'], ''), rect }
+  return {
+    id: str(v['id'], 'room'),
+    name: str(v['name'], ''),
+    rect,
+    floorId: str(v['floorId'], GROUND_FLOOR.id),
+  }
 }
 
 function readCase(v: unknown): Bookcase | null {
@@ -84,6 +117,7 @@ function readCase(v: unknown): Bookcase | null {
     rect,
     front: readSide(v['front']),
     roomId: typeof roomId === 'string' ? roomId : null,
+    floorId: str(v['floorId'], GROUND_FLOOR.id),
     sections,
   }
 }

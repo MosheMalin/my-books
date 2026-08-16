@@ -99,24 +99,32 @@ export function outward(side: Side): Pt {
 // --- snapping --------------------------------------------------------------
 
 /**
- * Snap one coordinate to the nearest CANDIDATE if one is in reach, otherwise
- * to the grid.
+ * Snap one coordinate to a neighbour edge, or to the grid — **whichever is
+ * actually nearer**.
  *
- * Candidates win over the grid on purpose: "flush against that wall" is a
- * physical fact the user is asserting, and rounding it to the nearest grid
- * line instead would leave a hairline gap that no amount of zooming closes.
+ * A neighbour beats the grid only on a tie, because "flush against that wall"
+ * is a physical fact the user is asserting and rounding it to the grid instead
+ * would leave a hairline gap no zoom closes.
+ *
+ * ⚠ The magnet used to win outright whenever it was within tolerance, and that
+ * is what made a bookcase resize *"only by 2"*: with another case starting at
+ * 12, dragging this one's edge to exactly 11 put the pointer 1.0 units from
+ * that neighbour — inside the 1.3-unit magnet — so it jumped to 12 while the
+ * grid line it was sitting exactly on was ignored. A magnet that overrides a
+ * perfect grid hit is not helping.
  */
 export function snapCoord(v: number, candidates: readonly number[], tol: number): number {
-  let best: number | null = null
-  let bestD = tol
+  const grid = snapToGrid(v)
+  let best = grid
+  let bestD = Math.abs(grid - v)
   for (const c of candidates) {
     const d = Math.abs(c - v)
-    if (d <= bestD) {
+    if (d <= bestD && d <= tol) {
       best = c
       bestD = d
     }
   }
-  return best ?? snapToGrid(v)
+  return best
 }
 
 /** The x coordinates worth snapping to: every vertical edge of every target. */
@@ -173,22 +181,30 @@ export function snapRect(r: Rect, targets: readonly Rect[], tol: number): Rect {
 }
 
 function bestShift(edges: number[], candidates: readonly number[], tol: number): number {
-  let shift: number | null = null
-  let bestD = tol
+  // The grid is the baseline, from whichever edge sits closest to a grid line
+  // — the rectangle keeps its exact size either way, so take the smaller nudge.
+  let shift = 0
+  let bestD = Infinity
+  for (const e of edges) {
+    const d = Math.abs(snapToGrid(e) - e)
+    if (d < bestD) {
+      bestD = d
+      shift = snapToGrid(e) - e
+    }
+  }
+  // A neighbour wins only if it is at least as near as the grid (same rule as
+  // `snapCoord`, and the same bug if it is not: a rectangle already sitting on
+  // a grid line would jump to a wall a whole unit away).
   for (const e of edges) {
     for (const c of candidates) {
       const d = Math.abs(c - e)
-      if (d <= bestD) {
+      if (d <= bestD && d <= tol) {
         bestD = d
         shift = c - e
       }
     }
   }
-  if (shift !== null) return shift
-  // No neighbour in reach: fall back to the grid, again choosing whichever
-  // edge is closer to a grid line so the rectangle keeps its exact size.
-  const first = edges[0] ?? 0
-  return snapToGrid(first) - first
+  return shift
 }
 
 // --- resize handles --------------------------------------------------------
