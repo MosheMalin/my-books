@@ -57,7 +57,7 @@ the owner named that appear nowhere:
 
 ## 3. The model, decided before any code
 
-Seven rules, each of which is cheap now and expensive later.
+Eight rules, each of which is cheap now and expensive later.
 
 ### 3.1 A drawn shelf slot IS a `Shelf`
 
@@ -200,6 +200,42 @@ Three consequences that are rules, not conveniences:
   way. Nothing here auto-removes — the same instinct as *never auto-remove a
   not-seen book*.
 
+### 3.8 The arrow guesses; the tools overrule
+
+**[DECIDED 2026-08-16 — owner]** *"Once a room or bookcase is drawn, touching
+the border switches to move; going outside the room, back to draw room;
+touching inside the room, draw bookcase. This is supposed to provide more
+fluent work — what do you think?"*
+
+Yes, and it is the default arrow rather than a fifth mode. A drag means what
+its STARTING POINT means:
+
+| where the drag starts | what it does |
+|---|---|
+| on an existing room or bookcase | select · move · resize |
+| on a room's **border** | move that room |
+| inside a room | draw a bookcase |
+| outside every room | draw a room |
+| Ctrl/Shift anywhere | select several |
+
+Three amendments the idea needs, and each is a rule rather than a detail:
+
+- **existing objects always win.** A bookcase stands ON the wall, so *"the
+  border means move the room"* and *"there is a bookcase here"* collide
+  constantly. The furniture is the answer, every time;
+- **the explicit tools stay.** The border zone has to be fingertip-sized, which
+  makes a small room mostly border — *Draw room* and *Draw bookcase* are how
+  you overrule a guess you do not want, and they are the only permanent
+  buttons besides the arrow and the hand;
+- **the marquee pays a modifier.** A plain drag on empty canvas now draws, so
+  selecting several moved to Ctrl+drag. Selecting several is the rarer act, so
+  it is the one that pays.
+
+And a fourth thing that only shows up once you build it: **a tap is not a
+failed drawing.** In the arrow, a click that produces a zero-size rectangle
+selects whatever is under it and says nothing — complaining about it would
+make the fluent mode the noisiest one.
+
 ## 4. The fork, and how it was settled
 
 **[SETTLED 2026-08-16 — owner, after drawing on the first build.] Freehand
@@ -283,7 +319,7 @@ rules P6.1 inherits rather than lab conveniences:
 
 ### 4a. What the lab caught, for the record
 
-Five rounds of building and driving it in a real browser produced twelve
+Six rounds of building and driving it in a real browser produced thirteen
 defects, each of which would have been argued about rather than found if this
 had been built straight into `app/web`:
 
@@ -331,7 +367,13 @@ had been built straight into `app/web`:
     path, and only the first would have been found by testing one of them;
 12. **the panel stacked under the plan on a half-width window.** The breakpoint
     was 820 px, which a laptop browser at half screen hits — and the settings
-    belong at the side.
+    belong at the side;
+13. **`setPointerCapture` threw the whole handler away, a second time.** The
+    new panel divider called it without the guard the canvas already had, so
+    the exception escaped *before* the move listeners were attached and the
+    drag did nothing whatsoever. The first fix was a comment in one file; the
+    lesson is that pointer capture is best-effort and the drag must not depend
+    on it.
 
 ## 4b. The original fork, and what the lab was for
 
@@ -419,10 +461,11 @@ depth override on one shelf — on a phone-sized viewport, and the drawing is
 exported. That export is P6.1's first fixture: a real plan, in abstract units,
 made by the person the feature is for.
 
-⚠ The lab has been through **five passes**. The first offered freehand against
+⚠ The lab has been through **six passes**. The first offered freehand against
 snap-while-dragging and was rejected wholesale (§4); the third came back
 *"very fluent"* with five additions; the fourth and fifth were polish plus four
-real bugs. Expect a sixth: the point
+real bugs; the sixth cut the toolbar to eight controls and made the arrow
+guess. Expect a seventh: the point
 of a disposable app is that rejecting it costs a day, not a sprint. It is
 finished when the owner stops finding things, not when the item list is
 ticked.

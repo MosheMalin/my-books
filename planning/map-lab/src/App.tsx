@@ -33,11 +33,15 @@ import { PlanCanvas } from './ui/PlanCanvas'
 import { Toolbar } from './ui/Toolbar'
 import type { Clipboard, Doc, Selection, Theme, Tool } from './ui/types'
 import { EMPTY, count, hasCase, hasRoom, selectCase, selectRoom } from './ui/types'
-import { fitTo, initialView, type View } from './ui/viewport'
+import { fitTo, initialView, zoomAbout, type View } from './ui/viewport'
 
 const STORAGE_KEY = 'booksnap.map-lab.doc'
 const THEME_KEY = 'booksnap.map-lab.theme'
 const FLOOR_KEY = 'booksnap.map-lab.floor'
+const SIDE_KEY = 'booksnap.map-lab.side'
+const SIDE_MIN = 220
+const SIDE_MAX = 720
+const clampSide = (w: number) => Math.max(SIDE_MIN, Math.min(SIDE_MAX, Math.round(w)))
 /** How far a pasted copy lands from its original, in units. Far enough to see
  *  it, near enough to drag into place. */
 const PASTE_OFFSET = 2
@@ -46,7 +50,7 @@ const emptyDoc = (): Doc => ({ plan: emptyPlan(), seq: 0 })
 
 export default function App() {
   const [hist, setHist] = useState<History<Doc>>(() => initHistory(loadDoc()))
-  const [tool, setTool] = useState<Tool>('select')
+  const [tool, setTool] = useState<Tool>('auto')
   const [theme, setTheme] = useState<Theme>(loadTheme)
   const [selection, setSelection] = useState<Selection>(EMPTY)
   const [floorPick, setFloorPick] = useState<string>(loadFloor)
@@ -54,6 +58,11 @@ export default function App() {
   const [view, setView] = useState<View>(initialView)
   const [message, setMessage] = useState<string | null>(null)
   const [ghosts, setGhosts] = useState(false)
+  const [allFloors, setAllFloors] = useState(false)
+  /** Which object the canvas asked to have renamed. The panel opens its fold
+   *  and puts the caret in the name box — one editor, not two. */
+  const [renaming, setRenaming] = useState<{ kind: 'room' | 'case'; id: string } | null>(null)
+  const [sideWidth, setSideWidth] = useState<number>(loadSideWidth)
   const [saved, setSaved] = useState<'saving' | 'saved' | 'failed'>('saved')
   const wrapRef = useRef<HTMLDivElement | null>(null)
 
@@ -96,6 +105,14 @@ export default function App() {
       setSaved('failed')
     }
   }, [doc])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SIDE_KEY, String(sideWidth))
+    } catch {
+      /* ignore */
+    }
+  }, [sideWidth])
 
   useEffect(() => {
     try {
@@ -384,6 +401,12 @@ export default function App() {
     select: setSelection,
   }
 
+  /** Double-click on the plan: select it and ask the panel to start editing. */
+  const beginRename = useCallback((kind: 'room' | 'case', id: string) => {
+    setSelection(kind === 'room' ? selectRoom(id) : selectCase(id))
+    setRenaming({ kind, id })
+  }, [])
+
   // --- floors --------------------------------------------------------------
 
   const addFloor = useCallback(() => {
@@ -478,6 +501,19 @@ export default function App() {
     say('Opened.')
   }
 
+  const doZoom = useCallback(
+    (factor: number) => {
+      const el = wrapRef.current
+      if (!el) return
+      const r = el.getBoundingClientRect()
+      // About the CENTRE of what is on screen, which is the only anchor a menu
+      // command has — a wheel zoom has the pointer, this does not.
+      setView((v) => zoomAbout(v, { x: v.cx, y: v.cy }, v.scale * factor))
+      void r
+    },
+    [],
+  )
+
   const doFit = useCallback(() => {
     const el = wrapRef.current
     if (!el) return
@@ -530,9 +566,11 @@ export default function App() {
       if (meta) return
       if (e.code === 'Escape' || e.key === 'Escape') {
         setSelection(EMPTY)
-        return setTool('select')
+        return setTool('auto')
       }
-      if (is('Digit1', '1')) return setTool('select')
+      if (e.key === '+' || e.key === '=') return doZoom(1.25)
+      if (e.key === '-' || e.key === '_') return doZoom(1 / 1.25)
+      if (is('Digit1', '1')) return setTool('auto')
       if (is('Digit2', '2')) return setTool('room')
       if (is('Digit3', '3')) return setTool('case')
       if (is('Digit4', '4')) return setTool('pan')
@@ -553,6 +591,9 @@ export default function App() {
         floors={doc.plan.floors}
         floorId={floorId}
         ghosts={ghosts}
+        allFloors={allFloors}
+        onAllFloors={setAllFloors}
+        onZoom={doZoom}
         onFloor={(id) => {
           setFloorPick(id)
           setSelection(EMPTY)
@@ -608,12 +649,62 @@ export default function App() {
             onMoveSelection={moveSelection}
             onResize={resizeItem}
             onRejected={say}
+            onRename={beginRename}
+            overview={
+              allFloors && doc.plan.floors.length > 1
+                ? {
+                    plan: doc.plan,
+                    onFocus: (id) => {
+                      setAllFloors(false)
+                      setFloorPick(id)
+                      setSelection(EMPTY)
+                    },
+                  }
+                : null
+            }
           />
-          <Hint tool={tool} />
+          <Hint tool={tool} overview={allFloors && doc.plan.floors.length > 1} />
           {message && <div className="toast">{message}</div>}
         </div>
-        <aside className="side">
-          <Inspector doc={doc} floorId={floorId} selection={selection} actions={actions} />
+        {/* Drag to widen the settings. The elevation of a wide bookcase wants
+            the room, and 330 px is a guess about someone else's screen. */}
+        <div
+          className="resizer"
+          role="separator"
+          aria-label="drag to resize the settings panel"
+          aria-orientation="vertical"
+          onPointerDown={(e) => {
+            // Same guard as the canvas: capture throws InvalidPointerId for a
+            // pointer the browser no longer considers active, and letting that
+            // escape would abort the handler BEFORE the listeners are attached
+            // — the drag would then do nothing at all.
+            try {
+              e.currentTarget.setPointerCapture(e.pointerId)
+            } catch {
+              /* the window listeners below are what actually drive the drag */
+            }
+            const startX = e.clientX
+            const startW = sideWidth
+            const move = (ev: PointerEvent) => {
+              setSideWidth(clampSide(startW + (startX - ev.clientX)))
+            }
+            const up = () => {
+              window.removeEventListener('pointermove', move)
+              window.removeEventListener('pointerup', up)
+            }
+            window.addEventListener('pointermove', move)
+            window.addEventListener('pointerup', up)
+          }}
+        />
+        <aside className="side" style={{ width: sideWidth, flexBasis: sideWidth }}>
+          <Inspector
+            doc={doc}
+            floorId={floorId}
+            selection={selection}
+            actions={actions}
+            renaming={renaming}
+            onRenamed={() => setRenaming(null)}
+          />
         </aside>
       </main>
     </div>
@@ -624,7 +715,10 @@ const size = (v: number): number => Math.max(1, Math.round(v))
 
 const offset = (r: Rect): Rect => ({ ...r, x: r.x + PASTE_OFFSET, y: r.y + PASTE_OFFSET })
 
-function Hint({ tool }: { tool: Tool }) {
+function Hint({ tool, overview }: { tool: Tool; overview: boolean }) {
+  if (overview) {
+    return <p className="hint">Every floor, side by side. Double-click one to work on it.</p>
+  }
   const text =
     tool === 'room'
       ? 'Drag a rectangle to draw a room. Its edges snap to the grid — and to any room already there, so rooms attach.'
@@ -632,7 +726,7 @@ function Hint({ tool }: { tool: Tool }) {
         ? 'Drag a rectangle inside a room. It snaps flush against the wall, and the books face into the room.'
         : tool === 'pan'
           ? 'Drag to slide the plan. Scroll or pinch to zoom.'
-          : 'Drag to move · drag a handle to resize · Ctrl+click adds to the selection · drag empty space to select several · Ctrl+C / Ctrl+V / Delete.'
+          : 'A room’s border moves it · inside a room draws a bookcase · outside draws a room · double-click to name · Ctrl+drag selects several.'
   return <p className="hint">{text}</p>
 }
 
@@ -649,6 +743,15 @@ function loadDoc(): Doc {
     return { plan: parsed.plan, seq: Number.isFinite(seq) ? seq : 0 }
   } catch {
     return emptyDoc()
+  }
+}
+
+function loadSideWidth(): number {
+  try {
+    const raw = Number(window.localStorage.getItem(SIDE_KEY))
+    return Number.isFinite(raw) && raw > 0 ? clampSide(raw) : 330
+  } catch {
+    return 330
   }
 }
 

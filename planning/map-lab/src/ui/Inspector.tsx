@@ -11,6 +11,8 @@
  * panel says how many and offers to apply — it never applies silently.
  */
 
+import { useEffect, useRef } from 'react'
+
 import { Elevation } from './Elevation'
 import type { Doc, Selection } from './types'
 import { count, only } from './types'
@@ -53,16 +55,22 @@ export type Actions = {
 
 const isRoom = (o: Room | Bookcase): o is Room => !('front' in o)
 
+export type Renaming = { kind: 'room' | 'case'; id: string } | null
+
 export function Inspector({
   doc,
   floorId,
   selection,
   actions,
+  renaming,
+  onRenamed,
 }: {
   doc: Doc
   floorId: string
   selection: Selection
   actions: Actions
+  renaming: Renaming
+  onRenamed: () => void
 }) {
   const { plan } = doc
   const n = count(selection)
@@ -73,9 +81,17 @@ export function Inspector({
   const one = only(selection, plan)
   if (!one) return <Empty plan={plan} />
   return isRoom(one) ? (
-    <RoomPanel room={one} plan={plan} actions={actions} />
+    <RoomPanel room={one} plan={plan} actions={actions} renaming={renaming} onRenamed={onRenamed} />
   ) : (
-    <CasePanel bc={one} plan={plan} floorId={floorId} selection={selection} actions={actions} />
+    <CasePanel
+      bc={one}
+      plan={plan}
+      floorId={floorId}
+      selection={selection}
+      actions={actions}
+      renaming={renaming}
+      onRenamed={onRenamed}
+    />
   )
 }
 
@@ -143,7 +159,37 @@ function Many({
 
 // --- room ------------------------------------------------------------------
 
-function RoomPanel({ room, plan, actions }: { room: Room; plan: Plan; actions: Actions }) {
+/**
+ * Puts the caret in a name box when the plan asks for it — that is what a
+ * double-click on a room means (owner, 2026-08-16). One editor rather than an
+ * on-canvas second one: two places to type a name is two places for it to
+ * disagree with itself.
+ */
+function useRenameFocus(active: boolean, done: () => void) {
+  const ref = useRef<HTMLInputElement | null>(null)
+  useEffect(() => {
+    if (!active) return
+    ref.current?.focus()
+    ref.current?.select()
+    done()
+  }, [active, done])
+  return ref
+}
+
+function RoomPanel({
+  room,
+  plan,
+  actions,
+  renaming,
+  onRenamed,
+}: {
+  room: Room
+  plan: Plan
+  actions: Actions
+  renaming: Renaming
+  onRenamed: () => void
+}) {
+  const nameRef = useRenameFocus(renaming?.kind === 'room' && renaming.id === room.id, onRenamed)
   const attached = plan.cases.filter((c) => c.roomId === room.id)
   return (
     <div className="inspector">
@@ -151,6 +197,7 @@ function RoomPanel({ room, plan, actions }: { room: Room; plan: Plan; actions: A
       <label className="field">
         <span>Name</span>
         <input
+          ref={nameRef}
           className="rtl-safe"
           value={room.name}
           placeholder="סלון · living room"
@@ -211,14 +258,20 @@ function CasePanel({
   floorId,
   selection,
   actions,
+  renaming,
+  onRenamed,
 }: {
   bc: Bookcase
   plan: Plan
   floorId: string
   selection: Selection
   actions: Actions
+  renaming: Renaming
+  onRenamed: () => void
 }) {
   const room = plan.rooms.find((r) => r.id === bc.roomId) ?? null
+  const wanted = renaming?.kind === 'case' && renaming.id === bc.id
+  const nameRef = useRenameFocus(wanted, onRenamed)
   return (
     <div className="inspector">
       <h2>Bookcase</h2>
@@ -228,12 +281,14 @@ function CasePanel({
           screen — four fields above it push the grid off the bottom. */}
       <Fold
         storageKey="booksnap.map-lab.fold.caseDetails"
+        forceOpen={wanted}
         label="Name, size, room, facing"
         summary={`${bc.name || 'unnamed'} · ${bc.rect.w}×${bc.rect.h} · faces ${SIDE_NAME[bc.front]}`}
       >
         <label className="field">
           <span>Name</span>
           <input
+            ref={nameRef}
             className="rtl-safe"
             value={bc.name}
             placeholder="ארון הסלון"
@@ -332,14 +387,21 @@ function Fold({
   storageKey,
   label,
   summary,
+  forceOpen,
   children,
 }: {
   storageKey: string
   label: string
   summary: string
+  forceOpen?: boolean
   children: React.ReactNode
 }) {
   const [open, setOpen] = useSticky(storageKey, true)
+  // A rename that lands in a collapsed fold would put the caret somewhere
+  // invisible, which reads as "double-click did nothing".
+  useEffect(() => {
+    if (forceOpen && !open) setOpen(true)
+  }, [forceOpen, open, setOpen])
   return (
     <section className={open ? 'fold open' : 'fold'}>
       <button

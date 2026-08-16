@@ -7,7 +7,7 @@ look at.
 
 ```bash
 npm install --prefix planning/map-lab
-npm --prefix planning/map-lab test          # 73 tests, ~1s
+npm --prefix planning/map-lab test          # 75 tests, ~1s
 ```
 
 The dev server is `map-lab` in `.claude/launch.json` (port 5175 — 5173 is the
@@ -23,51 +23,57 @@ was too free"*. Everything is now a **rectangle on the grid**, for rooms and
 bookcases alike, and the freehand code is deleted rather than disabled. The
 second pass came back *"very fluent"*; the third added selection, copy/paste
 and attachment; the fourth fixed two real bugs and moved the edit commands into
-a menu; the fifth added sections and floors and fixed two more.
+a menu; the fifth added sections and floors and fixed two more; the sixth cut
+the toolbar to eight controls and made the arrow guess what you meant.
 
 ## What to try
 
-1. **Draw room** — drag a rectangle. Then drag a second one so it lands near
+1. **Just draw.** The arrow (➤) is the default and reads your starting point:
+   outside every room a drag draws a **room**, inside one it draws a
+   **bookcase**, and on a room's **border** it moves the room. Existing
+   furniture always wins. Ctrl+drag selects several; double-click names
+   whatever you hit. ▭ and ▬ overrule the guess when you want to.
+2. **Draw room** — drag a rectangle. Then drag a second one so it lands near
    the first: its edges **weld onto the neighbour**, exactly, so rooms attach
    and an L-shaped room is two rectangles.
-2. **Draw bookcase** — drag a rectangle inside a room. It snaps flush against
+3. **Draw bookcase** — drag a rectangle inside a room. It snaps flush against
    the wall and the books face into the room. The thick line is the front.
-3. **Move & edit** — drag to move, drag a handle to resize, tap to open the
+4. **Move & edit** — drag to move, drag a handle to resize, tap to open the
    panel. Sizes are typeable in the panel as well as draggable: the units are
    relative, so "twice as wide as that one" is the only thing that matters, and
    typing is how you say it exactly.
-4. **Select several** — Ctrl+click adds to the selection, or drag a band across
+5. **Select several** — Ctrl+click adds to the selection, or drag a band across
    empty space to catch everything it touches. One Delete removes the lot.
    **Ctrl+C / Ctrl+V** copies them, offset, with a bookcase's columns, levels
    and depths intact. Everything is also under **Edit ▾**, which prints each
    shortcut beside its command.
-5. **Undo a lot.** Ctrl+Z steps back 200 edits; Ctrl+Y (or Ctrl+Shift+Z) steps
+6. **Undo a lot.** Ctrl+Z steps back 200 edits; Ctrl+Y (or Ctrl+Shift+Z) steps
    forward again. Typing a room name is ONE undo, not one per letter.
-6. **Attachment** — a bookcase belongs to a room and moves with it. Drawing it
+7. **Attachment** — a bookcase belongs to a room and moves with it. Drawing it
    inside a room attaches it; the *Moves with* dropdown points it anywhere,
    including nowhere. Dragging the case yourself can re-home it; a room moving
    its own furniture never changes whose furniture it is.
-7. **Change floors.** The dropdown in the toolbar switches storey; ＋ adds
+8. **Change floors.** The dropdown in the toolbar switches storey; ＋ adds
    one. Each floor has its own rooms — two storeys both start at 0,0, so only
    one is drawn at a time — and *other floors* ghosts the rest behind it, which
    is how you line a bookcase up over the stairwell below. A floor is **not**
    part of a shelf's address; it is a grouping over rooms.
-8. **Stack two bookcases.** A low base with a taller unit on top is ONE
+9. **Stack two bookcases.** A low base with a taller unit on top is ONE
    bookcase with two **sections**: press *a second section on top*, then give
    it its own column count. Sections divide independently and carry their own
    depth; with one section the editor shows no section chrome at all.
-9. **Watch the depth rule.** Set a case's *default* depth to 3. Its existing
+10. **Watch the depth rule.** Set a case's *default* depth to 3. Its existing
    shelves keep depth 1 and the panel says how many — changing a default never
    reaches back into shelves that already exist, because that would delete the
    location of every book standing in a back row. A **new** column takes the
    new default. Applying to existing shelves is a separate button.
-10. **Black or white** — two real themes, not an inverted filter.
-11. **Trace a sketch** — your floor-plan photo goes behind the canvas at
+11. **Black or white** — two real themes, not an inverted filter.
+12. **Trace a sketch** — your floor-plan photo goes behind the canvas at
    adjustable opacity. Draw over it, then remove it. That is the whole of "or
    provide a sketch": no image understanding, no paid call.
-12. **On a phone.** The layout stacks under 820px and the toolbar gives its
+13. **On a phone.** The layout stacks under 820px and the toolbar gives its
    space back to the canvas. This is the viewport the verdict should come from.
-13. **Save.** Every edit is written to this browser immediately and the
+14. **Save.** Every edit is written to this browser immediately and the
    toolbar says so. *Save to file* is the copy that survives a cleared browser
    — integers in abstract units, no pixel, no viewport, no centimetre. Send
    that file over; it is the artefact.
@@ -118,6 +124,10 @@ a rewrite. Nothing in `core/` imports React, touches the DOM, or calls `fetch`.
   reaches 1.3 units, so drawing a one-unit-deep case against a wall pulled both
   its edges onto that wall and the case vanished. A snap that annihilates the
   rectangle is never what anyone meant.
+- **`setPointerCapture` threw the whole handler away, twice.** The panel
+  divider called it without the guard the canvas already had, so the exception
+  escaped before the move listeners were attached and the drag did nothing at
+  all. Pointer capture is best-effort; a drag must not depend on it.
 - **A rectangle could not be resized by one unit next to a neighbour.** The
   magnet won whenever a neighbour edge was within tolerance — even with the
   pointer exactly on a grid line and the neighbour a whole unit away, so the

@@ -553,6 +553,30 @@ export function planBounds(plan: Plan, floorId?: string): { min: Pt; max: Pt } {
   }
 }
 
+/**
+ * Where each storey sits when they are all shown at once.
+ *
+ * Floors are laid out LEFT TO RIGHT at their natural size, each shifted so its
+ * own left edge starts where the previous one ended. They cannot simply be
+ * drawn together — every storey starts at 0,0, so the bedroom would land on
+ * the kitchen — and stacking them vertically would fight the fact that a plan
+ * is usually wider than it is tall.
+ */
+export function overviewLayout(
+  plan: Plan,
+  gap = 6,
+): { floor: Floor; dx: number; width: number; height: number }[] {
+  let x = 0
+  return plan.floors.map((floor) => {
+    const b = planBounds(plan, floor.id)
+    const width = Math.max(b.max.x - b.min.x, gap)
+    const height = Math.max(b.max.y - b.min.y, gap)
+    const dx = x - b.min.x
+    x += width + gap
+    return { floor, dx, width, height }
+  })
+}
+
 export function casesInRoom(plan: Plan, roomId: string): Bookcase[] {
   return plan.cases.filter((c) => c.roomId === roomId)
 }

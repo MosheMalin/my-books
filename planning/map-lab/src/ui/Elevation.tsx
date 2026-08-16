@@ -113,10 +113,15 @@ function SectionBlock({
         </header>
       )}
 
-      <div
-        className="elevation-grid"
-        style={{ gridTemplateColumns: `repeat(${cols}, minmax(44px, 1fr))` }}
-      >
+      {/* The scroll lives HERE, around one section's columns — not around the
+          whole panel (owner, 2026-08-16). A wide bookcase should slide its own
+          columns; it should not drag the name box and the depth rule sideways
+          with them. */}
+      <div className="elev-scroll">
+        <div
+          className="elevation-grid"
+          style={{ gridTemplateColumns: `repeat(${cols}, minmax(44px, 1fr))` }}
+        >
         {Array.from({ length: cols }, (_, col) => (
           <div className="elev-col" key={col}>
             <div className="elev-col-head">col {col + 1}</div>
@@ -160,8 +165,9 @@ function SectionBlock({
                 +
               </button>
             </div>
-          </div>
-        ))}
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className="elevation-cols">

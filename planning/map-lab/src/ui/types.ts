@@ -6,7 +6,24 @@ import type { Bookcase, Plan, Room } from '../core/model'
  * 2026-08-16: *"the free draw was too free"*. Everything is a rectangle on the
  * grid now — see MAP_PLAN §4.
  */
-export type Tool = 'select' | 'room' | 'case' | 'pan'
+/**
+ * `auto` is the arrow, and it decides what a drag means from WHERE it starts
+ * (owner, 2026-08-16 — *"touching the border switches to move… touching inside
+ * the room switches to draw bookcase… more fluent"*):
+ *
+ *   over an existing room or bookcase   → select, move, resize
+ *   on a room's BORDER                  → move that room
+ *   inside a room                       → draw a bookcase
+ *   outside every room                  → draw a room
+ *   Ctrl/Shift + drag on empty          → select several
+ *
+ * ⚠ Existing objects always win. A bookcase stands ON the wall, so "the border
+ * means move the room" and "there is a bookcase here" collide constantly, and
+ * the furniture has to be the answer. `room` and `case` remain as explicit
+ * tools for when the guess is not what you want — a small room is mostly
+ * border once the zone is fingertip-sized.
+ */
+export type Tool = 'auto' | 'room' | 'case' | 'pan'
 
 export type Theme = 'dark' | 'light'
 

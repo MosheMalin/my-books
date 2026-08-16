@@ -14,6 +14,9 @@ export type MenuItem = {
   shortcut?: string
   disabled?: boolean
   danger?: boolean
+  /** Present makes the row a toggle, and it renders its state. Absent leaves
+   *  it a plain command — `false` and "not a toggle" are different things. */
+  checked?: boolean
   onSelect: () => void
 }
 
@@ -57,15 +60,23 @@ export function Menu({ label, items }: { label: string; items: MenuItem[] }) {
             <button
               key={it.label}
               type="button"
-              role="menuitem"
               disabled={it.disabled}
               className={it.danger ? 'danger' : ''}
+              aria-checked={it.checked}
+              role={it.checked === undefined ? 'menuitem' : 'menuitemcheckbox'}
               onClick={() => {
                 setOpen(false)
                 it.onSelect()
               }}
             >
-              <span>{it.label}</span>
+              <span>
+                {it.checked !== undefined && (
+                  <span className="tick" aria-hidden="true">
+                    {it.checked ? '✓' : ' '}
+                  </span>
+                )}
+                {it.label}
+              </span>
               {it.shortcut && <kbd>{it.shortcut}</kbd>}
             </button>
           ))}

@@ -115,6 +115,16 @@ button.on {
 }
 button.danger { color: var(--danger); }
 
+button.icon {
+  width: 36px;
+  padding: 4px;
+  font-size: 15px;
+  line-height: 1;
+  text-align: center;
+}
+.icons { gap: 3px; }
+.menu-pop .tick { display: inline-block; width: 14px; }
+
 .floors select { max-width: 130px; }
 .floors .floor-name { width: 110px; }
 .floors button { padding: 6px 8px; }
@@ -166,6 +176,15 @@ button.danger { color: var(--danger); }
 .body { display: flex; flex: 1; min-height: 0; }
 .canvas-wrap { position: relative; flex: 1; min-width: 0; }
 
+.resizer {
+  flex: 0 0 6px;
+  cursor: col-resize;
+  background: var(--line);
+  opacity: 0.35;
+  touch-action: none;
+}
+.resizer:hover { opacity: 1; background: var(--accent); }
+
 .side {
   width: 330px;
   flex: 0 0 330px;
@@ -186,7 +205,15 @@ button.danger { color: var(--danger); }
  * way round — the lab is judged on a phone. */
 @media (max-width: 640px) {
   .body { flex-direction: column; }
-  .side { width: auto; flex: 0 0 38%; border-inline-start: none; border-top: 1px solid var(--line); }
+  /* !important: the drag handle writes an inline width, which means nothing
+     once the panel is stacked under the plan rather than beside it. */
+  .side {
+    width: auto !important;
+    flex: 0 0 38% !important;
+    border-inline-start: none;
+    border-top: 1px solid var(--line);
+  }
+  .resizer { display: none; }
   .toolbar { gap: 5px; padding: 5px 6px; }
   .toolbar button { padding: 6px 9px; font-size: 12px; }
   .brand { display: none; }
@@ -310,6 +337,19 @@ svg.plan {
   fill: var(--accent);
   font-size: 12px;
   font-family: var(--font);
+}
+
+.storey-label {
+  fill: var(--dim);
+  font-size: 2.2px;
+  font-family: var(--font);
+  unicode-bidi: plaintext;
+}
+.storey-rule {
+  stroke: var(--line);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 4;
+  vector-effect: non-scaling-stroke;
 }
 
 .ghost {
@@ -479,7 +519,8 @@ legend { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-s
 .section-defaults input { width: 52px; min-height: 28px; padding: 4px 6px; }
 .section-defaults button { min-height: 28px; padding: 2px 8px; font-size: 11px; }
 
-.elevation-grid { display: grid; gap: 6px; }
+.elev-scroll { overflow-x: auto; overflow-y: hidden; padding-bottom: 2px; }
+.elevation-grid { display: grid; gap: 6px; min-width: max-content; }
 .elev-col { display: flex; flex-direction: column; gap: 3px; }
 .elev-col-head { font-size: 11px; color: var(--dim); text-align: center; }
 .elev-col-foot { display: flex; gap: 3px; }

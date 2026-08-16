@@ -16,7 +16,16 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type { Pt } from '../core/geom'
 import { GRID, GRID_MAJOR, dist } from '../core/geom'
 import type { Bookcase, Plan, Room } from '../core/model'
-import { columnDividers, depthLines, frontEdge, isTooSmall, maxDepth } from '../core/model'
+import {
+  casesOn,
+  columnDividers,
+  depthLines,
+  frontEdge,
+  isTooSmall,
+  maxDepth,
+  overviewLayout,
+  roomsOn,
+} from '../core/model'
 import type { Handle, Rect } from '../core/rect'
 import {
   bottom,
@@ -53,6 +62,10 @@ type Props = {
   onMoveSelection: (dx: number, dy: number) => void
   onResize: (kind: Kind, id: string, r: Rect) => void
   onRejected: (reason: string) => void
+  /** Double-click on a room or bookcase — the fluent way to name one. */
+  onRename: (kind: Kind, id: string) => void
+  /** Every storey at once, read-only; double-clicking one focuses it. */
+  overview: { plan: Plan; onFocus: (floorId: string) => void } | null
 }
 
 type Drag =
@@ -68,6 +81,7 @@ export function PlanCanvas(props: Props) {
   const svgRef = useRef<SVGSVGElement | null>(null)
   const [rect, setRect] = useState<ScreenRect>({ left: 0, top: 0, width: 800, height: 600 })
   const [drag, setDrag] = useState<Drag>(null)
+  const [hover, setHover] = useState<'move' | 'room' | 'case'>('room')
   const pointers = useRef(new Map<number, Pt>())
   const pinch = useRef<{ d: number; scale: number } | null>(null)
 
@@ -108,6 +122,20 @@ export function PlanCanvas(props: Props) {
           ...plan.cases.filter((c) => c.id !== exceptId).map((c) => c.rect),
         ]
 
+  /**
+   * What a drag starting here would DO. One function, so the cursor, the hint
+   * and the pointer handler can never disagree about it.
+   */
+  const intentAt = (p: Pt): 'move' | 'room' | 'case' => {
+    if (tool !== 'auto') return tool === 'pan' ? 'move' : tool
+    if (caseAt(p)) return 'move'
+    const room = roomAt(p)
+    if (!room) return 'room'
+    // The border belongs to the room itself — but only where no furniture is
+    // standing on it, which `caseAt` above has already settled.
+    return onBorder(room.rect, p, magnet) ? 'move' : 'case'
+  }
+
   const caseAt = (p: Pt): Bookcase | null => {
     for (let i = plan.cases.length - 1; i >= 0; i--) {
       const bc = plan.cases[i]!
@@ -143,6 +171,7 @@ export function PlanCanvas(props: Props) {
     const add = e.ctrlKey || e.metaKey || e.shiftKey
 
     if (tool === 'pan' || e.button === 1) return setDrag({ kind: 'pan', from: p, view })
+    if (props.overview) return setDrag({ kind: 'pan', from: p, view })
     if (tool === 'room') return setDrag({ kind: 'draw', what: 'room', from: p, to: p })
     if (tool === 'case') return setDrag({ kind: 'draw', what: 'case', from: p, to: p })
 
@@ -161,14 +190,21 @@ export function PlanCanvas(props: Props) {
       return setDrag({ kind: 'move', what: 'case', id: bc.id, from: p, to: p, orig: bc.rect })
     }
     const room = roomAt(p)
-    if (room) {
+    if (room && (add || onBorder(room.rect, p, magnet))) {
       if (add) return props.onSelect(toggle(selection, 'room', room.id))
       if (!hasRoom(selection, room.id)) props.onSelect(selectRoom(room.id))
       return setDrag({ kind: 'move', what: 'room', id: room.id, from: p, to: p, orig: room.rect })
     }
-    // Empty space: a selection band. Still never a pan.
-    if (!add) props.onSelect(EMPTY)
-    setDrag({ kind: 'band', from: p, to: p, add })
+    // ⚠ Ctrl/Shift claims the band, because a plain drag on empty canvas now
+    // DRAWS. Selecting several is the rarer act, so it is the one that pays a
+    // modifier.
+    if (add) return setDrag({ kind: 'band', from: p, to: p, add })
+    if (room) {
+      props.onSelect(selectRoom(room.id))
+      return setDrag({ kind: 'draw', what: 'case', from: p, to: p })
+    }
+    props.onSelect(EMPTY)
+    setDrag({ kind: 'draw', what: 'room', from: p, to: p })
   }
 
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
@@ -183,7 +219,15 @@ export function PlanCanvas(props: Props) {
       props.onView(zoomAbout(view, toWorld(mid, rect, view), pinch.current.scale * factor))
       return
     }
-    if (!drag) return
+    if (!drag) {
+      // Only when the ANSWER changes, not on every pixel: this runs on every
+      // pointermove and a re-render per pixel is a lot of nothing.
+      if (tool === 'auto' && !props.overview) {
+        const next = intentAt(world(e))
+        setHover((h) => (h === next ? h : next))
+      }
+      return
+    }
     const p = world(e)
     if (drag.kind === 'pan') {
       const v = drag.view
@@ -229,6 +273,14 @@ export function PlanCanvas(props: Props) {
     const r = resolve(d, magnet, targetsFor)
     if (!r) return
     if (isTooSmall(r)) {
+      // In `auto` a tap is not a failed drawing, it is a tap: select whatever
+      // is under it and say nothing. Complaining about a click would make the
+      // fluent mode the noisiest one.
+      if (d.kind === 'draw' && tool === 'auto') {
+        const bc = caseAt(end)
+        const room = roomAt(end)
+        return props.onSelect(bc ? selectCase(bc.id) : room ? selectRoom(room.id) : EMPTY)
+      }
       return props.onRejected(
         d.kind === 'draw'
           ? `too small — drag out at least ${GRID} × ${GRID} squares`
@@ -267,7 +319,15 @@ export function PlanCanvas(props: Props) {
     drag?.kind === 'move' && live ? { dx: live.x - drag.orig.x, dy: live.y - drag.orig.y } : null
   const band = drag?.kind === 'band' ? rectFrom(drag.from, drag.to) : null
   const bounds = visibleBounds(rect, view)
-  const cursor = tool === 'pan' ? 'grab' : tool === 'select' ? 'default' : 'crosshair'
+  const cursor = props.overview
+    ? 'zoom-in'
+    : tool === 'pan'
+      ? 'grab'
+      : tool !== 'auto'
+        ? 'crosshair'
+        : hover === 'move'
+          ? 'move'
+          : 'crosshair'
 
   /** Where a rectangle sits RIGHT NOW, mid-drag. Everything that travels with
    *  the selection previews together, or a multi-move looks broken until the
@@ -297,6 +357,20 @@ export function PlanCanvas(props: Props) {
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
       onWheel={onWheel}
+      onDoubleClick={(e) => {
+        const p = world(e)
+        if (props.overview) {
+          const hit = overviewLayout(props.overview.plan).find(
+            (f) => p.x >= f.dx && p.x <= f.dx + f.width,
+          )
+          if (hit) props.overview.onFocus(hit.floor.id)
+          return
+        }
+        const bc = caseAt(p)
+        if (bc) return props.onRename('case', bc.id)
+        const room = roomAt(p)
+        if (room) props.onRename('room', room.id)
+      }}
       onContextMenu={(e) => e.preventDefault()}
       role="application"
       aria-label="floor plan"
@@ -317,6 +391,22 @@ export function PlanCanvas(props: Props) {
           />
         )}
 
+        {props.overview &&
+          overviewLayout(props.overview.plan).map(({ floor, dx, width, height }) => (
+            <g key={floor.id} className="storey" transform={`translate(${dx} 0)`}>
+              <text className="storey-label" x={width / 2} y={-2} textAnchor="middle">
+                {floor.name}
+              </text>
+              <line className="storey-rule" x1={width + 3} y1={-4} x2={width + 3} y2={height + 4} />
+              {roomsOn(props.overview!.plan, floor.id).map((r) => (
+                <RoomShape key={r.id} room={r} rect={r.rect} selected={false} />
+              ))}
+              {casesOn(props.overview!.plan, floor.id).map((bc) => (
+                <CaseShape key={bc.id} bc={bc} selected={false} />
+              ))}
+            </g>
+          ))}
+
         {props.ghosts.map((r) => (
           <rect
             key={`ghost-${r.id}`}
@@ -328,7 +418,7 @@ export function PlanCanvas(props: Props) {
           />
         ))}
 
-        {plan.rooms.map((r) => (
+        {!props.overview && plan.rooms.map((r) => (
           <RoomShape
             key={r.id}
             room={r}
@@ -337,7 +427,7 @@ export function PlanCanvas(props: Props) {
           />
         ))}
 
-        {plan.cases.map((bc) => (
+        {!props.overview && plan.cases.map((bc) => (
           <CaseShape
             key={bc.id}
             bc={{ ...bc, rect: shown(bc.id, 'case', bc.rect) }}
@@ -359,7 +449,7 @@ export function PlanCanvas(props: Props) {
           <rect className="band" x={band.x} y={band.y} width={band.w} height={band.h} />
         )}
 
-        {loneRect && !drag && tool === 'select' && (
+        {loneRect && !drag && tool === 'auto' && !props.overview && (
           <g className="handles">
             {handlePositions(loneRect, magnet).map(({ h, at }) => (
               <rect
@@ -417,6 +507,20 @@ function resolve(
   const y0 = d.handle.hy === -1 ? p.y : d.orig.y
   const y1 = d.handle.hy === 1 ? p.y : bottom(d.orig)
   return rectFrom({ x: x0, y: y0 }, { x: x1, y: y1 })
+}
+
+/** Within `tol` of a rectangle's edge, from either side. The room's border is
+ *  the room's own handle in `auto` — its interior belongs to the furniture. */
+function onBorder(r: Rect, p: Pt, tol: number): boolean {
+  const inX = p.x >= r.x - tol && p.x <= right(r) + tol
+  const inY = p.y >= r.y - tol && p.y <= bottom(r) + tol
+  if (!inX || !inY) return false
+  return (
+    Math.abs(p.x - r.x) <= tol ||
+    Math.abs(p.x - right(r)) <= tol ||
+    Math.abs(p.y - r.y) <= tol ||
+    Math.abs(p.y - bottom(r)) <= tol
+  )
 }
 
 function Grid({ min, max, scale }: { min: Pt; max: Pt; scale: number }) {

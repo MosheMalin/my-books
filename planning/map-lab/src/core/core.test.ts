@@ -40,6 +40,7 @@ import {
   maxDepth,
   newBookcase,
   newSection,
+  overviewLayout,
   reattach,
   removeSection,
   roomFor,
@@ -451,6 +452,34 @@ describe('floors', () => {
     const back = parsePlan(JSON.stringify(broken))
     if (!back.ok) throw new Error('should parse')
     expect(back.plan.rooms[0]!.floorId).toBe('f1')
+  })
+
+  it('lays every storey out side by side, each at its own size', () => {
+    const plan: Plan = {
+      ...emptyPlan(),
+      floors: [{ id: 'f1', name: 'g' }, { id: 'f2', name: 'u' }],
+      rooms: [
+        room('r1', rect(0, 0, 20, 12)),
+        { ...room('r2', rect(0, 0, 10, 8)), floorId: 'f2' },
+      ],
+    }
+    const [ground, upstairs] = overviewLayout(plan, 6)
+    // the ground floor keeps its own coordinates; the next one is pushed clear
+    expect(ground!.dx).toBe(0)
+    expect(ground!.width).toBe(20)
+    expect(upstairs!.dx).toBe(26)
+    expect(upstairs!.width).toBe(10)
+  })
+
+  it('shifts a storey that does not start at the origin back to its own left edge', () => {
+    const plan: Plan = {
+      ...emptyPlan(),
+      floors: [{ id: 'f1', name: 'g' }],
+      rooms: [room('r1', rect(40, 30, 10, 10))],
+    }
+    // otherwise a plan drawn far from 0,0 would leave a gap the width of its
+    // own offset before it
+    expect(overviewLayout(plan)[0]!.dx).toBe(-40)
   })
 
   it('round-trips several floors', () => {
