@@ -1,3 +1,5 @@
+import { useI18n } from '../../lib/i18n'
+import { mapText } from '../text'
 /**
  * The storey, in the corner of the board.
  *
@@ -29,6 +31,7 @@ type Props = {
 }
 
 export function FloorBadge(props: Props) {
+  const T = mapText(useI18n().lang)
   const [editing, setEditing] = useState(false)
   const inputRef = useRef<HTMLInputElement | null>(null)
   const current = props.floors.find((f) => f.id === props.floorId)
@@ -46,7 +49,7 @@ export function FloorBadge(props: Props) {
         <input
           ref={inputRef}
           className="rtl-safe"
-          aria-label="floor name"
+          aria-label={T.floor_name}
           value={current?.name ?? ''}
           onChange={(e) => props.onRename(props.floorId, e.target.value)}
           // Enter and Escape both put you back on the board — a name box that
@@ -60,7 +63,7 @@ export function FloorBadge(props: Props) {
         <span
           className="floor-name rtl-safe"
           onDoubleClick={() => !props.allFloors && setEditing(true)}
-          title={props.allFloors ? undefined : 'Double-click to rename this floor'}
+          title={props.allFloors ? undefined : T.rename_floor_hint}
         >
           {props.allFloors ? 'All floors' : current?.name || 'Floor'}
         </span>

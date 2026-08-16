@@ -1,3 +1,5 @@
+import { useI18n } from '../../lib/i18n'
+import { mapText, type MapText } from '../text'
 /**
  * The toolbar: four menus, four icons, and the storey.
  *
@@ -56,47 +58,51 @@ type Props = {
  * tooltip is for what the control DOES, and "(2)" was the same meaningless
  * digit that got the labels rewritten two passes ago.
  */
-const TOOLS: { tool: Tool; icon: () => React.ReactElement; label: string; hint: string }[] = [
+const tools = (T: MapText): { tool: Tool; icon: () => React.ReactElement; label: string; hint: string }[] => [
   {
     tool: 'auto',
     icon: ArrowIcon,
-    label: 'Arrow',
-    hint: 'Arrow — guesses from where you press: a room’s border moves it, inside a room draws a bookcase, outside every room draws a room. Ctrl+drag selects several.',
+    label: T.arrow,
+    hint: T.hint_arrow, // from where you press: a room’s border moves it, inside a room draws a bookcase, outside every room draws a room. Ctrl+drag selects several.',
   },
   {
     tool: 'room',
     icon: RoomIcon,
-    label: 'Draw room',
-    hint: 'Draw room — always draws a room, wherever you start.',
+    label: T.draw_room,
+    hint: T.hint_room, // draws a room, wherever you start.',
   },
   {
     tool: 'case',
     icon: CaseIcon,
-    label: 'Draw bookcase',
-    hint: 'Draw bookcase — always draws a bookcase, wherever you start.',
+    label: T.draw_case,
+    hint: T.hint_case, // draws a bookcase, wherever you start.',
   },
   {
     tool: 'pan',
     icon: PanIcon,
-    label: 'Pan',
-    hint: 'Pan — slide the plan. So do the middle button and two fingers.',
+    label: T.pan,
+    hint: T.hint_pan, // the plan. So do the middle button and two fingers.',
   },
 ]
 
-const SAVED_TEXT = {
-  saving: 'saving…',
-  saved: 'saved here',
-  failed: 'NOT saved — use File ▸ Save to file',
-} as const
+const savedText = (T: MapText) => ({
+  saving: T.saving,
+  saved: T.saved,
+  // ⚠ The lab said "use File ▸ Save to file" here, because browser storage
+  // was all it had. The plan lives in the library now, so the honest advice
+  // is to try again.
+  failed: T.save_failed,
+})
 
 export function Toolbar(props: Props) {
+  const T = mapText(useI18n().lang)
   const underlayRef = useRef<HTMLInputElement | null>(null)
   const nothingSelected = props.selectedCount === 0
 
   return (
     <header className="toolbar">
-      <div className="group icons" role="radiogroup" aria-label="tool">
-        {TOOLS.map((t) => (
+      <div className="group icons" role="radiogroup" aria-label={T.tool}>
+        {tools(T).map((t) => (
           <button
             key={t.tool}
             type="button"
@@ -115,21 +121,22 @@ export function Toolbar(props: Props) {
 
       <div className="group">
         <Menu
-          label="Plan"
+          label={T.menu_plan}
           items={[
-            { label: 'Reload from the server', onSelect: props.onReload },
-            { label: 'Clear the plan', danger: true, onSelect: props.onClear },
+            { label: T.reload, onSelect: props.onReload },
+            { label: T.clear_plan, danger: true, onSelect: props.onClear },
           ]}
         />
         <Menu
-          label="Edit"
+          label={T.menu_edit}
           items={[
-            { label: 'Undo', shortcut: 'Ctrl+Z', disabled: !props.canUndo, onSelect: props.onUndo },
-            { label: 'Redo', shortcut: 'Ctrl+Y', disabled: !props.canRedo, onSelect: props.onRedo },
-            { label: 'Copy', shortcut: 'Ctrl+C', disabled: nothingSelected, onSelect: props.onCopy },
-            { label: 'Paste', shortcut: 'Ctrl+V', disabled: !props.canPaste, onSelect: props.onPaste },
+            { label: T.undo, shortcut: 'Ctrl+Z', disabled: !props.canUndo, onSelect: props.onUndo },
+            { label: T.redo, shortcut: 'Ctrl+Y', disabled: !props.canRedo, onSelect: props.onRedo },
+            { label: T.copy, shortcut: 'Ctrl+C', disabled: nothingSelected, onSelect: props.onCopy },
+            { label: T.paste, shortcut: 'Ctrl+V', disabled: !props.canPaste, onSelect: props.onPaste },
             {
-              label: props.selectedCount > 1 ? `Delete ${props.selectedCount}` : 'Delete',
+              label: props.selectedCount > 1
+                ? T.delete_many(props.selectedCount) : T.delete,
               shortcut: 'Del',
               disabled: nothingSelected,
               danger: true,
@@ -138,29 +145,30 @@ export function Toolbar(props: Props) {
           ]}
         />
         <Menu
-          label="View"
+          label={T.menu_view}
           items={[
-            { label: 'Zoom in', shortcut: '+', onSelect: () => props.onZoom(1.25) },
-            { label: 'Zoom out', shortcut: '−', onSelect: () => props.onZoom(1 / 1.25) },
-            { label: 'Show all', onSelect: props.onFit },
+            { label: T.zoom_in, shortcut: '+', onSelect: () => props.onZoom(1.25) },
+            { label: T.zoom_out, shortcut: '−',
+              onSelect: () => props.onZoom(1 / 1.25) },
+            { label: T.show_all, onSelect: props.onFit },
             {
-              label: 'Ghost the other floors',
+              label: T.ghost_floors,
               checked: props.ghosts,
               disabled: !props.manyFloors,
               onSelect: () => props.onGhosts(!props.ghosts),
             },
             {
-              label: props.theme === 'dark' ? 'White background' : 'Black background',
+              label: props.theme === 'dark' ? T.white_bg : T.black_bg,
               onSelect: () => props.onTheme(props.theme === 'dark' ? 'light' : 'dark'),
             },
           ]}
         />
         <Menu
-          label="Apartment"
+          label={T.menu_draw}
           items={[
-            { label: 'Draw a room', onSelect: () => props.onTool('room') },
-            { label: 'Draw a bookcase', onSelect: () => props.onTool('case') },
-            { label: 'Trace a sketch…', onSelect: () => underlayRef.current?.click() },
+            { label: T.draw_room, onSelect: () => props.onTool('room') },
+            { label: T.draw_case, onSelect: () => props.onTool('case') },
+            { label: T.trace, onSelect: () => underlayRef.current?.click() },
           ]}
         />
       </div>
@@ -201,7 +209,7 @@ export function Toolbar(props: Props) {
           role="status"
           title="Every change is written to this browser's storage immediately. Clearing site data loses it — File ▸ Save to file is the copy that survives."
         >
-          {SAVED_TEXT[props.saved]}
+          {savedText(T)[props.saved]}
         </span>
       </div>
 
@@ -210,7 +218,7 @@ export function Toolbar(props: Props) {
         type="file"
         accept="image/*"
         hidden
-        aria-label="upload a floor plan to trace"
+        aria-label={T.trace_upload}
         onChange={(e) => {
           const f = e.target.files?.[0]
           if (f) props.onUnderlay(f)

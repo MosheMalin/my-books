@@ -1,3 +1,5 @@
+import { useI18n } from '../../lib/i18n'
+import { mapText } from '../text'
 /**
  * The properties panel — "edit their settings" (owner, 2026-08-16).
  *
@@ -200,13 +202,14 @@ function RoomPanel({
   renaming: Renaming
   onRenamed: () => void
 }) {
+  const T = mapText(useI18n().lang)
   const nameRef = useRenameFocus(renaming?.kind === 'room' && renaming.id === room.id, onRenamed)
   const attached = plan.cases.filter((c) => c.roomId === room.id)
   return (
     <div className="inspector">
       <h2>Room</h2>
       <label className="field">
-        <span>Name</span>
+        <span>{T.name}</span>
         <input
           ref={nameRef}
           className="rtl-safe"
@@ -281,6 +284,7 @@ function CasePanel({
   renaming: Renaming
   onRenamed: () => void
 }) {
+  const T = mapText(useI18n().lang)
   const room = plan.rooms.find((r) => r.id === bc.roomId) ?? null
   const wanted = renaming?.kind === 'case' && renaming.id === bc.id
   const nameRef = useRenameFocus(wanted, onRenamed)
@@ -298,7 +302,7 @@ function CasePanel({
         summary={`${bc.name || 'unnamed'} · ${bc.rect.w}×${bc.rect.h} · faces ${SIDE_NAME[bc.front]}`}
       >
         <label className="field">
-          <span>Name</span>
+          <span>{T.name}</span>
           <input
             ref={nameRef}
             className="rtl-safe"
@@ -318,7 +322,7 @@ function CasePanel({
         />
 
         <label className="field inline">
-          <span>Moves with</span>
+          <span>{T.moves_with}</span>
           {/* The SHARED control, not a bare <select>: Chrome pins the UA
               chevron a fixed distance from the border and ignores
               padding-inline-end, so one dropdown on the page would look
@@ -327,11 +331,11 @@ function CasePanel({
               came over. */}
           <Select
             className="rtl-safe"
-            aria-label="the room this bookcase is attached to"
+            aria-label={T.moves_with}
             value={bc.roomId ?? ''}
             onChange={(e) => actions.setCaseRoom(bc.id, e.target.value || null)}
           >
-            <option value="">nothing — stands alone</option>
+            <option value="">{T.stands_alone}</option>
             {/* Only rooms on THIS storey: a bookcase cannot move with a room on
                 another floor, and offering it would be offering a broken link. */}
             {plan.rooms
@@ -345,11 +349,11 @@ function CasePanel({
         </label>
 
         <div className="field inline">
-          <span>Books face</span>
+          <span>{T.books_face}</span>
           <button
             type="button"
             onClick={() => actions.turnCase(bc.id)}
-            aria-label="turn the bookcase"
+            aria-label={T.turn_case}
           >
             {SIDE_NAME[bc.front]} ⟳ turn
           </button>
@@ -541,9 +545,10 @@ function ShelfPanel({
 
 
 function Empty({ plan }: { plan: Plan }) {
+  const T = mapText(useI18n().lang)
   return (
     <div className="inspector">
-      <h2>Nothing selected</h2>
+      <h2>{T.nothing_selected}</h2>
       <p className="note">
         {plan.rooms.length} rooms · {plan.cases.length} bookcases.
       </p>

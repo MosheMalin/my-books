@@ -1,3 +1,5 @@
+import { useI18n } from '../../lib/i18n'
+import { mapText } from '../text'
 /**
  * The bookcase, front-on — the SECOND geometry (MAP_PLAN §3.2).
  *
@@ -73,6 +75,7 @@ function SectionBlock({
   selection,
   ...props
 }: Props & { sec: Section; many: boolean }) {
+  const T = mapText(useI18n().lang)
   const cols = columnCount(sec)
   const selected = selection.shelf?.caseId === bc.id && selection.shelf.sectionId === sec.id
     ? selection.shelf
@@ -134,13 +137,13 @@ function SectionBlock({
                   key={level}
                   type="button"
                   className={`elev-cell${isSel ? ' selected' : ''}${override ? ' override' : ''}`}
-                  aria-label={`shelf, ${addr}column ${col + 1}, level ${level + 1}`}
+                  aria-label={T.shelf_at(addr, col + 1, level + 1)}
                   aria-pressed={isSel}
                   onClick={() => props.onSelectShelf(sec.id, col, level)}
                 >
                   <span className="elev-level">{level + 1}</span>
                   {shelf && shelf.depth > 1 && (
-                    <span className="elev-depth" title={`${shelf.depth} rows front-to-back`}>
+                    <span className="elev-depth" title={T.rows_deep(shelf.depth)}>
                       ×{shelf.depth}
                     </span>
                   )}
@@ -151,7 +154,7 @@ function SectionBlock({
             <div className="elev-col-foot">
               <button
                 type="button"
-                aria-label={`remove a level from ${addr}column ${col + 1}`}
+                aria-label={T.remove_level(addr, col + 1)}
                 disabled={(sec.columnLevels[col] ?? 1) <= 1}
                 onClick={() => props.onColumnLevels(sec.id, col, (sec.columnLevels[col] ?? 1) - 1)}
               >
@@ -159,7 +162,7 @@ function SectionBlock({
               </button>
               <button
                 type="button"
-                aria-label={`add a level to ${addr}column ${col + 1}`}
+                aria-label={T.add_level(addr, col + 1)}
                 onClick={() => props.onColumnLevels(sec.id, col, (sec.columnLevels[col] ?? 1) + 1)}
               >
                 +
@@ -194,31 +197,31 @@ function SectionBlock({
 
       <div className="section-defaults">
         <label>
-          <span>new levels</span>
+          <span>{T.new_levels}</span>
           <input
             type="number"
             min={1}
             max={12}
             value={sec.defaultLevels}
-            aria-label={many ? `default levels per column, ${label.toLowerCase()}` : 'default levels per column'}
+            aria-label={many ? T.default_levels_of(label) : T.default_levels}
             onChange={(e) => props.onDefaultLevels(sec.id, Number(e.target.value))}
           />
         </label>
         <button
           type="button"
-          aria-label={many ? `apply the level default to every column of ${label.toLowerCase()}` : 'apply the level default to every column'}
+          aria-label={many ? T.apply_levels_of(label) : T.apply_levels}
           onClick={() => props.onApplyDefaultLevels(sec.id)}
         >
           apply
         </button>
         <label>
-          <span>new depth</span>
+          <span>{T.new_depth}</span>
           <input
             type="number"
             min={1}
             max={MAX_DEPTH}
             value={sec.defaultDepth}
-            aria-label={many ? `default depth, ${label.toLowerCase()}` : 'default depth'}
+            aria-label={many ? T.default_depth_of(label) : T.default_depth}
             onChange={(e) => props.onDefaultDepth(sec.id, Number(e.target.value))}
           />
         </label>
@@ -233,7 +236,7 @@ function SectionBlock({
           row.
           <button
             type="button"
-            aria-label={many ? `apply the depth default to every shelf of ${label.toLowerCase()}` : 'apply the depth default to every shelf'}
+            aria-label={many ? T.apply_depth_of(label) : T.apply_depth}
             onClick={() => props.onApplyDefaultDepth(sec.id)}
           >
             Apply to all {sec.shelves.length} shelves
