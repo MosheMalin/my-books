@@ -930,6 +930,13 @@ export interface paths {
          *     usually has about as many columns as its base and re-entering what is
          *     already on screen is not a feature. Adding at the BOTTOM renumbers the
          *     ones above: ``ordinal`` is bottom-first, unique, and printed in addresses.
+         *
+         *     ⚠ ``above_id`` is the general form and exists because ``top``/``bottom``
+         *     cannot say *back where it was*: a review measured a section restored into
+         *     the MIDDLE of a stack by an undo being sent as ``top``, appended by this
+         *     route, and recorded by the client as landed — so the drawing and the
+         *     library disagreed about which unit stands on which, and ``ordinal`` is what
+         *     an address prints.
          */
         post: operations["create_section_api_v1_map_sections_post"];
         delete?: never;
@@ -2974,13 +2981,18 @@ export interface components {
          *     against — a hutch usually has about as many columns as its base.
          */
         SectionCreate: {
+            /**
+             * Above Id
+             * @description Put it directly above THIS section, and shape it like that one. The general form of `where`, and the only way to express a section going back into the MIDDLE of a stack — which is what undoing a middle removal is. Without it the client had to say `top`, the server appended, and the drawing and the library silently disagreed about which unit stands on which.
+             */
+            above_id?: string | null;
             /** Bookcase Id */
             bookcase_id: string;
             /**
              * Where
-             * @default top
+             * @description At the top of the stack, or under it. Omit both fields for the top.
              */
-            where: string;
+            where?: string | null;
         };
         /**
          * SectionDTO

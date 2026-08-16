@@ -22,6 +22,26 @@ import { allShelves } from './core/model'
 export const MAX_SLOTS_PER_BOOKCASE = 400
 /** Sections stack bottom to top; more than a handful is not furniture. */
 export const MAX_SECTIONS_PER_BOOKCASE = 8
+/**
+ * The per-field ceilings on the wire (`SectionPatch`, `SectionCreate`).
+ *
+ * ⚠ A number box does not enforce its own `max`: typing 41 into *new levels*
+ * sent `{"default_levels": 41}` and came back 422 — and a 422's `detail` is a
+ * LIST, so the banner rendered `[object Object]` until `client.ts` learned to
+ * read one. Both halves were measured; this is the half that stops the request
+ * being made at all.
+ */
+export const MAX_LEVELS_PER_COLUMN = 40
+export const MAX_COLUMNS_PER_SECTION = 40
+
+/** A typed level count, kept inside what the server accepts. An empty box
+ *  reads as 0 and means one, which is the existing behaviour of every number
+ *  field in this editor. */
+export const clampLevels = (n: number): number =>
+  Math.max(1, Math.min(MAX_LEVELS_PER_COLUMN, Math.round(n) || 1))
+
+export const clampColumns = (n: number): number =>
+  Math.max(1, Math.min(MAX_COLUMNS_PER_SECTION, Math.round(n) || 1))
 
 /** Which ceiling an edit would cross, with the number that crosses it — or
  *  null, which is the answer for every gesture anybody actually makes. */

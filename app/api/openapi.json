@@ -2344,16 +2344,35 @@
       "SectionCreate": {
         "description": "Add a section to a bookcase. It copies the shape of the one it stands\nagainst — a hutch usually has about as many columns as its base.",
         "properties": {
+          "above_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Put it directly above THIS section, and shape it like that one. The general form of `where`, and the only way to express a section going back into the MIDDLE of a stack — which is what undoing a middle removal is. Without it the client had to say `top`, the server appended, and the drawing and the library silently disagreed about which unit stands on which.",
+            "title": "Above Id"
+          },
           "bookcase_id": {
             "minLength": 1,
             "title": "Bookcase Id",
             "type": "string"
           },
           "where": {
-            "default": "top",
-            "pattern": "^(top|bottom)$",
-            "title": "Where",
-            "type": "string"
+            "anyOf": [
+              {
+                "pattern": "^(top|bottom)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "At the top of the stack, or under it. Omit both fields for the top.",
+            "title": "Where"
           }
         },
         "required": [
@@ -4948,7 +4967,7 @@
     },
     "/api/v1/map/sections": {
       "post": {
-        "description": "Add a section — a hutch on the base, or a plinth under it.\n\nIt copies the shape of the section it stands against, because a hutch\nusually has about as many columns as its base and re-entering what is\nalready on screen is not a feature. Adding at the BOTTOM renumbers the\nones above: ``ordinal`` is bottom-first, unique, and printed in addresses.",
+        "description": "Add a section — a hutch on the base, or a plinth under it.\n\nIt copies the shape of the section it stands against, because a hutch\nusually has about as many columns as its base and re-entering what is\nalready on screen is not a feature. Adding at the BOTTOM renumbers the\nones above: ``ordinal`` is bottom-first, unique, and printed in addresses.\n\n⚠ ``above_id`` is the general form and exists because ``top``/``bottom``\ncannot say *back where it was*: a review measured a section restored into\nthe MIDDLE of a stack by an undo being sent as ``top``, appended by this\nroute, and recorded by the client as landed — so the drawing and the\nlibrary disagreed about which unit stands on which, and ``ordinal`` is what\nan address prints.",
         "operationId": "create_section_api_v1_map_sections_post",
         "requestBody": {
           "content": {

@@ -489,7 +489,20 @@ def create_section(
     usually has about as many columns as its base and re-entering what is
     already on screen is not a feature. Adding at the BOTTOM renumbers the
     ones above: ``ordinal`` is bottom-first, unique, and printed in addresses.
+
+    ⚠ ``above_id`` is the general form and exists because ``top``/``bottom``
+    cannot say *back where it was*: a review measured a section restored into
+    the MIDDLE of a stack by an undo being sent as ``top``, appended by this
+    route, and recorded by the client as landed — so the drawing and the
+    library disagreed about which unit stands on which, and ``ordinal`` is what
+    an address prints.
     """
+    if body.where is not None and body.above_id is not None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "`where` and `above_id` both say where the section goes; one "
+            "request carries one instruction",
+        )
     _bookcase(store, library, body.bookcase_id)
     with _translated():
         # Recomputed from the LIVE snapshot every time, and written as one
@@ -500,11 +513,27 @@ def create_section(
         # did the same with no failure at all.
         siblings = [s for s in store.load_map(library).sections
                     if s.bookcase_id == body.bookcase_id]
-        section = next_section(body.bookcase_id, siblings, id=ids.new_id(),
-                               where=body.where)
-        ordered = ([section] + sorted(siblings, key=lambda s: s.ordinal)
-                   if body.where == "bottom"
-                   else sorted(siblings, key=lambda s: s.ordinal) + [section])
+        standing = sorted(siblings, key=lambda s: s.ordinal)
+        below = None
+        if body.above_id is not None:
+            below = next((s for s in standing if s.id == body.above_id), None)
+            if below is None:
+                # 404 rather than 400: a section of another bookcase and a
+                # section that never existed are the same answer, the way a
+                # foreign library and a fictional one are.
+                raise _gone("section")
+        # `next_section` copies the shape of the section it stands against, so
+        # the sibling list handed to it IS the choice of neighbour.
+        section = next_section(
+            body.bookcase_id, [below] if below else siblings, id=ids.new_id(),
+            where="top" if below else (body.where or "top"))
+        if below is not None:
+            at = standing.index(below) + 1
+            ordered = standing[:at] + [section] + standing[at:]
+        elif body.where == "bottom":
+            ordered = [section] + standing
+        else:
+            ordered = standing + [section]
         settled = renumber_sections(ordered)
         check_bookcase_size(settled)
         store.save_sections(library, settled)

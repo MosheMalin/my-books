@@ -46,7 +46,6 @@ export interface MapText {
   menu_plan: string
   menu_edit: string
   menu_view: string
-  menu_draw: string
   reload: string
   undo: string
   redo: string
@@ -109,6 +108,7 @@ export interface MapText {
   selected_mix: (rooms: number, cases: number) => string
   selected_carried: (n: number) => string
   delete_all: (n: number) => string
+  delete_cases_confirm: (cases: number, shelves: number, photos: number) => string
   delete_room: string
   delete_case: string
   rooms_keep_their_cases: string
@@ -202,14 +202,16 @@ const HE: MapText = {
   menu_plan: 'תוכנית',
   menu_edit: 'עריכה',
   menu_view: 'תצוגה',
-  menu_draw: 'הדירה',
   reload: 'טעינה מחדש מהשרת',
   undo: 'ביטול',
   redo: 'ביצוע מחדש',
   copy: 'העתקה',
   paste: 'הדבקה',
   delete: 'מחיקה',
-  delete_many: (n) => `מחיקת ${n} פריטים`,
+  // ⚠ Hebrew counts too. A review found `1 פריטים` / `1 חדרים` where every
+  // English counterpart handled the singular — the language of the product is
+  // the one that had no plural rules.
+  delete_many: (n) => (n === 1 ? 'מחיקת פריט אחד' : `מחיקת ${n} פריטים`),
   new_depth: 'עומק חדש',
   default_depth: 'עומק ברירת מחדל',
   default_depth_of: (s) => `עומק ברירת מחדל, ${s}`,
@@ -239,8 +241,8 @@ const HE: MapText = {
   one_floor_at_least: 'בתוכנית יש לפחות קומה אחת.',
   floor_not_removed: (rooms, cases) =>
     `לא הוסרה — עדיין יש בקומה הזו ${[
-      rooms > 0 ? `${rooms} חדרים` : '',
-      cases > 0 ? `${cases} כוננויות` : '',
+      rooms > 0 ? (rooms === 1 ? 'חדר אחד' : `${rooms} חדרים`) : '',
+      cases > 0 ? (cases === 1 ? 'כוננית אחת' : `${cases} כוננויות`) : '',
     ].filter(Boolean).join(' ו')}.`,
   read_only_bar: 'כל הקומות — צפייה בלבד, אי אפשר לערוך',
   back_to: (floor) => `חזרה ל${floor}`,
@@ -262,12 +264,24 @@ const HE: MapText = {
   too_many_slots: (asked, max) =>
     `לא בוצע — כוננית מחזיקה עד ${max} מדפים, וכאן היו ${asked}.`,
   too_many_sections: (max) => `לא בוצע — כוננית מחזיקה עד ${max} יחידות.`,
-  copied: (n) => `${n} פריטים הועתקו.`,
-  selected_n: (n) => `${n} נבחרו`,
+  copied: (n) => (n === 1 ? 'פריט אחד הועתק.' : `${n} פריטים הועתקו.`),
+  selected_n: (n) => (n === 1 ? 'פריט אחד נבחר' : `${n} נבחרו`),
   selected_mix: (rooms, cases) =>
-    `${rooms} חדרים · ${cases} כוננויות. גרירה של אחד מהם מזיזה את כולם.`,
-  selected_carried: (n) => `עוד ${n} כוננויות יזוזו יחד, כי הן מחוברות לחדרים שנבחרו.`,
-  delete_all: (n) => `מחיקת כל ${n} הפריטים`,
+    `${rooms === 1 ? 'חדר אחד' : `${rooms} חדרים`} · ${
+      cases === 1 ? 'כוננית אחת' : `${cases} כוננויות`
+    }. גרירה של אחד מהם מזיזה את כולם.`,
+  selected_carried: (n) =>
+    n === 1
+      ? 'עוד כוננית אחת תזוז יחד, כי היא מחוברת לחדר שנבחר.'
+      : `עוד ${n} כוננויות יזוזו יחד, כי הן מחוברות לחדרים שנבחרו.`,
+  delete_all: (n) => (n === 1 ? 'מחיקת הפריט' : `מחיקת כל ${n} הפריטים`),
+  delete_cases_confirm: (cases, shelves, photos) =>
+    `${cases === 1 ? 'למחוק את הכוננית' : `למחוק ${cases} כוננויות`} ו${
+      shelves === 1 ? 'את המדף שבה' : `-${shelves} המדפים שבהן`}?` +
+    (photos > 0
+      ? ` ל${photos === 1 ? 'מדף אחד' : `-${photos} מדפים`} מצורפות תמונות.`
+      : '') +
+    ' מדף שעומדים עליו ספרים או שמצורפות אליו תמונות מנותק מהכתובת ולא נמחק.',
   delete_room: 'מחיקת החדר הזה',
   delete_case: 'מחיקת הכוננית הזו',
   rooms_keep_their_cases:
@@ -296,7 +310,9 @@ const HE: MapText = {
   in_sections: (n) => ` ב-${n} יחידות`,
   free_measurement:
     'מדידה חופשית — יחסית לקירות החדר, לעולם לא בסנטימטרים, ושום דבר כאן אינו מסיק כמה ספרים נכנסים.',
-  counts: (rooms, cases) => `${rooms} חדרים · ${cases} כוננויות.`,
+  counts: (rooms, cases) =>
+    `${rooms === 1 ? 'חדר אחד' : `${rooms} חדרים`} · ${
+      cases === 1 ? 'כוננית אחת' : `${cases} כוננויות`}.`,
   step_room: '— גררו מלבן. גררו את הבא לידו והם ייצמדו קיר אל קיר.',
   step_case:
     '— גררו מלבן בתוך חדר. הוא נצמד לקיר, מתחבר לחדר, וזז איתו.',
@@ -369,7 +385,6 @@ const EN: MapText = {
   menu_plan: 'Plan',
   menu_edit: 'Edit',
   menu_view: 'View',
-  menu_draw: 'Apartment',
   reload: 'Reload from the server',
   undo: 'Undo',
   redo: 'Redo',
@@ -436,6 +451,13 @@ const EN: MapText = {
   selected_carried: (n) =>
     `${n} more bookcase${n === 1 ? '' : 's'} will travel along, attached to the selected rooms.`,
   delete_all: (n) => `Delete all ${n}`,
+  delete_cases_confirm: (cases, shelves, photos) =>
+    `Delete ${cases === 1 ? 'this bookcase' : `${cases} bookcases`} and ` +
+    `${shelves === 1 ? 'its shelf' : `their ${shelves} shelves`}?` +
+    (photos > 0
+      ? ` ${photos === 1 ? 'One shelf has' : `${photos} shelves have`} photographs.`
+      : '') +
+    ' A shelf holding books or photographs is detached from its address, not destroyed.',
   delete_room: 'Delete this room',
   delete_case: 'Delete this bookcase',
   rooms_keep_their_cases:

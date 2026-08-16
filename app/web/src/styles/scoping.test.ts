@@ -32,11 +32,20 @@ const SHEET = join(dirname(fileURLToPath(import.meta.url)), 'map.css')
  * ⚠ `@media` is unwrapped rather than skipped: the phone breakpoint is where
  * `.brand { display: none }` lives, and a rule that only leaks below 640px is
  * a rule that only leaks on the device this product is for.
+ *
+ * ⚠⚠ The first version of this function CLAIMED that and did not do it. It
+ * split on `}` and dropped any chunk whose head began with `@` — which is the
+ * chunk carrying the FIRST rule inside the block, because `@media … { .toolbar
+ * {` is one chunk. A review measured it: an unscoped `.toolbar` inserted as
+ * the first rule of the phone breakpoint passed. Stripping the prelude first
+ * is what makes the docstring true.
  */
 function selectors(css: string): string[] {
   const withoutComments = css.replace(/\/\*[\s\S]*?\*\//g, '')
+  // Drop `@media (...) {` and friends, keeping what is inside them.
+  const flat = withoutComments.replace(/@[a-zA-Z-]+[^{;]*\{/g, '')
   const out: string[] = []
-  for (const chunk of withoutComments.split('}')) {
+  for (const chunk of flat.split('}')) {
     const head = chunk.split('{')[0]
     if (!head) continue
     const text = head.trim()
@@ -54,6 +63,20 @@ describe('map.css', () => {
     expect(selectors(css).length).toBeGreaterThan(100)
   })
 
+  it('sees INSIDE a breakpoint, including its first rule', () => {
+    // The scanner IS the test, so it is probed against the evasion a review
+    // measured rather than trusted.
+    const block = [
+      '@media (max-width: 640px) {',
+      '  .toolbar { gap: 5px; }',
+      '  .mapscreen .brand { display: none; }',
+      '}',
+    ].join('\n')
+    expect(selectors(block)).toEqual(['.toolbar', '.mapscreen .brand'])
+    expect(selectors('@supports (a: b) { .leaky { color: red; } }'))
+      .toEqual(['.leaky'])
+  })
+
   it('scopes every rule to the editor', () => {
     // ⚠ `.page-plan` is the ONE exception and it is deliberate: it dresses the
     // element the editor is mounted INTO, so it cannot be inside `.mapscreen`.
@@ -65,12 +88,14 @@ describe('map.css', () => {
       .toEqual([])
   })
 
-  it('defines its own tokens nowhere but inside that scope', () => {
-    // `--btn` and `--input-bg` exist only here. A declaration READING one from
-    // outside computes to `unset`, which is how a transparent button happens.
-    for (const line of css.split(/\r?\n/)) {
-      if (/^\s*--(btn|input-bg|grid-|room-|case-)/.test(line)) continue
-      expect(line).not.toMatch(/^\s*(button|input|select|fieldset|legend)\b/)
-    }
+  it('opens no rule on a bare element name, at any indentation', () => {
+    // A second, cruder net for the same hazard, kept because it is the one
+    // that catches an element selector wherever it hides: `--btn` and
+    // `--input-bg` exist ONLY inside this scope, so a bare `button { … }` here
+    // does not merely restyle the product's buttons — reading an undefined
+    // custom property is invalid at computed-value time, and the declaration
+    // resolves to `unset` rather than to the product's own rule.
+    for (const line of css.split(/\r?\n/))
+      expect(line).not.toMatch(/^\s*(button|input|select|fieldset|legend)[\s.:[{]/)
   })
 })

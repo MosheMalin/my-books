@@ -156,9 +156,13 @@ async function run(api: Api, op: Op, ids: Ids, siteId: string): Promise<void> {
       return
 
     case 'section.add': {
+      // ⚠ One instruction: the id it stands on, or `bottom` for the floor.
+      // `top` is `above_id` of whatever is topmost, so this never sends it —
+      // and a section going back into the MIDDLE of a stack has no other way
+      // to be said at all.
       const made = await api.post('/map/sections', {
         bookcase_id: ids.of(op.caseId),
-        where: op.atBottom ? 'bottom' : 'top',
+        ...(op.aboveId ? { above_id: ids.of(op.aboveId) } : { where: 'bottom' }),
       })
       ids.learn(op.section.id, made.section.id)
       return

@@ -170,6 +170,16 @@ describe('what a change asks the server to do', () => {
     expect(ops[0]).toMatchObject({ kind: 'shelf.depth', col: 1, level: 2, depth: 3 })
   })
 
+  it('notices the case was TURNED, which is a fact about the furniture', () => {
+    // `front` decides which physical end is column 1 (MAP_PLAN §7 Q3), so a
+    // turn that never reaches the server re-labels every shelf in the case.
+    const before = drawn()
+    const after: Plan = {
+      ...before, cases: [{ ...before.cases[0]!, front: 'N' }],
+    }
+    expect(planDiff(before, after).map((o) => o.kind)).toEqual(['case.edit'])
+  })
+
   it('sees nothing when nothing changed', () => {
     expect(planDiff(drawn(), drawn())).toEqual([])
   })
@@ -282,6 +292,26 @@ describe('creating a bookcase the create call cannot describe', () => {
     expect(ops[2]).toMatchObject({ col: 1, level: 6, depth: 4 })
   })
 
+  it('names the section a new one stands ON, in every direction', () => {
+    // ⚠ Three placements, one field. `top`/`bottom` could not express the
+    // third: a section restored into the MIDDLE by an undo was sent as `top`,
+    // appended by the server, and recorded as landed — so the drawing and the
+    // library disagreed about which unit stands on which, and `ordinal` is
+    // what an address prints.
+    const stack = (ids: string[]): Bookcase => ({
+      ...newBookcase('c1', '', { x: 0, y: 0, w: 4, h: 1 }, 'S', null, 'f1', 2),
+      sections: ids.map((id) => section(id, [2], 2, 1)),
+    })
+    const plan = (bc: Bookcase): Plan => ({ ...emptyPlan(), cases: [bc] })
+    const added = (before: string[], after: string[]) =>
+      planDiff(plan(stack(before)), plan(stack(after)))
+        .find((o) => o.kind === 'section.add')
+
+    expect(added(['a', 'b'], ['a', 'b', 'c'])).toMatchObject({ aboveId: 'b' })
+    expect(added(['a', 'b'], ['c', 'a', 'b'])).toMatchObject({ aboveId: null })
+    expect(added(['a', 'c'], ['a', 'b', 'c'])).toMatchObject({ aboveId: 'a' })
+  })
+
   it('adds a plain section with ONE call, because the server copies its neighbour', () => {
     // The other half of the rule: what the server will build is tracked, so a
     // gesture whose result already matches it sends no corrections at all. A
@@ -300,13 +330,24 @@ describe('creating a bookcase the create call cannot describe', () => {
 })
 
 describe('pushing', () => {
+  /**
+   * ⚠ The fake answers `/map/bookcases` with the SECTION it minted, because
+   * the real one does. A review caught this modelling the pre-`BookcaseDrawnDTO`
+   * shape: the client's half of that fix — reading `made.section.id` — could
+   * be deleted with the whole ring green, which is exactly how the previous
+   * attempt shipped a line reading a field that did not exist.
+   */
   const recorder = () => {
     const calls: [string, string, unknown][] = []
     const api: Api = {
       post: async (p, b) => {
         calls.push(['POST', p, b])
-        return p === '/map/sections' ? { section: { id: 'server-sec' } }
-          : { id: `server-${calls.length}` }
+        if (p === '/map/sections') return { section: { id: 'server-sec' } }
+        if (p === '/map/bookcases') {
+          return { id: `server-${calls.length}`,
+                   section: { id: `server-first-${calls.length}` } }
+        }
+        return { id: `server-${calls.length}` }
       },
       patch: async (p, b) => { calls.push(['PATCH', p, b]); return {} },
       del: async (p) => { calls.push(['DELETE', p, null]); return {} },
@@ -373,6 +414,69 @@ describe('pushing', () => {
     // ⚠ STOPPED. The second room's call assumed the first landed; pressing
     // on sends calls whose premise is gone.
     expect(calls).toHaveLength(1)
+  })
+
+  it('addresses the section the CREATE minted, not the local id', async () => {
+    // ⚠ The measured symptom of getting this wrong: draw a bookcase, press
+    // `+ column`, and every case drawn in the session answered `404 no such
+    // section`. The server half is gated in `tests/test_api.py`; this is the
+    // client half, which was previously deletable with a green board.
+    const { calls, api } = recorder()
+    const ids = new Ids()
+    const bc = {
+      ...newBookcase('c1', '', { x: 0, y: 0, w: 4, h: 1 }, 'S', null, 'f1', 2),
+      sections: [section('c1:s1', [5, 5], 5, 1)],
+    }
+    const first = bc.sections[0]!
+    await push(api, [
+      { kind: 'case.add', bookcase: bc },
+      { kind: 'section.columns', section: first, columns: 3 },
+      { kind: 'section.add', caseId: 'c1', section: section('c1:s2', [2], 2, 1),
+        aboveId: 'c1:s1' },
+    ], ids, 'st')
+    expect(calls[0]![2]).toMatchObject({ columns: 2, levels: 5, depth: 1 })
+    expect(calls[1]![1]).toBe('/map/sections/server-first-1')
+    // …and the section it stands on is named by the server's id too.
+    expect(calls[2]![2]).toMatchObject({ above_id: 'server-first-1' })
+  })
+
+  it('says `bottom` only for a section standing on the floor', async () => {
+    const { calls, api } = recorder()
+    await push(api, [{
+      kind: 'section.add', caseId: 'c1', section: newSection('s9', 1),
+      aboveId: null,
+    }], new Ids(), 'st')
+    expect(calls[0]![2]).toEqual({ bookcase_id: 'c1', where: 'bottom' })
+  })
+
+  it('empties a section\'s slots before removing it, in that order', async () => {
+    // The op that detaches every shelf in a section from its address. The
+    // ORDER is the rule: the server refuses the delete while a slot is full.
+    const { calls, api } = recorder()
+    const before: Plan = { ...emptyPlan(), cases: [{
+      ...newBookcase('c1', '', { x: 0, y: 0, w: 4, h: 1 }, 'S', null, 'f1', 2),
+      sections: [section('s1', [2], 2, 1), section('s2', [2], 2, 1)],
+    }] }
+    const after: Plan = { ...before, cases: [{
+      ...before.cases[0]!, sections: [before.cases[0]!.sections[0]!],
+    }] }
+    const ops = planDiff(before, after)
+    expect(ops.map((o) => o.kind)).toEqual(['section.remove'])
+    await push(api, ops, new Ids(), 'st')
+    expect(calls.map((c) => `${c[0]} ${c[1]}`)).toEqual([
+      'DELETE /map/sections/s2/slots',
+      'DELETE /map/sections/s2',
+    ])
+  })
+
+  it('sends `detach` rather than a null room, because null means unchanged', async () => {
+    const { calls, api } = recorder()
+    const bc = newBookcase('c1', '', { x: 0, y: 0, w: 4, h: 1 }, 'S', null, 'f1', 2)
+    await push(api, [
+      { kind: 'case.edit', bookcase: bc, roomChanged: true },
+    ], new Ids(), 'st')
+    expect(calls[0]![2]).toMatchObject({ detach: true })
+    expect(calls[0]![2]).not.toHaveProperty('place_id')
   })
 
   it('shifts a per-shelf depth back to the wire\'s 1-based address', async () => {

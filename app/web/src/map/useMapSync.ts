@@ -27,7 +27,7 @@ export type MapSource = {
   api: Api
   /**
     * The site and storey the drawing hangs off, created if this library has
-    * none. Sites arrive as a picker in P6.3b; until then there is one.
+    * none. Sites arrive as a picker in P6.3.1; until then there is one.
     *
     * ⚠ It must return a real FLOOR id too. The first version returned only
     * the site, `toPlan` synthesised a floor the server had never heard of,
@@ -74,6 +74,37 @@ export function useMapSync(source: MapSource): MapSync {
    *  first instead of racing it. */
   const homing = useRef<Promise<{ siteId: string; floorId: string }> | null>(null)
   const inflight = useRef<Promise<void>>(Promise.resolve())
+  /**
+   * ⚠ **Nothing is written while the document is being re-derived**, and this
+   * is the guard that says so.
+   *
+   * `initial` is the last plan the server was ASKED for; `confirmed` is the
+   * last plan it was TOLD. They agree until the first successful push and
+   * never again. A data-integrity review measured what that cost: bumping
+   * `generation` re-keys `MapScreen`, which REMOUNTS with the stale `initial`
+   * and — as every mount does — hands its starting document to `record`. That
+   * diffs the plan from before the session's edits against everything the
+   * server was told, and pushes the REVERSE: `DELETE /map/bookcases/<id>/
+   * slots` (which detaches the shelves books stand on) and then the case
+   * itself. Two triggers, both measured: *Plan ▸ Reload from the server*, and
+   * every refusal — the path this hook uses to RECOVER from one.
+   *
+   * `setReady(false)` closes the mount: the editor is gone for that render
+   * instead of mounting over stale data. `era` closes the other half — a
+   * write QUEUED before the reload, which would otherwise run afterwards
+   * against a `confirmed` the server is about to contradict, and be re-issued
+   * by the next diff because the load's own GET went out before it landed.
+   * A counter rather than a flag, because "is a reload pending" is false again
+   * the moment the new document arrives, and the task may run after that.
+   */
+  const era = useRef(0)
+
+  /** Throw the session's document away and re-derive it from the server. */
+  const startOver = useCallback(() => {
+    era.current += 1
+    setReady(false)
+    setGeneration((g) => g + 1)
+  }, [])
 
   useEffect(() => {
     let alive = true
@@ -112,18 +143,38 @@ export function useMapSync(source: MapSource): MapSync {
     //
     // Serialised for the id table too: a second push could otherwise send a
     // locally minted id the first has not yet learned the server's answer for.
+    const era_ = era.current
     inflight.current = inflight.current.then(async () => {
+      // ⚠ Checked HERE rather than at call time: this task may have waited
+      // behind a push that was still in flight when the reload was asked for,
+      // and reassigning `inflight` does not cancel a chain that is already
+      // running. The document this plan described is gone either way.
+      if (era_ !== era.current) return
       const ops = planDiff(confirmed.current, plan)
       if (ops.length === 0) {
         setSaved('saved')
         return
       }
       try {
-        const { refusal: stopped } = await push(
+        const { done, refusal: stopped } = await push(
           source.api, ops, ids.current, site.current)
+        if (era_ !== era.current) {
+          // ⚠ The document was re-derived WHILE this push was in flight, so
+          // `confirmed` now describes the server's answer and this plan
+          // describes a drawing nobody is looking at. Writing it here is what
+          // put a `DELETE` for a locally minted id on the wire — measured.
+          //
+          // `done` is why this is not simply a `return`: operations that
+          // landed after the reload's own GET went out are on the server and
+          // NOT in the document just derived, so the screen would be missing
+          // what this push created. Ask again — the second load happens after
+          // the writes, so it converges.
+          if (done > 0) startOver()
+          return
+        }
         if (stopped) {
-          // ⚠ RE-DERIVE, do not guess. `done` operations landed and the rest
-          // did not, and there is no honest way to compute the document that
+          // ⚠ RE-DERIVE, do not guess. Some operations landed and the rest did
+          // not, and there is no honest way to compute the document that
           // describes — so the server is asked again and the editor remounts
           // with the truth. A review measured the alternative: leaving
           // `confirmed` untouched made every later edit replay the creates
@@ -131,10 +182,11 @@ export function useMapSync(source: MapSource): MapSync {
           //
           // The cost is the undo stack for that session, which is the right
           // thing to lose when the drawing on screen and the drawing in the
-          // library have diverged.
+          // library have diverged. `startOver` — not a bare bump — because
+          // the bump ALONE was the second half of the same defect.
           setRefusal(stopped)
           setSaved('failed')
-          setGeneration((g) => g + 1)
+          startOver()
           return
         }
         confirmed.current = plan
@@ -144,7 +196,7 @@ export function useMapSync(source: MapSource): MapSync {
         setSaved('failed')
       }
     })
-  }, [source])
+  }, [source, startOver])
 
   return {
     generation,
@@ -155,7 +207,7 @@ export function useMapSync(source: MapSource): MapSync {
     dismiss: () => setRefusal(null),
     initial,
     record,
-    reload: () => setGeneration((g) => g + 1),
+    reload: startOver,
   }
 }
 

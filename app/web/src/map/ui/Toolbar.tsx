@@ -130,7 +130,10 @@ export function Toolbar(props: Props) {
             BEFORE the call — the split P6.2 already reports. */}
         <Menu
           label={T.menu_plan}
-          items={[{ label: T.reload, onSelect: props.onReload }]}
+          items={[
+            { label: T.reload, onSelect: props.onReload },
+            { label: T.trace, onSelect: () => underlayRef.current?.click() },
+          ]}
         />
         <Menu
           label={T.menu_edit}
@@ -168,14 +171,14 @@ export function Toolbar(props: Props) {
             },
           ]}
         />
-        <Menu
-          label={T.menu_draw}
-          items={[
-            { label: T.draw_room, onSelect: () => props.onTool('room') },
-            { label: T.draw_case, onSelect: () => props.onTool('case') },
-            { label: T.trace, onSelect: () => underlayRef.current?.click() },
-          ]}
-        />
+        {/* ⚠ There is no *Apartment* menu any more. It offered *Draw room* and
+            *Draw bookcase* — the two permanent radio buttons three inches to
+            its left, under the same names — which is both a duplicate control
+            and two things announcing one accessible name (CLAUDE.md). It also
+            contradicted the rule that shrank this toolbar in the first place:
+            a command lives in a menu, and only the TOOLS get a button. Its
+            third item, the tracing underlay, is a thing you do to the plan and
+            moved into the Plan menu, which stopped being a menu of one. */}
       </div>
 
       {props.underlay && (

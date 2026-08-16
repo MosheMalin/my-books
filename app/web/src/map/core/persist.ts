@@ -8,6 +8,19 @@
  *
  * The underlay is NOT exported: a tracing image is scaffolding, and its `src`
  * is an object URL that means nothing in another session.
+ *
+ * ⚠ **Nothing in the shipped editor imports this module** — the port dropped
+ * the lab's *File ▸ Save to file*, because the plan lives in the library now.
+ * It is kept, with its tests, for the day an export comes back (a copy of the
+ * drawing to hand over is a real ask), and the note is here so nobody reads a
+ * tested module as a live one.
+ *
+ * ⚠⚠ And the condition on ever wiring it up again: `parsePlan` REBUILDS
+ * section ids from array position, on the stated grounds that nothing outside
+ * the document refers to one. That stopped being true when `shelves.
+ * section_id` did — MAP_PLAN records it as one of the two conventions P6.3
+ * had to honour. An import that re-mints ids would re-address every shelf in
+ * the file.
  */
 
 import type { Bookcase, Floor, Plan, Room, Section, Shelf } from './model'

@@ -512,8 +512,8 @@ this pillar.**
 | **P6.0** | **The map lab** — a standalone app, no backend, outside the gate. Rectangle drawing for rooms and bookcases, room-to-room attachment, multi-select, copy/paste, explicit bookcase→room attachment, resize handles, sections, floors, the elevation editor, underlay tracing, black/white themes, visible autosave, a real undo stack. | M | ✅ nine passes |
 | **P6.1** | **Address domain + migration** — `Site`, `Floor`, `Place`, `Bookcase`, `Section`, the shelf address, geometry in abstract units. Drawn slots create real empty `Shelf` rows. Naming lint. Schema **v20** with a real v19→v20 upgrade test. | L | ✅ |
 | **P6.2** | **API + policy** — the map through `current_library`, one capability each, contracts regenerated. | M | ✅ |
-| **P6.3** | **The port** — the lab's editor moves into `app/web/src/map/` **verbatim** where it is framework-free, wired to the API by an adapter. **The lab is deleted in the same commit.** Behaviour identical to the lab's ninth pass — that is the acceptance test, not a rewrite. | M | **branch `p6.3-port`, NOT merged** |
-| **P6.3b** | **The site picker** — the one thing the lab never had (§3.9). Sites and their floors become manageable in the ported editor; a single site renders no chrome. Deliberately AFTER P6.3, so "behaves the same" is verifiable before anything new is added. | S | |
+| **P6.3** | **The port** — the lab's editor moves into `app/web/src/map/` **verbatim** where it is framework-free, wired to the API by an adapter. **The lab is deleted in the same commit.** Behaviour identical to the lab's ninth pass — that is the acceptance test, not a rewrite. | M | ✅ |
+| **P6.3.1** | **The site picker** — the one thing the lab never had (§3.9). Sites and their floors become manageable in the ported editor; a single site renders no chrome. Deliberately AFTER P6.3, so "behaves the same" is verifiable before anything new is added. ⚠ Renumbered: this item was "P6.3b", and P6.3's own wiring commit spent that identifier in the git log. | S | |
 | **P6.4** | **Binding and merge** — photo-born shelves bind into drawn slots; several identities merge into one physical shelf, with aliases. | L | |
 | **P6.5** | **The map as navigation** — three drill levels, "where is it" incl. depth, stale-depth surfacing, capture handoff. | L | |
 | **P6.6** | *Optional:* bookcase photo → proposed levels via `segment.py`, confirmed by hand. | S | |
@@ -654,8 +654,9 @@ created the case, its section and 15 real addressed `Shelf` rows, which a
 reload drew back by name in Hebrew.
 
 `review-quality` and `review-ux` then found **eight criticals between them**,
-every one measured. Four are fixed on the branch (see 6b28c96); these remain,
-and the branch does not merge until they are:
+every one measured. Four were fixed in 6b28c96 and the other four — with the
+four smaller findings filed beside them — in cb89cce, which is what let the
+branch merge. The list is kept because it is the record of what a port costs:
 
 1. **A pasted bookcase aliases the original's section ids.** `paste` mints a
    new case id and spreads the sections through unchanged, so a depth change
@@ -687,6 +688,48 @@ and the branch does not merge until they are:
 not in the ported core. The constraint MAP_PLAN set — "the core is
 framework-free, and that is the part that ports verbatim" — held exactly as
 designed, and every defect landed in the ~400 lines written around it.
+
+**What closing them changed, and the ninth defect nobody had measured.**
+
+- **The diff MODELS the server's creates instead of assuming them.** `case.add`
+  carries one column count and two defaults, which is all
+  `POST /map/bookcases` accepts — so `planDiff` now follows a create with the
+  calls that finish it, and it tracks what the server will hold as each op
+  lands. That tracking is not fussiness: `POST /map/sections` states no shape
+  at all (it copies the section it stands against), so what a new section still
+  needs depends on the ops issued before it in the same pass. The plain
+  `+ section` gesture still costs exactly one call; a two-section paste costs
+  twelve, six of them per-shelf depths that are genuinely required — the copy's
+  slots really do stand at the depth they were copied from, and §3.3 forbids a
+  default reaching back into them.
+- **"One grid instruction per pass" was a misreading** of a rule about one
+  REQUEST. The old code sent the column count and left the per-column heights
+  *"to the next pass, which converges"* — there is no next pass, because
+  `confirmed` becomes the document the moment the push succeeds.
+- **A section id is a shelf's address, so a copy may not share one.** The paste
+  is a pure function now (`app/web/src/map/paste.ts`).
+- **`POST /map/bookcases` answers with the section it minted.** 6b28c96 said it
+  had fixed *"you cannot edit a bookcase you have just drawn"* by reading
+  `made.section.id` off this response; `BookcaseDTO` had no such field, so the
+  line was dead and `+ column` on a fresh case still answered 404. The DTO is
+  `BookcaseDrawnDTO`; the ids a client cannot guess are now all told to it.
+- **The ninth defect: `map.css` was still repainting the product.** The same
+  commit scoped the token block and said *"every rule is scoped now"*; the ~130
+  rules under it were not, including bare `button`, `input`, `select` and
+  `fieldset`. Measured on the books tab, having never opened the map: every
+  unclassed button and input computed `background-color: rgba(0,0,0,0)` at
+  13px, because `--btn` and `--input-bg` exist only inside `.mapscreen` and an
+  undefined custom property makes the declaration invalid at computed-value
+  time rather than falling back. `app/web/src/styles/scoping.test.ts` is the
+  gate; the same fix retires the `.side` collision (`.map-side`).
+
+⚠⚠ **Two claims in one commit message were false**, and both were checkable in
+a minute — a response field that did not exist, and a scope that covered a
+tenth of the file. That is the failure CLAUDE.md names as worse than silence,
+because a wrong stated reason is what makes the next reader delete the guard.
+The rule it earns: a commit message asserting a property must name where the
+property is enforced, and the enforcement must be opened while the sentence is
+written.
 
 ## 6. What P6.1 must not repeat
 

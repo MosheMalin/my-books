@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { useI18n } from '../lib/i18n'
 
-import type { Bookcase, Floor, Plan, Underlay } from './core/model'
+import type { Bookcase, Plan, Underlay } from './core/model'
 import {
   TURN,
   addSection,
@@ -36,10 +36,13 @@ import { Toolbar } from './ui/Toolbar'
 import type { Clipboard, Doc, Selection, Theme, Tool } from './ui/types'
 import { EMPTY, count, hasCase, hasRoom, selectCase, selectRoom } from './ui/types'
 import { fitTo, initialView, zoomAbout, type View } from './ui/viewport'
+import { deletionCost } from './cost'
 import { pasteInto } from './paste'
 import {
   MAX_SECTIONS_PER_BOOKCASE,
   MAX_SLOTS_PER_BOOKCASE,
+  clampColumns,
+  clampLevels,
   overCeiling,
 } from './limits'
 import { mapText, type MapText } from './text'
@@ -316,8 +319,28 @@ export default function MapScreen(props: MapScreenProps) {
     [update],
   )
 
+  /**
+   * ⚠ **The door.** Deleting a bookcase empties its slots first, and emptying
+   * a slot detaches the shelf standing in it — the books keep their shelf, the
+   * shelf loses its address, and nothing on this screen says so afterwards.
+   * That is the identical argument that removed *Clear the plan*, and two
+   * reviews pointed out it had been applied to one control and not to this
+   * one, which does the same thing to less data. Removing a column and
+   * removing a section have asked since the lab.
+   *
+   * The counts are what this client can honestly state: how many shelves go,
+   * and how many of them carry photographs. It cannot say how many hold BOOKS
+   * — the server reports that split (`deleted` vs `detached`) only after the
+   * call — so the wording promises the mechanism rather than a number it does
+   * not have. A room alone asks nothing: deleting one destroys no shelf and
+   * never cascades into its furniture.
+   */
   const deleteSelection = useCallback(() => {
     if (count(selection) === 0) return
+    const cost = deletionCost(doc.plan.cases.filter((c) => hasCase(selection, c.id)))
+    if (cost.shelves > 0 &&
+        !confirm(T.delete_cases_confirm(cost.cases, cost.shelves, cost.photos)))
+      return
     update((d) => ({
       ...d,
       plan: {
@@ -332,7 +355,7 @@ export default function MapScreen(props: MapScreenProps) {
       },
     }))
     setSelection(EMPTY)
-  }, [selection, update])
+  }, [selection, update, doc.plan.cases, T])
 
   // --- copy / paste --------------------------------------------------------
 
@@ -395,11 +418,14 @@ export default function MapScreen(props: MapScreenProps) {
       ),
     setCaseRoom: (id, roomId) => mapCase(id, (bc) => ({ ...bc, roomId })),
     turnCase: (id) => mapCase(id, (bc) => ({ ...bc, front: TURN[bc.front] })),
-    setColumnCount: (id, sid, n) => growCase(id, (bc) => mapSection(bc, sid, (s) => withColumnCount(s, n))),
+    // ⚠ Clamped where the number ENTERS the document, not where it is shown:
+    // an `<input max=…>` is a hint, and a typed 41 reached the wire as a 422.
+    setColumnCount: (id, sid, n) =>
+      growCase(id, (bc) => mapSection(bc, sid, (s) => withColumnCount(s, clampColumns(n)))),
     setColumnLevels: (id, sid, col, n) =>
-      growCase(id, (bc) => mapSection(bc, sid, (s) => withColumnLevels(s, col, n))),
+      growCase(id, (bc) => mapSection(bc, sid, (s) => withColumnLevels(s, col, clampLevels(n)))),
     setDefaultLevels: (id, sid, n) =>
-      mapCase(id, (bc) => mapSection(bc, sid, (s) => withDefaultLevels(s, n)), `deflevels:${sid}`),
+      mapCase(id, (bc) => mapSection(bc, sid, (s) => withDefaultLevels(s, clampLevels(n))), `deflevels:${sid}`),
     applyDefaultLevels: (id, sid) => growCase(id, (bc) => mapSection(bc, sid, applyDefaultLevels)),
     setDefaultDepth: (id, sid, n) =>
       mapCase(id, (bc) => mapSection(bc, sid, (s) => withDefaultDepth(s, n)), `defdepth:${sid}`),
@@ -433,14 +459,26 @@ export default function MapScreen(props: MapScreenProps) {
 
   const addFloor = useCallback(() => {
     const n = doc.plan.floors.length + 1
-    // ⚠ In the reader's language. The lab wrote "Floor 2" and the port kept
-    // it, so a Hebrew library grew English storeys — and the name is DATA:
-    // it goes to the server on the next push and stays there.
-    const floor: Floor = { id: `f${n}`, name: T.floor_n(n) }
-    update((d) => ({ ...d, plan: { ...d.plan, floors: d.plan.floors.concat(floor) } }))
-    setFloorPick(floor.id)
+    // ⚠ The id comes from `seq`, never from the COUNT. Add two storeys, remove
+    // the first while it is empty, add again: the count mints an id that is
+    // already taken, `planDiff` indexes floors by id, and the duplicate
+    // collapses — no `floor.add` is issued, the storey never reaches the
+    // server, and it silently merges with the one it collided with. Rooms and
+    // bookcases have always numbered from `seq`; this is the same rule.
+    //
+    // The NAME is in the reader's language, and it is DATA: the lab wrote
+    // "Floor 2" and the port kept it, so a Hebrew library grew English
+    // storeys that went to the server and stayed there.
+    update((d) => ({
+      seq: d.seq + 1,
+      plan: {
+        ...d.plan,
+        floors: d.plan.floors.concat({ id: `fl${d.seq + 1}`, name: T.floor_n(n) }),
+      },
+    }))
+    setFloorPick(`fl${doc.seq + 1}`)
     setSelection(EMPTY)
-  }, [doc.plan.floors.length, update, T])
+  }, [doc.plan.floors.length, doc.seq, update, T])
 
   const renameFloor = useCallback(
     (id: string, name: string) =>

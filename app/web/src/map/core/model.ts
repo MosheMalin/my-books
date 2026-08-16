@@ -350,20 +350,17 @@ export function withShelfDepth(
   }
 }
 
-export function withShelfPhotos(
-  sec: Section,
-  col: number,
-  level: number,
-  photos: number,
-): Section {
-  const n = Math.max(0, Math.round(photos))
-  return {
-    ...sec,
-    shelves: sec.shelves.map((s) =>
-      s.col === col && s.level === level ? { ...s, photos: n } : s,
-    ),
-  }
-}
+/**
+ * ⚠ There is no `withShelfPhotos`, and its absence is a decision.
+ *
+ * The lab had one: the photo count was part of the document, typed in, so a
+ * half-catalogued case could be made to LOOK half-catalogued while drawing. In
+ * the product `Shelf.photos` is `capture_count` — a fact read off the server —
+ * and the panel prints it rather than editing it. A setter here would be a
+ * write path with nothing behind it, which is exactly what the field it fed
+ * turned out to be: it accepted an edit, the toolbar said *saved*, and the
+ * next load showed the old number.
+ */
 
 // --- bookcase aggregates ---------------------------------------------------
 

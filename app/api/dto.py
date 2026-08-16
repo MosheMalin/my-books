@@ -1337,7 +1337,21 @@ class SectionCreate(BaseModel):
     against — a hutch usually has about as many columns as its base."""
 
     bookcase_id: str = Field(min_length=1)
-    where: str = Field(default="top", pattern="^(top|bottom)$")
+    where: str | None = Field(
+        default=None, pattern="^(top|bottom)$",
+        description="At the top of the stack, or under it. Omit both fields "
+                    "for the top.",
+    )
+    above_id: str | None = Field(
+        default=None,
+        description="Put it directly above THIS section, and shape it like "
+                    "that one. The general form of `where`, and the only way "
+                    "to express a section going back into the MIDDLE of a "
+                    "stack — which is what undoing a middle removal is. "
+                    "Without it the client had to say `top`, the server "
+                    "appended, and the drawing and the library silently "
+                    "disagreed about which unit stands on which.",
+    )
 
 
 class SectionPatch(BaseModel):

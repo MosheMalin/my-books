@@ -106,6 +106,14 @@ export function toPlan(map: MapWire, shelves: ShelfWire[], siteId: string): Plan
         ),
       }))
   return {
+    // ⚠ The fallback is a LAST RESORT, not a normal path, and it is why
+    // `ensureHome` exists: an earlier version let this synthesise a storey the
+    // server had never heard of, and the first room drawn onto it was refused
+    // with a 404 for a floor id that existed nowhere but the document. The
+    // loader now creates a real one BEFORE this runs, so an empty list here
+    // means the site was deleted underneath us — a blank canvas is a better
+    // answer than a crash, and the next edit will be refused rather than
+    // filed somewhere wrong, because this id belongs to nothing.
     floors: floors.length > 0 ? floors : [{ id: 'f1', name: '' }],
     rooms: map.places
       .filter((p) => mine.has(p.floor_id))
@@ -140,7 +148,13 @@ export type Op =
   | { kind: 'case.add'; bookcase: Bookcase }
   | { kind: 'case.edit'; bookcase: Bookcase; roomChanged: boolean }
   | { kind: 'case.remove'; id: string }
-  | { kind: 'section.add'; caseId: string; section: Section; atBottom: boolean }
+  /** ⚠ `aboveId` is the section it STANDS ON, and null means the floor.
+   *  `top`/`bottom` could not say *back where it was*: a section restored into
+   *  the middle of a stack by an undo was sent as `top`, the server appended
+   *  it, and the client recorded the append as landed — so the drawing and the
+   *  library disagreed about which unit stands on which, with nothing left to
+   *  re-diff, and `ordinal` is what an address PRINTS. */
+  | { kind: 'section.add'; caseId: string; section: Section; aboveId: string | null }
   | { kind: 'section.columns'; section: Section; columns: number }
   | { kind: 'section.levels'; section: Section; col: number; levels: number }
   | { kind: 'section.defaults'; section: Section }
@@ -242,12 +256,19 @@ function sectionOps(live: Section[], after: Bookcase): Op[] {
   after.sections.forEach((section, i) => {
     let had = standing.find((s) => s.id === section.id)
     if (!had) {
-      const atBottom = i === 0
-      const neighbour = atBottom ? standing[0] : standing[standing.length - 1]
-      ops.push({ kind: 'section.add', caseId: after.id, section, atBottom })
-      had = asCreated(section.id, neighbour)
-      if (atBottom) standing.unshift(had)
-      else standing.push(had)
+      // What it stands ON, in the document — and therefore on the server,
+      // since the sections below it are dealt with first. Null is the floor,
+      // and then the server copies whatever is standing there.
+      const below = i > 0
+        ? standing.find((s) => s.id === after.sections[i - 1]!.id)
+        : undefined
+      ops.push({
+        kind: 'section.add', caseId: after.id, section,
+        aboveId: below?.id ?? null,
+      })
+      had = asCreated(section.id, below ?? (i === 0 ? standing[0] : undefined))
+      standing.splice(
+        below ? standing.findIndex((s) => s.id === below.id) + 1 : 0, 0, had)
     }
     ops.push(...shapeOps(had, section))
     // Everything above lands before the next section is added, so by now the

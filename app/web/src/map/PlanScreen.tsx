@@ -30,7 +30,7 @@ export function PlanScreen() {
       del: (path) => mapDelete(path),
     },
     /**
-     * A drawing needs a site AND a storey to hang off, and until P6.3b there
+     * A drawing needs a site AND a storey to hang off, and until P6.3.1 there
      * is exactly one of each. Created on first use rather than at sign-up: a
      * household that never draws anything should not carry a "Home" nobody
      * typed.
@@ -40,7 +40,7 @@ export function PlanScreen() {
      * exists only in the document — measured by opening the editor.
      *
      * Reads before it writes. Two tabs opening an undrawn library at the same
-     * instant could still mint two sites; the picker in P6.3b is where an
+     * instant could still mint two sites; the picker in P6.3.1 is where an
      * extra one gets deleted, and the loader picks the first deterministically
      * meanwhile.
      */
@@ -65,20 +65,25 @@ export function PlanScreen() {
       </main>
     )
   }
+  /* The server's own words. A refusal here is a rule the owner met — "a
+     bookcase holds at most 400 shelves", "3 rooms still on this floor" — and
+     paraphrasing it would lose the count that makes it actionable.
+
+     ⚠ Rendered ABOVE the loading branch, because a refusal is exactly when
+     the editor is re-deriving: hiding the reason while the screen it refers
+     to is rebuilt would make the one informative message the briefest thing
+     on screen. */
+  const banner = sync.refusal && (
+    <p className="mapbanner" role="alert" onClick={sync.dismiss}>
+      {sync.refusal.detail}
+    </p>
+  )
   if (!sync.ready || !sync.initial) {
-    return <main className="screen"><p>{t.loading}</p></main>
+    return <main className="screen">{banner}<p>{t.loading}</p></main>
   }
   return (
     <>
-      {sync.refusal && (
-        /* The server's own words. A refusal here is a rule the owner met —
-           "a bookcase holds at most 400 shelves", "3 rooms still on this
-           floor" — and paraphrasing it would lose the count that makes it
-           actionable. */
-        <p className="mapbanner" role="alert" onClick={sync.dismiss}>
-          {sync.refusal.detail}
-        </p>
-      )}
+      {banner}
       {/* ⚠ MOUNTED with its document. The editor must never exist before its
           data does — see `useMapSync`'s note and the storey this cost. `key`
           makes a reload a fresh mount rather than an adoption. */}

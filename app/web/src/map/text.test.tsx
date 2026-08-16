@@ -151,7 +151,23 @@ describe('the editor in Hebrew', () => {
     openEditor()
     await user.click(screen.getByRole('button', { name: HE.menu_plan }))
     const items = screen.getAllByRole('menuitem').map((el) => el.textContent)
-    expect(items).toEqual([HE.reload])
+    expect(items).toEqual([HE.reload, HE.trace])
+  })
+
+  it('offers each drawing tool ONCE, as the button it already is', async () => {
+    // The *Apartment* menu repeated *Draw room* and *Draw bookcase* under the
+    // names the permanent radios already announce — two controls, one
+    // accessible name, and a contradiction of the rule that shrank this
+    // toolbar: a command lives in a menu, and only the tools get a button.
+    const user = userEvent.setup()
+    openEditor()
+    for (const name of [HE.draw_room, HE.draw_case]) {
+      expect(screen.getAllByRole('radio', { name })).toHaveLength(1)
+      expect(screen.queryByRole('menuitem', { name })).not.toBeInTheDocument()
+    }
+    await user.click(screen.getByRole('button', { name: HE.menu_plan }))
+    for (const name of [HE.draw_room, HE.draw_case])
+      expect(screen.queryByRole('menuitem', { name })).not.toBeInTheDocument()
   })
 
   it('tells the truth about saving, and names no menu that is gone', () => {

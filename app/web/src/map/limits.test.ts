@@ -12,7 +12,15 @@ import { describe, expect, it } from 'vitest'
 
 import { newBookcase, newSection, withColumnCount } from './core/model'
 import type { Bookcase, Section } from './core/model'
-import { MAX_SLOTS_PER_BOOKCASE, overCeiling } from './limits'
+import { deletionCost } from './cost'
+import {
+  MAX_COLUMNS_PER_SECTION,
+  MAX_LEVELS_PER_COLUMN,
+  MAX_SLOTS_PER_BOOKCASE,
+  clampColumns,
+  clampLevels,
+  overCeiling,
+} from './limits'
 
 const wide = (id: string, cols: number, levels: number): Section =>
   withColumnCount({ ...newSection(id, 1), defaultLevels: levels,
@@ -59,5 +67,40 @@ describe('the slot ceiling', () => {
     expect(overCeiling(caseOf(...eight.slice(0, 7)), caseOf(...eight))).toBeNull()
     expect(overCeiling(caseOf(...eight), caseOf(...eight, wide('s9', 1, 1))))
       .toEqual({ what: 'sections' })
+  })
+})
+
+describe('a typed number', () => {
+  it('never leaves the range the wire accepts', () => {
+    // ⚠ An `<input max=…>` is a hint, not a gate: typing 41 into *new levels*
+    // sent `{"default_levels": 41}`, came back 422, and a 422's `detail` is a
+    // LIST — so the banner rendered `[object Object]`. Both halves were
+    // measured; this is the one that stops the request being made.
+    expect(clampLevels(41)).toBe(MAX_LEVELS_PER_COLUMN)
+    expect(clampColumns(999)).toBe(MAX_COLUMNS_PER_SECTION)
+    expect(clampLevels(40)).toBe(40)
+    // An empty box reads as 0 and means one — the behaviour every number
+    // field in this editor already had.
+    expect(clampLevels(0)).toBe(1)
+    expect(clampLevels(Number.NaN)).toBe(1)
+    expect(clampColumns(-3)).toBe(1)
+  })
+})
+
+describe('what deleting a bookcase would cost', () => {
+  it('counts the shelves that stop being addressed, and the photographed ones', () => {
+    // Removing a COLUMN has asked since the lab and removing a SECTION has
+    // asked since the lab; deleting the whole case asked nothing, while doing
+    // the same thing to more data. These are the numbers the door states.
+    const withPhotos = (id: string): Bookcase => {
+      const bc = caseOf(wide(id, 2, 3))
+      const sec = bc.sections[0]!
+      sec.shelves = sec.shelves.map((s, i) => (i < 2 ? { ...s, photos: 1 } : s))
+      return { ...bc, id }
+    }
+    expect(deletionCost([withPhotos('a'), withPhotos('b')]))
+      .toEqual({ cases: 2, shelves: 12, photos: 4 })
+    // A selection of rooms alone destroys no shelf, and asks nothing.
+    expect(deletionCost([])).toEqual({ cases: 0, shelves: 0, photos: 0 })
   })
 })

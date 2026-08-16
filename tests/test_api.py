@@ -51,6 +51,10 @@ from app.adapters.memory_store import (
 from app.api import deps
 from app.api.app import bind_ports, create_app
 from app.domain import (
+    DEFAULT_COLUMNS,
+    DEFAULT_DEPTH,
+    DEFAULT_LEVELS,
+    MAX_DEPTH,
     MAX_SECTIONS_PER_BOOKCASE,
     MAX_SLOTS_PER_BOOKCASE,
     Account,
@@ -5542,15 +5546,54 @@ def test_the_editor_knows_the_ceilings_this_service_enforces():
 
     The same shape as `MAX_SCORE` in `ClaimRow.tsx` tracking `match.py`.
     Named here, so changing either side is a decision rather than an accident.
+
+    ⚠ The list covers the two ceilings the editor REFUSES on and the four
+    values it CREATES with. A review found `MAX_DEPTH` unpinned: the depth
+    spinner takes its `max` from the client's copy, and `with_default_depth`
+    raises above the server's — so the two drifting apart is an editor
+    offering a depth this service answers 400 for. `DEFAULT_LEVELS` and
+    `DEFAULT_DEPTH` are load-bearing for a different reason: `sync.ts`'s
+    `asCreated` models `next_section`'s no-neighbour fallback with them, and a
+    model that disagrees with the server emits no corrections at all.
     """
-    source = (REPO_ROOT / "app" / "web" / "src" / "map" / "limits.ts").read_text(
-        "utf-8")
-    for name, value in (("MAX_SLOTS_PER_BOOKCASE", MAX_SLOTS_PER_BOOKCASE),
-                        ("MAX_SECTIONS_PER_BOOKCASE",
-                         MAX_SECTIONS_PER_BOOKCASE)):
+    web = REPO_ROOT / "app" / "web" / "src" / "map"
+    limits = (web / "limits.ts").read_text("utf-8")
+    model = (web / "core" / "model.ts").read_text("utf-8")
+    pinned = [
+        ("MAX_SLOTS_PER_BOOKCASE", MAX_SLOTS_PER_BOOKCASE, limits, "limits.ts"),
+        ("MAX_SECTIONS_PER_BOOKCASE", MAX_SECTIONS_PER_BOOKCASE, limits,
+         "limits.ts"),
+        ("MAX_DEPTH", MAX_DEPTH, model, "core/model.ts"),
+        ("DEFAULT_LEVELS", DEFAULT_LEVELS, model, "core/model.ts"),
+        ("DEFAULT_DEPTH", DEFAULT_DEPTH, model, "core/model.ts"),
+        ("DEFAULT_COLUMNS", DEFAULT_COLUMNS, model, "core/model.ts"),
+    ]
+    for name, value, source, where in pinned:
         line = f"export const {name} = {value}"
         assert line in source, (
-            f"{name} is {value} here; app/web/src/map/limits.ts disagrees"
+            f"{name} is {value} here; app/web/src/map/{where} disagrees"
+        )
+
+    # ⚠ And the two ceilings that live on the DTO rather than in the domain,
+    # because they bound one FIELD. A number box can be typed past its own
+    # `max`: `{"default_levels": 41}` answered 422, and a 422's `detail` is a
+    # LIST — which rendered as "[object Object]" until `client.ts` learned to
+    # read one. The editor clamps, so the request is never made.
+    from app.api.dto import SectionPatch
+
+    schema = SectionPatch.model_json_schema()["properties"]
+
+    def _ceiling(field: str) -> int:
+        spec = schema[field]
+        for option in spec.get("anyOf", [spec]):
+            if "maximum" in option:
+                return option["maximum"]
+        raise AssertionError(f"SectionPatch.{field} states no maximum")
+
+    for name, value in (("MAX_LEVELS_PER_COLUMN", _ceiling("levels")),
+                        ("MAX_COLUMNS_PER_SECTION", _ceiling("columns"))):
+        assert f"export const {name} = {value}" in limits, (
+            f"SectionPatch bounds this at {value}; limits.ts disagrees"
         )
 
 
@@ -5825,17 +5868,40 @@ def test_every_map_path_answers_404_for_another_library_with_its_own_methods():
             ("delete", f"/api/v1/map/sections/{section['id']}/slots"),
             ("post", f"/api/v1/map/sections/{section['id']}/depth"),
             ("post", f"/api/v1/map/sections/{section['id']}/levels"),
+            # ⚠ The per-slot depth patch was missing from this list — the one
+            # route addressed by (section, col, level) rather than by id, and
+            # the one that writes to a SHELF. Found by a review probing what
+            # the meta-test did not.
+            ("patch", f"/api/v1/map/sections/{section['id']}/shelves/1/1",
+             {"depth_count": 2}),
         ]
-        for method, path in probes:
+        for method, path, *rest in probes:
             call = getattr(theirs, method)
-            got = call(path, json={}) if method != "delete" else call(path)
+            # ⚠ A VALID body where the route requires one. An empty `{}` on the
+            # slot-depth patch answers 422 before the resolver is reached, and
+            # a probe that accepts 422 is a probe that would accept an
+            # unguarded route the day the body becomes optional.
+            got = call(path) if method == "delete" \
+                else call(path, json=rest[0] if rest else {})
             assert got.status_code == 404, (method, path, got.status_code)
-        # …and the creates that name a foreign parent in the BODY.
-        assert theirs.post("/api/v1/map/sections",
-                           json={"bookcase_id": case}).status_code == 404
-        assert theirs.post("/api/v1/map/bookcases", json={
-            "floor_id": world["floor"]["id"],
-            "rect": {"x": 0, "y": 0, "w": 2, "h": 1}}).status_code == 404
+        # …and EVERY create that names a foreign parent in the BODY, which is
+        # the other half of the surface: a create has no id in its path, so a
+        # path-shaped probe cannot reach it at all.
+        bodies = [
+            ("/api/v1/map/sections", {"bookcase_id": case}),
+            ("/api/v1/map/sections", {"bookcase_id": case,
+                                      "above_id": section["id"]}),
+            ("/api/v1/map/bookcases", {"floor_id": world["floor"]["id"],
+                                       "rect": {"x": 0, "y": 0, "w": 2, "h": 1}}),
+            ("/api/v1/map/floors", {"site_id": world["site"]["id"],
+                                    "name": "לא שלי"}),
+            ("/api/v1/map/places", {"floor_id": world["floor"]["id"],
+                                    "name": "לא שלי",
+                                    "rect": {"x": 0, "y": 0, "w": 2, "h": 2}}),
+        ]
+        for path, body in bodies:
+            got = theirs.post(path, json=body)
+            assert got.status_code == 404, (path, got.status_code, got.text)
 
         # Nothing of the real library moved.
         after = mine.get("/api/v1/map").json()
@@ -5929,6 +5995,86 @@ def test_a_section_added_at_the_bottom_renumbers_the_rest_without_gaps():
         assert after["ordinal"] == untouched["ordinal"], (
             "renumbering one bookcase renumbered another's sections"
         )
+
+
+def test_a_section_can_go_back_where_it_was_in_the_middle_of_a_stack():
+    """⚠⚠ Measured at review: undoing the removal of a MIDDLE section.
+
+    ``top``/``bottom`` cannot say *back where it was*, so the client sent
+    ``top``, this route appended, and the client recorded the append as landed
+    — the drawing said base·middle·top and the library said base·top·middle,
+    with nothing left to re-diff. ``ordinal`` is what an address PRINTS, so
+    the storey of the furniture a book is filed under changed with no edit.
+
+    ``above_id`` is the general form: it also shapes the new section like the
+    one it stands ON, which is the same rule ``where`` follows.
+    """
+    with TestClient(_app()) as client:
+        world = _drawn_map(client, columns=2, levels=2)
+        case_id = world["case"]["id"]
+        sections = lambda: [                                    # noqa: E731
+            s for s in client.get("/api/v1/map").json()["sections"]
+            if s["bookcase_id"] == case_id]
+        base = sections()[0]
+        middle = client.post("/api/v1/map/sections", json={
+            "bookcase_id": case_id}).json()["section"]
+        top = client.post("/api/v1/map/sections", json={
+            "bookcase_id": case_id}).json()["section"]
+        assert [s["id"] for s in sections()] == [base["id"], middle["id"],
+                                                 top["id"]]
+
+        gone = client.delete(f"/api/v1/map/sections/{middle['id']}/slots")
+        assert gone.status_code == 200, gone.text
+        assert client.delete(
+            f"/api/v1/map/sections/{middle['id']}").status_code == 204
+
+        back = client.post("/api/v1/map/sections", json={
+            "bookcase_id": case_id, "above_id": base["id"]})
+        assert back.status_code == 201, back.text
+        assert back.json()["section"]["ordinal"] == 2
+        assert [s["id"] for s in sections()] == [
+            base["id"], back.json()["section"]["id"], top["id"]
+        ], "the restored section did not go back between the two it was under"
+        assert [s["ordinal"] for s in sections()] == [1, 2, 3]
+        # Shaped like the section it stands ON, not like the top of the stack.
+        assert back.json()["section"]["column_levels"] == \
+            base["column_levels"], "it copied the wrong neighbour"
+
+        # ⚠ And into a stack with NO gap in it, which is the case the
+        # arithmetic actually has to get right: the new section's ordinal
+        # collides with the one already above, so where it lands is decided by
+        # WHERE IT WAS PUT IN THE LIST, not by the sort. Appending it (the
+        # shape this route had) puts it one storey too high.
+        squeezed = client.post("/api/v1/map/sections", json={
+            "bookcase_id": case_id, "above_id": base["id"]})
+        assert squeezed.status_code == 201, squeezed.text
+        assert [s["id"] for s in sections()][:2] == [
+            base["id"], squeezed.json()["section"]["id"]
+        ], "the new section did not land directly above the one it names"
+        assert [s["ordinal"] for s in sections()] == [1, 2, 3, 4]
+
+
+def test_a_section_that_says_where_it_goes_twice_is_refused():
+    """One request carries one instruction — the rule `patch_section` already
+    holds for `columns` versus `column`/`levels`, and for the same reason: the
+    fall-through would silently obey one and report success for both."""
+    with TestClient(_app()) as client:
+        world = _drawn_map(client)
+        base = client.get("/api/v1/map").json()["sections"][0]
+        both = client.post("/api/v1/map/sections", json={
+            "bookcase_id": world["case"]["id"], "where": "top",
+            "above_id": base["id"]})
+        assert both.status_code == 400, both.text
+        assert "one instruction" in both.json()["detail"]
+        # A section of ANOTHER bookcase is a 404, like every fictional id.
+        elsewhere = client.post("/api/v1/map/bookcases", json={
+            "floor_id": world["floor"]["id"],
+            "rect": {"x": 9, "y": 0, "w": 2, "h": 1},
+            "columns": 1, "levels": 1}).json()
+        stranger = client.post("/api/v1/map/sections", json={
+            "bookcase_id": world["case"]["id"],
+            "above_id": elsewhere["section"]["id"]})
+        assert stranger.status_code == 404, stranger.text
 
 
 def test_a_room_moved_upstairs_takes_its_bookcases_with_it():

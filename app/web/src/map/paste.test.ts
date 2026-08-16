@@ -11,7 +11,7 @@ import { describe, expect, it } from 'vitest'
 import { newBookcase } from './core/model'
 import type { Bookcase, Plan, Room, Section } from './core/model'
 import { emptyPlan } from './core/model'
-import { pasteInto } from './paste'
+import { PASTE_OFFSET, pasteInto } from './paste'
 import { planDiff } from './sync'
 import type { Doc } from './ui/types'
 
@@ -59,6 +59,10 @@ describe('pasting a bookcase', () => {
     expect(copy.sections.map((s) => s.columnLevels)).toEqual([[5, 5], [3, 3, 3]])
     expect(copy.sections.map((s) => s.defaultDepth)).toEqual([1, 2])
     expect(copy.name).toBe(original.name)
+    // …and it lands BESIDE its original rather than exactly on top of it,
+    // which would be a copy nobody can see or drag off.
+    expect(copy.rect.x).toBe(original.rect.x + PASTE_OFFSET)
+    expect(copy.rect.y).toBe(original.rect.y + PASTE_OFFSET)
   })
 
   it('shares no shelf object with the original, so an edit stays put', () => {
