@@ -23,7 +23,12 @@
  */
 
 import type { Bookcase, Floor, Plan, Room, Section, Shelf } from './core/model'
-import { columnCount } from './core/model'
+import {
+  DEFAULT_DEPTH,
+  DEFAULT_LEVELS,
+  columnCount,
+  withColumnCount,
+} from './core/model'
 import type { Rect, Side } from './core/rect'
 
 // --- the wire, narrowed to what this editor uses --------------------------
@@ -151,11 +156,12 @@ export type Op =
  * refused while its bookcases are being moved out of it, and a section's
  * while its slots are being emptied.
  *
- * ⚠ **One grid instruction per section per pass.** P6.2 answers 400 for a
- * request carrying both `columns` and `column`/`levels`, because the old
- * fall-through silently applied half an edit. A single gesture only ever
- * changes one of them; a batch that somehow changed both emits the column
- * count and leaves the per-column heights to the next pass, which converges.
+ * ⚠ **One grid instruction per REQUEST.** P6.2 answers 400 for a request
+ * carrying both `columns` and `column`/`levels`, because the old fall-through
+ * silently applied half an edit. That is a rule about one call, not about one
+ * pass: a pass that changes both sends the column count and then the heights,
+ * in that order. There is no "next pass" to leave the rest to — `confirmed`
+ * becomes this document as soon as the push succeeds.
  */
 export function planDiff(before: Plan, after: Plan): Op[] {
   const ops: Op[] = []
@@ -179,6 +185,14 @@ export function planDiff(before: Plan, after: Plan): Op[] {
     const had = wasCase.get(bookcase.id)
     if (!had) {
       ops.push({ kind: 'case.add', bookcase })
+      // ⚠ AND the rest of the furniture. The create builds ONE section —
+      // the first — and only from its column count and its two defaults,
+      // because that is all the create body carries (`push.ts`). A pasted or
+      // undo-restored case with a hutch, ragged columns or per-shelf depths
+      // needs everything else asked for explicitly, and a review measured
+      // what happens when it is not: the case is created uniform, `confirmed`
+      // records the loss as LANDED, and it is never diffed again.
+      ops.push(...sectionOps(asDrawn(bookcase), bookcase))
       continue
     }
     if (!sameCase(had, bookcase))
@@ -187,7 +201,7 @@ export function planDiff(before: Plan, after: Plan): Op[] {
         bookcase,
         roomChanged: had.roomId !== bookcase.roomId,
       })
-    ops.push(...sectionDiff(had, bookcase))
+    ops.push(...sectionOps(had.sections, bookcase))
   }
 
   // Removals last, and innermost first — a bookcase cannot go while its
@@ -211,37 +225,108 @@ export function planDiff(before: Plan, after: Plan): Op[] {
   return ops
 }
 
-function sectionDiff(before: Bookcase, after: Bookcase): Op[] {
+/**
+ * The section calls for one bookcase, given what the server holds for it.
+ *
+ * ⚠ **What the server holds is TRACKED, not guessed.** `POST /map/sections`
+ * states no shape at all — it copies the section it stands against
+ * (`next_section`, `app/domain/place.py`) — so the corrections a new section
+ * needs depend on the ops issued before it in this same pass. The list below
+ * is the server's own, bottom→top, advanced as each op lands. A section
+ * removed in this pass stays in it on purpose: removals are issued LAST, so
+ * it is still there to be copied.
+ */
+function sectionOps(live: Section[], after: Bookcase): Op[] {
   const ops: Op[] = []
-  const had = index(before.sections)
+  const standing = live.slice()
   after.sections.forEach((section, i) => {
-    const was = had.get(section.id)
-    if (!was) {
-      ops.push({ kind: 'section.add', caseId: after.id, section, atBottom: i === 0 })
-      return
+    let had = standing.find((s) => s.id === section.id)
+    if (!had) {
+      const atBottom = i === 0
+      const neighbour = atBottom ? standing[0] : standing[standing.length - 1]
+      ops.push({ kind: 'section.add', caseId: after.id, section, atBottom })
+      had = asCreated(section.id, neighbour)
+      if (atBottom) standing.unshift(had)
+      else standing.push(had)
     }
-    if (was.defaultLevels !== section.defaultLevels ||
-        was.defaultDepth !== section.defaultDepth)
-      ops.push({ kind: 'section.defaults', section })
-    if (columnCount(was) !== columnCount(section)) {
-      ops.push({ kind: 'section.columns', section, columns: columnCount(section) })
-    } else {
-      section.columnLevels.forEach((levels, col) => {
-        if (was.columnLevels[col] !== levels)
-          ops.push({ kind: 'section.levels', section, col, levels })
-      })
-    }
-    for (const shelf of section.shelves) {
-      const stood = was.shelves.find(
-        (s) => s.col === shelf.col && s.level === shelf.level)
-      if (stood && stood.depth !== shelf.depth)
-        ops.push({
-          kind: 'shelf.depth', section, col: shelf.col,
-          level: shelf.level, depth: shelf.depth,
-        })
-    }
+    ops.push(...shapeOps(had, section))
+    // Everything above lands before the next section is added, so by now the
+    // server holds exactly what the document says — which is what makes the
+    // neighbour a later `section.add` copies knowable at all.
+    standing[standing.findIndex((s) => s.id === section.id)] = section
   })
   return ops
+}
+
+/** The calls that turn `had` — the section as the server has it — into
+ *  `section`. */
+function shapeOps(had: Section, section: Section): Op[] {
+  const ops: Op[] = []
+  if (had.defaultLevels !== section.defaultLevels ||
+      had.defaultDepth !== section.defaultDepth)
+    ops.push({ kind: 'section.defaults', section })
+  // ⚠ One grid instruction per REQUEST — never "one per pass". The API
+  // answers 400 for `columns` and `column`/`levels` in one body, and the
+  // previous shape left the per-column heights *"to the next pass, which
+  // converges"*: there is no next pass, because `confirmed` becomes this
+  // document the moment the push succeeds. Two requests, one instruction
+  // each, in this order.
+  let heights = had.columnLevels
+  if (columnCount(had) !== columnCount(section)) {
+    ops.push({ kind: 'section.columns', section, columns: columnCount(section) })
+    // What a count change LEAVES behind: the columns that were there keep
+    // their heights and new trailing ones arrive at the section's default
+    // (`with_column_count`) — which the defaults op above has just set.
+    heights = Array.from({ length: columnCount(section) },
+      (_, col) => had.columnLevels[col] ?? section.defaultLevels)
+  }
+  section.columnLevels.forEach((levels, col) => {
+    if (heights[col] !== levels)
+      ops.push({ kind: 'section.levels', section, col, levels })
+  })
+  for (const shelf of section.shelves) {
+    const stood = had.shelves.find(
+      (s) => s.col === shelf.col && s.level === shelf.level)
+    // A slot the grid ops above just created arrives at the section's own
+    // default depth; one that was already standing keeps whatever it had.
+    // Comparing only against slots that already existed is how a pasted
+    // case's per-shelf overrides went missing.
+    const depth = stood ? stood.depth : section.defaultDepth
+    if (depth !== shelf.depth)
+      ops.push({
+        kind: 'shelf.depth', section, col: shelf.col,
+        level: shelf.level, depth: shelf.depth,
+      })
+  }
+  return ops
+}
+
+/** A section built to a stated shape, with the shelves it implies. The
+ *  client's `withColumnCount` and the server's `with_column_count` are the
+ *  same arithmetic, so this is a prediction only in name. */
+const built = (id: string, columns: number, levels: number, depth: number): Section =>
+  withColumnCount(
+    { id, columnLevels: [], defaultLevels: levels, defaultDepth: depth, shelves: [] },
+    Math.max(1, columns),
+  )
+
+/** A section as `POST /map/sections` will create it: shaped like the one it
+ *  stands against, or one column of the defaults when there is none. */
+const asCreated = (id: string, neighbour: Section | undefined): Section =>
+  built(
+    id,
+    neighbour ? columnCount(neighbour) : 1,
+    neighbour?.defaultLevels ?? DEFAULT_LEVELS,
+    neighbour?.defaultDepth ?? DEFAULT_DEPTH,
+  )
+
+/** What `POST /map/bookcases` will have created: the FIRST section only,
+ *  uniform, from the column count and the two defaults `push.ts` sends. */
+const asDrawn = (bc: Bookcase): Section[] => {
+  const first = bc.sections[0]
+  return first
+    ? [built(first.id, columnCount(first), first.defaultLevels, first.defaultDepth)]
+    : []
 }
 
 const index = <T extends { id: string }>(xs: T[]) =>

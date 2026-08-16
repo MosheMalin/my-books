@@ -9,7 +9,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { emptyPlan, newBookcase, newSection, withColumnCount } from './core/model'
-import type { Plan } from './core/model'
+import type { Bookcase, Plan, Section } from './core/model'
 import { Ids, push, type Api } from './push'
 import { planDiff, toPlan, type MapWire, type ShelfWire } from './sync'
 
@@ -172,6 +172,130 @@ describe('what a change asks the server to do', () => {
 
   it('sees nothing when nothing changed', () => {
     expect(planDiff(drawn(), drawn())).toEqual([])
+  })
+
+  it('sends the column count AND the heights in one pass, count first', () => {
+    // ⚠ The API's rule is one grid instruction per REQUEST. The old code read
+    // it as one per PASS and left the heights "to the next pass, which
+    // converges" — but `confirmed` becomes this document as soon as the push
+    // succeeds, so there is no next pass and the heights were simply dropped.
+    const before = drawn()
+    const section = before.cases[0]!.sections[0]!
+    const wider = withColumnCount(section, 3)
+    const ragged: Section = { ...wider, columnLevels: [5, 5, 2] }
+    const after: Plan = {
+      ...before, cases: [{ ...before.cases[0]!, sections: [ragged] }],
+    }
+    const ops = planDiff(before, after)
+    expect(ops.map((o) => o.kind))
+      .toEqual(['section.columns', 'section.levels'])
+    expect(ops[1]).toMatchObject({ col: 2, levels: 2 })
+  })
+})
+
+// --- a case that is CREATED with more than the create call can say ---------
+
+/** A section built by hand, so a test can state a shape the editor would take
+ *  several gestures to reach. */
+const section = (
+  id: string, columnLevels: number[], defaultLevels: number, defaultDepth: number,
+): Section => ({
+  id,
+  columnLevels,
+  defaultLevels,
+  defaultDepth,
+  shelves: columnLevels.flatMap((levels, col) =>
+    Array.from({ length: levels }, (_, level) =>
+      ({ col, level, depth: defaultDepth, photos: 0 }))),
+})
+
+describe('creating a bookcase the create call cannot describe', () => {
+  /** A base of 2 columns of 5, and a hutch of 3 columns of 3 standing on it —
+   *  the shape §3.6 exists for, and the shape a paste or an undo produces in
+   *  ONE document change. */
+  const stacked = (): Bookcase => ({
+    ...newBookcase('c9', 'ארון', { x: 0, y: 0, w: 4, h: 1 }, 'S', null, 'f1', 2),
+    sections: [section('s1', [5, 5], 5, 1), section('s2', [3, 3, 3], 3, 2)],
+  })
+
+  const opsFor = (bc: Bookcase) =>
+    planDiff(emptyPlan(), { ...emptyPlan(), cases: [bc] })
+
+  it('asks for the hutch too, and for the shape the create could not carry', () => {
+    // ⚠ Measured before this: `case.add` sent only `sections[0]`, the server
+    // built a uniform case, and `confirmed` then recorded the loss as LANDED
+    // — so it was never diffed again and the hutch existed only on screen.
+    const kinds = opsFor(stacked()).map((o) => o.kind)
+    expect(kinds.slice(0, 6)).toEqual([
+      'case.add',        // base: 2 columns of 5 at depth 1 — all the body says
+      'section.add',     // the hutch, which copies the base's shape server-side
+      'section.defaults',
+      'section.columns',
+      'section.levels',  // the two columns the copy left at the base's height
+      'section.levels',
+    ])
+    // ⚠ And six per-shelf calls, which are not waste. `create_section` fills
+    // the copy's slots at the depth it copied — the base's 1 — and setting the
+    // section's default afterwards deliberately does NOT reach back into
+    // existing shelves (§3.3). Those ten slots become nine, and the six that
+    // survive really do stand at the wrong depth until each is told.
+    expect(kinds.slice(6)).toEqual(Array(6).fill('shelf.depth'))
+  })
+
+  it('states the hutch\'s own defaults, not the ones it was copied from', () => {
+    const defaults = opsFor(stacked()).find((o) => o.kind === 'section.defaults')
+    expect(defaults && 'section' in defaults && defaults.section)
+      .toMatchObject({ id: 's2', defaultLevels: 3, defaultDepth: 2 })
+  })
+
+  it('carries a per-shelf override on a slot that did not exist yet', () => {
+    // The old shelf loop compared against slots that ALREADY stood, so every
+    // override on a freshly created case — exactly what a paste is — was
+    // invisible to the diff.
+    const bc = stacked()
+    bc.sections[0]!.shelves = bc.sections[0]!.shelves.map((s) =>
+      s.col === 1 && s.level === 4 ? { ...s, depth: 3 } : s)
+    const ops = opsFor(bc).filter(
+      (o) => o.kind === 'shelf.depth' && 'section' in o && o.section.id === 's1')
+    expect(ops).toHaveLength(1)
+    expect(ops[0]).toMatchObject({ col: 1, level: 4, depth: 3 })
+  })
+
+  it('carries an override on a slot the GRID ops are about to create', () => {
+    // ⚠ The other half of the same defect, and the half a case with even
+    // columns cannot show. `POST /map/bookcases` builds every column at the
+    // section's default height, so a taller column's extra slots do not exist
+    // until the `section.levels` call — and they arrive at the section's
+    // default DEPTH. An override on one of them has nothing to compare
+    // against, and comparing it against itself (which is what "only report a
+    // slot that already stood" amounts to) reports nothing at all.
+    const ragged = section('s1', [5, 7], 5, 1)
+    ragged.shelves = ragged.shelves.map((s) =>
+      s.col === 1 && s.level === 6 ? { ...s, depth: 4 } : s)
+    const bc: Bookcase = {
+      ...newBookcase('c9', '', { x: 0, y: 0, w: 4, h: 1 }, 'S', null, 'f1', 2),
+      sections: [ragged],
+    }
+    const ops = opsFor(bc)
+    expect(ops.map((o) => o.kind))
+      .toEqual(['case.add', 'section.levels', 'shelf.depth'])
+    expect(ops[2]).toMatchObject({ col: 1, level: 6, depth: 4 })
+  })
+
+  it('adds a plain section with ONE call, because the server copies its neighbour', () => {
+    // The other half of the rule: what the server will build is tracked, so a
+    // gesture whose result already matches it sends no corrections at all. A
+    // client that "forced" the shape instead would issue five calls for every
+    // press of `+ another section`.
+    const before: Plan = { ...emptyPlan(), cases: [{
+      ...newBookcase('c1', '', { x: 0, y: 0, w: 4, h: 1 }, 'S', null, 'f1', 2),
+      sections: [section('s1', [4, 4], 4, 2)],
+    }] }
+    const after: Plan = { ...before, cases: [{
+      ...before.cases[0]!,
+      sections: [...before.cases[0]!.sections, section('s2', [4, 4], 4, 2)],
+    }] }
+    expect(planDiff(before, after).map((o) => o.kind)).toEqual(['section.add'])
   })
 })
 

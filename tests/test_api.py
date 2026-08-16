@@ -51,6 +51,8 @@ from app.adapters.memory_store import (
 from app.api import deps
 from app.api.app import bind_ports, create_app
 from app.domain import (
+    MAX_SECTIONS_PER_BOOKCASE,
+    MAX_SLOTS_PER_BOOKCASE,
     Account,
     Decision,
     DecisionKind,
@@ -5501,6 +5503,55 @@ def test_drawing_a_bookcase_creates_its_shelves_and_they_carry_an_address():
                                       for lvl in range(1, 6)}
         assert all(s["address"]["section_id"] == section["id"]
                    for s in shelves)
+
+
+def test_drawing_a_bookcase_answers_with_the_section_it_minted():
+    """The one id a client cannot guess and must have at once.
+
+    Ids are minted on the server and TRANSLATED on the client, never
+    rewritten (`app/web/src/map/push.ts`) — so an id it is never told stays
+    local for the rest of the session. The elevation addresses this section in
+    the very next gesture, and the measured symptom of leaving it out is
+    *404 no such section* on `+ column` for every bookcase drawn in a session.
+    """
+    with TestClient(_app()) as client:
+        world = _drawn_map(client, columns=3, levels=4, depth=2)
+        section = world["case"]["section"]
+        assert section["bookcase_id"] == world["case"]["id"]
+        assert section["ordinal"] == 1
+        assert section["column_levels"] == [4, 4, 4]
+        assert section["default_depth"] == 2
+        # The same section the map hands back, not a second one beside it.
+        listed = client.get("/api/v1/map").json()["sections"]
+        assert [s["id"] for s in listed] == [section["id"]]
+        # The gesture that was measured failing, on the id this response gave.
+        grew = client.patch(f"/api/v1/map/sections/{section['id']}",
+                            json={"columns": 4})
+        assert grew.status_code == 200, grew.text
+
+
+def test_the_editor_knows_the_ceilings_this_service_enforces():
+    """⚠⚠ A CLIENT constant that must track a server one.
+
+    MAP_PLAN's note on P6.2: *"the editor must not offer a gesture that asks
+    for more than the ceiling, or the owner meets a 409"* — so the map editor
+    carries its own copy of both limits and refuses the gesture before the
+    request. Two copies of a number drift silently, and the drift shows up as
+    an editor promising what this service will not do: a refusal banner, and
+    the reload the sync performs when it can no longer describe the document.
+
+    The same shape as `MAX_SCORE` in `ClaimRow.tsx` tracking `match.py`.
+    Named here, so changing either side is a decision rather than an accident.
+    """
+    source = (REPO_ROOT / "app" / "web" / "src" / "map" / "limits.ts").read_text(
+        "utf-8")
+    for name, value in (("MAX_SLOTS_PER_BOOKCASE", MAX_SLOTS_PER_BOOKCASE),
+                        ("MAX_SECTIONS_PER_BOOKCASE",
+                         MAX_SECTIONS_PER_BOOKCASE)):
+        line = f"export const {name} = {value}"
+        assert line in source, (
+            f"{name} is {value} here; app/web/src/map/limits.ts disagrees"
+        )
 
 
 def test_a_photographed_shelf_has_no_address_and_that_is_normal():

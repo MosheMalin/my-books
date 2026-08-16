@@ -351,9 +351,7 @@ export function PlanCanvas(props: Props) {
         return props.onSelect(bc ? selectCase(bc.id) : room ? selectRoom(room.id) : EMPTY)
       }
       return props.onRejected(
-        d.kind === 'draw'
-          ? `too small — drag out at least ${GRID} × ${GRID} squares`
-          : 'that would leave nothing to see',
+        d.kind === 'draw' ? T.too_small(GRID) : T.nothing_to_see,
       )
     }
     if (d.kind === 'draw') {

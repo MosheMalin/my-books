@@ -159,7 +159,11 @@ export function App() {
       {onboarding ? (
         <FirstLibrary />
       ) : (
-      <main className="page">
+      /* ⚠ The plan is the one screen that is a WORKSPACE rather than a
+         document: it sizes itself to the viewport and scrolls inside its own
+         panes, so the page's reading padding and 1500px measure would take
+         space off a canvas that has none to give on a phone. */
+      <main className={onPlan ? 'page page-plan' : 'page'}>
         {route.name === 'book' ? (
           <BookPage bookId={route.id} onBack={back} onAuthor={filterByAuthor} />
         ) : route.name === 'capture' ? (

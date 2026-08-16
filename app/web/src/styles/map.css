@@ -1,13 +1,25 @@
 /*
  * The map editor's own sheet, scoped to `.mapscreen`.
  *
- * ⚠ **Every rule here is scoped, and that is a bug fix.** As the lab's sheet
- * this opened with an unqualified `:root` block redefining six of
+ * ⚠ **Every rule here is scoped, and that is a bug fix — twice over.** As the
+ * lab's sheet this opened with an unqualified `:root` block redefining six of
  * `tokens.css`'s design tokens, plus a global reset and a `body` rule. Ported
  * as-is and imported last, it repainted the ENTIRE product: measured at
  * review, `--bg` was `#14171c` on every screen with the colour scheme forced
  * to light, and the product had no light theme at all. Equal specificity,
  * later import wins — the trap CLAUDE.md already carries.
+ *
+ * The fix for that scoped the TOKEN BLOCK and said "every rule is scoped now",
+ * which was not true of the ~130 rules under it: `button`, `input`, `select`,
+ * `fieldset`, `legend` and a dozen generic class names were still global, and
+ * `--btn`/`--input-bg` exist nowhere outside this scope. Measured on the books
+ * tab, having never opened the map: every unclassed `<button>` and `<input>`
+ * in the product computed `background-color: rgba(0,0,0,0)` — an undefined
+ * custom property is invalid at computed-value time, so the declaration falls
+ * back to `transparent` rather than to the product's own rule — at 13px
+ * instead of 14.5, and the books toolbar took this sheet's padding. Now every
+ * selector begins with `.mapscreen`, which is also what stops the map's
+ * `.side` colliding with `base.css` (it is `.map-side`).
  *
  * The token NAMES are kept inside the scope, so the ported rules below did
  * not have to change.
@@ -67,11 +79,32 @@
   --case-ink: #14314f;
 }
 
-.app { display: flex; flex-direction: column; height: 100%; }
+/* The page gives its padding and its measure back for this tab — see the
+ * comment on `<main>` in `App.tsx`. This is the ONE rule in this file that is
+ * not scoped to `.mapscreen`, because it is about the element the editor is
+ * mounted INTO; it is scoped by `.page-plan`, which nothing else uses. */
+.page.page-plan {
+  padding: 0;
+  max-width: none;
+}
+
+/* ⚠ A REAL height, not `100%`. As the lab's root this filled a full-viewport
+ * mount and `height: 100%` was true; inside `main.page` it resolves against a
+ * parent with no height of its own, so the flex children collapsed to their
+ * content and the canvas — the only thing here with nothing to be tall about
+ * — was measured at 150px on a phone, with the hint overlaying half of it.
+ * The page's own padding is dropped for this tab (`.page.page-plan`), so the
+ * arithmetic is the app bar and nothing else. */
+.mapscreen {
+  display: flex;
+  flex-direction: column;
+  height: calc(100dvh - var(--appbar-h));
+  min-height: 320px;
+}
 
 /* --- toolbar ------------------------------------------------------------- */
 
-.toolbar {
+.mapscreen .toolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -81,8 +114,8 @@
   border-bottom: 1px solid var(--line);
 }
 
-.brand { display: flex; align-items: baseline; gap: 6px; }
-.brand .tag {
+.mapscreen .brand { display: flex; align-items: baseline; gap: 6px; }
+.mapscreen .brand .tag {
   font-size: 11px;
   color: var(--dim);
   border: 1px solid var(--line);
@@ -90,10 +123,10 @@
   padding: 1px 7px;
 }
 
-.group { display: flex; align-items: center; gap: 4px; }
-.group.right { margin-inline-start: auto; }
+.mapscreen .group { display: flex; align-items: center; gap: 4px; }
+.mapscreen .group.right { margin-inline-start: auto; }
 
-button {
+.mapscreen button {
   font: inherit;
   font-size: 13px;
   color: var(--ink);
@@ -104,40 +137,40 @@ button {
   cursor: pointer;
   min-height: 34px;
 }
-button:hover:not(:disabled) { border-color: var(--accent); }
-button:disabled { opacity: 0.4; cursor: default; }
-button.on {
+.mapscreen button:hover:not(:disabled) { border-color: var(--accent); }
+.mapscreen button:disabled { opacity: 0.4; cursor: default; }
+.mapscreen button.on {
   background: var(--accent-dim);
   border-color: var(--accent);
   font-weight: 600;
 }
-button.danger { color: var(--danger); }
+.mapscreen button.danger { color: var(--danger); }
 
-button.icon {
+.mapscreen button.icon {
   display: grid;
   place-items: center;
   width: 36px;
   padding: 4px;
 }
-.icons { gap: 3px; }
+.mapscreen .icons { gap: 3px; }
 
-.ic { fill: currentColor; }
-.ic.stroke {
+.mapscreen .ic { fill: currentColor; }
+.mapscreen .ic.stroke {
   fill: none;
   stroke: currentColor;
   stroke-width: 1.3;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-.menu-pop .tick { display: inline-block; width: 14px; }
+.mapscreen .menu-pop .tick { display: inline-block; width: 14px; }
 
-.slider { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--dim); }
-.slider input { width: 84px; }
+.mapscreen .slider { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--dim); }
+.mapscreen .slider input { width: 84px; }
 
 /* --- menu ---------------------------------------------------------------- */
 
-.menu { position: relative; }
-.menu-pop {
+.mapscreen .menu { position: relative; }
+.mapscreen .menu-pop {
   position: absolute;
   inset-inline-start: 0;
   top: calc(100% + 4px);
@@ -151,7 +184,7 @@ button.icon {
   border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
-.menu-pop button {
+.mapscreen .menu-pop button {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -162,8 +195,8 @@ button.icon {
   background: none;
   text-align: start;
 }
-.menu-pop button:hover:not(:disabled) { background: var(--accent-dim); }
-.menu-pop kbd {
+.mapscreen .menu-pop button:hover:not(:disabled) { background: var(--accent-dim); }
+.mapscreen .menu-pop kbd {
   font: inherit;
   font-size: 11px;
   color: var(--dim);
@@ -174,19 +207,19 @@ button.icon {
 
 /* --- layout -------------------------------------------------------------- */
 
-.body { display: flex; flex: 1; min-height: 0; }
-.canvas-wrap { position: relative; flex: 1; min-width: 0; }
+.mapscreen .body { display: flex; flex: 1; min-height: 0; }
+.mapscreen .canvas-wrap { position: relative; flex: 1; min-width: 0; }
 
-.resizer {
+.mapscreen .resizer {
   flex: 0 0 6px;
   cursor: col-resize;
   background: var(--line);
   opacity: 0.35;
   touch-action: none;
 }
-.resizer:hover { opacity: 1; background: var(--accent); }
+.mapscreen .resizer:hover { opacity: 1; background: var(--accent); }
 
-.side {
+.mapscreen .map-side {
   width: 330px;
   flex: 0 0 330px;
   border-inline-start: 1px solid var(--line);
@@ -199,33 +232,33 @@ button.icon {
  * side"*). It was stacking below 820px, which a half-width browser window hits
  * easily. It only stacks on a real phone now, and narrows before it does. */
 @media (max-width: 1040px) {
-  .side { width: 280px; flex: 0 0 280px; }
+  .mapscreen .map-side { width: 280px; flex: 0 0 280px; }
 }
 
 /* Phone. The toolbar gives its space back to the canvas rather than the other
  * way round — the lab is judged on a phone. */
 @media (max-width: 640px) {
-  .body { flex-direction: column; }
+  .mapscreen .body { flex-direction: column; }
   /* !important: the drag handle writes an inline width, which means nothing
      once the panel is stacked under the plan rather than beside it. */
-  .side {
+  .mapscreen .map-side {
     width: auto !important;
     flex: 0 0 38% !important;
     border-inline-start: none;
     border-top: 1px solid var(--line);
   }
-  .resizer { display: none; }
-  .toolbar { gap: 5px; padding: 5px 6px; }
-  .toolbar button { padding: 6px 9px; font-size: 12px; }
-  .brand { display: none; }
-  .saved { font-size: 10px; }
-  .slider input { width: 60px; }
+  .mapscreen .resizer { display: none; }
+  .mapscreen .toolbar { gap: 5px; padding: 5px 6px; }
+  .mapscreen .toolbar button { padding: 6px 9px; font-size: 12px; }
+  .mapscreen .brand { display: none; }
+  .mapscreen .saved { font-size: 10px; }
+  .mapscreen .slider input { width: 60px; }
 }
 
 /* The storey, in the corner of the BOARD rather than the control line. An HTML
  * overlay, so it keeps its size through any zoom — a label that shrinks when
  * you zoom out is unreadable exactly when you need it. */
-.floor-badge {
+.mapscreen .floor-badge {
   position: absolute;
   inset-inline-start: 10px;
   top: 10px;
@@ -237,16 +270,16 @@ button.icon {
   border: 1px solid var(--line);
   border-radius: 8px;
 }
-.floor-badge .floor-name {
+.mapscreen .floor-badge .floor-name {
   font-size: 13px;
   font-weight: 600;
   cursor: text;
   white-space: nowrap;
 }
-.floor-badge input { min-height: 28px; padding: 3px 6px; width: 140px; font-size: 13px; }
-.floor-badge .menu > button { min-height: 28px; padding: 2px 6px; }
+.mapscreen .floor-badge input { min-height: 28px; padding: 3px 6px; width: 140px; font-size: 13px; }
+.mapscreen .floor-badge .menu > button { min-height: 28px; padding: 2px 6px; }
 
-.hint {
+.mapscreen .hint {
   position: absolute;
   inset-inline: 10px;
   bottom: 10px;
@@ -260,7 +293,7 @@ button.icon {
   pointer-events: none;
 }
 
-.readonly-bar {
+.mapscreen .readonly-bar {
   position: absolute;
   inset-inline-start: 50%;
   top: 10px;
@@ -276,9 +309,9 @@ button.icon {
   border-radius: 8px;
   white-space: nowrap;
 }
-.readonly-bar button { min-height: 28px; padding: 3px 10px; font-size: 12px; }
+.mapscreen .readonly-bar button { min-height: 28px; padding: 3px 10px; font-size: 12px; }
 
-.toast {
+.mapscreen .toast {
   position: absolute;
   inset-inline-start: 50%;
   top: 14px;
@@ -294,7 +327,7 @@ button.icon {
 
 /* --- the plan ------------------------------------------------------------ */
 
-svg.plan {
+.mapscreen svg.plan {
   display: block;
   width: 100%;
   height: 100%;
@@ -302,47 +335,47 @@ svg.plan {
   user-select: none;
 }
 
-.grid-minor, .grid-major { fill: none; vector-effect: non-scaling-stroke; }
-.grid-minor { stroke: var(--grid-minor); stroke-width: 1; }
-.grid-major { stroke: var(--grid-major); stroke-width: 1; }
+.mapscreen .grid-minor, .mapscreen .grid-major { fill: none; vector-effect: non-scaling-stroke; }
+.mapscreen .grid-minor { stroke: var(--grid-minor); stroke-width: 1; }
+.mapscreen .grid-major { stroke: var(--grid-major); stroke-width: 1; }
 
-.room rect {
+.mapscreen .room rect {
   fill: var(--room-fill);
   stroke: var(--room-stroke);
   stroke-width: 3;
   vector-effect: non-scaling-stroke;
 }
-.room.selected rect { stroke: var(--accent); }
+.mapscreen .room.selected rect { stroke: var(--accent); }
 
-.room-label {
+.mapscreen .room-label {
   fill: var(--dim);
   font-size: 1.6px;
   font-family: var(--font);
   unicode-bidi: plaintext;
 }
 
-.case rect {
+.mapscreen .case rect {
   fill: var(--case-fill);
   stroke: var(--case-stroke);
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
 }
-.case.selected rect { stroke: var(--accent); stroke-width: 2.5; }
+.mapscreen .case.selected rect { stroke: var(--accent); stroke-width: 2.5; }
 
-.case-front { stroke: var(--case-front); stroke-width: 4; vector-effect: non-scaling-stroke; }
-.case-divider {
+.mapscreen .case-front { stroke: var(--case-front); stroke-width: 4; vector-effect: non-scaling-stroke; }
+.mapscreen .case-divider {
   stroke: var(--case-stroke);
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
 }
-.case-depth {
+.mapscreen .case-depth {
   stroke: var(--case-front);
   stroke-width: 1;
   stroke-dasharray: 3 3;
   opacity: 0.7;
   vector-effect: non-scaling-stroke;
 }
-.case-label {
+.mapscreen .case-label {
   fill: var(--case-ink);
   font-size: 1.3px;
   font-family: var(--font);
@@ -350,7 +383,8 @@ svg.plan {
   pointer-events: none;
 }
 
-.preview-room, .preview-case {
+.mapscreen .preview-room,
+.mapscreen .preview-case {
   fill: color-mix(in srgb, var(--accent) 18%, transparent);
   stroke: var(--accent);
   stroke-width: 2;
@@ -358,14 +392,14 @@ svg.plan {
   vector-effect: non-scaling-stroke;
 }
 
-.handles rect {
+.mapscreen .handles rect {
   fill: var(--bg);
   stroke: var(--accent);
   stroke-width: 2;
   vector-effect: non-scaling-stroke;
 }
 
-.band {
+.mapscreen .band {
   fill: color-mix(in srgb, var(--accent) 12%, transparent);
   stroke: var(--accent);
   stroke-width: 1.5;
@@ -373,26 +407,26 @@ svg.plan {
   vector-effect: non-scaling-stroke;
 }
 
-.multi-count {
+.mapscreen .multi-count {
   fill: var(--accent);
   font-size: 12px;
   font-family: var(--font);
 }
 
-.storey-label {
+.mapscreen .storey-label {
   fill: var(--dim);
   font-size: 2.2px;
   font-family: var(--font);
   unicode-bidi: plaintext;
 }
-.storey-rule {
+.mapscreen .storey-rule {
   stroke: var(--line);
   stroke-width: 1.5;
   stroke-dasharray: 4 4;
   vector-effect: non-scaling-stroke;
 }
 
-.ghost {
+.mapscreen .ghost {
   fill: none;
   stroke: var(--dim);
   stroke-width: 1.5;
@@ -401,8 +435,8 @@ svg.plan {
   vector-effect: non-scaling-stroke;
 }
 
-.size-badge rect { fill: var(--accent); }
-.size-badge text {
+.mapscreen .size-badge rect { fill: var(--accent); }
+.mapscreen .size-badge text {
   fill: #fff;
   font-size: 12px;
   font-family: var(--font);
@@ -411,16 +445,18 @@ svg.plan {
 
 /* --- inspector ----------------------------------------------------------- */
 
-.inspector { padding: 12px 14px 40px; }
-.inspector h2 { margin: 0 0 10px; font-size: 15px; }
+.mapscreen .inspector { padding: 12px 14px 40px; }
+.mapscreen .inspector h2 { margin: 0 0 10px; font-size: 15px; }
 
-.field { display: block; margin-bottom: 10px; }
-.field > span { display: block; font-size: 12px; color: var(--dim); margin-bottom: 3px; }
-.field.inline { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.field.inline > span { margin: 0; }
-.size-inputs { display: flex; align-items: center; gap: 6px; color: var(--dim); }
+.mapscreen .field { display: block; margin-bottom: 10px; }
+.mapscreen .field > span { display: block; font-size: 12px; color: var(--dim); margin-bottom: 3px; }
+.mapscreen .field.inline { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.mapscreen .field.inline > span { margin: 0; }
+.mapscreen .size-inputs { display: flex; align-items: center; gap: 6px; color: var(--dim); }
 
-input:not([type]), input[type='text'], input[type='number'] {
+.mapscreen input:not([type]),
+.mapscreen input[type='text'],
+.mapscreen input[type='number'] {
   font: inherit;
   color: var(--ink);
   background: var(--input-bg);
@@ -429,21 +465,21 @@ input:not([type]), input[type='text'], input[type='number'] {
   padding: 7px 8px;
   min-height: 34px;
 }
-.field > input:not([type='number']) { width: 100%; }
-input[type='number'] { width: 68px; }
+.mapscreen .field > input:not([type='number']) { width: 100%; }
+.mapscreen input[type='number'] { width: 68px; }
 
-.rtl-safe { unicode-bidi: plaintext; text-align: start; }
+.mapscreen .rtl-safe { unicode-bidi: plaintext; text-align: start; }
 
-.note { font-size: 12px; color: var(--dim); line-height: 1.5; margin: 8px 0; }
-.note code { font-size: 11px; }
+.mapscreen .note { font-size: 12px; color: var(--dim); line-height: 1.5; margin: 8px 0; }
+.mapscreen .note code { font-size: 11px; }
 
-.steps { font-size: 12px; color: var(--dim); line-height: 1.6; padding-inline-start: 18px; }
-.steps strong { color: var(--ink); }
+.mapscreen .steps { font-size: 12px; color: var(--dim); line-height: 1.6; padding-inline-start: 18px; }
+.mapscreen .steps strong { color: var(--ink); }
 
 /* --- collapsible fold ---------------------------------------------------- */
 
-.fold { margin: 0 0 10px; }
-.fold-head {
+.mapscreen .fold { margin: 0 0 10px; }
+.mapscreen .fold-head {
   display: flex;
   align-items: baseline;
   gap: 6px;
@@ -456,10 +492,10 @@ input[type='number'] { width: 68px; }
   background: none;
   text-align: start;
 }
-.fold-head:hover { border-color: var(--accent); }
-.fold-caret { color: var(--dim); font-size: 11px; }
-.fold-label { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.06em; }
-.fold-summary {
+.mapscreen .fold-head:hover { border-color: var(--accent); }
+.mapscreen .fold-caret { color: var(--dim); font-size: 11px; }
+.mapscreen .fold-label { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.06em; }
+.mapscreen .fold-summary {
   flex: 1;
   overflow: hidden;
   font-size: 12px;
@@ -468,12 +504,12 @@ input[type='number'] { width: 68px; }
   white-space: nowrap;
   text-align: end;
 }
-.fold-body { padding-top: 10px; }
+.mapscreen .fold-body { padding-top: 10px; }
 
-.picked { font-size: 12px; line-height: 1.7; margin: 6px 0; padding-inline-start: 18px; }
-.picked li { color: var(--dim); }
+.mapscreen .picked { font-size: 12px; line-height: 1.7; margin: 6px 0; padding-inline-start: 18px; }
+.mapscreen .picked li { color: var(--dim); }
 
-button.link {
+.mapscreen button.link {
   min-height: 0;
   padding: 0;
   border: 0;
@@ -484,7 +520,7 @@ button.link {
   text-decoration: underline;
 }
 
-select {
+.mapscreen select {
   font: inherit;
   font-size: 13px;
   color: var(--ink);
@@ -496,12 +532,12 @@ select {
   max-width: 62%;
 }
 
-.saved { font-size: 11px; color: var(--dim); }
-.saved-failed { color: var(--danger); font-weight: 600; }
-.row { display: flex; gap: 6px; margin: 10px 0; }
-.row button { flex: 1; }
+.mapscreen .saved { font-size: 11px; color: var(--dim); }
+.mapscreen .saved-failed { color: var(--danger); font-weight: 600; }
+.mapscreen .row { display: flex; gap: 6px; margin: 10px 0; }
+.mapscreen .row button { flex: 1; }
 
-.rule {
+.mapscreen .rule {
   font-size: 12px;
   line-height: 1.5;
   color: var(--warn-ink);
@@ -511,43 +547,43 @@ select {
   padding: 8px 10px;
   margin: 8px 0;
 }
-.rule button { margin-top: 8px; width: 100%; }
+.mapscreen .rule button { margin-top: 8px; width: 100%; }
 
-fieldset { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px 10px; margin: 12px 0; }
-legend { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.06em; }
+.mapscreen fieldset { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px 10px; margin: 12px 0; }
+.mapscreen legend { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.06em; }
 
-.inspector > button.danger { width: 100%; }
+.mapscreen .inspector > button.danger { width: 100%; }
 
 /* --- elevation ----------------------------------------------------------- */
 
-.elevation { margin: 10px 0; }
+.mapscreen .elevation { margin: 10px 0; }
 
 /* Sections read as stacked units: a rule between them, and the one on top is
  * drawn on top. With a single section none of this chrome renders at all. */
-.elev-section { padding: 8px 0; }
-.elev-section + .elev-section { border-top: 2px solid var(--line); }
+.mapscreen .elev-section { padding: 8px 0; }
+.mapscreen .elev-section + .elev-section { border-top: 2px solid var(--line); }
 
-.section-head {
+.mapscreen .section-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   margin-bottom: 6px;
 }
-.section-name { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
-.section-where { color: var(--dim); text-transform: none; letter-spacing: 0; }
-.section-head button { min-height: 26px; padding: 2px 8px; }
+.mapscreen .section-name { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+.mapscreen .section-where { color: var(--dim); text-transform: none; letter-spacing: 0; }
+.mapscreen .section-head button { min-height: 26px; padding: 2px 8px; }
 
-.section-add {
+.mapscreen .section-add {
   width: 100%;
   margin: 4px 0;
   font-size: 12px;
   color: var(--dim);
   border-style: dashed;
 }
-.section-add:hover:not(:disabled) { color: var(--ink); }
+.mapscreen .section-add:hover:not(:disabled) { color: var(--ink); }
 
-.section-defaults {
+.mapscreen .section-defaults {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -555,18 +591,18 @@ legend { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-s
   font-size: 11px;
   color: var(--dim);
 }
-.section-defaults label { display: flex; align-items: center; gap: 4px; }
-.section-defaults input { width: 52px; min-height: 28px; padding: 4px 6px; }
-.section-defaults button { min-height: 28px; padding: 2px 8px; font-size: 11px; }
+.mapscreen .section-defaults label { display: flex; align-items: center; gap: 4px; }
+.mapscreen .section-defaults input { width: 52px; min-height: 28px; padding: 4px 6px; }
+.mapscreen .section-defaults button { min-height: 28px; padding: 2px 8px; font-size: 11px; }
 
-.elev-scroll { overflow-x: auto; overflow-y: hidden; padding-bottom: 2px; }
-.elevation-grid { display: grid; gap: 6px; min-width: max-content; }
-.elev-col { display: flex; flex-direction: column; gap: 3px; }
-.elev-col-head { font-size: 11px; color: var(--dim); text-align: center; }
-.elev-col-foot { display: flex; gap: 3px; }
-.elev-col-foot button { flex: 1; min-height: 26px; padding: 2px; font-size: 12px; }
+.mapscreen .elev-scroll { overflow-x: auto; overflow-y: hidden; padding-bottom: 2px; }
+.mapscreen .elevation-grid { display: grid; gap: 6px; min-width: max-content; }
+.mapscreen .elev-col { display: flex; flex-direction: column; gap: 3px; }
+.mapscreen .elev-col-head { font-size: 11px; color: var(--dim); text-align: center; }
+.mapscreen .elev-col-foot { display: flex; gap: 3px; }
+.mapscreen .elev-col-foot button { flex: 1; min-height: 26px; padding: 2px; font-size: 12px; }
 
-.elev-cell {
+.mapscreen .elev-cell {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -579,16 +615,16 @@ legend { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-s
   border-radius: 5px;
   color: var(--dim);
 }
-.elev-cell.selected { border-style: solid; border-color: var(--accent); color: var(--ink); }
-.elev-cell.override {
+.mapscreen .elev-cell.selected { border-style: solid; border-color: var(--accent); color: var(--ink); }
+.mapscreen .elev-cell.override {
   background: var(--warn-bg);
   border-color: var(--warn);
   border-style: solid;
   color: var(--warn-ink);
 }
-.elev-level { opacity: 0.7; }
-.elev-depth { font-weight: 600; }
-.elev-photos { font-size: 10px; }
+.mapscreen .elev-level { opacity: 0.7; }
+.mapscreen .elev-depth { font-weight: 600; }
+.mapscreen .elev-photos { font-size: 10px; }
 
-.elevation-cols { display: flex; gap: 6px; margin-top: 8px; }
-.elevation-cols button { flex: 1; }
+.mapscreen .elevation-cols { display: flex; gap: 6px; margin-top: 8px; }
+.mapscreen .elevation-cols button { flex: 1; }

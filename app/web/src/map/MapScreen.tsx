@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import type { Bookcase, Floor, Plan, Room, Underlay } from './core/model'
+import { useI18n } from '../lib/i18n'
+
+import type { Bookcase, Floor, Plan, Underlay } from './core/model'
 import {
   TURN,
   addSection,
@@ -8,7 +10,6 @@ import {
   floorContents,
   applyDefaultDepth,
   applyDefaultLevels,
-  emptyPlan,
   frontFor,
   mapSection,
   newBookcase,
@@ -24,7 +25,6 @@ import {
   withDefaultLevels,
   withRect,
   withShelfDepth,
-  withShelfPhotos,
 } from './core/model'
 import type { Rect } from './core/rect'
 import type { History } from './core/history'
@@ -36,6 +36,13 @@ import { Toolbar } from './ui/Toolbar'
 import type { Clipboard, Doc, Selection, Theme, Tool } from './ui/types'
 import { EMPTY, count, hasCase, hasRoom, selectCase, selectRoom } from './ui/types'
 import { fitTo, initialView, zoomAbout, type View } from './ui/viewport'
+import { pasteInto } from './paste'
+import {
+  MAX_SECTIONS_PER_BOOKCASE,
+  MAX_SLOTS_PER_BOOKCASE,
+  overCeiling,
+} from './limits'
+import { mapText, type MapText } from './text'
 
 const THEME_KEY = 'booksnap.map-lab.theme'
 const FLOOR_KEY = 'booksnap.map-lab.floor'
@@ -43,11 +50,6 @@ const SIDE_KEY = 'booksnap.map-lab.side'
 const SIDE_MIN = 220
 const SIDE_MAX = 720
 const clampSide = (w: number) => Math.max(SIDE_MIN, Math.min(SIDE_MAX, Math.round(w)))
-/** How far a pasted copy lands from its original, in units. Far enough to see
- *  it, near enough to drag into place. */
-const PASTE_OFFSET = 2
-
-const emptyDoc = (): Doc => ({ plan: emptyPlan(), seq: 0 })
 
 export type MapScreenProps = {
   /** The drawing as the server confirmed it. The editor is MOUNTED with it —
@@ -60,6 +62,7 @@ export type MapScreenProps = {
 
 export default function MapScreen(props: MapScreenProps) {
   const { onChange, saved } = props
+  const T = mapText(useI18n().lang)
   const [hist, setHist] = useState<History<Doc>>(
     () => initHistory({ plan: props.initialPlan, seq: 0 }))
   const [tool, setTool] = useState<Tool>('auto')
@@ -170,6 +173,32 @@ export default function MapScreen(props: MapScreenProps) {
         tag,
       ),
     [update],
+  )
+
+  /**
+   * A structural edit, refused HERE when the server would refuse it there.
+   *
+   * MAP_PLAN's note on what P6.2 landed says it plainly: *the editor must not
+   * offer a gesture that asks for more than the ceiling, or the owner meets a
+   * 409*. Without this, `+ column` on a wide case reported "not saved" in a
+   * corner and the whole editor then RELOADED to re-derive from the server —
+   * a refusal for a rule the screen could have stated before the press.
+   *
+   * ⚠ Only a gesture that GROWS is refused. A case that is somehow already
+   * over a ceiling must still be shrinkable, or the guard becomes the trap.
+   */
+  const growCase = useCallback(
+    (id: string, fn: (bc: Bookcase) => Bookcase, tag: string | null = null) => {
+      const bc = doc.plan.cases.find((c) => c.id === id)
+      const over = bc ? overCeiling(bc, fn(bc)) : null
+      if (over) {
+        return say(over.what === 'slots'
+          ? T.too_many_slots(over.asked, MAX_SLOTS_PER_BOOKCASE)
+          : T.too_many_sections(MAX_SECTIONS_PER_BOOKCASE))
+      }
+      mapCase(id, fn, tag)
+    },
+    [doc.plan.cases, mapCase, say, T],
   )
 
   /**
@@ -314,46 +343,17 @@ export default function MapScreen(props: MapScreenProps) {
     // Deep-cloned at COPY time: a later edit to the original must not reach
     // into the clipboard, and a paste must not alias the shelves it came from.
     setClipboard(JSON.parse(JSON.stringify({ rooms, cases })) as Clipboard)
-    say(`Copied ${rooms.length + cases.length} item${rooms.length + cases.length > 1 ? 's' : ''}.`)
-  }, [doc.plan, selection, say])
+    say(T.copied(rooms.length + cases.length))
+  }, [doc.plan, selection, say, T])
 
+  /** ⚠ The copy gets section ids of its OWN — see `paste.ts`. Sharing them
+   *  made an edit on the copy write to the original's shelves. */
   const paste = useCallback(() => {
     if (!clipboard) return
-    let seq = doc.seq
-    const roomIdMap = new Map<string, string>()
-    const rooms: Room[] = clipboard.rooms.map((r) => {
-      seq += 1
-      const id = `r${seq}`
-      roomIdMap.set(r.id, id)
-      // Onto the storey you are LOOKING at — copying the ground floor's layout
-      // as a starting point for the first floor is the obvious use.
-      return { ...r, id, rect: offset(r.rect), floorId }
-    })
-    const cases: Bookcase[] = clipboard.cases.map((c) => {
-      seq += 1
-      return {
-        ...c,
-        id: `c${seq}`,
-        rect: offset(c.rect),
-        floorId,
-        // A case copied together with its room stays with THAT copy, not with
-        // the original room — otherwise pasting a room-and-its-cases produces
-        // furniture that moves when the wrong room moves.
-        roomId: c.roomId ? roomIdMap.get(c.roomId) ?? c.roomId : null,
-      }
-    })
-    update((d) => ({
-      seq,
-      plan: {
-        ...d.plan,
-        rooms: d.plan.rooms.concat(rooms),
-        cases: d.plan.cases
-          .concat(cases)
-          .map((c) => (cases.some((n) => n.id === c.id) && !c.roomId ? reattach(c, d.plan) : c)),
-      },
-    }))
-    setSelection({ rooms: rooms.map((r) => r.id), cases: cases.map((c) => c.id), shelf: null })
-  }, [clipboard, doc.seq, update, floorId])
+    const pasted = pasteInto(doc, clipboard, floorId)
+    update(() => pasted.doc)
+    setSelection(pasted.selection)
+  }, [clipboard, doc, update, floorId])
 
   const actions: Actions = {
     renameRoom: (id, name) =>
@@ -395,12 +395,12 @@ export default function MapScreen(props: MapScreenProps) {
       ),
     setCaseRoom: (id, roomId) => mapCase(id, (bc) => ({ ...bc, roomId })),
     turnCase: (id) => mapCase(id, (bc) => ({ ...bc, front: TURN[bc.front] })),
-    setColumnCount: (id, sid, n) => mapCase(id, (bc) => mapSection(bc, sid, (s) => withColumnCount(s, n))),
+    setColumnCount: (id, sid, n) => growCase(id, (bc) => mapSection(bc, sid, (s) => withColumnCount(s, n))),
     setColumnLevels: (id, sid, col, n) =>
-      mapCase(id, (bc) => mapSection(bc, sid, (s) => withColumnLevels(s, col, n))),
+      growCase(id, (bc) => mapSection(bc, sid, (s) => withColumnLevels(s, col, n))),
     setDefaultLevels: (id, sid, n) =>
       mapCase(id, (bc) => mapSection(bc, sid, (s) => withDefaultLevels(s, n)), `deflevels:${sid}`),
-    applyDefaultLevels: (id, sid) => mapCase(id, (bc) => mapSection(bc, sid, applyDefaultLevels)),
+    applyDefaultLevels: (id, sid) => growCase(id, (bc) => mapSection(bc, sid, applyDefaultLevels)),
     setDefaultDepth: (id, sid, n) =>
       mapCase(id, (bc) => mapSection(bc, sid, (s) => withDefaultDepth(s, n)), `defdepth:${sid}`),
     applyDefaultDepth: (id, sid) => mapCase(id, (bc) => mapSection(bc, sid, applyDefaultDepth)),
@@ -410,13 +410,7 @@ export default function MapScreen(props: MapScreenProps) {
         (bc) => mapSection(bc, sid, (s) => withShelfDepth(s, col, level, n)),
         `shelfdepth:${sid}:${col}:${level}`,
       ),
-    setShelfPhotos: (id, sid, col, level, n) =>
-      mapCase(
-        id,
-        (bc) => mapSection(bc, sid, (s) => withShelfPhotos(s, col, level, n)),
-        `shelfphotos:${sid}:${col}:${level}`,
-      ),
-    addSection: (id, where) => mapCase(id, (bc) => addSection(bc, where)),
+    addSection: (id, where) => growCase(id, (bc) => addSection(bc, where)),
     removeSection: (id, sid) => {
       mapCase(id, (bc) => removeSection(bc, sid))
       // The selected cell may have been inside it. Dropping the shelf while
@@ -439,11 +433,14 @@ export default function MapScreen(props: MapScreenProps) {
 
   const addFloor = useCallback(() => {
     const n = doc.plan.floors.length + 1
-    const floor: Floor = { id: `f${n}`, name: `Floor ${n}` }
+    // ⚠ In the reader's language. The lab wrote "Floor 2" and the port kept
+    // it, so a Hebrew library grew English storeys — and the name is DATA:
+    // it goes to the server on the next push and stays there.
+    const floor: Floor = { id: `f${n}`, name: T.floor_n(n) }
     update((d) => ({ ...d, plan: { ...d.plan, floors: d.plan.floors.concat(floor) } }))
     setFloorPick(floor.id)
     setSelection(EMPTY)
-  }, [doc.plan.floors.length, update])
+  }, [doc.plan.floors.length, update, T])
 
   const renameFloor = useCallback(
     (id: string, name: string) =>
@@ -463,18 +460,12 @@ export default function MapScreen(props: MapScreenProps) {
   /** Refuses to take a storey down with the house still on it. Nothing here
    *  auto-removes: the count says what is in the way. */
   const removeFloor = useCallback(() => {
-    if (doc.plan.floors.length <= 1) return say('A plan has at least one floor.')
+    if (doc.plan.floors.length <= 1) return say(T.one_floor_at_least)
     const { rooms, cases } = floorContents(doc.plan, floorId)
-    if (rooms + cases > 0) {
-      const parts = [
-        rooms > 0 ? `${rooms} room${rooms > 1 ? 's' : ''}` : '',
-        cases > 0 ? `${cases} bookcase${cases > 1 ? 's' : ''}` : '',
-      ].filter(Boolean)
-      return say(`Not removed — ${parts.join(' and ')} still on this floor.`)
-    }
+    if (rooms + cases > 0) return say(T.floor_not_removed(rooms, cases))
     update((d) => ({ ...d, plan: { ...d.plan, floors: d.plan.floors.filter((f) => f.id !== floorId) } }))
     setFloorPick(doc.plan.floors.find((f) => f.id !== floorId)!.id)
-  }, [doc.plan, floorId, update, say])
+  }, [doc.plan, floorId, update, say, T])
 
   // --- underlay ------------------------------------------------------------
 
@@ -495,12 +486,12 @@ export default function MapScreen(props: MapScreenProps) {
           aspect: img.naturalWidth / Math.max(1, img.naturalHeight),
           opacity: 0.45,
         })
-        say('Traced sketch loaded — draw over it, then remove it.')
+        say(T.trace_loaded)
       }
-      img.onerror = () => say('That file did not decode as an image.')
+      img.onerror = () => say(T.trace_not_an_image)
       img.src = src
     }
-    reader.onerror = () => say('Could not read that file.')
+    reader.onerror = () => say(T.trace_unreadable)
     reader.readAsDataURL(file)
   }
 
@@ -618,12 +609,6 @@ export default function MapScreen(props: MapScreenProps) {
           setUnderlay(doc.plan.underlay ? { ...doc.plan.underlay, ...patch } : null)
         }
         onUnderlayClear={() => setUnderlay(null)}
-        onClear={() => {
-          if (confirm('Throw away this drawing?')) {
-            setHist((h) => commit(h, emptyDoc()))
-            setSelection(EMPTY)
-          }
-        }}
       />
 
       <main className="body">
@@ -658,16 +643,17 @@ export default function MapScreen(props: MapScreenProps) {
                 : null
             }
           />
-          <Hint tool={tool} overview={overview} />
+          <Hint tool={tool} overview={overview} T={T} />
           {/* ⚠ The overview had no visible exit: the way out was a menu item
               in the corner, and "I could not get rid of it no matter which
               button I clicked" is what that costs. A mode with no door on
               screen is a trap, however few keystrokes it really takes. */}
           {overview && (
             <div className="readonly-bar" role="status">
-              <span>Every floor — viewing only, nothing can be edited</span>
+              <span>{T.read_only_bar}</span>
               <button type="button" onClick={() => setAllFloors(false)}>
-                Back to {doc.plan.floors.find((f) => f.id === floorId)?.name ?? 'the plan'}
+                {T.back_to(
+                  doc.plan.floors.find((f) => f.id === floorId)?.name || T.the_plan)}
               </button>
             </div>
           )}
@@ -691,7 +677,7 @@ export default function MapScreen(props: MapScreenProps) {
         <div
           className="resizer"
           role="separator"
-          aria-label="drag to resize the settings panel"
+          aria-label={T.panel_resize}
           aria-orientation="vertical"
           onPointerDown={(e) => {
             // Same guard as the canvas: capture throws InvalidPointerId for a
@@ -716,7 +702,13 @@ export default function MapScreen(props: MapScreenProps) {
             window.addEventListener('pointerup', up)
           }}
         />
-        <aside className="side" style={{ width: sideWidth, flexBasis: sideWidth }}>
+        {/* ⚠ `map-side`, not `side`. `base.css` carries this app's exception to
+            `.rtl-safe` for the book row's end-aligned location column, and it
+            is written `:root[dir=rtl] .side .rtl-safe { text-align: left }` —
+            four class-weight terms, which no rule in this sheet can outrank.
+            The panel's Hebrew was measured aligning LEFT, and its English
+            RIGHT: exactly inverted, in both directions. */}
+        <aside className="map-side" style={{ width: sideWidth, flexBasis: sideWidth }}>
           <Inspector
             doc={doc}
             floorId={floorId}
@@ -733,20 +725,16 @@ export default function MapScreen(props: MapScreenProps) {
 
 const size = (v: number): number => Math.max(1, Math.round(v))
 
-const offset = (r: Rect): Rect => ({ ...r, x: r.x + PASTE_OFFSET, y: r.y + PASTE_OFFSET })
-
-function Hint({ tool, overview }: { tool: Tool; overview: boolean }) {
-  if (overview) {
-    return <p className="hint">Every floor, side by side. Double-click one to work on it.</p>
-  }
+function Hint({ tool, overview, T }: { tool: Tool; overview: boolean; T: MapText }) {
+  if (overview) return <p className="hint">{T.hint_overview}</p>
   const text =
     tool === 'room'
-      ? 'Drag a rectangle to draw a room. Its edges snap to the grid — and to any room already there, so rooms attach.'
+      ? T.hint_room
       : tool === 'case'
-        ? 'Drag a rectangle inside a room. It snaps flush against the wall, and the books face into the room.'
+        ? T.hint_case
         : tool === 'pan'
-          ? 'Drag to slide the plan. Scroll or pinch to zoom.'
-          : 'A room’s border moves it · inside a room draws a bookcase · outside draws a room · double-click to name · Ctrl+drag selects several.'
+          ? T.hint_pan
+          : T.hint_arrow
   return <p className="hint">{text}</p>
 }
 

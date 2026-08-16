@@ -410,6 +410,63 @@
         "title": "BookcaseDTO",
         "type": "object"
       },
+      "BookcaseDrawnDTO": {
+        "description": "What drawing a bookcase answers: the case **and the section it minted\nalongside it**.\n\n⚠ The section id is not a convenience. A create mints its ids on the\nserver while the document holds locally minted ones, and the client\ntranslates rather than rewrites (`app/web/src/map/push.ts`) — so an id it\nis never told stays local for the rest of the session. The elevation\naddresses that first section in the very next gesture: draw a case, press\n``+ column``, and without this field the request goes to\n``/map/sections/c3:s1`` and answers *404 no such section*. A previous fix\nclaimed to close that by reading ``section`` off this response, which did\nnot carry one.",
+        "properties": {
+          "floor_id": {
+            "title": "Floor Id",
+            "type": "string"
+          },
+          "front": {
+            "default": "S",
+            "description": "N/E/S/W — which face the books look out of, and therefore whose LEFT END is column 1. A fact about the furniture, so the UI's reading direction never moves it.",
+            "title": "Front",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "default": "",
+            "title": "Name",
+            "type": "string"
+          },
+          "order": {
+            "default": 0,
+            "maximum": 100000.0,
+            "minimum": -100000.0,
+            "title": "Order",
+            "type": "integer"
+          },
+          "place_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The room it stands in. Null is legal — a case drawn before its room is somewhere rather than nowhere, and it carries its own floor for that reason (§3.7).",
+            "title": "Place Id"
+          },
+          "rect": {
+            "$ref": "#/components/schemas/RectDTO"
+          },
+          "section": {
+            "$ref": "#/components/schemas/SectionDTO"
+          }
+        },
+        "required": [
+          "id",
+          "floor_id",
+          "rect",
+          "section"
+        ],
+        "title": "BookcaseDrawnDTO",
+        "type": "object"
+      },
       "BookcasePatch": {
         "properties": {
           "detach": {
@@ -4465,7 +4522,7 @@
     },
     "/api/v1/map/bookcases": {
       "post": {
-        "description": "Draw a bookcase — **and every shelf its first section describes.**\n\n§3.1: a drawn slot IS a Shelf. Ask for 2 columns of 5 and ten real, empty,\naddressed shelves come into existence, each carrying the section's depth\nas a COPY. That is the point of the route, not a side effect of it.",
+        "description": "Draw a bookcase — **and every shelf its first section describes.**\n\n§3.1: a drawn slot IS a Shelf. Ask for 2 columns of 5 and ten real, empty,\naddressed shelves come into existence, each carrying the section's depth\nas a COPY. That is the point of the route, not a side effect of it.\n\nThe answer names that first section, because the client addresses it in\nthe very next gesture and has no other way to learn its id — see\n:class:`BookcaseDrawnDTO`.",
         "operationId": "create_bookcase_api_v1_map_bookcases_post",
         "requestBody": {
           "content": {
@@ -4482,7 +4539,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BookcaseDTO"
+                  "$ref": "#/components/schemas/BookcaseDrawnDTO"
                 }
               }
             },

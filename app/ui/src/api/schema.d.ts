@@ -768,6 +768,10 @@ export interface paths {
          *     §3.1: a drawn slot IS a Shelf. Ask for 2 columns of 5 and ten real, empty,
          *     addressed shelves come into existence, each carrying the section's depth
          *     as a COPY. That is the point of the route, not a side effect of it.
+         *
+         *     The answer names that first section, because the client addresses it in
+         *     the very next gesture and has no other way to learn its id — see
+         *     :class:`BookcaseDrawnDTO`.
          */
         post: operations["create_bookcase_api_v1_map_bookcases_post"];
         delete?: never;
@@ -1909,6 +1913,50 @@ export interface components {
              */
             place_id?: string | null;
             rect: components["schemas"]["RectDTO"];
+        };
+        /**
+         * BookcaseDrawnDTO
+         * @description What drawing a bookcase answers: the case **and the section it minted
+         *     alongside it**.
+         *
+         *     ⚠ The section id is not a convenience. A create mints its ids on the
+         *     server while the document holds locally minted ones, and the client
+         *     translates rather than rewrites (`app/web/src/map/push.ts`) — so an id it
+         *     is never told stays local for the rest of the session. The elevation
+         *     addresses that first section in the very next gesture: draw a case, press
+         *     ``+ column``, and without this field the request goes to
+         *     ``/map/sections/c3:s1`` and answers *404 no such section*. A previous fix
+         *     claimed to close that by reading ``section`` off this response, which did
+         *     not carry one.
+         */
+        BookcaseDrawnDTO: {
+            /** Floor Id */
+            floor_id: string;
+            /**
+             * Front
+             * @description N/E/S/W — which face the books look out of, and therefore whose LEFT END is column 1. A fact about the furniture, so the UI's reading direction never moves it.
+             * @default S
+             */
+            front: string;
+            /** Id */
+            id: string;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /**
+             * Order
+             * @default 0
+             */
+            order: number;
+            /**
+             * Place Id
+             * @description The room it stands in. Null is legal — a case drawn before its room is somewhere rather than nowhere, and it carries its own floor for that reason (§3.7).
+             */
+            place_id?: string | null;
+            rect: components["schemas"]["RectDTO"];
+            section: components["schemas"]["SectionDTO"];
         };
         /** BookcasePatch */
         BookcasePatch: {
@@ -4350,7 +4398,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["BookcaseDTO"];
+                    "application/json": components["schemas"]["BookcaseDrawnDTO"];
                 };
             };
             /** @description Validation Error */

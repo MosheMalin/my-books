@@ -56,6 +56,7 @@ from app.api.deps import (
 )
 from app.api.dto import (
     BookcaseCreate,
+    BookcaseDrawnDTO,
     BookcaseDTO,
     BookcasePatch,
     DepthApplyDTO,
@@ -359,7 +360,7 @@ def delete_place(
 
 # --- bookcases ------------------------------------------------------------
 
-@router.post("/bookcases", response_model=BookcaseDTO,
+@router.post("/bookcases", response_model=BookcaseDrawnDTO,
              status_code=status.HTTP_201_CREATED)
 def create_bookcase(
     body: BookcaseCreate,
@@ -368,12 +369,16 @@ def create_bookcase(
     shelves: ShelfStore = Depends(get_shelf_store),
     ids: IdGen = Depends(get_id_gen),
     clock: Clock = Depends(get_clock),
-) -> BookcaseDTO:
+) -> BookcaseDrawnDTO:
     """Draw a bookcase — **and every shelf its first section describes.**
 
     §3.1: a drawn slot IS a Shelf. Ask for 2 columns of 5 and ten real, empty,
     addressed shelves come into existence, each carrying the section's depth
     as a COPY. That is the point of the route, not a side effect of it.
+
+    The answer names that first section, because the client addresses it in
+    the very next gesture and has no other way to learn its id — see
+    :class:`BookcaseDrawnDTO`.
     """
     with _translated():
         case = new_bookcase(id=ids.new_id(), library_id=library.id,
@@ -390,7 +395,7 @@ def create_bookcase(
         drawn = draw_bookcase(store, shelves, library, case, ids=ids,
                               clock=clock, columns=body.columns,
                               levels=body.levels, depth=body.depth)
-    return BookcaseDTO.of(drawn.bookcase)
+    return BookcaseDrawnDTO.of_drawn(drawn.bookcase, drawn.sections[0])
 
 
 @router.patch("/bookcases/{case_id}", response_model=BookcaseDTO)

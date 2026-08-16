@@ -47,7 +47,6 @@ type Props = {
   onUnderlay: (file: File) => void
   onUnderlayChange: (patch: Partial<Underlay>) => void
   onUnderlayClear: () => void
-  onClear: () => void
 }
 
 /**
@@ -111,7 +110,7 @@ export function Toolbar(props: Props) {
             aria-label={t.label}
             disabled={props.readOnly && t.tool !== 'pan'}
             className={`icon${props.tool === t.tool && !props.readOnly ? ' on' : ''}`}
-            title={props.readOnly ? 'Viewing every floor — nothing can be drawn' : t.hint}
+            title={props.readOnly ? T.no_drawing_here : t.hint}
             onClick={() => props.onTool(t.tool)}
           >
             <t.icon />
@@ -120,12 +119,18 @@ export function Toolbar(props: Props) {
       </div>
 
       <div className="group">
+        {/* ⚠ *Clear the plan* is GONE, not disabled. In the lab it emptied
+            `localStorage`; here the same gesture diffs to removing every
+            room, every bookcase and every storey of the household's real map
+            — and each case removal empties its slots first, which detaches
+            the shelves the books actually stand on. One `confirm()` inherited
+            from a throwaway app is not the door that belongs in front of
+            that. If the owner ever wants it back it needs its own screen: the
+            counts it would touch, and how many of those shelves hold books,
+            BEFORE the call — the split P6.2 already reports. */}
         <Menu
           label={T.menu_plan}
-          items={[
-            { label: T.reload, onSelect: props.onReload },
-            { label: T.clear_plan, danger: true, onSelect: props.onClear },
-          ]}
+          items={[{ label: T.reload, onSelect: props.onReload }]}
         />
         <Menu
           label={T.menu_edit}
@@ -176,38 +181,42 @@ export function Toolbar(props: Props) {
       {props.underlay && (
         <div className="group">
           <label className="slider">
-            <span>fade</span>
+            <span>{T.trace_fade_short}</span>
             <input
               type="range"
               min={5}
               max={100}
               value={Math.round(props.underlay.opacity * 100)}
-              aria-label="underlay opacity"
+              aria-label={T.trace_opacity}
               onChange={(e) => props.onUnderlayChange({ opacity: Number(e.target.value) / 100 })}
             />
           </label>
           <label className="slider">
-            <span>size</span>
+            <span>{T.trace_size_short}</span>
             <input
               type="range"
               min={10}
               max={200}
               value={Math.round(props.underlay.scale)}
-              aria-label="underlay size"
+              aria-label={T.trace_size}
               onChange={(e) => props.onUnderlayChange({ scale: Number(e.target.value) })}
             />
           </label>
-          <button type="button" onClick={props.onUnderlayClear} aria-label="remove the underlay">
+          <button type="button" onClick={props.onUnderlayClear} aria-label={T.trace_remove}>
             ✕
           </button>
         </div>
       )}
 
       <div className="group right">
+        {/* ⚠ The lab's tooltip named browser storage and a *File ▸ Save to
+            file* menu; the port kept it after deleting the menu, so the one
+            place that explains saving pointed at a control that no longer
+            exists. Neither half was true here: the plan is in the library. */}
         <span
           className={`saved saved-${props.saved}`}
           role="status"
-          title="Every change is written to this browser's storage immediately. Clearing site data loses it — File ▸ Save to file is the copy that survives."
+          title={T.saved_hint}
         >
           {savedText(T)[props.saved]}
         </span>

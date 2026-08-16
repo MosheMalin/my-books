@@ -65,15 +65,19 @@ export function FloorBadge(props: Props) {
           onDoubleClick={() => !props.allFloors && setEditing(true)}
           title={props.allFloors ? undefined : T.rename_floor_hint}
         >
-          {props.allFloors ? 'All floors' : current?.name || 'Floor'}
+          {props.allFloors ? T.all_floors : current?.name || T.floor}
         </span>
       )}
 
+      {/* ⚠ The menu is a bare chevron, so it needs a name of its own: with an
+          empty label `Menu` falls back to `title`, and neither was set — the
+          only control on the board announced nothing at all. */}
       <Menu
         label=""
+        title={T.floor_menu}
         items={[
           ...props.floors.map((f) => ({
-            label: f.name || 'Floor',
+            label: f.name || T.floor,
             checked: !props.allFloors && f.id === props.floorId,
             onSelect: () => {
               props.onAllFloors(false)
@@ -81,19 +85,22 @@ export function FloorBadge(props: Props) {
             },
           })),
           {
-            label: 'All floors, side by side',
+            label: T.all_floors_long,
             checked: props.allFloors,
             disabled: props.floors.length <= 1,
             onSelect: () => props.onAllFloors(!props.allFloors),
           },
-          { label: 'Add a floor', onSelect: props.onAdd },
+          { label: T.add_floor, onSelect: props.onAdd },
           {
-            label: 'Rename this floor',
+            // Named for THIS floor: two controls announcing the same
+            // accessible name collide, and last time the colliding pair
+            // included rename — the one that writes (CLAUDE.md).
+            label: T.rename_floor(current?.name || T.floor),
             disabled: props.allFloors,
             onSelect: () => setEditing(true),
           },
           {
-            label: 'Remove this floor',
+            label: T.remove_floor(current?.name || T.floor),
             disabled: props.floors.length <= 1 || props.allFloors,
             danger: true,
             onSelect: props.onRemove,
