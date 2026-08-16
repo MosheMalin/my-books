@@ -293,6 +293,44 @@ def test_the_source_drawing_moves_and_stands_beside_the_targets():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_every_library_scoped_table_is_in_the_leftover_check():
+    """The tuple and the move loop must not drift apart, and only ONE
+    direction was loud.
+
+    Dropping a table from the MOVE aborts the merge — that half works. But
+    dropping it from `_LIBRARY_TABLES` while still moving it is silent, and
+    that is the direction that matters next time somebody adds a table:
+    the leftover check is the thing that catches a move nobody wrote.
+
+    So compare the tuple against the schema itself. Every table with a
+    `library_id` column has to be in it, and a new one fails here rather than
+    in six months as an orphan on the owner's own file.
+    """
+    from app.adapters.merge_library import _LIBRARY_TABLES
+
+    w, tmp = _world()
+    try:
+        conn = sqlite3.connect(str(w.db))
+        try:
+            scoped = set()
+            for (name,) in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ):
+                columns = {r[1] for r in conn.execute(
+                    f"PRAGMA table_info({name})")}
+                if "library_id" in columns:
+                    scoped.add(name)
+        finally:
+            conn.close()
+        assert scoped == set(_LIBRARY_TABLES), (
+            f"_LIBRARY_TABLES disagrees with the schema — missing "
+            f"{sorted(scoped - set(_LIBRARY_TABLES))}, stale "
+            f"{sorted(set(_LIBRARY_TABLES) - scoped)}"
+        )
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_two_libraries_of_different_customers_are_never_merged():
     """§4.1's boundary, over the most destructive tool in the product.
 

@@ -76,6 +76,7 @@ from app.ports.store import (
     BookSort,
     DuplicateBookKey,
     DuplicateCaptureSlot,
+    DuplicateSectionOrdinal,
     DuplicateShelfSlot,
     ShelfNotEmpty,
     UnknownShelf,
@@ -108,6 +109,30 @@ def _open(path: Path) -> Iterator[sqlite3.Connection]:
         yield conn
     finally:
         conn.close()
+
+
+@contextmanager
+def _immediate(conn: sqlite3.Connection) -> Iterator[None]:
+    """One EXCLUSIVE transaction around a read-then-write.
+
+    ``with conn:`` opens a DEFERRED one, which takes the write lock only at
+    the first write — so a check and the delete it authorises can be
+    interleaved by another connection. That is fine for a single statement and
+    wrong for *"count what is standing here, then remove the furniture"*.
+
+    Same shape as the migration runner's own ``BEGIN IMMEDIATE``, and for the
+    same reason: the re-read has to happen under the lock.
+
+    ⚠ A `NotEmpty` raised inside is a refusal, not a failure — the rollback is
+    still right, because nothing should have been written.
+    """
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        yield
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
 
 
 class _SqliteStore:
@@ -294,14 +319,18 @@ class SqliteBookStore(_SqliteStore):
         return BookPage(items=tuple(hits[offset: offset + limit]),
                         total=len(hits), offset=offset, limit=limit)
 
-    def shelf_ids_in_use(self, library: LibraryRef) -> frozenset[str]:
+    def deepest_copy_depth(self, library: LibraryRef) -> dict[str, int]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT DISTINCT shelf_id FROM copies"
-                " WHERE library_id = ? AND shelf_id IS NOT NULL",
+                # COALESCE because an unlocated copy has no depth (v4's rule),
+                # and a copy WITH a shelf but no depth predates nothing — it
+                # is simply the front row.
+                "SELECT shelf_id, MAX(COALESCE(depth, 1)) FROM copies"
+                " WHERE library_id = ? AND shelf_id IS NOT NULL"
+                " GROUP BY shelf_id",
                 (library.id,),
             ).fetchall()
-        return frozenset(r[0] for r in rows)
+        return {r[0]: int(r[1]) for r in rows}
 
     def count(self, library: LibraryRef) -> int:
         with self._connect() as conn:
@@ -1392,11 +1421,26 @@ class SqliteMapStore(_SqliteStore):
         with self._connect() as conn:
             if not self._exists(conn, "sites", library, site_id):
                 return False
-            floors = self._count(
-                conn, "SELECT COUNT(*) FROM floors WHERE library_id = ? AND"
-                " site_id = ?", (library.id, site_id))
-            check_removable(f"site {site_id}",
-                            GroupingContents(floors=floors))
+            # ⚠ Measured at review: refusing a site that holds ANY floor made
+            # a site with one empty storey undeletable, because `delete_floor`
+            # refuses the last storey of a site. "The parents' place", drawn
+            # by mistake, was permanent. So the refusal is about what the
+            # floors HOLD, and empty storeys leave with their site — a floor
+            # with no rooms and no bookcases is not something "nothing
+            # auto-removes" is protecting.
+            on_my_floors = (
+                " IN (SELECT id FROM floors WHERE library_id = ?"
+                " AND site_id = ?)")
+            check_removable(f"site {site_id}", GroupingContents(
+                places=self._count(
+                    conn, "SELECT COUNT(*) FROM places WHERE library_id = ?"
+                    " AND floor_id" + on_my_floors,
+                    (library.id, library.id, site_id)),
+                bookcases=self._count(
+                    conn, "SELECT COUNT(*) FROM bookcases WHERE library_id = ?"
+                    " AND floor_id" + on_my_floors,
+                    (library.id, library.id, site_id)),
+            ))
             total = self._count(
                 conn, "SELECT COUNT(*) FROM sites WHERE library_id = ?",
                 (library.id,))
@@ -1405,6 +1449,9 @@ class SqliteMapStore(_SqliteStore):
                     f"site {site_id} is the only one; a drawing has somewhere "
                     f"to be")
             with conn:
+                conn.execute(
+                    "DELETE FROM floors WHERE library_id = ? AND site_id = ?",
+                    (library.id, site_id))
                 conn.execute("DELETE FROM sites WHERE id = ? AND library_id = ?",
                              (site_id, library.id))
             return True
@@ -1542,7 +1589,13 @@ class SqliteMapStore(_SqliteStore):
         return _load_bookcase(row) if row else None
 
     def delete_bookcase(self, library: LibraryRef, bookcase_id: str) -> bool:
-        with self._connect() as conn:
+        # ⚠ The count and the DELETE are ONE exclusive transaction. A review
+        # forced the interleaving on the deferred version: a shelf inserted
+        # into a slot between the two, and the delete came out as a raw
+        # `sqlite3.IntegrityError` from the sections cascade — nothing was
+        # destroyed (the shelf's own FK held), but a router would answer 500
+        # where it means 409.
+        with self._connect() as conn, _immediate(conn):
             if not self._exists(conn, "bookcases", library, bookcase_id):
                 return False
             standing = self._count(
@@ -1555,13 +1608,12 @@ class SqliteMapStore(_SqliteStore):
                 raise NotEmpty(
                     f"{standing} shelf/shelves still stand in bookcase "
                     f"{bookcase_id}; empty the slots first (MAP_PLAN §3.1)")
-            with conn:
-                # Sections cascade from the bookcase (a section is not
-                # addressable on its own); the shelves were checked above,
-                # because they are not the bookcase's to destroy.
-                conn.execute(
-                    "DELETE FROM bookcases WHERE id = ? AND library_id = ?",
-                    (bookcase_id, library.id))
+            # Sections cascade from the bookcase (a section is not addressable
+            # on its own); the shelves were checked above, because they are
+            # not the bookcase's to destroy.
+            conn.execute(
+                "DELETE FROM bookcases WHERE id = ? AND library_id = ?",
+                (bookcase_id, library.id))
             return True
 
     # --- sections ---------------------------------------------------------
@@ -1573,26 +1625,39 @@ class SqliteMapStore(_SqliteStore):
                 raise UnknownParent(
                     f"no bookcase {section.bookcase_id!r} in library "
                     f"{library.id!r}")
-            with conn:
-                conn.execute(
-                    'INSERT INTO sections (id, library_id, bookcase_id, ordinal,'
-                    ' column_levels, default_levels, default_depth)'
-                    ' VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET'
-                    ' bookcase_id=excluded.bookcase_id, ordinal=excluded.ordinal,'
-                    ' column_levels=excluded.column_levels,'
-                    ' default_levels=excluded.default_levels,'
-                    ' default_depth=excluded.default_depth'
-                    ' WHERE sections.library_id = excluded.library_id',
-                    (section.id, library.id, section.bookcase_id,
-                     section.ordinal, json.dumps(list(section.column_levels)),
-                     section.default_levels, section.default_depth))
+            try:
+                with conn:
+                    conn.execute(
+                        'INSERT INTO sections (id, library_id, bookcase_id,'
+                        ' ordinal, column_levels, default_levels,'
+                        ' default_depth) VALUES (?,?,?,?,?,?,?)'
+                        ' ON CONFLICT(id) DO UPDATE SET'
+                        ' bookcase_id=excluded.bookcase_id,'
+                        ' ordinal=excluded.ordinal,'
+                        ' column_levels=excluded.column_levels,'
+                        ' default_levels=excluded.default_levels,'
+                        ' default_depth=excluded.default_depth'
+                        ' WHERE sections.library_id = excluded.library_id',
+                        (section.id, library.id, section.bookcase_id,
+                         section.ordinal,
+                         json.dumps(list(section.column_levels)),
+                         section.default_levels, section.default_depth))
+            except sqlite3.IntegrityError as exc:
+                # By columns, like every other unique index in this file.
+                if "sections.bookcase_id" in str(exc):
+                    raise DuplicateSectionOrdinal(
+                        f"another section is already number {section.ordinal} "
+                        f"of bookcase {section.bookcase_id} (MAP_PLAN §3.6)"
+                    ) from exc
+                raise
 
     def get_section(self, library: LibraryRef, section_id: str) -> Section | None:
         row = self._one("sections", library, section_id)
         return _load_section(row) if row else None
 
     def delete_section(self, library: LibraryRef, section_id: str) -> bool:
-        with self._connect() as conn:
+        # One exclusive transaction, for the reason `delete_bookcase` states.
+        with self._connect() as conn, _immediate(conn):
             row = conn.execute(
                 "SELECT * FROM sections WHERE id = ? AND library_id = ?",
                 (section_id, library.id)).fetchone()
@@ -1613,10 +1678,9 @@ class SqliteMapStore(_SqliteStore):
                 raise NotEmpty(
                     f"{standing} shelf/shelves still stand in section "
                     f"{section_id}; empty the slots first (MAP_PLAN §3.1)")
-            with conn:
-                conn.execute(
-                    "DELETE FROM sections WHERE id = ? AND library_id = ?",
-                    (section_id, library.id))
+            conn.execute(
+                "DELETE FROM sections WHERE id = ? AND library_id = ?",
+                (section_id, library.id))
             return True
 
     # --- small shared helpers ---------------------------------------------
@@ -1900,9 +1964,13 @@ def _load_book(conn: sqlite3.Connection, row: sqlite3.Row) -> Book:
 
 
 def _load_shelf(row: sqlite3.Row) -> Shelf:
-    # All three address columns or none: a half-addressed shelf is not a
-    # partial answer, it is a corrupt one, so it reads as UNADDRESSED rather
-    # than as "column 2 of nowhere".
+    # All three address columns or none. This is a CRASH GUARD, not a
+    # semantic choice — said plainly because the first comment here claimed
+    # the row "reads as unaddressed rather than as column 2 of nowhere", and
+    # a row with a section but a NULL col would in fact raise `TypeError`
+    # out of `ShelfAddress` without it. The state is unreachable through
+    # this store (all three are written together, and the partial unique
+    # index keys on all three); the guard is for a file edited by hand.
     section_id = row["section_id"]
     col, level = row["col"], row["level"]
     address = (

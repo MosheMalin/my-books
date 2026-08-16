@@ -1,0 +1,94 @@
+{
+  "_comment": [
+    "A plan in the map lab's EXPORTED shape (planning/map-lab/src/core/persist.ts,",
+    "FORMAT_VERSION 4), hand-authored for P6.1 because the owner called P6.0's",
+    "exit and asked to start from empty (2026-08-16).",
+    "",
+    "It exists to pin the two places where the lab's document and the product's",
+    "domain deliberately DISAGREE, so P6.3 ports the editor instead of",
+    "discovering them:",
+    "",
+    "  1. col and level are 0-BASED here and 1-based in ShelfAddress. The domain",
+    "     REFUSES a 0 rather than re-basing it silently, so the importer adds one",
+    "     and an off-by-one raises instead of filing a book one shelf over.",
+    "  2. section ids are '<caseId>:sN' by array position, and persist.ts REBUILDS",
+    "     them on every import on the stated grounds that nothing outside the",
+    "     document refers to one. That stopped being true: shelves.section_id",
+    "     refers to one, from another table, behind a RESTRICT foreign key.",
+    "",
+    "Two storeys, because one storey cannot show that rooms are found only on",
+    "their own (MAP_PLAN 3.7); a bookcase with two sections, because a plain one",
+    "would not exercise the address that prints a section; a ragged column,",
+    "because equal columns make several rules unobservable."
+  ],
+  "format": "booksnap.map-lab.plan",
+  "version": 4,
+  "plan": {
+    "floors": [
+      { "id": "f1", "name": "Ground floor" },
+      { "id": "f2", "name": "Upstairs" }
+    ],
+    "rooms": [
+      { "id": "r1", "name": "Living room", "floorId": "f1",
+        "rect": { "x": 0, "y": 0, "w": 12, "h": 9 } },
+      { "id": "r2", "name": "Hall", "floorId": "f1",
+        "rect": { "x": 12, "y": 0, "w": 4, "h": 9 } },
+      { "id": "r3", "name": "Study", "floorId": "f2",
+        "rect": { "x": 0, "y": 0, "w": 8, "h": 7 } }
+    ],
+    "cases": [
+      {
+        "id": "c1", "name": "The big one", "roomId": "r1", "floorId": "f1",
+        "front": "S",
+        "rect": { "x": 0, "y": 0, "w": 6, "h": 1 },
+        "sections": [
+          {
+            "columnLevels": [5, 5, 3],
+            "defaultLevels": 5,
+            "defaultDepth": 2,
+            "shelves": [
+              { "col": 0, "level": 0, "depth": 2, "photos": 1 },
+              { "col": 0, "level": 1, "depth": 2, "photos": 0 },
+              { "col": 2, "level": 2, "depth": 1, "photos": 0 }
+            ]
+          },
+          {
+            "columnLevels": [2, 2],
+            "defaultLevels": 2,
+            "defaultDepth": 1,
+            "shelves": [
+              { "col": 0, "level": 0, "depth": 1, "photos": 0 }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "c2", "name": "Hall shelf", "roomId": "r2", "floorId": "f1",
+        "front": "W",
+        "rect": { "x": 15, "y": 2, "w": 1, "h": 4 },
+        "sections": [
+          {
+            "columnLevels": [4],
+            "defaultLevels": 4,
+            "defaultDepth": 1,
+            "shelves": []
+          }
+        ]
+      },
+      {
+        "id": "c3", "name": "", "roomId": null, "floorId": "f2",
+        "front": "E",
+        "rect": { "x": 3, "y": 3, "w": 1, "h": 3 },
+        "sections": [
+          {
+            "columnLevels": [3],
+            "defaultLevels": 3,
+            "defaultDepth": 1,
+            "shelves": []
+          }
+        ]
+      }
+    ],
+    "underlay": null
+  }
+}

@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Protocol
+from typing import Mapping, Protocol
 
 from app.domain import Book, Capture, LibraryRef, Read, Shelf, ShelfAddress, Status
 
@@ -89,6 +89,17 @@ class UnknownParent(StoreError):
     raises it too: a shelf's address names a section, and a section is not
     this port's aggregate. ``app.ports.map`` imports it from here, which is
     the direction that has no cycle in it.
+    """
+
+
+class DuplicateSectionOrdinal(StoreError):
+    """Two sections of one bookcase claiming the same number (MAP_PLAN §3.6).
+
+    ``ordinal`` is not decoration — it is what an address PRINTS. Two
+    sections both at 1 make *"section 1, column 2, level 3"* name two
+    different shelves, and the owner is sent to the wrong half of the
+    furniture. Declared as a unique index and raised by name so the API can
+    say which number is taken.
     """
 
 
@@ -231,20 +242,23 @@ class BookStore(Protocol):
         whole library: an empty search box is the caller's business.
         """
 
-    def shelf_ids_in_use(self, library: LibraryRef) -> frozenset[str]:
-        """Every shelf id at least one copy currently stands on (P6.1).
+    def deepest_copy_depth(self, library: LibraryRef) -> Mapping[str, int]:
+        """Per shelf, the deepest depth a copy of a book stands at (P6.1).
 
-        The question the map has to be able to ask before it erases a slot:
-        *is anything standing here?* Captures are the other half and
-        ``ShelfStore`` already answers those; a shelf can hold books with no
-        photograph at all (a MANUAL entry, or a photo deleted later), so
-        asking only about captures would call an occupied shelf empty and
-        delete it.
+        ONE method rather than two, because the map asks two questions that
+        have one answer: *is anything standing here?* (the shelf id is a key)
+        and *how far back does it stand?* (the value). Two methods would be
+        two queries that can disagree, and the second question is the one
+        whose wrong answer un-declares a book's depth.
 
-        A set rather than a per-shelf call because the caller is redrawing a
-        bookcase and needs the answer for twenty shelves at once — twenty
-        round trips is how this becomes the query that makes the editor feel
-        slow.
+        Captures are the other half and ``ShelfStore`` answers those; a shelf
+        can hold books with **no photograph at all** — a MANUAL entry, or a
+        photo deleted later — so asking only about captures calls an occupied
+        shelf empty and hands it to the delete branch.
+
+        A mapping rather than a per-shelf call because the caller is redrawing
+        a bookcase and needs the answer for twenty shelves at once. Shelves
+        with nothing on them are simply absent.
         """
 
     def count(self, library: LibraryRef) -> int:

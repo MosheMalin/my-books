@@ -49,37 +49,44 @@ from app.domain import (
 )
 from app.ports import Clock, IdGen
 from app.ports.map import MapStore
-from app.ports.store import BookStore, ShelfStore
+from app.ports.store import BookStore, ShelfNotEmpty, ShelfStore
 
 
-def occupied_shelf_ids(
+def deepest_occupied_depths(
     shelves: ShelfStore,
     books: BookStore,
     library: LibraryRef,
     candidates: Iterable[Shelf],
-) -> tuple[str, ...]:
-    """Which of these shelves are holding something — the ONE way to ask.
+) -> dict[str, int]:
+    """How far back something actually stands on each of these shelves.
 
-    ⚠ Both halves, and the second one is the one a reasonable person leaves
+    ⚠ **Both halves**, and the second is the one a reasonable person leaves
     out. **Captures** are the photographic record a re-read diffs against
-    (§5.6), and **copies** are the books themselves — a shelf can hold books
-    with no photograph at all (a MANUAL entry, or a photo deleted later), so
-    asking only about captures calls an occupied shelf empty and hands it to
-    the delete branch of :func:`app.domain.plan_slot_removal`. That is the
-    review finding this function exists to make unrepeatable: the answer is
-    computed here, once, instead of at each call site.
+    (§5.6); **copies** are the books themselves — a shelf can hold books with
+    no photograph at all (a MANUAL entry, or a photo deleted later), so asking
+    only about captures calls an occupied shelf empty.
 
-    Every function below takes ``occupied_ids`` as a REQUIRED keyword for the
-    same reason. A default of "nothing is occupied" is a default of "delete
-    everything", and it would be silently correct in every test that happens
-    to use empty shelves.
+    A shelf with nothing on it is simply absent, which is what makes this the
+    answer to both questions the map asks: ``id in result`` is *is anything
+    standing here?* and ``result[id]`` is *how far back?* Two separate
+    queries could disagree, and this is the pair whose disagreement either
+    deletes a shelf or un-declares a book's depth.
+
+    Every destructive function below computes this ITSELF rather than taking
+    it as an argument. A required argument stops a caller FORGETTING; it does
+    not stop the answer being stale by the time it is used, and a review
+    measured that window closing on a book added from the phone while the map
+    was open on a laptop.
     """
-    on_a_copy = books.shelf_ids_in_use(library)
-    return tuple(
-        shelf.id
-        for shelf in candidates
-        if shelf.id in on_a_copy or shelves.list_captures(library, shelf.id)
-    )
+    from_copies = books.deepest_copy_depth(library)
+    deepest: dict[str, int] = {}
+    for shelf in candidates:
+        depth = from_copies.get(shelf.id, 0)
+        for capture in shelves.list_captures(library, shelf.id):
+            depth = max(depth, capture.depth)
+        if depth:
+            deepest[shelf.id] = depth
+    return deepest
 
 
 @dataclass(frozen=True)
@@ -138,52 +145,54 @@ def draw_bookcase(
 def apply_slot_change(
     map_store: MapStore,
     shelves: ShelfStore,
+    books: BookStore,
     library: LibraryRef,
     change: SlotChange,
     *,
     ids: IdGen,
     clock: Clock,
-    occupied_ids: tuple[str, ...],
 ) -> SlotRemoval:
-    """Persist a section edit: the grid, the new shelves, and the lost ones.
+    """Persist a section edit: the lost shelves, the grid, and the new ones.
 
-    The order matters and is not arbitrary. The **section is written first**,
-    so a crash between the two halves leaves slots without shelves — which
-    reads as an unphotographed bookcase, a state the model already allows and
-    every screen already handles. The other order leaves shelves addressed to
-    slots that no longer exist, which is a shelf nothing can render.
+    ⚠ **Removals first, then the section, then the additions**, and the order
+    is the whole safety of the function. A review measured the previous one
+    (section first): shrinking a column wrote the smaller grid, the removal
+    loop then raised, and the shelf left behind was addressed to a slot that
+    no longer existed — *"a shelf nothing can render"*, which is what the old
+    docstring claimed the order was avoiding. Worse, it did not heal: the
+    retry recomputed ``dropped`` from the already-shrunk section, got nothing,
+    and the bookcase became permanently undeletable because ``delete_bookcase``
+    still counted the stray.
 
-    ``occupied_ids`` is REQUIRED, and :func:`occupied_shelf_ids` is how it is
-    computed — a default would mean "nothing is occupied", which is "delete
-    everything", and it would read as correct in every test using empty
-    shelves.
+    This order is self-healing in both directions. A failure before the
+    section is written leaves the drawing exactly as it was, so the retry
+    computes the SAME change and finishes it; a failure after it leaves slots
+    with no shelves, which is an unphotographed bookcase — a state the model
+    already allows and every screen already handles.
+
+    Occupancy is computed HERE, immediately before the destructive half,
+    rather than taken as an argument. A required argument stops a caller
+    forgetting; it does not stop the answer going stale between the request
+    and the write, and the measured case was a book added from the phone
+    while the map was open on a laptop.
     """
-    map_store.save_section(library, change.section)
-    _fill(shelves, library, change.section, change.added, ids=ids, clock=clock)
     losing = [
         shelf
         for address in change.dropped
         if (shelf := shelves.get_shelf_at(library, address)) is not None
     ]
-    removal = plan_slot_removal(losing, occupied_ids=occupied_ids)
-    by_id = {s.id: s for s in losing}
-    for shelf_id in removal.detached:
-        # It keeps its label, its photos and its books. What it loses is a
-        # location the owner has just erased from the drawing — which is a
-        # smaller loss than the shelf, and the only one that was asked for.
-        shelves.save_shelf(library, unbind_shelf(by_id[shelf_id]))
-    for shelf_id in removal.deleted:
-        shelves.delete_shelf(library, shelf_id)
+    removal = _release(shelves, books, library, losing)
+    map_store.save_section(library, change.section)
+    _fill(shelves, library, change.section, change.added, ids=ids, clock=clock)
     return removal
 
 
 def clear_bookcase_slots(
     map_store: MapStore,
     shelves: ShelfStore,
+    books: BookStore,
     library: LibraryRef,
     bookcase_id: str,
-    *,
-    occupied_ids: tuple[str, ...],
 ) -> SlotRemoval:
     """Empty every slot of a bookcase, so the case can then be deleted.
 
@@ -193,26 +202,84 @@ def clear_bookcase_slots(
     emptied the slots itself would be the silent data-loss path MAP_PLAN §2
     predicted for this exact item.
     """
+    return _release(shelves, books, library,
+                    _standing_in_bookcase(map_store, shelves, library,
+                                          bookcase_id))
+
+
+def clear_section_slots(
+    shelves: ShelfStore,
+    books: BookStore,
+    library: LibraryRef,
+    section_id: str,
+) -> SlotRemoval:
+    """Empty ONE section's slots, so that section can then be deleted.
+
+    Separate from :func:`clear_bookcase_slots` because they are different
+    requests: a bookcase with a base and a hutch has two sections, and
+    implementing *"remove the hutch"* by clearing the case would detach or
+    delete every shelf in the base as well.
+    """
+    return _release(shelves, books, library,
+                    shelves.list_shelves_in_section(library, section_id))
+
+
+def _standing_in_bookcase(
+    map_store: MapStore,
+    shelves: ShelfStore,
+    library: LibraryRef,
+    bookcase_id: str,
+) -> list[Shelf]:
     snapshot = map_store.load_map(library)
-    mine = [s for s in snapshot.sections if s.bookcase_id == bookcase_id]
     standing: list[Shelf] = []
-    for section in mine:
-        standing.extend(shelves.list_shelves_in_section(library, section.id))
-    removal = plan_slot_removal(standing, occupied_ids=occupied_ids)
-    by_id = {s.id: s for s in standing}
+    for section in snapshot.sections:
+        if section.bookcase_id == bookcase_id:
+            standing.extend(
+                shelves.list_shelves_in_section(library, section.id))
+    return standing
+
+
+def _release(
+    shelves: ShelfStore,
+    books: BookStore,
+    library: LibraryRef,
+    losing: Iterable[Shelf],
+) -> SlotRemoval:
+    """Let go of a set of slots: detach what is occupied, delete what is not.
+
+    The one place either half happens, so the rule cannot be half-applied by
+    one caller and not another.
+    """
+    losing = list(losing)
+    occupied = deepest_occupied_depths(shelves, books, library, losing)
+    removal = plan_slot_removal(losing, occupied_ids=occupied.keys())
+    by_id = {s.id: s for s in losing}
     for shelf_id in removal.detached:
+        # It keeps its label, its photos and its books. What it loses is a
+        # location the owner has just erased from the drawing — a smaller loss
+        # than the shelf, and the only one that was asked for.
         shelves.save_shelf(library, unbind_shelf(by_id[shelf_id]))
+    deleted: list[str] = []
+    detached = list(removal.detached)
     for shelf_id in removal.deleted:
-        shelves.delete_shelf(library, shelf_id)
-    return removal
+        try:
+            shelves.delete_shelf(library, shelf_id)
+            deleted.append(shelf_id)
+        except ShelfNotEmpty:
+            # It gained a photograph after the occupancy query and before the
+            # delete. The store is right to refuse, and the planner's own rule
+            # says an occupied shelf is DETACHED — so do that instead of
+            # propagating, which is what left a half-applied edit behind.
+            shelves.save_shelf(library, unbind_shelf(by_id[shelf_id]))
+            detached.append(shelf_id)
+    return SlotRemoval(deleted=tuple(deleted), detached=tuple(detached))
 
 
 def apply_depth_default(
     shelves: ShelfStore,
+    books: BookStore,
     library: LibraryRef,
     section: Section,
-    *,
-    deepest_occupied: dict[str, int] | None = None,
 ) -> tuple[Shelf, ...]:
     """Push a section's depth default onto its existing shelves.
 
@@ -222,11 +289,20 @@ def apply_depth_default(
     deeper so the screen can say so rather than silently doing less than it
     was asked.
 
+    ⚠ The occupancy is computed HERE, from both stores, for the reason
+    :func:`apply_slot_change` gives — and this is the clamp whose absence a
+    review measured directly: a copy recorded at depth 2 of a shelf that now
+    declares one row, which ``Shelf.check_depth`` then refuses and no foreign
+    key can see.
+
     Returns the shelves that were KEPT deeper.
     """
     standing = shelves.list_shelves_in_section(library, section.id)
-    result = apply_default_depth(section, standing,
-                                 deepest_occupied=deepest_occupied)
+    result = apply_default_depth(
+        section, standing,
+        deepest_occupied=deepest_occupied_depths(shelves, books, library,
+                                                 standing),
+    )
     for shelf in result.shelves:
         shelves.save_shelf(library, shelf)
     return result.kept

@@ -51,6 +51,7 @@ from app.ports.store import (
     BookSort,
     DuplicateBookKey,
     DuplicateCaptureSlot,
+    DuplicateSectionOrdinal,
     DuplicateShelfSlot,
     ShelfNotEmpty,
     UnknownShelf,
@@ -151,13 +152,16 @@ class MemoryBookStore:
         return BookPage(items=tuple(hits[offset: offset + limit]),
                         total=len(hits), offset=offset, limit=limit)
 
-    def shelf_ids_in_use(self, library: LibraryRef) -> frozenset[str]:
-        return frozenset(
-            copy.shelf_id
-            for book in self._shelf(library).values()
-            for copy in book.copies
-            if copy.shelf_id
-        )
+    def deepest_copy_depth(self, library: LibraryRef) -> dict[str, int]:
+        deepest: dict[str, int] = {}
+        for book in self._shelf(library).values():
+            for copy in book.copies:
+                if not copy.shelf_id:
+                    continue
+                depth = copy.depth or 1
+                if depth > deepest.get(copy.shelf_id, 0):
+                    deepest[copy.shelf_id] = depth
+        return deepest
 
     def count(self, library: LibraryRef) -> int:
         return len(self._shelf(library))
@@ -204,9 +208,19 @@ class MemoryShelfStore:
         # contract suite would be asserting SQLite's behaviour rather than
         # the spec's.
         if shelf.address is not None:
-            if (self._sections is not None
-                    and self._sections.get_section(
-                        library, shelf.address.section_id) is None):
+            # ⚠ FAIL CLOSED when unbound. This guard used to be conditional on
+            # the binding, so a bare `MemoryShelfStore()` — which is what
+            # `app/main.py` and most tests construct — silently skipped it and
+            # accepted an address the real database refuses. A guard whose
+            # default is "skip me" is the same shape as the `occupied_ids`
+            # default a review already measured.
+            if self._sections is None:
+                raise RuntimeError(
+                    "MemoryShelfStore was given an addressed shelf before "
+                    "bind_map(); it cannot check the section exists"
+                )
+            if self._sections.get_section(
+                    library, shelf.address.section_id) is None:
                 raise UnknownParent(
                     f"no section {shelf.address.section_id!r} in library "
                     f"{library.id!r}"
@@ -721,10 +735,15 @@ class MemoryMapStore:
         self._cases: dict[str, dict[str, Bookcase]] = {}
         self._sections: dict[str, dict[str, Section]] = {}
         #: Shelves live in ``MemoryShelfStore``, so this store cannot see
-        #: whether a slot is filled. The composition root hands it the shelf
-        #: store's own view; without one, "is this section empty" answers
-        #: honestly that it does not know and the refusal falls to the layer
-        #: that does (``app/map_edit.py``).
+        #: whether a slot is filled; ``bind_shelves`` hands it that view.
+        #:
+        #: ⚠ Unbound, it REFUSES to answer rather than answering weakly. The
+        #: first version said the refusal "falls to the layer that does
+        #: (app/map_edit.py)" — which was simply false: `map_edit` empties
+        #: slots, it never re-checks before a delete, so an unbound store
+        #: deleted sections out from under addressed shelves and returned
+        #: True. A wrong stated reason is what makes the next reader delete
+        #: the guard.
         self._occupied: "MemoryShelfStore | None" = None
 
     def bind_shelves(self, shelves: "MemoryShelfStore") -> None:
@@ -767,11 +786,26 @@ class MemoryMapStore:
             return False
         floors = [f for f in self._t(self._floors, library).values()
                   if f.site_id == site_id]
-        check_removable(f"site {site_id}", GroupingContents(floors=len(floors)))
+        mine = {f.id for f in floors}
+        # ⚠ Measured at review: refusing a site that holds ANY floor made a
+        # site with one empty storey undeletable, because `delete_floor`
+        # refuses the last storey of a site. "The parents' place", drawn by
+        # mistake, was permanent. So the refusal is about what the floors
+        # HOLD, and empty storeys leave with their site — a floor with no
+        # rooms and no bookcases is not something "nothing auto-removes" is
+        # protecting.
+        check_removable(f"site {site_id}", GroupingContents(
+            places=sum(1 for p in self._t(self._places, library).values()
+                       if p.floor_id in mine),
+            bookcases=sum(1 for c in self._t(self._cases, library).values()
+                          if c.floor_id in mine),
+        ))
         if len(sites) <= 1:
             raise NotEmpty(
                 f"site {site_id} is the only one; a drawing has somewhere to be"
             )
+        for floor_id in mine:
+            del self._t(self._floors, library)[floor_id]
         del sites[site_id]
         return True
 
@@ -883,6 +917,18 @@ class MemoryMapStore:
             raise UnknownParent(
                 f"no bookcase {section.bookcase_id!r} in library {library.id!r}"
             )
+        # v20's unique index, in Python — `ordinal` is what the address PRINTS,
+        # so two sections of one bookcase both at 1 send the owner to the
+        # wrong half of the furniture. Without it here the SQL store would
+        # refuse what this one accepts.
+        for other in self._t(self._sections, library).values():
+            if (other.bookcase_id == section.bookcase_id
+                    and other.ordinal == section.ordinal
+                    and other.id != section.id):
+                raise DuplicateSectionOrdinal(
+                    f"section {other.id} is already number {section.ordinal} "
+                    f"of bookcase {section.bookcase_id}"
+                )
         self._t(self._sections, library)[section.id] = section
 
     def get_section(
@@ -907,8 +953,14 @@ class MemoryMapStore:
         return True
 
     def _refuse_if_filled(self, library: LibraryRef, section: Section) -> None:
+        # ⚠ FAIL CLOSED when unbound — see `MemoryShelfStore.save_shelf`. This
+        # returned silently before, so a bare `MemoryMapStore()` deleted a
+        # bookcase out from under the shelves standing in it.
         if self._occupied is None:
-            return
+            raise RuntimeError(
+                "MemoryMapStore was asked to remove furniture before "
+                "bind_shelves(); it cannot check whether a shelf stands in it"
+            )
         standing = self._occupied.list_shelves_in_section(library, section.id)
         if standing:
             raise NotEmpty(

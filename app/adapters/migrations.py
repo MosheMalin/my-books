@@ -1083,8 +1083,14 @@ CREATE TABLE sections (
     default_depth  INTEGER NOT NULL DEFAULT 1
 );
 
--- Bottom-first, which is the order the elevation reverses to draw.
-CREATE INDEX sections_by_bookcase ON sections (library_id, bookcase_id, ordinal, id);
+-- Bottom-first, which is the order the elevation reverses to draw. UNIQUE,
+-- because `ordinal` is not decoration: two sections of one bookcase both at 1
+-- make `address_parts` print "section 1" for two different shelves, and the
+-- owner is then sent to the wrong half of the furniture. The lab could not
+-- express this at all (its sections are an array), so the constraint arrives
+-- with the table rather than after somebody hits it.
+CREATE UNIQUE INDEX sections_by_bookcase
+    ON sections (library_id, bookcase_id, ordinal);
 
 ALTER TABLE shelves ADD COLUMN section_id TEXT REFERENCES sections (id);
 ALTER TABLE shelves ADD COLUMN col INTEGER;

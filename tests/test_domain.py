@@ -505,6 +505,60 @@ def test_a_shelf_carries_no_address_only_identity():
     )
 
 
+def _banned_names(src: str, banned: set[str]) -> list[str]:
+    """Every identifier in ``src`` that is one of ``banned``.
+
+    ⚠ Six kinds of identifier, and five were added after a review measured
+    them missing: a ``class Row``, a positional-only parameter, a lambda's
+    parameter, an ``async def``'s parameter and a keyword argument all slipped
+    through the first version, which walked only ``Name``, ``Attribute`` and a
+    plain ``def``'s ordinary args. A lint with holes reads exactly like a lint
+    without them.
+    """
+    tree = ast.parse(src)
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id in banned:
+            found.add(node.id)
+        elif isinstance(node, ast.Attribute) and node.attr in banned:
+            found.add(node.attr)
+        elif isinstance(node, (ast.ClassDef, ast.FunctionDef,
+                               ast.AsyncFunctionDef)) and node.name in banned:
+            found.add(node.name)
+        elif isinstance(node, ast.keyword) and node.arg in banned:
+            found.add(node.arg)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                             ast.Lambda)):
+            args = node.args
+            for a in (args.posonlyargs + args.args + args.kwonlyargs
+                      + [x for x in (args.vararg, args.kwarg) if x]):
+                if a.arg in banned:
+                    found.add(a.arg)
+    return sorted(found)
+
+
+def test_the_depth_naming_lint_can_actually_see_a_violation():
+    """Gate the DETECTOR on a synthetic corpus, the way CLAUDE.md's dead-key
+    trap says to: against the real modules the rule is unobservable once they
+    are clean, so a lint that quietly stopped working would pass forever.
+
+    Every line below is a shape that survived the first version of the check.
+    """
+    corpus = (
+        "class Row:\n    pass\n"
+        "def a(row, /): return row\n"
+        "async def b(band): return band\n"
+        "c = lambda rows: rows\n"
+        "def d(*, bands): return bands\n"
+        "def e(): f(row=1)\n"
+        "def g(*band): pass\n"
+    )
+    caught = _banned_names(corpus, {"row", "rows", "band", "bands", "Row"})
+    assert caught == ["Row", "band", "bands", "row", "rows"], caught
+    assert _banned_names("def fine(depth, level, col): return depth",
+                         {"row", "rows", "band", "bands"}) == []
+
+
 def test_depth_is_never_called_row_or_band_in_the_shelf_module():
     """§5.7's named ⚠: `segment.py` already uses *band* for the horizontal
     rows found WITHIN one photo, and `Spine.band` is in the stored record
@@ -517,23 +571,16 @@ def test_depth_is_never_called_row_or_band_in_the_shelf_module():
     behind this one"*), and the ban is on what code calls it.
     """
     banned = {"row", "rows", "band", "bands"}
-    # ⚠ `place.py` joined this list at P6.1, and it is the module most likely
-    # to break the rule, because it is full of grids: a section has columns
-    # ACROSS and levels DOWN, and "row" is the word an unwary reader reaches
-    # for to mean a level. It would then sit two lines from a depth, which is
-    # exactly the collision §5.7 named.
-    for module in ("shelf.py", "place.py"):
-        src = (REPO_ROOT / "app" / "domain" / module).read_text(encoding="utf-8")
-        offenders = sorted({
-            node.id if isinstance(node, ast.Name) else node.attr
-            for node in ast.walk(ast.parse(src))
-            if (isinstance(node, ast.Name) and node.id in banned)
-            or (isinstance(node, ast.Attribute) and node.attr in banned)
-        } | {
-            a.arg for fn in ast.walk(ast.parse(src))
-            if isinstance(fn, ast.FunctionDef)
-            for a in fn.args.args + fn.args.kwonlyargs if a.arg in banned
-        })
+    # ⚠ FOUR modules since P6.1, not one. `place.py` and `map_edit.py` are the
+    # likeliest to break the rule because they are full of grids: a section
+    # has columns ACROSS and levels DOWN, and "row" is the word an unwary
+    # reader reaches for to mean a level. It would then sit two lines from a
+    # depth, which is exactly the collision §5.7 named. A review found the
+    # scope stopping at `app/domain/`, so the grid arithmetic was outside it.
+    for module in ("app/domain/shelf.py", "app/domain/place.py",
+                   "app/map_edit.py", "app/ports/map.py"):
+        src = (REPO_ROOT / module).read_text(encoding="utf-8")
+        offenders = _banned_names(src, banned)
         assert not offenders, (
             f"§5.7: in {module}, call it depth or level, never {offenders} — "
             "it collides with segment.py's horizontal bands"
@@ -2470,3 +2517,281 @@ def test_the_wishlist_stands_nowhere():
     except VirtualShelfHasNoDepth:
         return
     raise AssertionError("the wishlist was given a shelf in a bookcase")
+
+
+def test_an_out_of_range_section_edit_raises_instead_of_clamping():
+    """Found at review: the lenient answer sat on the DESTRUCTIVE path.
+
+    `with_column_count(section, 0)` silently meant *shrink to one column*,
+    dropping every other column's slots — and it disagreed with
+    `Section.__post_init__`, which raises for the same value. One invalid
+    input must not have two answers, and certainly not with the quiet one
+    doing the damage.
+    """
+    from app.domain import (new_section, with_column_count, with_column_levels,
+                            with_default_depth, with_default_levels)
+
+    section = new_section(id="se", library_id="lib", bookcase_id="bc",
+                          columns=3, default_levels=5)
+    for call in (
+        lambda: with_column_count(section, 0),
+        lambda: with_column_count(section, -2),
+        lambda: with_column_levels(section, 1, 0),
+        lambda: with_default_levels(section, 0),
+        lambda: with_default_depth(section, 0),
+        lambda: with_default_depth(section, 99),
+    ):
+        try:
+            call()
+        except DomainError:
+            continue
+        raise AssertionError("an out-of-range section edit was clamped")
+    # …and the section is untouched by any of it.
+    assert section.column_levels == (5, 5, 5)
+
+
+def test_a_slot_list_is_column_major_because_ids_are_minted_from_it():
+    """`Section.addresses` states an order and, until a review said so,
+    nothing held it. It is not decoration: `map_edit._fill` walks it to mint
+    shelf ids, so the order decides which id lands on which slot — and P6.3
+    has to match it or a re-import files every shelf one place over."""
+    from app.domain import new_section
+
+    section = new_section(id="se", library_id="lib", bookcase_id="bc",
+                          columns=2, default_levels=2)
+    assert [(a.col, a.level) for a in section.addresses] == [
+        (1, 1), (1, 2), (2, 1), (2, 2)], "the slot list is not column-major"
+
+
+def test_the_front_row_never_announces_itself():
+    """§5.7: the back row is a real location, stated only when it is NOT the
+    obvious one. A review caught the original assertion being vacuous — it
+    passed no depth at all, so `None` proved nothing."""
+    from app.domain import (Rect, ShelfAddress, address_parts, new_bookcase,
+                            new_place, new_section)
+
+    salon = new_place(id="pl", library_id="lib", floor_id="fl",
+                      rect=Rect(0, 0, 9, 7), name="סלון")
+    case = new_bookcase(id="bc", library_id="lib", floor_id="fl",
+                        rect=Rect(0, 0, 4, 1), name="כוננית")
+    section = new_section(id="se", library_id="lib", bookcase_id="bc",
+                          columns=1)
+    at = ShelfAddress("se", 1, 1)
+    said = address_parts(place=salon, bookcase=case, section=section,
+                         section_count=1, address=at, depth=1)
+    assert said.depth is None, "the front row announced itself"
+    assert address_parts(place=salon, bookcase=case, section=section,
+                         section_count=1, address=at, depth=2).depth == 2
+
+
+def test_a_site_and_a_floor_must_be_named_but_a_room_need_not_be():
+    """The same call as "library name mandatory, shelf label optional": a
+    site or a storey exists only because there are two of them, and an
+    unnamed one in a picker is unusable. A room is recognisable by its shape
+    and its neighbours, which is what a drawing is for."""
+    from app.domain import Rect, new_floor, new_place, new_site
+
+    for call in (
+        lambda: new_site(id="s", library_id="lib", name="  "),
+        lambda: new_floor(id="f", library_id="lib", site_id="s", name=""),
+    ):
+        try:
+            call()
+        except DomainError:
+            continue
+        raise AssertionError("an unnamed site or storey was accepted")
+    unnamed = new_place(id="p", library_id="lib", floor_id="f",
+                        rect=Rect(0, 0, 4, 4))
+    assert unnamed.name == ""
+
+
+def test_a_section_is_numbered_from_one_and_a_bookcase_faces_a_real_side():
+    """Two guards with no gate until a review counted them. `ordinal` is what
+    the address PRINTS, and `front` decides which physical end is column 1
+    (§7.3) — a bad value in either sends the owner to the wrong place."""
+    from app.domain import Rect, Section, new_bookcase
+
+    for call in (
+        lambda: Section(id="se", library_id="lib", bookcase_id="bc",
+                        ordinal=0),
+        lambda: new_bookcase(id="bc", library_id="lib", floor_id="fl",
+                             rect=Rect(0, 0, 4, 1), front="UP"),
+    ):
+        try:
+            call()
+        except DomainError:
+            continue
+        raise AssertionError("a section ordinal of 0, or a nonsense front")
+
+
+def test_a_new_section_copies_the_shape_of_the_one_it_stands_on():
+    """The lab's rule (`model.ts:addSection`): *a hutch usually has about as
+    many columns as the base it stands on*, so starting from a blank 1x5
+    would mean re-entering what is already on screen."""
+    from app.domain import new_section, next_section, renumber_sections
+
+    base = new_section(id="base", library_id="lib", bookcase_id="bc",
+                       ordinal=1, columns=3, default_levels=4, default_depth=2)
+    hutch = next_section("bc", [base], id="hutch", where="top")
+    assert hutch.ordinal == 2
+    assert hutch.column_count == 3, "the hutch forgot the base's width"
+    assert (hutch.default_levels, hutch.default_depth) == (4, 2)
+    assert hutch.library_id == "lib"
+
+    # Added at the BOTTOM, everything above moves up — `ordinal` is unique
+    # per bookcase and is what the address prints, so the gap cannot stay.
+    plinth = next_section("bc", [base, hutch], id="plinth", where="bottom")
+    closed = renumber_sections([plinth, base, hutch])
+    assert [s.id for s in closed] == ["plinth", "base", "hutch"]
+    assert [s.ordinal for s in closed] == [1, 2, 3]
+
+
+def test_the_depth_confirmation_can_say_how_many_shelves_it_would_change():
+    """§3.3 requires the apply to be *"an explicit action, showing the count
+    affected"*, so the count has to exist before the action does. The lab had
+    it; the first cut of this module did not."""
+    from app.domain import new_section, new_shelf, shelves_differing_from_default_depth
+
+    section = new_section(id="se", library_id="lib", bookcase_id="bc",
+                          columns=1, default_levels=3, default_depth=1)
+    standing = [new_shelf(id="a", library_id="lib", depth_count=2),
+                new_shelf(id="b", library_id="lib", depth_count=1),
+                new_shelf(id="c", library_id="lib", depth_count=3)]
+    assert shelves_differing_from_default_depth(section, standing) == 2
+
+
+def test_applying_the_level_default_levels_every_column():
+    """The explicit, opt-in counterpart of the depth apply, and the one the
+    elevation's *apply to every column* button calls. It was exported with no
+    caller and no test; a review found it a no-op-able."""
+    from app.domain import (apply_default_levels, new_section,
+                            with_column_levels, with_default_levels)
+
+    section = new_section(id="se", library_id="lib", bookcase_id="bc",
+                          columns=3, default_levels=4)
+    ragged = with_column_levels(section, 2, 1).section
+    assert ragged.column_levels == (4, 1, 4)
+
+    evened = apply_default_levels(with_default_levels(ragged, 5))
+    assert evened.section.column_levels == (5, 5, 5)
+    # (4,1,4) -> (5,5,5): one new level on each tall column, four on the short
+    # one. Six real shelves, and every one of them a row §3.1 says comes into
+    # being the moment the grid does.
+    assert len(evened.added) == 6, [(a.col, a.level) for a in evened.added]
+    assert evened.dropped == (), "levelling every column dropped a slot"
+
+
+def test_a_photo_born_shelf_can_be_bound_into_a_drawn_slot_and_let_go_again():
+    """P6.4's entry point, and the round trip that makes it safe: binding
+    gives an address, unbinding takes only the address — the label, the depth
+    and the shelf itself survive, because they are what its books point at."""
+    from app.domain import ShelfAddress, bind_shelf, new_shelf, unbind_shelf
+
+    photographed = new_shelf(id="sh", library_id="lib", label="מדף הסלון",
+                             depth_count=2, created_at="2026-01-01T00:00:00Z")
+    assert not photographed.is_addressed
+    bound = bind_shelf(photographed, ShelfAddress("se", 2, 3))
+    assert bound.is_addressed and bound.address.col == 2
+    assert (bound.label, bound.depth_count) == ("מדף הסלון", 2)
+    loose = unbind_shelf(bound)
+    assert loose.address is None
+    assert (loose.label, loose.depth_count, loose.created_at) == (
+        "מדף הסלון", 2, "2026-01-01T00:00:00Z")
+
+
+def test_a_real_lab_drawing_fits_the_domain_and_names_the_two_shifts():
+    """MAP_PLAN §5's stated P6.1 deliverable, and P6.3's specification.
+
+    `fixtures/map/lab_plan_v4.json` is a plan in the lab's own exported shape.
+    Loading it through the domain pins the two places the lab's document and
+    this model deliberately DISAGREE, so the port discovers them here rather
+    than on the owner's data:
+
+      1. **col and level are 0-based in the document, 1-based in the domain.**
+         The domain REFUSES a 0 instead of re-basing it silently, so a
+         forgotten `+1` raises rather than filing every book one shelf over;
+      2. **section ids must be carried, not rebuilt.** `persist.ts` regenerates
+         them from array position because "nothing outside the document refers
+         to one" — a sentence that stopped being true when `shelves.section_id`
+         did. Rebuilding by position also renumbers everything above a section
+         inserted at the bottom.
+
+    It is a real drawing shape on purpose: two storeys, an unattached case, an
+    unnamed case, a two-section bookcase and a ragged column — each of which
+    makes some rule observable that a tidy one-of-everything plan hides.
+    """
+    import json
+
+    from app.domain import (Bookcase, Floor, Place, Rect, Section, ShelfAddress,
+                            new_bookcase, new_floor, new_place, new_section)
+
+    raw = json.loads(
+        (REPO_ROOT / "fixtures" / "map" / "lab_plan_v4.json").read_text(
+            encoding="utf-8"))
+    assert raw["format"] == "booksnap.map-lab.plan" and raw["version"] == 4
+    plan = raw["plan"]
+
+    # Every floor of the document becomes a Floor of ONE site — the level the
+    # lab never had (§3.9), so the import invents exactly one and says so.
+    floors = [new_floor(id=f["id"], library_id="lib", site_id="st",
+                        name=f["name"]) for f in plan["floors"]]
+    assert [f.name for f in floors] == ["Ground floor", "Upstairs"]
+
+    rooms = {r["id"]: new_place(id=r["id"], library_id="lib",
+                                floor_id=r["floorId"], name=r["name"],
+                                rect=Rect(**{k: r["rect"][k]
+                                             for k in "xywh"}))
+             for r in plan["rooms"]}
+    assert rooms["r1"].rect == Rect(0, 0, 12, 9)
+    assert rooms["r3"].floor_id == "f2", "a room lost its storey"
+
+    # An unattached case keeps its floor — §3.7's "somewhere, not everywhere".
+    cases = [new_bookcase(id=c["id"], library_id="lib", floor_id=c["floorId"],
+                          name=c["name"], front=c["front"],
+                          place_id=c["roomId"],
+                          rect=Rect(**{k: c["rect"][k] for k in "xywh"}))
+             for c in plan["cases"]]
+    loose = [c for c in cases if c.place_id is None]
+    assert [c.id for c in loose] == ["c3"] and loose[0].floor_id == "f2"
+    assert [c.name for c in cases if not c.name] == [""], (
+        "the fixture is meant to carry an unnamed case"
+    )
+
+    # Sections, ids CARRIED from the document rather than regenerated.
+    big = plan["cases"][0]
+    sections = [
+        Section(id=f"{big['id']}:s{i + 1}", library_id="lib",
+                bookcase_id=big["id"], ordinal=i + 1,
+                column_levels=tuple(s["columnLevels"]),
+                default_levels=s["defaultLevels"],
+                default_depth=s["defaultDepth"])
+        for i, s in enumerate(big["sections"])
+    ]
+    assert [s.ordinal for s in sections] == [1, 2]
+    assert sections[0].column_levels == (5, 5, 3), "the ragged column flattened"
+    assert sections[0].column_count == 3
+
+    # …and the SHIFT. The document's (0,0) is the domain's (1,1); the domain
+    # refuses the document's own numbering outright.
+    for shelf in big["sections"][0]["shelves"]:
+        address = ShelfAddress(sections[0].id, shelf["col"] + 1,
+                               shelf["level"] + 1)
+        assert address in sections[0].addresses, (
+            f"{address} is outside the grid the section describes"
+        )
+    try:
+        ShelfAddress(sections[0].id, big["sections"][0]["shelves"][0]["col"],
+                     big["sections"][0]["shelves"][0]["level"])
+    except DomainError:
+        pass
+    else:
+        raise AssertionError(
+            "the document's 0-based address was accepted as-is, so an "
+            "importer that forgot the +1 would file every book one place over"
+        )
+
+    # The shelf the document says is one row deep inside a two-deep section:
+    # its own depth, copied at creation and never read back through (§3.3).
+    odd = [s for s in big["sections"][0]["shelves"] if s["depth"] == 1]
+    assert odd, "the fixture is meant to carry a per-shelf depth override"
+    assert sections[0].default_depth == 2

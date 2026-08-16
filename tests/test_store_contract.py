@@ -98,6 +98,7 @@ from app.ports.store import (
     BookSort,
     DuplicateBookKey,
     DuplicateCaptureSlot,
+    DuplicateSectionOrdinal,
     DuplicateShelfSlot,
     ShelfNotEmpty,
     UnknownShelf,
@@ -1621,6 +1622,75 @@ def saves_and_reads_back_the_whole_drawing(stores):
 
 
 @map_contract
+def the_whole_drawing_comes_back_in_the_order_the_screens_want(stores):
+    """⚠ Two of everything, deliberately. A review found the round-trip case
+    building ONE of each, which makes order unobservable — the same defect
+    class as "even column heights make dropping from the front and from the
+    end indistinguishable", and both implementations' sort keys survived
+    being reversed.
+
+    It matters most for P6.3: the lab's elevation reverses the section array
+    to draw top-down, so a section order the port disagrees with silently
+    inverts a bookcase — the hutch is drawn as the base.
+    """
+    maps, shelves, books = stores
+    # ⚠ The ids sort OPPOSITE to the order, deliberately: with `s1`/`s2` a
+    # store that ignored `order` and fell back to id produced the same list,
+    # and the mutation check caught this assertion passing either way.
+    for order, name, sid in ((2, "אצל ההורים", "a-parents"),
+                             (1, "הבית", "z-home")):
+        maps.save_site(LIB, new_site(id=sid, library_id=LIB.id, name=name,
+                                     order=order))
+    for sid, fid, order, name in (("z-home", "f-up", 2, "קומה א"),
+                                  ("z-home", "f-down", 1, "קרקע")):
+        maps.save_floor(LIB, new_floor(id=fid, library_id=LIB.id, site_id=sid,
+                                       name=name, order=order))
+    for pid, fid, order in (("p2", "f-down", 2), ("p1", "f-down", 1)):
+        maps.save_place(LIB, new_place(id=pid, library_id=LIB.id,
+                                       floor_id=fid, rect=Rect(0, 0, 5, 5),
+                                       order=order))
+    for bid, order in (("bc2", 2), ("bc1", 1)):
+        maps.save_bookcase(LIB, new_bookcase(id=bid, library_id=LIB.id,
+                                             floor_id="f-down",
+                                             rect=Rect(0, 0, 3, 1),
+                                             order=order))
+    for sec, ordinal in (("hutch", 2), ("base", 1)):
+        maps.save_section(LIB, new_section(id=sec, library_id=LIB.id,
+                                           bookcase_id="bc1", ordinal=ordinal))
+
+    snap = maps.load_map(LIB)
+    assert [s.id for s in snap.sites] == ["z-home", "a-parents"], (
+        "sites came back in id order, so `order` is ignored"
+    )
+    assert [f.id for f in snap.floors] == ["f-down", "f-up"]
+    assert [p.id for p in snap.places] == ["p1", "p2"]
+    assert [b.id for b in snap.bookcases] == ["bc1", "bc2"]
+    assert [s.id for s in snap.sections] == ["base", "hutch"], (
+        "sections came back top-first; the elevation would draw the hutch "
+        "as the base"
+    )
+
+
+@map_contract
+def an_undrawn_library_reads_as_empty_and_one_room_does_not(stores):
+    """`is_empty` answers a SCREEN's question — *is there anything to show?* —
+    so it counts rooms and furniture, not the site and floor every library
+    starts with. Stated in the port and, until a review said so, nowhere
+    enforced."""
+    maps, shelves, books = stores
+    assert maps.load_map(LIB).is_empty
+    maps.save_site(LIB, new_site(id="st", library_id=LIB.id, name="הבית"))
+    maps.save_floor(LIB, new_floor(id="fl", library_id=LIB.id, site_id="st",
+                                   name="קרקע"))
+    assert maps.load_map(LIB).is_empty, (
+        "a library with only its starting site and floor looked drawn"
+    )
+    maps.save_place(LIB, new_place(id="pl", library_id=LIB.id, floor_id="fl",
+                                   rect=Rect(0, 0, 4, 4)))
+    assert not maps.load_map(LIB).is_empty
+
+
+@map_contract
 def a_drawing_in_another_library_reads_as_absent(stores):
     """§4.2's rule, one level out: a foreign record is ABSENT, never
     forbidden, so the API can answer 404 without leaking existence."""
@@ -1707,6 +1777,64 @@ def the_last_storey_of_a_site_and_the_last_site_are_kept(stores):
 
 
 @map_contract
+def a_site_drawn_by_mistake_can_be_removed_with_its_empty_storeys(stores):
+    """⚠ Measured at review: these two refusals used to DEADLOCK. Removing a
+    site was refused while it held any floor, and removing its only floor was
+    refused because a site keeps at least one — so "the parents' place", drawn
+    by mistake, was permanent.
+
+    The refusal is about what the storeys HOLD. An empty floor leaves with its
+    site: a floor with no rooms and no bookcases is not something "nothing
+    auto-removes" is protecting, and the last site is still kept.
+    """
+    maps, shelves, books = stores
+    _drawn(maps, shelves)
+    maps.save_site(LIB, new_site(id="oops", library_id=LIB.id, name="בטעות"))
+    maps.save_floor(LIB, new_floor(id="oops-g", library_id=LIB.id,
+                                   site_id="oops", name="קרקע"))
+
+    assert maps.delete_site(LIB, "oops") is True
+    assert maps.get_floor(LIB, "oops-g") is None, "an orphan storey survived"
+    assert maps.get_site(LIB, "oops") is None
+    assert maps.get_floor(LIB, "lib-a-fl") is not None, (
+        "removing one site took another site's storey"
+    )
+
+    # …but a site holding an actual room is still refused, naming it.
+    maps.save_site(LIB, new_site(id="real", library_id=LIB.id, name="אמיתי"))
+    maps.save_floor(LIB, new_floor(id="real-g", library_id=LIB.id,
+                                   site_id="real", name="קרקע"))
+    maps.save_place(LIB, new_place(id="real-pl", library_id=LIB.id,
+                                   floor_id="real-g", rect=Rect(0, 0, 5, 5)))
+    err = _raises(NotEmpty, maps.delete_site, LIB, "real")
+    assert "1 room(s)" in str(err), str(err)
+    assert maps.get_floor(LIB, "real-g") is not None
+
+
+@map_contract
+def a_foreign_librarys_map_cannot_be_deleted_either(stores):
+    """Tenant isolation in the DESTRUCTIVE direction, which is the one worth
+    pinning. A foreign object is ABSENT — `False`, not an error and not a
+    refusal — so the API answers 404 and cannot leak existence even by the
+    shape of the failure (§4.2)."""
+    maps, shelves, books = stores
+    a = _drawn(maps, shelves)
+    _drawn(maps, shelves, library=OTHER)
+    for delete, target in ((maps.delete_site, "lib-a-st"),
+                           (maps.delete_floor, "lib-a-fl"),
+                           (maps.delete_place, "lib-a-pl"),
+                           (maps.delete_bookcase, "lib-a-bc"),
+                           (maps.delete_section, a.id)):
+        assert delete(OTHER, target) is False, (
+            f"{delete.__name__} reached into another library"
+        )
+    assert maps.get_site(LIB, "lib-a-st") is not None
+    assert maps.get_bookcase(LIB, "lib-a-bc") is not None
+    assert maps.get_section(LIB, a.id) is not None
+    assert len(maps.load_map(LIB).places) == 1
+
+
+@map_contract
 def a_bookcase_with_a_shelf_still_in_it_is_never_deleted(stores):
     """The silent-data-loss path MAP_PLAN §2 predicted for this item. The
     store refuses; emptying the slots is `app/map_edit.py`'s explicit job."""
@@ -1728,6 +1856,28 @@ def an_emptied_bookcase_takes_its_sections_with_it(stores):
     assert maps.delete_bookcase(LIB, "lib-a-bc") is True
     assert maps.get_section(LIB, section.id) is None
     assert maps.load_map(LIB).sections == ()
+
+
+@map_contract
+def two_sections_of_one_bookcase_may_not_share_a_number(stores):
+    """`ordinal` is what an address PRINTS (§3.6). Two sections both at 1 make
+    *"section 1, column 2, level 3"* name two different shelves, so the owner
+    is sent to the wrong half of the furniture. The lab could not express the
+    state at all — its sections are an array — so the constraint arrives with
+    the table rather than after somebody hits it."""
+    maps, shelves, books = stores
+    section = _drawn(maps, shelves)
+    assert section.ordinal == 1
+    _raises(DuplicateSectionOrdinal, maps.save_section, LIB,
+            new_section(id="twin", library_id=LIB.id,
+                        bookcase_id="lib-a-bc", ordinal=1))
+    # …the next one up is fine, and re-saving the SAME section is an edit.
+    maps.save_section(LIB, new_section(id="hutch", library_id=LIB.id,
+                                       bookcase_id="lib-a-bc", ordinal=2))
+    maps.save_section(LIB, new_section(id=section.id, library_id=LIB.id,
+                                       bookcase_id="lib-a-bc", ordinal=1,
+                                       columns=3))
+    assert maps.get_section(LIB, section.id).column_count == 3
 
 
 @map_contract
@@ -1792,21 +1942,27 @@ def a_shelf_may_not_be_addressed_to_a_section_that_is_not_there(stores):
 
 @map_contract
 def a_shelf_holding_a_book_is_found_even_with_no_photograph(stores):
-    """The half of "is this slot occupied?" a reasonable person leaves out.
+    """The half of "is this slot occupied?" a reasonable person leaves out,
+    and the DEPTH it answers with in the same breath.
 
-    A shelf can hold books with no capture at all — a MANUAL entry, or a
-    photo deleted later. Asking only about captures calls it empty and hands
-    it to the DELETE branch of `plan_slot_removal`, which is the review
-    finding `map_edit.occupied_shelf_ids` exists to make unrepeatable.
+    A shelf can hold books with no capture at all — a MANUAL entry, or a photo
+    deleted later. Asking only about captures calls it empty and hands it to
+    the DELETE branch of `plan_slot_removal`. And the depth is not a second
+    question: `map_edit` needs *how far back* to clamp a section's depth
+    default, and two queries that could disagree is how a copy ends up
+    recorded at a depth its shelf no longer declares.
     """
     maps, shelves, books = stores
     section = _drawn(maps, shelves)
     shelves.save_shelf(LIB, new_shelf(id="sh1", library_id=LIB.id,
+                                      depth_count=2,
                                       address=ShelfAddress(section.id, 1, 1)))
-    assert books.shelf_ids_in_use(LIB) == frozenset()
-    books.save(LIB, _book(9, shelf_id="sh1", depth=1))
-    assert books.shelf_ids_in_use(LIB) == {"sh1"}
-    assert books.shelf_ids_in_use(OTHER) == frozenset(), (
+    assert books.deepest_copy_depth(LIB) == {}
+    books.save(LIB, _book(9, shelf_id="sh1", depth=2))
+    assert books.deepest_copy_depth(LIB) == {"sh1": 2}, (
+        "the deepest occupied depth is wrong, so the clamp would shallow it"
+    )
+    assert books.deepest_copy_depth(OTHER) == {}, (
         "one library's occupied shelves leaked into another's"
     )
 

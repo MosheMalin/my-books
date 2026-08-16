@@ -72,8 +72,6 @@ MAX_DEPTH = 4
 #: compass bearings in the world.
 SIDES = ("N", "E", "S", "W")
 
-OPPOSITE = {"N": "S", "S": "N", "E": "W", "W": "E"}
-
 
 # --- errors ---------------------------------------------------------------
 
@@ -214,6 +212,12 @@ class Place:
     floor_id: str
     rect: Rect
     name: str = ""
+    #: Drawing order, and therefore **z-order**: the last one drawn is on top,
+    #: which is the rule the lab's hit test already used (`roomAt` walks the
+    #: array backwards, so the newest room wins an overlap). The lab got it
+    #: from array position; a table has no array, so the client assigns it.
+    #: Ties break by id, which is arbitrary but total — never by insertion,
+    #: which a store is not obliged to preserve.
     order: int = 0
 
     def __post_init__(self) -> None:
@@ -250,6 +254,9 @@ class Bookcase:
     name: str = ""
     front: str = "S"
     place_id: str | None = None
+    #: Drawing order / z-order — see :class:`Place.order`. Furniture wins a
+    #: tap over a room in every tool (§3.8), so a case's order competes only
+    #: with other cases.
     order: int = 0
 
     def __post_init__(self) -> None:
@@ -274,7 +281,17 @@ class Section:
 
     ``ordinal`` is **1-based and bottom-first**: section 1 stands on the floor.
     A plain bookcase has exactly one, and then the address never mentions it —
-    see :func:`address_parts`.
+    see :func:`address_parts`. It is UNIQUE per bookcase, declared as an index:
+    two sections both at 1 would make the address print "section 1" for two
+    different shelves.
+
+    ⚠ **The id is durable now, and it was not in the lab.** ``persist.ts``
+    rebuilds section ids from array position on every import, on the stated
+    grounds that *"nothing outside the document refers to one"*. That sentence
+    stopped being true the moment ``shelves.section_id`` existed: an importer
+    that renumbers by position orphans every addressed shelf in the library,
+    and inserting a section at the BOTTOM renumbers all of them. P6.3 must
+    carry ids across, not regenerate them.
 
     ``column_levels`` holds one entry per column, being that column's level
     count. The **column count is that tuple's length**; there is no second
@@ -497,8 +514,15 @@ def with_column_count(section: Section, count: int) -> SlotChange:
 
     New columns get the section's CURRENT ``default_levels`` — the
     creation-time copy of §3.3, one level up.
+
+    ⚠ An out-of-range count RAISES rather than clamping. Clamping put the
+    lenient answer on the DESTRUCTIVE path: ``count=0`` from a confused client
+    silently meant *shrink to one column*, dropping every other column's
+    slots. It also disagreed with ``Section.__post_init__``, which raises for
+    the same value — one invalid input, two answers, and the quiet one doing
+    the damage.
     """
-    n = max(1, int(count))
+    n = _positive(count, "a section has at least one column")
     if n <= section.column_count:
         after = replace(section, column_levels=section.column_levels[:n])
     else:
@@ -523,7 +547,7 @@ def with_column_levels(section: Section, col: int, levels: int) -> SlotChange:
             f"section {section.id} has {section.column_count} column(s); "
             f"there is no column {col}"
         )
-    n = max(1, int(levels))
+    n = _positive(levels, "a column has at least one level")
     levels_now = list(section.column_levels)
     levels_now[col - 1] = n
     return _change(section, replace(section, column_levels=tuple(levels_now)))
@@ -532,7 +556,10 @@ def with_column_levels(section: Section, col: int, levels: int) -> SlotChange:
 def with_default_levels(section: Section, levels: int) -> Section:
     """Set the default. **Existing columns are untouched** — that is the point
     of a default (§3.3); applying it is :func:`apply_default_levels`."""
-    return replace(section, default_levels=max(1, int(levels)))
+    return replace(
+        section,
+        default_levels=_positive(levels, "a column has at least one level"),
+    )
 
 
 def with_default_depth(section: Section, depth: int) -> Section:
@@ -542,8 +569,73 @@ def with_default_depth(section: Section, depth: int) -> Section:
     the location of every book standing at depth 2 the moment somebody edits
     the section to 1. Applying it is :func:`apply_default_depth`, which is
     explicit, reports what it touched, and cannot go below an occupied row.
+
+    Out of range RAISES rather than clamping, for the reason
+    :func:`with_column_count` states: ``Section.__post_init__`` already raises
+    for the same value, and one invalid input must not have two answers.
     """
-    return replace(section, default_depth=_clamp_depth(depth))
+    if not 1 <= int(depth) <= MAX_DEPTH:
+        raise DomainError(
+            f"a section's default depth is 1..{MAX_DEPTH}, got {depth}"
+        )
+    return replace(section, default_depth=int(depth))
+
+
+def next_section(bookcase_id: str, siblings: Iterable[Section],
+                 *, id: str, where: str = "top") -> Section:
+    """A new section for a bookcase, shaped like the one it stands against.
+
+    The lab's rule (``model.ts:addSection``) and the reason for it: *"a hutch
+    usually has about as many columns as the base it stands on"*, so starting
+    from a blank 1×5 would mean re-entering what is already on screen.
+
+    ``where='bottom'`` is the awkward case and is why this returns the whole
+    set's renumbering rather than one object — every section above the new one
+    moves up an ordinal, and ``ordinal`` is unique per bookcase. Use
+    :func:`renumber_sections` on the result.
+    """
+    ordered = sorted(siblings, key=lambda s: s.ordinal)
+    neighbour = (ordered[-1] if where == "top" else ordered[0]) if ordered else None
+    return Section(
+        id=id,
+        library_id=neighbour.library_id if neighbour else "",
+        bookcase_id=bookcase_id,
+        ordinal=(ordered[-1].ordinal + 1) if (ordered and where == "top") else 1,
+        column_levels=tuple(
+            [neighbour.default_levels if neighbour else DEFAULT_LEVELS]
+            * (neighbour.column_count if neighbour else 1)
+        ),
+        default_levels=neighbour.default_levels if neighbour else DEFAULT_LEVELS,
+        default_depth=neighbour.default_depth if neighbour else DEFAULT_DEPTH,
+    )
+
+
+def renumber_sections(sections: Iterable[Section]) -> tuple[Section, ...]:
+    """Close the gaps: 1, 2, 3 bottom-first, in the order given.
+
+    Needed after adding at the bottom or removing from the middle, because
+    ``ordinal`` is unique per bookcase AND is what the address prints. Ids are
+    untouched — they are the durable handle a shelf's address holds.
+    """
+    return tuple(
+        replace(section, ordinal=i)
+        for i, section in enumerate(
+            sorted(sections, key=lambda s: s.ordinal), start=1)
+    )
+
+
+def shelves_differing_from_default_depth(
+    section: Section, shelves: Iterable[Shelf]
+) -> int:
+    """How many shelves the depth default would CHANGE.
+
+    §3.3 requires the confirmation to be *"an explicit action, showing the
+    count affected"*, so the count has to exist before the action does. The
+    lab had this (``shelvesDifferingFromDefaultDepth``) and the first cut of
+    this module did not — :class:`DepthApplication` reports what it could not
+    move, which is a different (and later) question.
+    """
+    return sum(1 for s in shelves if s.depth_count != section.default_depth)
 
 
 def apply_default_levels(section: Section) -> SlotChange:
@@ -576,7 +668,7 @@ def apply_default_depth(
     section: Section,
     shelves: Iterable[Shelf],
     *,
-    deepest_occupied: Mapping[str, int] | None = None,
+    deepest_occupied: Mapping[str, int],
 ) -> DepthApplication:
     """Copy the section's default onto its shelves — but never below a book.
 
@@ -586,10 +678,16 @@ def apply_default_depth(
     Deepening is never refused — there is nothing behind a shelf to protect.
 
     ``deepest_occupied`` maps a shelf id to the deepest depth a copy or a
-    capture actually stands at; a shelf missing from it is empty. The caller
-    computes it because that is a query, not a rule.
+    capture actually stands at; a shelf missing from it is empty.
+
+    ⚠ It has **no default**, and that is the second review finding of this
+    shape. An empty mapping means "nothing stands behind anything", which
+    means "shallow every shelf" — and the measured consequence is a copy
+    recorded at depth 2 of a shelf that now declares one row, which
+    ``Shelf.check_depth`` then refuses and no foreign key can see.
+    ``map_edit.deepest_occupied_depths`` is the one way to compute it.
     """
-    occupied = deepest_occupied or {}
+    occupied = deepest_occupied
     out: list[Shelf] = []
     kept: list[Shelf] = []
     for shelf in shelves:
@@ -602,8 +700,11 @@ def apply_default_depth(
     return DepthApplication(shelves=tuple(out), kept=tuple(kept))
 
 
-def _clamp_depth(depth: int) -> int:
-    return max(1, min(MAX_DEPTH, int(depth)))
+def _positive(value: int, why: str) -> int:
+    n = int(value)
+    if n < 1:
+        raise DomainError(f"{why}, got {value}")
+    return n
 
 
 # --- removal: nothing here auto-removes -----------------------------------
