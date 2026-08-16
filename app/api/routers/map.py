@@ -22,9 +22,23 @@ meaning rather than convention:
     deleted and which SURVIVED unaddressed — the owner is entitled to know a
     shelf did not vanish.
 
-⚠ Two capabilities, and only two. Reading the map is ``BROWSE`` — the same
-row as seeing the shelves. Every write is ``EDIT_MAP``, §4.2's row 7, which
-has been in the policy matrix since P4.0 waiting for exactly these routes.
+⚠ Two capabilities, and only two. Reading the map is ``BROWSE``; every write
+is ``EDIT_MAP``, §4.2's row 7, which has been in the policy matrix since P4.0
+waiting for exactly these routes.
+
+**[DECIDED 2026-08-16 — owner] Reading the map stays BROWSE**, and it was
+argued before it was decided. A security review put the case for Editor+:
+``VIEW_PHOTOS`` is deliberately Editor+ because *"the photos show the inside
+of a home, and 'viewer' may mean a friend browsing what you own"*, and a
+labelled floor plan is arguably a more legible disclosure than a photograph —
+room names, their positions and sizes, and where every bookcase stands.
+
+The owner overruled it: **everyone who can see the books sees the map.** The
+map exists to answer *"where is my book"* (P6.5), and a viewer who can find a
+title but not walk to it has been handed half a feature. So this is a
+decision on record rather than an oversight — do not "tighten" it without
+asking, and note the asymmetry the review cited runs the other way too:
+nothing here has been shown to anybody yet.
 """
 from __future__ import annotations
 
@@ -394,10 +408,19 @@ def patch_bookcase(
             "detach and place_id in one request mean two different things",
         )
     case = _bookcase(store, library, case_id)
+    if body.floor_id is not None and (case.place_id or body.place_id):
+        # A case in a room is on that room's storey by construction; moving
+        # it alone is how the "bricked bookcase" state was reachable. The
+        # room is what moves, and it takes its furniture with it.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "a case attached to a room moves with the room; move the room, "
+            "or detach the case first",
+        )
     room = _place(store, library, body.place_id) if body.place_id else None
     with _translated():
         case = _replace(case, name=body.name, front=body.front,
-                        order=body.order,
+                        order=body.order, floor_id=body.floor_id,
                         rect=body.rect.to_domain() if body.rect else None)
         if body.detach or room is not None:
             return BookcaseDTO.of(

@@ -1292,6 +1292,13 @@ class BookcasePatch(BaseModel):
                     "storey with it. Use `detach` to let go — null here means "
                     "'unchanged', because a JSON null cannot mean both.",
     )
+    floor_id: str | None = Field(
+        default=None,
+        description="Move a DETACHED case to another storey. A case attached "
+                    "to a room moves with the room instead (PATCH the room), "
+                    "because furniture and its room are on one storey by "
+                    "construction.",
+    )
     detach: bool = Field(
         default=False,
         description="Let go of the room, keeping the storey. Explicit, "

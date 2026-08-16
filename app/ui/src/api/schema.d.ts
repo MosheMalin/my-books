@@ -1887,6 +1887,11 @@ export interface components {
              * @default false
              */
             detach: boolean;
+            /**
+             * Floor Id
+             * @description Move a DETACHED case to another storey. A case attached to a room moves with the room instead (PATCH the room), because furniture and its room are on one storey by construction.
+             */
+            floor_id?: string | null;
             /** Front */
             front?: string | null;
             /** Name */

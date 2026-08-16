@@ -6038,3 +6038,32 @@ def test_the_tenancy_check_on_every_section_route_is_the_routes_own():
         ).status_code == 404
         # The victim's shelves are all still standing in their slots.
         assert all(s["address"] for s in mine.get("/api/v1/shelves").json())
+
+
+def test_a_detached_case_can_change_storey_but_an_attached_one_may_not():
+    """A review found no way at all to move a case between storeys, so a
+    mistakenly drawn floor could only be emptied by drawing a throwaway room
+    on the target — and the tempting wrong move was to clear its slots and
+    delete it, which destroys addresses.
+
+    An ATTACHED case still may not move alone: it is on its room's storey by
+    construction, and moving it alone is how the bricked-bookcase state was
+    reachable. The room is what moves.
+    """
+    with TestClient(_app()) as client:
+        world = _drawn_map(client)
+        upstairs = client.post("/api/v1/map/floors", json={
+            "site_id": world["site"]["id"], "name": "קומה א"}).json()
+        case_id = world["case"]["id"]
+
+        attached = client.patch(f"/api/v1/map/bookcases/{case_id}",
+                                json={"floor_id": upstairs["id"]})
+        assert attached.status_code == 409, attached.text
+        assert "detach" in attached.json()["detail"]
+
+        client.patch(f"/api/v1/map/bookcases/{case_id}", json={"detach": True})
+        moved = client.patch(f"/api/v1/map/bookcases/{case_id}",
+                             json={"floor_id": upstairs["id"]})
+        assert moved.status_code == 200, moved.text
+        assert moved.json()["floor_id"] == upstairs["id"]
+        assert moved.json()["place_id"] is None
