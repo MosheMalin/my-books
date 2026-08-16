@@ -1060,13 +1060,21 @@ class DuplicateAnswerIn(BaseModel):
 # measured is exactly what a later reader adds because it looks like free
 # value, and this is the layer where such a field would be added.
 
+#: Plans are bounded because houses are. A review stored a rectangle
+#: 4.6e18 units wide (accepted, echoed on every GET) and crashed the adapter
+#: with 2**64 — `OverflowError: Python int too large to convert to SQLite
+#: INTEGER`, a 500 on a write. The memory store took all of it happily, so
+#: the API ring could never have seen either.
+_PLAN_LIMIT = 100_000
+
+
 class RectDTO(BaseModel):
     """A rectangle in **abstract units** — never pixels, never centimetres."""
 
-    x: int
-    y: int
-    w: int = Field(gt=0)
-    h: int = Field(gt=0)
+    x: int = Field(ge=-_PLAN_LIMIT, le=_PLAN_LIMIT)
+    y: int = Field(ge=-_PLAN_LIMIT, le=_PLAN_LIMIT)
+    w: int = Field(gt=0, le=_PLAN_LIMIT)
+    h: int = Field(gt=0, le=_PLAN_LIMIT)
 
     @classmethod
     def of(cls, rect: Rect) -> "RectDTO":
@@ -1081,7 +1089,7 @@ class SiteDTO(BaseModel):
 
     id: str
     name: str
-    order: int = 0
+    order: int = Field(default=0, ge=-_PLAN_LIMIT, le=_PLAN_LIMIT)
 
     @classmethod
     def of(cls, site: Site) -> "SiteDTO":
@@ -1094,7 +1102,7 @@ class FloorDTO(BaseModel):
     id: str
     site_id: str
     name: str
-    order: int = 0
+    order: int = Field(default=0, ge=-_PLAN_LIMIT, le=_PLAN_LIMIT)
 
     @classmethod
     def of(cls, floor: Floor) -> "FloorDTO":
@@ -1110,7 +1118,7 @@ class PlaceDTO(BaseModel):
     name: str = ""
     rect: RectDTO
     order: int = Field(
-        default=0,
+        default=0, ge=-_PLAN_LIMIT, le=_PLAN_LIMIT,
         description="Drawing order, and therefore z-order: the last one drawn "
                     "is on top, which is what decides an overlapping tap.",
     )
@@ -1141,7 +1149,7 @@ class BookcaseDTO(BaseModel):
                     "furniture, so the UI's reading direction never moves it.",
     )
     rect: RectDTO
-    order: int = 0
+    order: int = Field(default=0, ge=-_PLAN_LIMIT, le=_PLAN_LIMIT)
 
     @classmethod
     def of(cls, case: Bookcase) -> "BookcaseDTO":
@@ -1215,24 +1223,28 @@ class SiteCreate(BaseModel):
     """A site is NAMED — it exists only because there are two of them, and an
     unnamed one in a picker is unusable."""
 
-    name: str = Field(min_length=1)
-    order: int = 0
+    name: str = Field(min_length=1, max_length=120)
+    order: int = Field(default=0, ge=-_PLAN_LIMIT, le=_PLAN_LIMIT)
 
 
 class SitePatch(BaseModel):
-    name: str | None = Field(default=None, min_length=1)
-    order: int | None = None
+    name: str | None = Field(default=None, min_length=1,
+                             max_length=120)
+    order: int | None = Field(default=None, ge=-_PLAN_LIMIT,
+                              le=_PLAN_LIMIT)
 
 
 class FloorCreate(BaseModel):
     site_id: str = Field(min_length=1)
-    name: str = Field(min_length=1)
-    order: int = 0
+    name: str = Field(min_length=1, max_length=120)
+    order: int = Field(default=0, ge=-_PLAN_LIMIT, le=_PLAN_LIMIT)
 
 
 class FloorPatch(BaseModel):
-    name: str | None = Field(default=None, min_length=1)
-    order: int | None = None
+    name: str | None = Field(default=None, min_length=1,
+                             max_length=120)
+    order: int | None = Field(default=None, ge=-_PLAN_LIMIT,
+                              le=_PLAN_LIMIT)
 
 
 class PlaceCreate(BaseModel):
@@ -1241,15 +1253,16 @@ class PlaceCreate(BaseModel):
 
     floor_id: str = Field(min_length=1)
     rect: RectDTO
-    name: str = ""
-    order: int = 0
+    name: str = Field(default="", max_length=120)
+    order: int = Field(default=0, ge=-_PLAN_LIMIT, le=_PLAN_LIMIT)
 
 
 class PlacePatch(BaseModel):
-    name: str | None = None
+    name: str | None = Field(default=None, max_length=120)
     rect: RectDTO | None = None
     floor_id: str | None = None
-    order: int | None = None
+    order: int | None = Field(default=None, ge=-_PLAN_LIMIT,
+                              le=_PLAN_LIMIT)
 
 
 class BookcaseCreate(BaseModel):
@@ -1259,19 +1272,20 @@ class BookcaseCreate(BaseModel):
     floor_id: str = Field(min_length=1)
     rect: RectDTO
     name: str = ""
-    front: str = "S"
+    front: str = Field(default="S", pattern="^[NESW]$")
     place_id: str | None = None
-    order: int = 0
+    order: int = Field(default=0, ge=-_PLAN_LIMIT, le=_PLAN_LIMIT)
     columns: int = Field(default=DEFAULT_COLUMNS, ge=1, le=40)
     levels: int = Field(default=DEFAULT_LEVELS, ge=1, le=40)
     depth: int = Field(default=DEFAULT_DEPTH, ge=1, le=MAX_DEPTH)
 
 
 class BookcasePatch(BaseModel):
-    name: str | None = None
+    name: str | None = Field(default=None, max_length=120)
     rect: RectDTO | None = None
-    front: str | None = None
-    order: int | None = None
+    front: str | None = Field(default=None, pattern="^[NESW]$")
+    order: int | None = Field(default=None, ge=-_PLAN_LIMIT,
+                              le=_PLAN_LIMIT)
     place_id: str | None = Field(
         default=None,
         description="Point the case at a room; it moves onto that room's "

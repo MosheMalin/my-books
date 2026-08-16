@@ -79,11 +79,10 @@ def deepest_occupied_depths(
     was open on a laptop.
     """
     from_copies = books.deepest_copy_depth(library)
+    from_photos = shelves.deepest_capture_depth(library)
     deepest: dict[str, int] = {}
     for shelf in candidates:
-        depth = from_copies.get(shelf.id, 0)
-        for capture in shelves.list_captures(library, shelf.id):
-            depth = max(depth, capture.depth)
+        depth = max(from_copies.get(shelf.id, 0), from_photos.get(shelf.id, 0))
         if depth:
             deepest[shelf.id] = depth
     return deepest
@@ -183,7 +182,11 @@ def apply_slot_change(
     ]
     removal = _release(shelves, books, library, losing)
     map_store.save_section(library, change.section)
-    _fill(shelves, library, change.section, change.added, ids=ids, clock=clock)
+    # The WHOLE address set, not just `change.added` — `_fill` is idempotent
+    # by address, so this costs nothing extra and heals a section whose slots
+    # lost their shelves to a concurrent edit.
+    _fill(shelves, library, change.section, change.section.addresses,
+          ids=ids, clock=clock)
     return removal
 
 
@@ -338,21 +341,34 @@ def _fill(
 ) -> int:
     """Create one empty shelf per address that has none yet.
 
+    **Two queries and one write, whatever the size of the bookcase.** The
+    per-address version asked ``get_shelf_at`` and wrote once per slot, and
+    the SQLite adapter opens a connection per operation — a security review
+    measured 40 columns of 40 costing 16.5 seconds and 1600 connections from
+    a 110-byte request. This lists the section once and writes the missing
+    shelves as one transaction.
+
     Idempotent by address, which is what makes a retried request safe: the
     slot is the identity, so a second call finds the shelf already standing
     there instead of minting a twin the unique index would then refuse.
+
+    ⚠ Callers pass the section's WHOLE address set, not just what a change
+    added — so a slot left empty by a lost update (two tabs editing one
+    section) gains its shelf on the next edit instead of staying a drawn
+    rectangle with nothing behind it.
     """
-    made = 0
+    standing = {s.address for s in shelves.list_shelves_in_section(
+        library, section.id)}
     now = clock.now_iso()
-    for address in addresses:
-        if shelves.get_shelf_at(library, address) is not None:
-            continue
-        shelves.save_shelf(library, new_shelf(
+    fresh = tuple(
+        new_shelf(
             id=ids.new_id(),
             library_id=library.id,
             depth_count=section.default_depth,
             created_at=now,
             address=address,
-        ))
-        made += 1
-    return made
+        )
+        for address in addresses if address not in standing
+    )
+    shelves.save_shelves(library, fresh)
+    return len(fresh)

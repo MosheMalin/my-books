@@ -26,6 +26,7 @@ import shutil
 import sys
 import tempfile
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -2013,6 +2014,131 @@ def one_librarys_slots_are_invisible_to_another(stores):
     assert [s.id for s in shelves.list_shelves_in_section(LIB, a.id)] == ["sh-a"]
     assert shelves.get_shelf_at(OTHER, ShelfAddress(a.id, 1, 1)) is None
     assert len(maps.load_map(OTHER).sites) == 1
+
+
+@map_contract
+def a_whole_bookcase_of_shelves_is_written_as_one_unit(stores):
+    """`save_shelves` exists because the SQL adapter opens a connection per
+    operation: a security review measured 40 columns of 40 costing 16.5s and
+    1600 connections. All-or-nothing, so a rejected member leaves none of
+    them written — the same contract as one `save_shelf`, applied to each."""
+    maps, shelves, books = stores
+    section = _drawn(maps, shelves)
+    batch = tuple(new_shelf(id=f"sh{i}", library_id=LIB.id,
+                            address=ShelfAddress(section.id, 1, i + 1))
+                  for i in range(5))
+    shelves.save_shelves(LIB, batch)
+    assert len(shelves.list_shelves_in_section(LIB, section.id)) == 5
+
+    # One bad member and NOTHING lands — here, a second shelf claiming a slot
+    # the first of the batch already took.
+    clash = (new_shelf(id="ok", library_id=LIB.id,
+                       address=ShelfAddress(section.id, 2, 1)),
+             new_shelf(id="clash", library_id=LIB.id,
+                       address=ShelfAddress(section.id, 2, 1)))
+    _raises(DuplicateShelfSlot, shelves.save_shelves, LIB, clash)
+    assert shelves.get_shelf(LIB, "ok") is None, (
+        "a batch wrote some of its shelves and then refused the rest"
+    )
+    shelves.save_shelves(LIB, ())          # empty is a no-op, not an error
+
+
+@map_contract
+def the_deepest_photograph_on_each_shelf_comes_back_in_one_query(stores):
+    """The captures half of "is anything standing here?", grouped.
+
+    Asking `list_captures` once per shelf is the correlated-per-row pattern
+    that made `/images` take 13.6s for one page — CLAUDE.md records it, and a
+    review measured this router repeating it.
+    """
+    maps, shelves, books = stores
+    section = _drawn(maps, shelves)
+    shelf = new_shelf(id="sh1", library_id=LIB.id, depth_count=3,
+                      address=ShelfAddress(section.id, 1, 1))
+    shelves.save_shelf(LIB, shelf)
+    assert shelves.deepest_capture_depth(LIB) == {}
+    shelves.save_capture(LIB, new_capture(shelf, id="c1", depth=1))
+    shelves.save_capture(LIB, new_capture(shelf, id="c2", depth=3))
+    assert shelves.deepest_capture_depth(LIB) == {"sh1": 3}
+    assert shelves.deepest_capture_depth(OTHER) == {}, (
+        "one library's photographs leaked into another's"
+    )
+
+
+@map_contract
+def a_bookcases_sections_are_renumbered_as_one_unit(stores):
+    """⚠ Inserting at the BOTTOM pushes every section up an ordinal, and
+    `ordinal` is unique per bookcase AND is what an address prints.
+
+    A review measured the one-at-a-time version failing part-way: sections
+    shifted, the new one never created, a GAP at 3, and the request answering
+    an error while having permanently changed the drawing. Every retry
+    widened it. So the whole set is one write — and it must survive the
+    transient collision that "push everything up by one" always produces.
+    """
+    maps, shelves, books = stores
+    base = _drawn(maps, shelves)
+    maps.save_section(LIB, new_section(id="mid", library_id=LIB.id,
+                                       bookcase_id="lib-a-bc", ordinal=2))
+    # Every existing section up one, and a new one on the floor. Written one
+    # at a time in any order this collides; as a set it must not.
+    maps.save_sections(LIB, (
+        new_section(id="plinth", library_id=LIB.id, bookcase_id="lib-a-bc",
+                    ordinal=1),
+        new_section(id=base.id, library_id=LIB.id, bookcase_id="lib-a-bc",
+                    ordinal=2),
+        new_section(id="mid", library_id=LIB.id, bookcase_id="lib-a-bc",
+                    ordinal=3),
+    ))
+    got = [(s.id, s.ordinal) for s in maps.load_map(LIB).sections]
+    assert got == [("plinth", 1), (base.id, 2), ("mid", 3)], got
+
+    # …and a set that would leave two sections on one number is refused
+    # WHOLE — nothing half-applied.
+    _raises(DuplicateSectionOrdinal, maps.save_sections, LIB, (
+        new_section(id="plinth", library_id=LIB.id, bookcase_id="lib-a-bc",
+                    ordinal=9),
+        new_section(id="twin", library_id=LIB.id, bookcase_id="lib-a-bc",
+                    ordinal=9),
+    ))
+    assert maps.get_section(LIB, "plinth").ordinal == 1, (
+        "a refused renumbering left one of its writes behind"
+    )
+
+
+@map_contract
+def a_room_that_changes_storey_takes_its_furniture_with_it(stores):
+    """⚠ Measured at review, through the routes: a room moved upstairs and
+    its bookcase stayed on the ground floor — the state `NotOnThisFloor`
+    exists to make unreachable. The case was then BRICKED: rename, move,
+    resize and re-order all answered 409 forever, citing a mismatch the owner
+    never created.
+
+    A bookcase belongs to a room the way furniture does (§3.7), so it goes
+    where the room goes, in one call.
+    """
+    maps, shelves, books = stores
+    _drawn(maps, shelves)
+    maps.save_floor(LIB, new_floor(id="up", library_id=LIB.id,
+                                   site_id="lib-a-st", name="קומה א"))
+    loose = new_bookcase(id="loose", library_id=LIB.id, floor_id="lib-a-fl",
+                         rect=Rect(9, 9, 2, 1))
+    maps.save_bookcase(LIB, loose)
+
+    moved = maps.move_place(LIB, maps.get_place(LIB, "lib-a-pl"), "up")
+    assert moved.floor_id == "up"
+    assert maps.get_place(LIB, "lib-a-pl").floor_id == "up"
+    assert maps.get_bookcase(LIB, "lib-a-bc").floor_id == "up", (
+        "the room moved storeys and left its bookcase behind"
+    )
+    assert maps.get_bookcase(LIB, "loose").floor_id == "lib-a-fl", (
+        "a case attached to no room was dragged along"
+    )
+    # …and the case is still writable, which is what being bricked cost.
+    maps.save_bookcase(LIB, replace(maps.get_bookcase(LIB, "lib-a-bc"),
+                                    name="renamed"))
+    _raises(UnknownParent, maps.move_place, LIB,
+            maps.get_place(LIB, "lib-a-pl"), "no-such-floor")
 
 
 # --- registration ---------------------------------------------------------

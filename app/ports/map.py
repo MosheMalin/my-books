@@ -129,6 +129,40 @@ class MapStore(Protocol):
 
     def save_section(self, library: LibraryRef, section: Section) -> None: ...
 
+    def save_sections(
+        self, library: LibraryRef, sections: tuple[Section, ...]
+    ) -> None:
+        """Write a bookcase's sections as ONE unit.
+
+        ⚠ Required, not a convenience. Inserting a section at the BOTTOM
+        pushes every other one up an ordinal, and ``ordinal`` is unique per
+        bookcase AND is what an address prints. A review measured the
+        one-at-a-time version failing part-way: sections renumbered, the new
+        one never created, a gap at 3, and the request answering an error
+        while having permanently changed the drawing. Every retry widened it.
+
+        All-or-nothing, and the implementation must order its writes so no
+        intermediate state collides with the unique index.
+        """
+
+    def move_place(
+        self, library: LibraryRef, place: Place, floor_id: str
+    ) -> Place:
+        """Move a room to another storey, **taking its furniture with it**.
+
+        ⚠ One call, one transaction, because the two halves cannot be set
+        independently — a review moved a room upstairs and left its bookcase
+        on the ground floor, which is precisely the state
+        ``NotOnThisFloor`` exists to make unreachable. The case was then
+        un-renamable, un-movable and un-resizable forever: every write
+        re-checked the invariant and answered 409 about a mismatch the owner
+        never created.
+
+        A bookcase belongs to a room the way furniture does (§3.7), so it goes
+        where the room goes. That is the same argument ``attach_bookcase``
+        already makes in the other direction.
+        """
+
     def get_section(
         self, library: LibraryRef, section_id: str
     ) -> Section | None: ...

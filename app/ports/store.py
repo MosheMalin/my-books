@@ -324,6 +324,34 @@ class ShelfStore(Protocol):
         never sorts and then disagrees with the elevation on screen.
         """
 
+    def save_shelves(self, library: LibraryRef, shelves: tuple[Shelf, ...]) -> None:
+        """Write many shelves as ONE unit.
+
+        ⚠ Not a convenience. This port's SQLite adapter opens a connection per
+        operation — a deliberate choice, argued in its own docstring — and
+        drawing a bookcase creates one shelf per slot. A security review
+        measured what that costs when the two meet: a 110-byte request asking
+        for 40 columns of 40 took **16.5 seconds and 1600 connections**, and a
+        40-byte *add a section* request took 17 more. One request, one
+        connection, one transaction.
+
+        Same contract as :meth:`save_shelf` applied to each: same refusals,
+        and all-or-nothing, so a rejected shelf leaves none of them written.
+        """
+
+    def deepest_capture_depth(self, library: LibraryRef) -> Mapping[str, int]:
+        """Per shelf, the deepest depth a CAPTURE was filed at.
+
+        The other half of "is anything standing here?" — see
+        :meth:`BookStore.deepest_copy_depth`, which answers the copies half in
+        exactly this shape.
+
+        ⚠ A mapping, not a per-shelf call, for the reason the review measured:
+        asking `list_captures` once per shelf is the correlated-per-row
+        pattern that made ``/images`` take 13.6s for one page. Shelves with no
+        photograph are simply absent.
+        """
+
     def get_shelf_at(
         self, library: LibraryRef, address: ShelfAddress
     ) -> Shelf | None:

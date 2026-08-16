@@ -28,6 +28,8 @@ has been in the policy matrix since P4.0 waiting for exactly these routes.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import (
@@ -69,12 +71,16 @@ from app.domain import (
     Place,
     Section,
     Site,
+    TooManySlots,
     apply_default_levels,
+    check_bookcase_size,
     new_bookcase,
     new_floor,
     new_place,
+    new_section,
     new_site,
     next_section,
+    renumber_sections,
     with_column_count,
     with_column_levels,
     with_default_depth,
@@ -144,34 +150,37 @@ def _section(store: MapStore, library: LibraryRef, section_id: str) -> Section:
     return got
 
 
-def _save(save, library: LibraryRef, record):
-    """Write one map object, translating the store's refusals.
+@contextmanager
+def _translated():
+    """Turn the domain's and the stores' refusals into the right status.
+
+    ⚠ It wraps the CONSTRUCTION as well as the write, and that is the fix a
+    review measured: `Site.__post_init__` and `dataclasses.replace` both
+    validate, both sat outside the old `try`, and seven ordinary inputs — a
+    whitespace name, `front="Q"` — answered **500**. A mutating route that
+    answers 500 is one the phone client cannot classify, so it retries.
 
     ``UnknownParent`` is 404 rather than 400: a client naming a floor that is
     not there is naming something that, as far as this library is concerned,
-    does not exist — the same answer §4.2 gives for a foreign one, and for the
-    same reason.
+    does not exist — the same answer §4.2 gives for a foreign one.
     """
     try:
-        save(library, record)
+        yield
     except UnknownParent as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
-    except NotOnThisFloor as exc:
-        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
-    except DuplicateSectionOrdinal as exc:
+    except (NotOnThisFloor, NotEmpty, TooManySlots,
+            DuplicateSectionOrdinal) as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     except DomainError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
-    return record
 
 
 def _remove(delete, library: LibraryRef, record_id: str, what: str) -> None:
-    try:
+    # 409 (via `_translated`) carries the message that says WHAT is in the
+    # way — "cannot delete" with no reason is what makes the next reader
+    # delete the guard.
+    with _translated():
         removed = delete(library, record_id)
-    except NotEmpty as exc:
-        # 409, and the message says WHAT is in the way — "cannot delete" with
-        # no reason is what makes the next reader delete the guard.
-        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     if not removed:
         raise _gone(what)
 
@@ -202,9 +211,11 @@ def create_site(
     store: MapStore = Depends(get_map_store),
     ids: IdGen = Depends(get_id_gen),
 ) -> SiteDTO:
-    site = new_site(id=ids.new_id(), library_id=library.id,
-                    name=body.name, order=body.order)
-    return SiteDTO.of(_save(store.save_site, library, site))
+    with _translated():
+        site = new_site(id=ids.new_id(), library_id=library.id,
+                        name=body.name, order=body.order)
+        store.save_site(library, site)
+    return SiteDTO.of(site)
 
 
 @router.patch("/sites/{site_id}", response_model=SiteDTO)
@@ -215,8 +226,10 @@ def patch_site(
     store: MapStore = Depends(get_map_store),
 ) -> SiteDTO:
     site = _site(store, library, site_id)
-    site = _replace(site, name=body.name, order=body.order)
-    return SiteDTO.of(_save(store.save_site, library, site))
+    with _translated():
+        site = _replace(site, name=body.name, order=body.order)
+        store.save_site(library, site)
+    return SiteDTO.of(site)
 
 
 @router.delete("/sites/{site_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -240,9 +253,12 @@ def create_floor(
     store: MapStore = Depends(get_map_store),
     ids: IdGen = Depends(get_id_gen),
 ) -> FloorDTO:
-    floor = new_floor(id=ids.new_id(), library_id=library.id,
-                      site_id=body.site_id, name=body.name, order=body.order)
-    return FloorDTO.of(_save(store.save_floor, library, floor))
+    with _translated():
+        floor = new_floor(id=ids.new_id(), library_id=library.id,
+                          site_id=body.site_id, name=body.name,
+                          order=body.order)
+        store.save_floor(library, floor)
+    return FloorDTO.of(floor)
 
 
 @router.patch("/floors/{floor_id}", response_model=FloorDTO)
@@ -253,8 +269,10 @@ def patch_floor(
     store: MapStore = Depends(get_map_store),
 ) -> FloorDTO:
     floor = _floor(store, library, floor_id)
-    floor = _replace(floor, name=body.name, order=body.order)
-    return FloorDTO.of(_save(store.save_floor, library, floor))
+    with _translated():
+        floor = _replace(floor, name=body.name, order=body.order)
+        store.save_floor(library, floor)
+    return FloorDTO.of(floor)
 
 
 @router.delete("/floors/{floor_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -278,10 +296,12 @@ def create_place(
     store: MapStore = Depends(get_map_store),
     ids: IdGen = Depends(get_id_gen),
 ) -> PlaceDTO:
-    place = new_place(id=ids.new_id(), library_id=library.id,
-                      floor_id=body.floor_id, rect=body.rect.to_domain(),
-                      name=body.name, order=body.order)
-    return PlaceDTO.of(_save(store.save_place, library, place))
+    with _translated():
+        place = new_place(id=ids.new_id(), library_id=library.id,
+                          floor_id=body.floor_id, rect=body.rect.to_domain(),
+                          name=body.name, order=body.order)
+        store.save_place(library, place)
+    return PlaceDTO.of(place)
 
 
 @router.patch("/places/{place_id}", response_model=PlaceDTO)
@@ -292,10 +312,19 @@ def patch_place(
     store: MapStore = Depends(get_map_store),
 ) -> PlaceDTO:
     place = _place(store, library, place_id)
-    place = _replace(place, name=body.name, order=body.order,
-                     floor_id=body.floor_id,
-                     rect=body.rect.to_domain() if body.rect else None)
-    return PlaceDTO.of(_save(store.save_place, library, place))
+    with _translated():
+        place = _replace(place, name=body.name, order=body.order,
+                         rect=body.rect.to_domain() if body.rect else None)
+        store.save_place(library, place)
+        # ⚠ The storey moves through its OWN call, which takes the room's
+        # bookcases with it. A review moved a room upstairs with a plain
+        # field write and left its case on the ground floor — the state
+        # `NotOnThisFloor` exists to forbid — and the case was then
+        # un-renamable, un-movable and un-resizable forever, every write
+        # answering 409 about a mismatch the owner never created.
+        if body.floor_id is not None and body.floor_id != place.floor_id:
+            place = store.move_place(library, place, body.floor_id)
+    return PlaceDTO.of(place)
 
 
 @router.delete("/places/{place_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -327,20 +356,21 @@ def create_bookcase(
     addressed shelves come into existence, each carrying the section's depth
     as a COPY. That is the point of the route, not a side effect of it.
     """
-    case = new_bookcase(id=ids.new_id(), library_id=library.id,
-                        floor_id=body.floor_id, rect=body.rect.to_domain(),
-                        name=body.name, front=body.front,
-                        place_id=body.place_id, order=body.order)
-    try:
+    with _translated():
+        case = new_bookcase(id=ids.new_id(), library_id=library.id,
+                            floor_id=body.floor_id, rect=body.rect.to_domain(),
+                            name=body.name, front=body.front,
+                            place_id=body.place_id, order=body.order)
+        # The ceiling BEFORE the write, not after: the point is not to refuse
+        # the 1601st row, it is to never spend 16 seconds writing the first
+        # 1600 (§ MAX_SLOTS_PER_BOOKCASE).
+        check_bookcase_size([new_section(
+            id="probe", library_id=library.id, bookcase_id=case.id,
+            columns=body.columns, default_levels=body.levels,
+            default_depth=body.depth)])
         drawn = draw_bookcase(store, shelves, library, case, ids=ids,
                               clock=clock, columns=body.columns,
                               levels=body.levels, depth=body.depth)
-    except UnknownParent as exc:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
-    except NotOnThisFloor as exc:
-        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
-    except DomainError as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     return BookcaseDTO.of(drawn.bookcase)
 
 
@@ -358,24 +388,22 @@ def patch_bookcase(
     explicit, always: containment may only ever REASSIGN a case, never orphan
     one, and the lab found that the hard way twice.
     """
-    case = _bookcase(store, library, case_id)
-    case = _replace(case, name=body.name, front=body.front, order=body.order,
-                    rect=body.rect.to_domain() if body.rect else None)
     if body.detach and body.place_id is not None:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             "detach and place_id in one request mean two different things",
         )
-    if body.detach:
-        return BookcaseDTO.of(attach_case_to_room(store, library, case, None))
-    if body.place_id is not None:
-        room = _place(store, library, body.place_id)
-        try:
+    case = _bookcase(store, library, case_id)
+    room = _place(store, library, body.place_id) if body.place_id else None
+    with _translated():
+        case = _replace(case, name=body.name, front=body.front,
+                        order=body.order,
+                        rect=body.rect.to_domain() if body.rect else None)
+        if body.detach or room is not None:
             return BookcaseDTO.of(
                 attach_case_to_room(store, library, case, room))
-        except DomainError as exc:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
-    return BookcaseDTO.of(_save(store.save_bookcase, library, case))
+        store.save_bookcase(library, case)
+    return BookcaseDTO.of(case)
 
 
 @router.delete("/bookcases/{case_id}/slots", response_model=SlotRemovalDTO)
@@ -430,12 +458,24 @@ def create_section(
     ones above: ``ordinal`` is bottom-first, unique, and printed in addresses.
     """
     _bookcase(store, library, body.bookcase_id)
-    siblings = [s for s in store.load_map(library).sections
-                if s.bookcase_id == body.bookcase_id]
-    section = next_section(body.bookcase_id, siblings, id=ids.new_id(),
-                           where=body.where)
-    if body.where == "bottom":
-        _renumber(store, library, siblings, section)
+    with _translated():
+        # Recomputed from the LIVE snapshot every time, and written as one
+        # set. A review measured the previous shape — renumber one section at
+        # a time, outside any transaction: a failure part-way left the
+        # sections shifted, the new one never created, a GAP in the ordinals
+        # the address prints, and every retry widened it. Two concurrent adds
+        # did the same with no failure at all.
+        siblings = [s for s in store.load_map(library).sections
+                    if s.bookcase_id == body.bookcase_id]
+        section = next_section(body.bookcase_id, siblings, id=ids.new_id(),
+                               where=body.where)
+        ordered = ([section] + sorted(siblings, key=lambda s: s.ordinal)
+                   if body.where == "bottom"
+                   else sorted(siblings, key=lambda s: s.ordinal) + [section])
+        settled = renumber_sections(ordered)
+        check_bookcase_size(settled)
+        store.save_sections(library, settled)
+        section = next(s for s in settled if s.id == section.id)
     # ⚠ From EMPTY up to the shape, not from the shape to itself. A section
     # that has never been saved has no slots yet, so the change has to be
     # computed against nothing — asking `with_column_count` for the width it
@@ -463,8 +503,26 @@ def patch_section(
     existing shelf, and applying it is a separate, explicit call. The grid
     changes DO touch shelves, which is what the response reports.
     """
+    # ⚠ ONE grid instruction per request, checked before anything is read.
+    # A review measured the old fall-through: `{"columns":3,"column":1,
+    # "levels":9}` answered 200 having silently dropped the per-column edit,
+    # and `{"column":2}` alone answered 200 having done nothing at all — an
+    # elevation panel that saves what it is showing would apply half its edit
+    # every time and be told it succeeded.
+    per_column = body.column is not None or body.levels is not None
+    if body.columns is not None and per_column:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "`columns` resizes the whole section and `column`/`levels` one "
+            "column of it; one request carries one grid instruction",
+        )
+    if per_column and (body.column is None or body.levels is None):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "`column` and `levels` name one column's height together",
+        )
     section = _section(store, library, section_id)
-    try:
+    with _translated():
         if body.default_levels is not None:
             section = with_default_levels(section, body.default_levels)
         if body.default_depth is not None:
@@ -472,18 +530,17 @@ def patch_section(
         change = None
         if body.columns is not None:
             change = with_column_count(section, body.columns)
-        elif body.column is not None and body.levels is not None:
+        elif per_column:
             change = with_column_levels(section, body.column, body.levels)
-        elif body.levels is not None:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                "levels changes one column, so it needs `column` too",
-            )
-    except DomainError as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+        if change is not None:
+            siblings = [s for s in store.load_map(library).sections
+                        if s.bookcase_id == section.bookcase_id
+                        and s.id != section.id]
+            check_bookcase_size(siblings + [change.section])
     if change is None:
         # Defaults only: no slot moves, so nothing is created or removed.
-        _save(store.save_section, library, section)
+        with _translated():
+            store.save_section(library, section)
         return SectionEditDTO(section=SectionDTO.of(section))
     return _edit(store, shelves, books, library, change, ids=ids, clock=clock)
 
@@ -501,8 +558,13 @@ def apply_levels(
     """Level every column to the section's default — the explicit, opt-in
     half of the level default."""
     section = _section(store, library, section_id)
-    return _edit(store, shelves, books, library, apply_default_levels(section),
-                 ids=ids, clock=clock)
+    with _translated():
+        change = apply_default_levels(section)
+        siblings = [s for s in store.load_map(library).sections
+                    if s.bookcase_id == section.bookcase_id
+                    and s.id != section.id]
+        check_bookcase_size(siblings + [change.section])
+    return _edit(store, shelves, books, library, change, ids=ids, clock=clock)
 
 
 @router.post("/sections/{section_id}/depth", response_model=DepthApplyDTO)
@@ -568,32 +630,12 @@ def _replace(record, **fields):
     return replace(record, **given) if given else record
 
 
-def _renumber(store: MapStore, library: LibraryRef, siblings, incoming) -> None:
-    """Push every existing section up one, bottom-first, before inserting.
-
-    Written from the TOP down so no intermediate state collides with the
-    unique ``(bookcase, ordinal)`` index — moving section 1 to 2 while a
-    section 2 exists is exactly the collision the index is for.
-    """
-    from dataclasses import replace
-
-    for section in sorted(siblings, key=lambda s: s.ordinal, reverse=True):
-        store.save_section(library, replace(section,
-                                            ordinal=section.ordinal + 1))
-
-
 def _edit(store: MapStore, shelves: ShelfStore, books: BookStore,
           library: LibraryRef, change, *, ids: IdGen,
           clock: Clock) -> SectionEditDTO:
-    try:
+    with _translated():
         removal = apply_slot_change(store, shelves, books, library, change,
                                     ids=ids, clock=clock)
-    except UnknownParent as exc:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
-    except DuplicateSectionOrdinal as exc:
-        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
-    except DomainError as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     return SectionEditDTO(
         section=SectionDTO.of(change.section),
         created=len(change.added),

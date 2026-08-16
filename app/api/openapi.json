@@ -312,6 +312,7 @@
           },
           "front": {
             "default": "S",
+            "pattern": "^[NESW]$",
             "title": "Front",
             "type": "string"
           },
@@ -329,6 +330,8 @@
           },
           "order": {
             "default": 0,
+            "maximum": 100000.0,
+            "minimum": -100000.0,
             "title": "Order",
             "type": "integer"
           },
@@ -378,6 +381,8 @@
           },
           "order": {
             "default": 0,
+            "maximum": 100000.0,
+            "minimum": -100000.0,
             "title": "Order",
             "type": "integer"
           },
@@ -416,6 +421,7 @@
           "front": {
             "anyOf": [
               {
+                "pattern": "^[NESW]$",
                 "type": "string"
               },
               {
@@ -427,6 +433,7 @@
           "name": {
             "anyOf": [
               {
+                "maxLength": 120,
                 "type": "string"
               },
               {
@@ -438,6 +445,8 @@
           "order": {
             "anyOf": [
               {
+                "maximum": 100000.0,
+                "minimum": -100000.0,
                 "type": "integer"
               },
               {
@@ -1272,12 +1281,15 @@
       "FloorCreate": {
         "properties": {
           "name": {
+            "maxLength": 120,
             "minLength": 1,
             "title": "Name",
             "type": "string"
           },
           "order": {
             "default": 0,
+            "maximum": 100000.0,
+            "minimum": -100000.0,
             "title": "Order",
             "type": "integer"
           },
@@ -1307,6 +1319,8 @@
           },
           "order": {
             "default": 0,
+            "maximum": 100000.0,
+            "minimum": -100000.0,
             "title": "Order",
             "type": "integer"
           },
@@ -1328,6 +1342,7 @@
           "name": {
             "anyOf": [
               {
+                "maxLength": 120,
                 "minLength": 1,
                 "type": "string"
               },
@@ -1340,6 +1355,8 @@
           "order": {
             "anyOf": [
               {
+                "maximum": 100000.0,
+                "minimum": -100000.0,
                 "type": "integer"
               },
               {
@@ -1858,11 +1875,14 @@
           },
           "name": {
             "default": "",
+            "maxLength": 120,
             "title": "Name",
             "type": "string"
           },
           "order": {
             "default": 0,
+            "maximum": 100000.0,
+            "minimum": -100000.0,
             "title": "Order",
             "type": "integer"
           },
@@ -1896,6 +1916,8 @@
           "order": {
             "default": 0,
             "description": "Drawing order, and therefore z-order: the last one drawn is on top, which is what decides an overlapping tap.",
+            "maximum": 100000.0,
+            "minimum": -100000.0,
             "title": "Order",
             "type": "integer"
           },
@@ -1927,6 +1949,7 @@
           "name": {
             "anyOf": [
               {
+                "maxLength": 120,
                 "type": "string"
               },
               {
@@ -1938,6 +1961,8 @@
           "order": {
             "anyOf": [
               {
+                "maximum": 100000.0,
+                "minimum": -100000.0,
                 "type": "integer"
               },
               {
@@ -2215,19 +2240,25 @@
         "properties": {
           "h": {
             "exclusiveMinimum": 0.0,
+            "maximum": 100000.0,
             "title": "H",
             "type": "integer"
           },
           "w": {
             "exclusiveMinimum": 0.0,
+            "maximum": 100000.0,
             "title": "W",
             "type": "integer"
           },
           "x": {
+            "maximum": 100000.0,
+            "minimum": -100000.0,
             "title": "X",
             "type": "integer"
           },
           "y": {
+            "maximum": 100000.0,
+            "minimum": -100000.0,
             "title": "Y",
             "type": "integer"
           }
@@ -2634,12 +2665,15 @@
         "description": "A site is NAMED — it exists only because there are two of them, and an\nunnamed one in a picker is unusable.",
         "properties": {
           "name": {
+            "maxLength": 120,
             "minLength": 1,
             "title": "Name",
             "type": "string"
           },
           "order": {
             "default": 0,
+            "maximum": 100000.0,
+            "minimum": -100000.0,
             "title": "Order",
             "type": "integer"
           }
@@ -2663,6 +2697,8 @@
           },
           "order": {
             "default": 0,
+            "maximum": 100000.0,
+            "minimum": -100000.0,
             "title": "Order",
             "type": "integer"
           }
@@ -2679,6 +2715,7 @@
           "name": {
             "anyOf": [
               {
+                "maxLength": 120,
                 "minLength": 1,
                 "type": "string"
               },
@@ -2691,6 +2728,8 @@
           "order": {
             "anyOf": [
               {
+                "maximum": 100000.0,
+                "minimum": -100000.0,
                 "type": "integer"
               },
               {
