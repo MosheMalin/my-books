@@ -512,7 +512,7 @@ this pillar.**
 | **P6.0** | **The map lab** — a standalone app, no backend, outside the gate. Rectangle drawing for rooms and bookcases, room-to-room attachment, multi-select, copy/paste, explicit bookcase→room attachment, resize handles, sections, floors, the elevation editor, underlay tracing, black/white themes, visible autosave, a real undo stack. | M | ✅ nine passes |
 | **P6.1** | **Address domain + migration** — `Site`, `Floor`, `Place`, `Bookcase`, `Section`, the shelf address, geometry in abstract units. Drawn slots create real empty `Shelf` rows. Naming lint. Schema **v20** with a real v19→v20 upgrade test. | L | ✅ |
 | **P6.2** | **API + policy** — the map through `current_library`, one capability each, contracts regenerated. | M | ✅ |
-| **P6.3** | **The port** — the lab's editor moves into `app/web/src/map/` **verbatim** where it is framework-free, wired to the API by an adapter. **The lab is deleted in the same commit.** Behaviour identical to the lab's ninth pass — that is the acceptance test, not a rewrite. | M | |
+| **P6.3** | **The port** — the lab's editor moves into `app/web/src/map/` **verbatim** where it is framework-free, wired to the API by an adapter. **The lab is deleted in the same commit.** Behaviour identical to the lab's ninth pass — that is the acceptance test, not a rewrite. | M | **branch `p6.3-port`, NOT merged** |
 | **P6.3b** | **The site picker** — the one thing the lab never had (§3.9). Sites and their floors become manageable in the ported editor; a single site renders no chrome. Deliberately AFTER P6.3, so "behaves the same" is verifiable before anything new is added. | S | |
 | **P6.4** | **Binding and merge** — photo-born shelves bind into drawn slots; several identities merge into one physical shelf, with aliases. | L | |
 | **P6.5** | **The map as navigation** — three drill levels, "where is it" incl. depth, stale-depth surfacing, capture handoff. | L | |
@@ -644,6 +644,49 @@ What the two reviews measured, kept here because P6.3 inherits the shapes:
   `detached`), and P6.3 should SHOW that split before the destructive call —
   the 409 currently says "4 shelves still stand", which reads as "4 empty
   slots" when some of them hold books.
+
+### P6.3 — the port, and what two reviews found in it
+
+The port itself worked: `core/*` came over byte-for-byte (verified both
+directions against the deleted lab, all seven files), its 83 tests run in the
+web ring, and one `POST /map/bookcases` against the owner's real database
+created the case, its section and 15 real addressed `Shelf` rows, which a
+reload drew back by name in Hebrew.
+
+`review-quality` and `review-ux` then found **eight criticals between them**,
+every one measured. Four are fixed on the branch (see 6b28c96); these remain,
+and the branch does not merge until they are:
+
+1. **A pasted bookcase aliases the original's section ids.** `paste` mints a
+   new case id and spreads the sections through unchanged, so a depth change
+   on the COPY writes to the original's shelves — server answers 200.
+2. **`case.add` flattens everything but the first section**, so a pasted or
+   undo-restored case with a hutch, ragged columns or per-shelf depths is
+   created uniform, and `confirmed` records the loss as landed.
+3. **"Clear the plan" now destroys the household's real map** — in the lab it
+   cleared `localStorage`. Same family as the *Save to file* hint the port
+   caught; this one was missed.
+4. **The editor is half translated.** 17 keys in `text.ts` are defined and
+   unread, the whole floor menu and settings panel are English, `addFloor`
+   writes an English name to a Hebrew library, and the saved indicator's
+   tooltip still tells the owner to use *File ▸ Save to file* — a menu that no
+   longer exists. A wrong stated reason, on the exact element the i18n commit
+   claimed to fix.
+5. **The phone layout gives the canvas 150px** and the hint overlays half of
+   it; `.app { height: 100% }` assumed a full-viewport mount, and the 38%
+   split does not hold because the panel overflows its basis.
+6. **`.side` collides with `base.css`** and inverts Hebrew alignment in the
+   panel — exactly, in both directions.
+7. **The client does not know `MAX_SLOTS_PER_BOOKCASE`**, so it offers
+   gestures the server refuses — which P6.2's own note in this file said it
+   must not.
+8. `photos` is an editable field with no op behind it: it accepts an edit,
+   reports *saved*, and discards it.
+
+⚠ The lesson worth keeping: everything above is in the SEAM the port added,
+not in the ported core. The constraint MAP_PLAN set — "the core is
+framework-free, and that is the part that ports verbatim" — held exactly as
+designed, and every defect landed in the ~400 lines written around it.
 
 ## 6. What P6.1 must not repeat
 
