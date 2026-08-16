@@ -202,8 +202,10 @@ describe('pushing', () => {
     const room = after.rooms[0]!
     const later: Plan = { ...after, rooms: [{ ...room, name: 'הסלון' }] }
 
-    expect(await push(api, planDiff(before, after), ids, 'st')).toBeNull()
-    expect(await push(api, planDiff(after, later), ids, 'st')).toBeNull()
+    expect((await push(api, planDiff(before, after), ids, 'st')).refusal)
+      .toBeNull()
+    expect((await push(api, planDiff(after, later), ids, 'st')).refusal)
+      .toBeNull()
     // The document still calls it `local-room`; the wire never does again.
     expect(calls[1]![1]).toBe('/map/places/server-1')
   })
@@ -237,9 +239,13 @@ describe('pushing', () => {
       rooms: [{ id: 'r1', name: '', rect: { x: 0, y: 0, w: 9, h: 9 }, floorId: 'f1' },
               { id: 'r2', name: '', rect: { x: 9, y: 0, w: 9, h: 9 }, floorId: 'f1' }],
     }
-    const refusal = await push(api, planDiff(before, after), new Ids(), 'st')
+    const { done, refusal } = await push(api, planDiff(before, after),
+                                        new Ids(), 'st')
     expect(refusal?.status).toBe(409)
     expect(refusal?.detail).toContain('400 shelves')
+    // ⚠ HOW FAR it got, which is what stops a retry replaying a create that
+    // succeeded — the "phantom rooms" a review measured.
+    expect(done).toBe(0)
     // ⚠ STOPPED. The second room's call assumed the first landed; pressing
     // on sends calls whose premise is gone.
     expect(calls).toHaveLength(1)

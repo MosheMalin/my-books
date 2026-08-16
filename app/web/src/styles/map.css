@@ -1,14 +1,24 @@
 /*
- * The lab's own sheet. Deliberately NOT app/web's — the lab is disposable and
- * borrowing the product's design system would make it look decided.
+ * The map editor's own sheet, scoped to `.mapscreen`.
+ *
+ * ⚠ **Every rule here is scoped, and that is a bug fix.** As the lab's sheet
+ * this opened with an unqualified `:root` block redefining six of
+ * `tokens.css`'s design tokens, plus a global reset and a `body` rule. Ported
+ * as-is and imported last, it repainted the ENTIRE product: measured at
+ * review, `--bg` was `#14171c` on every screen with the colour scheme forced
+ * to light, and the product had no light theme at all. Equal specificity,
+ * later import wins — the trap CLAUDE.md already carries.
+ *
+ * The token NAMES are kept inside the scope, so the ported rules below did
+ * not have to change.
  *
  * Black OR white background (owner, 2026-08-16). Both are real themes rather
  * than an inverted filter: a schematic on white is a drawing, a schematic on
  * black is a screen, and the line weights that read well differ.
  */
 
-:root,
-:root[data-theme='dark'] {
+.mapscreen,
+.mapscreen[data-map-theme='dark'] {
   --bg: #14171c;
   --panel: #1b1f26;
   --line: #2b323c;
@@ -33,7 +43,7 @@
   --font: ui-sans-serif, system-ui, 'Segoe UI', Arial, sans-serif;
 }
 
-:root[data-theme='light'] {
+.mapscreen[data-map-theme='light'] {
   --bg: #ffffff;
   --panel: #f4f6f9;
   --line: #d3d9e2;
@@ -55,18 +65,6 @@
   --case-stroke: #4a6f9c;
   --case-front: #14314f;
   --case-ink: #14314f;
-}
-
-* { box-sizing: border-box; }
-
-html, body, #root { height: 100%; margin: 0; }
-
-body {
-  background: var(--bg);
-  color: var(--ink);
-  font-family: var(--font);
-  font-size: 14px;
-  overscroll-behavior: none;
 }
 
 .app { display: flex; flex-direction: column; height: 100%; }

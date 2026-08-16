@@ -101,19 +101,40 @@ export function useMapSync(source: MapSource): MapSync {
   }, [generation])
 
   const record = useCallback((plan: Plan) => {
-    const ops = planDiff(confirmed.current, plan)
-    if (ops.length === 0) return
     setSaved('saving')
-    // ⚠ SERIALISED. Two edits in flight at once would race on the id table —
-    // the second could send a locally minted id the first has not yet
-    // learned the server's answer for — and would also let a later gesture
-    // land before an earlier one it assumes.
+    // ⚠ SERIALISED, and the diff is computed INSIDE the task.
+    //
+    // A review measured the previous shape, where the diff ran at call time:
+    // `confirmed` only advances when a push resolves, so a second edit
+    // arriving during the round trip diffed against the STALE confirmed state
+    // and re-issued the first edit's creates. Two rooms, one of them
+    // orphaned, from drawing a room and typing one letter of its name.
+    //
+    // Serialised for the id table too: a second push could otherwise send a
+    // locally minted id the first has not yet learned the server's answer for.
     inflight.current = inflight.current.then(async () => {
+      const ops = planDiff(confirmed.current, plan)
+      if (ops.length === 0) {
+        setSaved('saved')
+        return
+      }
       try {
-        const stopped = await push(source.api, ops, ids.current, site.current)
+        const { refusal: stopped } = await push(
+          source.api, ops, ids.current, site.current)
         if (stopped) {
+          // ⚠ RE-DERIVE, do not guess. `done` operations landed and the rest
+          // did not, and there is no honest way to compute the document that
+          // describes — so the server is asked again and the editor remounts
+          // with the truth. A review measured the alternative: leaving
+          // `confirmed` untouched made every later edit replay the creates
+          // that HAD succeeded, and the library grew phantom rooms.
+          //
+          // The cost is the undo stack for that session, which is the right
+          // thing to lose when the drawing on screen and the drawing in the
+          // library have diverged.
           setRefusal(stopped)
           setSaved('failed')
+          setGeneration((g) => g + 1)
           return
         }
         confirmed.current = plan

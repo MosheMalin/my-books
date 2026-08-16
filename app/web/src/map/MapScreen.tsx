@@ -135,7 +135,6 @@ export default function MapScreen(props: MapScreenProps) {
   }, [floorId])
 
   useEffect(() => {
-    document.documentElement.dataset['theme'] = theme
     try {
       window.localStorage.setItem(THEME_KEY, theme)
     } catch {
@@ -588,7 +587,7 @@ export default function MapScreen(props: MapScreenProps) {
   })
 
   return (
-    <div className="app">
+    <div className="app mapscreen" data-map-theme={theme}>
       <Toolbar
         tool={tool}
         theme={theme}

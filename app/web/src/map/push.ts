@@ -24,6 +24,9 @@ export type Api = {
 /** What a push could not do, in the words the screen shows. */
 export type Refusal = { op: Op; status: number; detail: string }
 
+/** How far a push got. ``done`` counts the operations that LANDED. */
+export type Pushed = { done: number; refusal: Refusal | null }
+
 export class Ids {
   private readonly table = new Map<string, string>()
 
@@ -49,17 +52,23 @@ export class Ids {
  */
 export async function push(
   api: Api, ops: Op[], ids: Ids, siteId: string,
-): Promise<Refusal | null> {
+): Promise<Pushed> {
+  let done = 0
   for (const op of ops) {
     try {
       await run(api, op, ids, siteId)
+      done += 1
     } catch (err) {
       const refusal = asRefusal(err)
       if (!refusal) throw err
-      return { op, ...refusal }
+      // ⚠ HOW FAR IT GOT, not just that it stopped. A review measured the
+      // previous shape: the caller left `confirmed` where it was, so every
+      // later edit re-issued the whole failed batch — including the creates
+      // that had succeeded — and the library grew phantom rooms.
+      return { done, refusal: { op, ...refusal } }
     }
   }
-  return null
+  return { done, refusal: null }
 }
 
 async function run(api: Api, op: Op, ids: Ids, siteId: string): Promise<void> {
@@ -115,8 +124,14 @@ async function run(api: Api, op: Op, ids: Ids, siteId: string): Promise<void> {
         depth: first ? first.defaultDepth : 1,
       })
       ids.learn(op.bookcase.id, made.id)
-      // The server minted the first section too; the document's own id for it
-      // is learned on the next load, and nothing addresses it before then.
+      // ⚠ AND its first section. The previous comment here said the id was
+      // "learned on the next load, and nothing addresses it before then" —
+      // false, and measured: the elevation addresses it in the very next
+      // gesture, so drawing a bookcase and pressing `+ column` answered
+      // `404 no such section` for every bookcase drawn in a session.
+      if (made.section?.id && op.bookcase.sections[0]) {
+        ids.learn(op.bookcase.sections[0].id, made.section.id)
+      }
       return
     }
     case 'case.edit':
@@ -181,7 +196,12 @@ async function run(api: Api, op: Op, ids: Ids, siteId: string): Promise<void> {
 }
 
 function asRefusal(err: unknown): { status: number; detail: string } | null {
-  const e = err as { status?: number; detail?: string }
+  // ⚠ `message`, not just `detail`. `ApiError` (api/client.ts) copies the
+  // server's `detail` into `message`; reading only `detail` made every
+  // refusal render an EMPTY `role="alert"` — measured, with the server
+  // saying "a bookcase holds at most 400 shelves; this would have 408"
+  // and the owner seeing nothing but 43px of "not saved".
+  const e = err as { status?: number; detail?: string; message?: string }
   if (typeof e?.status !== 'number') return null
-  return { status: e.status, detail: e.detail ?? '' }
+  return { status: e.status, detail: e.detail || e.message || '' }
 }
