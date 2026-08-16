@@ -608,3 +608,25 @@ export const getShelfBooks = (
   shelfId: string, depth: number, opts: ApiOptions = {},
 ): Promise<Book[]> =>
   getJson(`/api/v1/shelves/${encodeURIComponent(shelfId)}/books?depth=${depth}`, opts)
+
+// --- the physical map (P6.2/P6.3) -------------------------------------------
+//
+// The editor speaks in whole objects, so these are the three verbs rather
+// than one function per route: `app/web/src/map/push.ts` turns a document
+// diff into calls, and giving it thirty named wrappers would put the route
+// table in two places. The paths it builds are all `/map/...`, prefixed here
+// so nothing outside this file writes `/api/v1` by hand.
+
+export type MapDrawing = components['schemas']['MapDTO']
+
+export const getMap = (opts: ApiOptions = {}): Promise<MapDrawing> =>
+  getJson('/api/v1/map', opts)
+
+export const mapPost = (path: string, body?: unknown, opts?: ApiOptions) =>
+  send('POST', `/api/v1${path}`, body, opts) as Promise<any>
+
+export const mapPatch = (path: string, body: unknown, opts?: ApiOptions) =>
+  send('PATCH', `/api/v1${path}`, body, opts) as Promise<any>
+
+export const mapDelete = (path: string, opts?: ApiOptions) =>
+  send('DELETE', `/api/v1${path}`, undefined, opts) as Promise<any>

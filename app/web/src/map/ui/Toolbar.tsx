@@ -41,8 +41,7 @@ type Props = {
   onCopy: () => void
   onPaste: () => void
   onDelete: () => void
-  onExport: () => void
-  onImport: (file: File) => void
+  onReload: () => void
   onUnderlay: (file: File) => void
   onUnderlayChange: (patch: Partial<Underlay>) => void
   onUnderlayClear: () => void
@@ -91,7 +90,6 @@ const SAVED_TEXT = {
 } as const
 
 export function Toolbar(props: Props) {
-  const importRef = useRef<HTMLInputElement | null>(null)
   const underlayRef = useRef<HTMLInputElement | null>(null)
   const nothingSelected = props.selectedCount === 0
 
@@ -117,10 +115,9 @@ export function Toolbar(props: Props) {
 
       <div className="group">
         <Menu
-          label="File"
+          label="Plan"
           items={[
-            { label: 'Save to file…', onSelect: props.onExport },
-            { label: 'Open file…', onSelect: () => importRef.current?.click() },
+            { label: 'Reload from the server', onSelect: props.onReload },
             { label: 'Clear the plan', danger: true, onSelect: props.onClear },
           ]}
         />
@@ -208,18 +205,6 @@ export function Toolbar(props: Props) {
         </span>
       </div>
 
-      <input
-        ref={importRef}
-        type="file"
-        accept="application/json,.json"
-        hidden
-        aria-label="open a plan file"
-        onChange={(e) => {
-          const f = e.target.files?.[0]
-          if (f) props.onImport(f)
-          e.target.value = ''
-        }}
-      />
       <input
         ref={underlayRef}
         type="file"

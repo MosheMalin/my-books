@@ -29,7 +29,6 @@ import {
 import type { Rect } from './core/rect'
 import type { History } from './core/history'
 import { canRedo, canUndo, commit, initHistory, redo, undo } from './core/history'
-import { parsePlan, serializePlan } from './core/persist'
 import { FloorBadge } from './ui/FloorBadge'
 import { Inspector, type Actions } from './ui/Inspector'
 import { PlanCanvas } from './ui/PlanCanvas'
@@ -38,7 +37,6 @@ import type { Clipboard, Doc, Selection, Theme, Tool } from './ui/types'
 import { EMPTY, count, hasCase, hasRoom, selectCase, selectRoom } from './ui/types'
 import { fitTo, initialView, zoomAbout, type View } from './ui/viewport'
 
-const STORAGE_KEY = 'booksnap.map-lab.doc'
 const THEME_KEY = 'booksnap.map-lab.theme'
 const FLOOR_KEY = 'booksnap.map-lab.floor'
 const SIDE_KEY = 'booksnap.map-lab.side'
@@ -51,8 +49,19 @@ const PASTE_OFFSET = 2
 
 const emptyDoc = (): Doc => ({ plan: emptyPlan(), seq: 0 })
 
-export default function App() {
-  const [hist, setHist] = useState<History<Doc>>(() => initHistory(loadDoc()))
+export type MapScreenProps = {
+  /** The drawing as the server confirmed it. The editor is MOUNTED with it —
+   *  see the module note in `PlanScreen`. */
+  initialPlan: Plan
+  onChange: (plan: Plan) => void
+  saved: 'saving' | 'saved' | 'failed'
+  onReload: () => void
+}
+
+export default function MapScreen(props: MapScreenProps) {
+  const { onChange, saved } = props
+  const [hist, setHist] = useState<History<Doc>>(
+    () => initHistory({ plan: props.initialPlan, seq: 0 }))
   const [tool, setTool] = useState<Tool>('auto')
   const [theme, setTheme] = useState<Theme>(loadTheme)
   const [selection, setSelection] = useState<Selection>(EMPTY)
@@ -66,7 +75,7 @@ export default function App() {
    *  and puts the caret in the name box — one editor, not two. */
   const [renaming, setRenaming] = useState<{ kind: 'room' | 'case'; id: string } | null>(null)
   const [sideWidth, setSideWidth] = useState<number>(loadSideWidth)
-  const [saved, setSaved] = useState<'saving' | 'saved' | 'failed'>('saved')
+
   const wrapRef = useRef<HTMLDivElement | null>(null)
 
   const doc = hist.present
@@ -94,23 +103,20 @@ export default function App() {
 
   /**
    * Every edit is written immediately (owner, 2026-08-16: *"allow to save, so
-   * work will not get lost"*). The toolbar SAYS so, because an autosave nobody
-   * can see is indistinguishable from no autosave — and the honest caveat is
-   * on the same line: this is browser storage, and *Save to file* is the copy
-   * that survives a cleared browser.
+   * work will not get lost"*), and the toolbar SAYS so — an autosave nobody
+   * can see is indistinguishable from no autosave.
+   *
+   * ⚠ The first run is the document this component was MOUNTED with, so it
+   * diffs to nothing. That is the whole reason the editor is mounted with its
+   * plan rather than handed one later: a guard here could not help, because
+   * on the render where the data arrives `doc.plan` is still the old one
+   * whatever order the effects run in — measured as a freshly created storey
+   * being deleted by the load that created it.
    */
   useEffect(() => {
-    setSaved('saving')
-    try {
-      window.localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({ plan: { ...doc.plan, underlay: null }, seq: doc.seq }),
-      )
-      setSaved('saved')
-    } catch {
-      setSaved('failed')
-    }
-  }, [doc])
+    onChange(doc.plan)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc.plan])
 
   useEffect(() => {
     try {
@@ -499,31 +505,6 @@ export default function App() {
     reader.readAsDataURL(file)
   }
 
-  // --- files ---------------------------------------------------------------
-
-  const doExport = () => {
-    const blob = new Blob([serializePlan(doc.plan)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'house.map-lab.json'
-    a.click()
-    URL.revokeObjectURL(url)
-    say('Saved to your downloads folder.')
-  }
-
-  const doImport = async (file: File) => {
-    const result = parsePlan(await file.text())
-    if (!result.ok) return say(`Not opened: ${result.error}.`)
-    const maxSeq = [...result.plan.rooms, ...result.plan.cases].reduce((m, o) => {
-      const n = Number(o.id.replace(/\D/g, ''))
-      return Number.isFinite(n) ? Math.max(m, n) : m
-    }, 0)
-    setHist((h) => commit(h, { plan: result.plan, seq: maxSeq }))
-    setSelection(EMPTY)
-    say('Opened.')
-  }
-
   const doZoom = useCallback(
     (factor: number) => {
       const el = wrapRef.current
@@ -632,8 +613,7 @@ export default function App() {
         onCopy={copySelection}
         onPaste={paste}
         onDelete={deleteSelection}
-        onExport={doExport}
-        onImport={doImport}
+        onReload={props.onReload}
         onUnderlay={loadUnderlay}
         onUnderlayChange={(patch) =>
           setUnderlay(doc.plan.underlay ? { ...doc.plan.underlay, ...patch } : null)
@@ -769,22 +749,6 @@ function Hint({ tool, overview }: { tool: Tool; overview: boolean }) {
           ? 'Drag to slide the plan. Scroll or pinch to zoom.'
           : 'A room’s border moves it · inside a room draws a bookcase · outside draws a room · double-click to name · Ctrl+drag selects several.'
   return <p className="hint">{text}</p>
-}
-
-function loadDoc(): Doc {
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
-    if (!raw) return emptyDoc()
-    const stored = JSON.parse(raw)
-    const parsed = parsePlan(
-      JSON.stringify({ format: 'booksnap.map-lab.plan', version: 2, plan: stored.plan }),
-    )
-    if (!parsed.ok) return emptyDoc()
-    const seq = Number(stored.seq)
-    return { plan: parsed.plan, seq: Number.isFinite(seq) ? seq : 0 }
-  } catch {
-    return emptyDoc()
-  }
 }
 
 function loadSideWidth(): number {

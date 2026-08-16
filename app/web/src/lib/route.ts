@@ -36,6 +36,7 @@ export type Route =
   | { name: 'book'; id: string }
   | { name: 'capture' }
   | { name: 'shelf'; id: string }
+  | { name: 'plan' }
   | { name: 'login'; token: string | null }
   | { name: 'invite'; token: string | null }
 
@@ -44,6 +45,10 @@ export function parseHash(hash: string): Route {
   const [head, arg] = path.split('/')
   if (head === 'book' && arg) return { name: 'book', id: decodeURIComponent(arg) }
   if (head === 'capture') return { name: 'capture' }
+  // ⚠ Before the `map/<id>` line below, which is the SHELF detail screen and
+  // has carried that prefix since P2.8. `#/plan` is the drawing; a bare
+  // `#/map` would read as the same thing as `#/map/<shelf>` and is not.
+  if (head === 'plan') return { name: 'plan' }
   if (head === 'map' && arg) return { name: 'shelf', id: decodeURIComponent(arg) }
   if (head === 'login' || head === 'invite') {
     // The two routes that read their query: an emailed sign-in link and a
@@ -65,6 +70,7 @@ export function shelfHash(id: string): string {
 
 export const LIBRARY_HASH = '#/library'
 export const CAPTURE_HASH = '#/capture'
+export const PLAN_HASH = '#/plan'
 
 export function useRoute(): {
   route: Route

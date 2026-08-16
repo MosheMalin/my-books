@@ -10,6 +10,7 @@ import { BookDrawer } from './book/BookDrawer'
 import { BookPage } from './book/BookPage'
 import { BooksTab } from './books/BooksTab'
 import { CaptureTab } from './capture/CaptureTab'
+import { PlanScreen } from './map/PlanScreen'
 import { ShelfPage } from './shelf/ShelfPage'
 import { useAuth } from './lib/auth'
 import { useBooks } from './lib/books'
@@ -19,7 +20,7 @@ import { MembersPanel } from './lib/MembersPanel'
 import { useI18n } from './lib/i18n'
 import { useLibrary } from './lib/library'
 import { LibrarySwitcher } from './lib/LibrarySwitcher'
-import { bookHash, CAPTURE_HASH, LIBRARY_HASH, useRoute } from './lib/route'
+import { bookHash, CAPTURE_HASH, LIBRARY_HASH, PLAN_HASH, useRoute } from './lib/route'
 
 export function App() {
   const { t, lang, toggleLang } = useI18n()
@@ -55,6 +56,7 @@ export function App() {
   // links to nothing.
   const onBooks = route.name === 'library' || route.name === 'book'
   const onCapture = route.name === 'capture'
+  const onPlan = route.name === 'plan'
   // P4.1c: no library yet — the tabs' screens can only 404, so the nav is
   // ABSENT during onboarding, not disabled (the house rule).
   const onboarding = !loading && !failed && libraries.length === 0
@@ -87,6 +89,14 @@ export function App() {
               onClick={() => navigate(CAPTURE_HASH)}
             >
               {t.capture_tab}
+            </button>
+            <button
+              type="button"
+              className={onPlan ? 'on' : ''}
+              aria-pressed={onPlan}
+              onClick={() => navigate(PLAN_HASH)}
+            >
+              {t.plan_tab}
             </button>
           </nav>
         )}
@@ -154,6 +164,11 @@ export function App() {
           <BookPage bookId={route.id} onBack={back} onAuthor={filterByAuthor} />
         ) : route.name === 'capture' ? (
           <CaptureTab />
+        ) : route.name === 'plan' ? (
+          /* ⚠ `key` on the library: switching libraries REMOUNTS the app
+             (CLAUDE.md), and a plan editor holding another library's drawing
+             mid-session would push it to the wrong one. */
+          <PlanScreen key={current?.id ?? 'none'} />
         ) : route.name === 'shelf' ? (
           <ShelfPage shelfId={route.id} onBack={back} onOpen={setDrawerId} />
         ) : (
