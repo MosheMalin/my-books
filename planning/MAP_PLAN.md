@@ -511,7 +511,7 @@ this pillar.**
 |---|---|---|---|
 | **P6.0** | **The map lab** — a standalone app, no backend, outside the gate. Rectangle drawing for rooms and bookcases, room-to-room attachment, multi-select, copy/paste, explicit bookcase→room attachment, resize handles, sections, floors, the elevation editor, underlay tracing, black/white themes, visible autosave, a real undo stack. | M | ✅ nine passes |
 | **P6.1** | **Address domain + migration** — `Site`, `Floor`, `Place`, `Bookcase`, `Section`, the shelf address, geometry in abstract units. Drawn slots create real empty `Shelf` rows. Naming lint. Schema **v20** with a real v19→v20 upgrade test. | L | ✅ |
-| **P6.2** | **API + policy** — the map through `current_library`, one capability each, contracts regenerated. | M | |
+| **P6.2** | **API + policy** — the map through `current_library`, one capability each, contracts regenerated. | M | ✅ |
 | **P6.3** | **The port** — the lab's editor moves into `app/web/src/map/` **verbatim** where it is framework-free, wired to the API by an adapter. **The lab is deleted in the same commit.** Behaviour identical to the lab's ninth pass — that is the acceptance test, not a rewrite. | M | |
 | **P6.3b** | **The site picker** — the one thing the lab never had (§3.9). Sites and their floors become manageable in the ported editor; a single site renders no chrome. Deliberately AFTER P6.3, so "behaves the same" is verifiable before anything new is added. | S | |
 | **P6.4** | **Binding and merge** — photo-born shelves bind into drawn slots; several identities merge into one physical shelf, with aliases. | L | |
@@ -612,6 +612,38 @@ and a test:
    outside the document refers to one"* — a sentence that stopped being true
    when `shelves.section_id` did. Rebuilding by position also renumbers
    everything above a section inserted at the bottom.
+
+### What P6.2 landed, and the one cell the owner decided
+
+Fifteen routes, two capabilities. **Reading the map is `BROWSE`** (owner,
+2026-08-16) over a reasoned objection: the security review argued for Editor+
+by analogy to `VIEW_PHOTOS`, which is Editor+ because *"the photos show the
+inside of a home"*, and a labelled floor plan is arguably a more legible
+disclosure than a photograph. The owner's answer — *everyone who can see the
+books sees the map* — is on record in `app/api/routers/map.py` together with
+the argument that lost, because a decision without its losing side gets
+re-litigated.
+
+What the two reviews measured, kept here because P6.3 inherits the shapes:
+
+- **the map's writes are an amplification surface.** A drawn slot is a Shelf,
+  and the SQLite adapter opens a connection per operation, so a 110-byte
+  request asking for 40 columns of 40 wrote 1600 rows in 16.5s — and *add a
+  section*, which states no size at all because it copies its neighbour, cost
+  17s from 40 bytes. Batched writes, a grouped captures query and
+  `MAX_SLOTS_PER_BOOKCASE` bring that to 0.02s. **The editor must not offer a
+  gesture that asks for more than the ceiling**, or the owner meets a 409;
+- **a room and its furniture move together, always.** Moving a room to another
+  storey alone left the case behind and BRICKED it — every later write
+  answered 409 about a mismatch nobody created. `move_place` takes the
+  bookcases with it; an attached case may not change storey on its own;
+- **one request carries one grid instruction.** `columns` and `column`/`levels`
+  together is a 400, because the old fall-through silently applied half an
+  edit and answered 200. An elevation panel must send one or the other;
+- **a structural edit reports what it cost the shelves** (`deleted` vs
+  `detached`), and P6.3 should SHOW that split before the destructive call —
+  the 409 currently says "4 shelves still stand", which reads as "4 empty
+  slots" when some of them hold books.
 
 ## 6. What P6.1 must not repeat
 
