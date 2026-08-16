@@ -32,6 +32,7 @@ import {
   center,
   contains,
   handleAt,
+  nearBorder,
   handlePositions,
   intersects,
   rectFrom,
@@ -43,7 +44,15 @@ import {
 import type { Selection, Tool } from './types'
 import { EMPTY, count, hasCase, hasRoom, only, selectCase, selectRoom, toggle } from './types'
 import type { Rect as ScreenRect, View } from './viewport'
-import { groupTransform, magnetUnits, toWorld, visibleBounds, zoomAbout } from './viewport'
+import {
+  borderInner,
+  borderOuter,
+  groupTransform,
+  magnetUnits,
+  toWorld,
+  visibleBounds,
+  zoomAbout,
+} from './viewport'
 
 type Kind = 'room' | 'case'
 
@@ -109,10 +118,38 @@ export function PlanCanvas(props: Props) {
   )
 
   const magnet = magnetUnits(view)
+  const inner = borderInner(view)
+  const outer = borderOuter(view)
+
+
+  /** The room whose border is under `p` — checked against every room rather
+   *  than only the one containing it, so the band works from OUTSIDE too. */
+  const roomBorderAt = (p: Pt): Room | null => {
+    for (let i = plan.rooms.length - 1; i >= 0; i--) {
+      const r = plan.rooms[i]!
+      if (nearBorder(r.rect, p, inner, outer)) return r
+    }
+    return null
+  }
   /** Handles belong to a single selection. Eight grips on each of six selected
    *  rooms is a field of dots, and every one of them is ambiguous. */
   const lone = only(selection, plan)
   const loneRect = lone?.rect ?? null
+
+  /**
+   * ⚠ A handle grabs what it DRAWS, and no more — and never more than a third
+   * of the shape it sits on.
+   *
+   * It used a full magnet (14 px, nearly twice the drawn square), so the grips
+   * of a selected room claimed a wide dead zone along its walls and starting a
+   * bookcase flush against one resized the room instead. The second clause
+   * matters just as much: a bookcase is ONE unit deep, so at a fixed size its
+   * top and bottom grips met in the middle and the case had no body left to
+   * pick up by.
+   */
+  const gripFor = (r: Rect): number =>
+    Math.min(magnet * 0.5, Math.min(r.w, r.h) / 3)
+  const grip = loneRect ? gripFor(loneRect) : magnet * 0.5
 
   const targetsFor = (what: Kind, exceptId?: string): Rect[] =>
     what === 'room'
@@ -126,23 +163,27 @@ export function PlanCanvas(props: Props) {
    * What a drag starting here would DO. One function, so the cursor, the hint
    * and the pointer handler can never disagree about it.
    */
+  /**
+   * What a drag starting here would DO. One function, so the cursor, the hint
+   * and the pointer handler can never disagree — and one order, which is the
+   * whole rule (owner, 2026-08-16):
+   *
+   *   a handle of the selected thing  → resize
+   *   INSIDE a bookcase               → move it, always, in every tool
+   *   on a room's border              → move that room
+   *   the tool, if one is held        → draw that
+   *   inside a room                   → draw a bookcase
+   *   outside every room              → draw a room
+   */
   const intentAt = (p: Pt): 'move' | 'room' | 'case' => {
     if (tool === 'pan') return 'move'
-    // ⚠ An EDGE is a handle in every tool (owner, 2026-08-16: *"even when draw
-    // room or draw bookcase is selected, hovering on the border should switch
-    // to move"*). Otherwise the tool you are holding decides whether existing
-    // walls exist, and nudging a room means putting a tool down first.
-    if (loneRect && handleAt(loneRect, p, magnet)) return 'move'
-    const bc = caseAt(p)
-    if (bc) {
-      // In the arrow the whole case is grabbable; in a drawing tool only its
-      // edge is, so you can still draw a case flush beside this one.
-      if (tool === 'auto' || onBorder(bc.rect, p, magnet)) return 'move'
-    }
-    const room = roomAt(p)
-    if (room && onBorder(room.rect, p, magnet)) return 'move'
+    if (loneRect && handleAt(loneRect, p, grip)) return 'move'
+    // Nobody draws a bookcase inside a bookcase, so its interior is never
+    // anything but a grip — in the drawing tools too.
+    if (caseAt(p)) return 'move'
+    if (roomBorderAt(p)) return 'move'
     if (tool !== 'auto') return tool
-    return room ? 'case' : 'room'
+    return roomAt(p) ? 'case' : 'room'
   }
 
   const caseAt = (p: Pt): Bookcase | null => {
@@ -184,53 +225,36 @@ export function PlanCanvas(props: Props) {
 
     // Handles and borders come FIRST, whatever tool is held.
     if (loneRect && !add) {
-      const h = handleAt(loneRect, p, magnet)
+      const h = handleAt(loneRect, p, grip)
       if (h) {
         const what: Kind = plan.cases.some((c) => c.id === lone?.id) ? 'case' : 'room'
         const id = lone?.id
         if (id) return setDrag({ kind: 'resize', what, id, handle: h, to: p, orig: loneRect })
       }
     }
-    if (tool !== 'auto') {
-      const edgeCase = caseAt(p)
-      if (edgeCase && onBorder(edgeCase.rect, p, magnet)) {
-        props.onSelect(selectCase(edgeCase.id))
-        return setDrag({
-          kind: 'move',
-          what: 'case',
-          id: edgeCase.id,
-          from: p,
-          to: p,
-          orig: edgeCase.rect,
-        })
-      }
-      const edgeRoom = roomAt(p)
-      if (edgeRoom && onBorder(edgeRoom.rect, p, magnet)) {
-        props.onSelect(selectRoom(edgeRoom.id))
-        return setDrag({
-          kind: 'move',
-          what: 'room',
-          id: edgeRoom.id,
-          from: p,
-          to: p,
-          orig: edgeRoom.rect,
-        })
-      }
-      return setDrag({ kind: 'draw', what: tool, from: p, to: p })
-    }
-
+    // A bookcase's interior grabs it in EVERY tool.
     const bc = caseAt(p)
     if (bc) {
       if (add) return props.onSelect(toggle(selection, 'case', bc.id))
       if (!hasCase(selection, bc.id)) props.onSelect(selectCase(bc.id))
       return setDrag({ kind: 'move', what: 'case', id: bc.id, from: p, to: p, orig: bc.rect })
     }
-    const room = roomAt(p)
-    if (room && (add || onBorder(room.rect, p, magnet))) {
-      if (add) return props.onSelect(toggle(selection, 'room', room.id))
-      if (!hasRoom(selection, room.id)) props.onSelect(selectRoom(room.id))
-      return setDrag({ kind: 'move', what: 'room', id: room.id, from: p, to: p, orig: room.rect })
+    const border = roomBorderAt(p)
+    if (border && !add) {
+      if (!hasRoom(selection, border.id)) props.onSelect(selectRoom(border.id))
+      return setDrag({
+        kind: 'move',
+        what: 'room',
+        id: border.id,
+        from: p,
+        to: p,
+        orig: border.rect,
+      })
     }
+    if (tool !== 'auto') return setDrag({ kind: 'draw', what: tool, from: p, to: p })
+
+    const room = roomAt(p)
+    if (room && add) return props.onSelect(toggle(selection, 'room', room.id))
     // ⚠ Ctrl/Shift claims the band, because a plain drag on empty canvas now
     // DRAWS. Selecting several is the rarer act, so it is the one that pays a
     // modifier.
@@ -502,10 +526,10 @@ export function PlanCanvas(props: Props) {
             {handlePositions(loneRect, magnet).map(({ h, at }) => (
               <rect
                 key={`${h.hx},${h.hy}`}
-                x={at.x - magnet * 0.45}
-                y={at.y - magnet * 0.45}
-                width={magnet * 0.9}
-                height={magnet * 0.9}
+                x={at.x - grip}
+                y={at.y - grip}
+                width={grip * 2}
+                height={grip * 2}
               />
             ))}
           </g>
@@ -555,20 +579,6 @@ function resolve(
   const y0 = d.handle.hy === -1 ? p.y : d.orig.y
   const y1 = d.handle.hy === 1 ? p.y : bottom(d.orig)
   return rectFrom({ x: x0, y: y0 }, { x: x1, y: y1 })
-}
-
-/** Within `tol` of a rectangle's edge, from either side. The room's border is
- *  the room's own handle in `auto` — its interior belongs to the furniture. */
-function onBorder(r: Rect, p: Pt, tol: number): boolean {
-  const inX = p.x >= r.x - tol && p.x <= right(r) + tol
-  const inY = p.y >= r.y - tol && p.y <= bottom(r) + tol
-  if (!inX || !inY) return false
-  return (
-    Math.abs(p.x - r.x) <= tol ||
-    Math.abs(p.x - right(r)) <= tol ||
-    Math.abs(p.y - r.y) <= tol ||
-    Math.abs(p.y - bottom(r)) <= tol
-  )
 }
 
 function Grid({ min, max, scale }: { min: Pt; max: Pt; scale: number }) {

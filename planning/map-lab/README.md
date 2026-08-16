@@ -7,7 +7,7 @@ look at.
 
 ```bash
 npm install --prefix planning/map-lab
-npm --prefix planning/map-lab test          # 80 tests, ~1s
+npm --prefix planning/map-lab test          # 83 tests, ~1s
 ```
 
 The dev server is `map-lab` in `.claude/launch.json` (port 5175 — 5173 is the
@@ -34,8 +34,10 @@ seventh moved the storey onto the board and drew the icons properly.
    **bookcase**, and on a room's **border** it moves the room. Existing
    furniture always wins. Ctrl+drag selects several; double-click names
    whatever you hit. The two drawing tools overrule the guess — but even while
-   you hold one, **a border is still a handle**: press an edge and you move
-   that room instead of drawing.
+   you hold one, **a border is still a handle** and **a bookcase is always
+   grabbable**: press a wall and you move that room, press a case and you move
+   the case. Press just *inside* a wall and you draw against it — the band that
+   grabs a room is deliberately mean on the inside.
 2. **Draw room** — drag a rectangle. Then drag a second one so it lands near
    the first: its edges **weld onto the neighbour**, exactly, so rooms attach
    and an L-shaped room is two rectangles.

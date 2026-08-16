@@ -89,3 +89,12 @@ export function visibleBounds(rect: Rect, view: View): { min: Pt; max: Pt } {
 export function magnetUnits(view: View, px = 14, floor = 0.6): number {
   return Math.max(floor, px / view.scale)
 }
+
+/**
+ * The band that grabs a ROOM rather than drawing in it — generous outside,
+ * mean inside. Drawing a bookcase flush against a wall means pressing just
+ * inside it, and that is the commoner act by far, so the inside gets 3 px and
+ * the outside 10.
+ */
+export const borderOuter = (view: View): number => magnetUnits(view, 10, 0.4)
+export const borderInner = (view: View): number => magnetUnits(view, 3, 0.12)

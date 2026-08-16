@@ -207,6 +207,30 @@ function bestShift(edges: number[], candidates: readonly number[], tol: number):
   return shift
 }
 
+/**
+ * Is `p` on this rectangle's BORDER — the band that grabs the room itself?
+ *
+ * ⚠ The band is deliberately **lopsided**: generous outside, mean inside
+ * (owner, 2026-08-16 — *"so if I want to draw a case near the border it will
+ * not move the room instead"*). The two gestures approach the wall from
+ * opposite directions:
+ *
+ *   grabbing the room   you aim AT the wall, or just past it
+ *   drawing a bookcase  you aim just INSIDE it, flush against it
+ *
+ * A symmetric fingertip-wide band serves the first and ruins the second, and
+ * drawing a case against a wall is the far commoner act.
+ *
+ * `inner` is clamped so a thin rectangle cannot end up with no border at all.
+ */
+export function nearBorder(r: Rect, p: Pt, inner: number, outer: number): boolean {
+  const grow = { x: r.x - outer, y: r.y - outer, w: r.w + outer * 2, h: r.h + outer * 2 }
+  if (!contains(grow, p)) return false
+  const bite = Math.min(inner, r.w / 2, r.h / 2)
+  const core = { x: r.x + bite, y: r.y + bite, w: r.w - bite * 2, h: r.h - bite * 2 }
+  return !(core.w > 0 && core.h > 0 && contains(core, p))
+}
+
 // --- resize handles --------------------------------------------------------
 
 /** Which handle: -1 is the low edge, +1 the high edge, 0 the middle. */

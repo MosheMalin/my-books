@@ -231,6 +231,28 @@ Three amendments the idea needs, and each is a rule rather than a detail:
   selecting several moved to Ctrl+drag. Selecting several is the rarer act, so
   it is the one that pays.
 
+**One order decides everything**, and it is the same in every tool:
+
+| the press lands on | what a drag does |
+|---|---|
+| a handle of the selected thing | resize |
+| **inside a bookcase** | move it — in every tool, since nobody draws a case inside a case |
+| a room's **border** | move that room |
+| anywhere, with a drawing tool held | draw that |
+| inside a room | draw a bookcase |
+| outside every room | draw a room |
+
+**The border band is lopsided on purpose.** Generous outside the wall, mean
+inside it, because the two gestures approach from opposite directions: you aim
+*at* the wall to grab the room and just *inside* it to draw a bookcase flush
+against it. A symmetric fingertip-wide band serves the first and ruins the
+second, and drawing a case against a wall is far commoner.
+
+**A handle grabs what it draws, and never more than a third of the shape it
+sits on.** The second clause is not tidiness: a bookcase is one unit deep, so
+at a fixed grip size its top and bottom handles met in the middle and the case
+had no body left to pick up by.
+
 **An edge is a handle in every tool.** Holding *Draw room* does not make the
 walls already on the plan stop existing: pressing on a room's border moves it,
 and only a press away from every border draws. Otherwise nudging a room means
@@ -331,7 +353,7 @@ rules P6.1 inherits rather than lab conveniences:
 
 ### 4a. What the lab caught, for the record
 
-Seven rounds of building and driving it in a real browser produced fifteen
+Eight rounds of building and driving it in a real browser produced sixteen
 defects, each of which would have been argued about rather than found if this
 had been built straight into `app/web`:
 
@@ -385,11 +407,16 @@ had been built straight into `app/web`:
     is what that costs. A mode with no visible exit is a trap however few
     keystrokes it really takes — it now carries a bar saying it is read-only
     with the way back in it, and the drawing tools are visibly disabled;
-14. **the cursor read the tool, not the intent.** Once an edge became grabbable
+14. **the grips ate the walls.** A handle claimed a full magnet — 14 px,
+    nearly twice the square it draws — so a selected room's eight grips made a
+    dead zone along every wall, and a selected bookcase one unit deep was
+    *entirely* handle with no body left to drag. Both were invisible: the
+    controls looked small and behaved large;
+15. **the cursor read the tool, not the intent.** Once an edge became grabbable
     in every tool the behaviour was right, but the pointer still showed a
     crosshair over it — the one thing telling the user about a rule was the
     thing that had not been updated;
-15. **`setPointerCapture` threw the whole handler away, a second time.** The
+16. **`setPointerCapture` threw the whole handler away, a second time.** The
     new panel divider called it without the guard the canvas already had, so
     the exception escaped *before* the move listeners were attached and the
     drag did nothing whatsoever. The first fix was a comment in one file; the
@@ -482,13 +509,13 @@ depth override on one shelf — on a phone-sized viewport, and the drawing is
 exported. That export is P6.1's first fixture: a real plan, in abstract units,
 made by the person the feature is for.
 
-⚠ The lab has been through **eight passes**. The first offered freehand against
+⚠ The lab has been through **nine passes**. The first offered freehand against
 snap-while-dragging and was rejected wholesale (§4); the third came back
 *"very fluent"* with five additions; the fourth and fifth were polish plus four
 real bugs; the sixth cut the toolbar to eight controls and made the arrow
 guess; the seventh moved the storey onto the board and drew the icons;
-the eighth stacked the floors as rows and gave the read-only view a door.
-Expect a ninth: the point
+the eighth stacked the floors as rows and gave the read-only view a door; the
+ninth tuned what the pointer grabs. Expect a tenth: the point
 of a disposable app is that rejecting it costs a day, not a sprint. It is
 finished when the owner stops finding things, not when the item list is
 ticked.

@@ -17,6 +17,7 @@ import {
   handleAt,
   handlePositions,
   intersects,
+  nearBorder,
   overlaps,
   rectFrom,
   right,
@@ -179,6 +180,29 @@ describe('rectangles', () => {
     expect(flushSide(rect(0, 0, 8, 1), livingRoom.rect)).toBe('N')
     // a tall thin one in the same corner is against the LEFT wall
     expect(flushSide(rect(0, 0, 1, 8), livingRoom.rect)).toBe('W')
+  })
+
+  it('grabs a room from ON or JUST OUTSIDE its wall', () => {
+    const r = rect(0, 0, 20, 12)
+    expect(nearBorder(r, pt(10, 0), 0.2, 1)).toBe(true) // exactly on it
+    expect(nearBorder(r, pt(10, -0.8), 0.2, 1)).toBe(true) // just outside
+    expect(nearBorder(r, pt(-0.5, 6), 0.2, 1)).toBe(true) // outside the left wall
+  })
+
+  it('leaves room to draw a bookcase FLUSH against the wall', () => {
+    // "So if I want to draw a case near the border it will not move the room
+    // instead" (owner, 2026-08-16). The band is lopsided on purpose: you aim
+    // AT the wall to grab the room and just INSIDE it to draw against it.
+    const r = rect(0, 0, 20, 12)
+    expect(nearBorder(r, pt(10, 0.3), 0.2, 1)).toBe(false)
+    expect(nearBorder(r, pt(10, 6), 0.2, 1)).toBe(false) // deep inside
+    expect(nearBorder(r, pt(10, -2), 0.2, 1)).toBe(false) // well clear of it
+  })
+
+  it('never leaves a thin rectangle with no border at all', () => {
+    // a one-unit-deep bookcase would otherwise be entirely "inside"
+    const thin = rect(0, 0, 8, 1)
+    expect(nearBorder(thin, pt(4, 0.5), 2, 1)).toBe(true)
   })
 
   it('keeps all eight handles on a rectangle with room for them', () => {
