@@ -234,6 +234,103 @@ def test_an_unnamed_shelf_gains_the_location_label_and_a_named_one_keeps_its_own
 
 
 
+def test_the_source_drawing_moves_and_stands_beside_the_targets():
+    """P6.1's five map tables joined `_LIBRARY_TABLES`, so the merge has to
+    move them — the leftover check aborts the whole transaction otherwise, and
+    a table moved but missing from that tuple commits an orphan instead.
+
+    Nothing is merged GEOMETRICALLY: both houses start at 0,0, so laying one
+    out beside the other would move furniture the owner placed. The parents'
+    site simply arrives next to this one, which is one visible rename away
+    from being right and zero taps away from being honest.
+    """
+    from dataclasses import replace
+
+    from app.adapters.sqlite_store import SqliteMapStore
+    from app.domain import (Rect, ShelfAddress, new_bookcase, new_floor,
+                            new_place, new_section, new_site)
+
+    w, tmp = _world()
+    try:
+        maps = SqliteMapStore(w.db)
+        maps.save_site(DST, new_site(id="st-home", library_id=DST.id,
+                                     name="הבית"))
+        maps.save_site(SRC, new_site(id="st-par", library_id=SRC.id,
+                                     name="אצל ההורים"))
+        maps.save_floor(SRC, new_floor(id="fl-par", library_id=SRC.id,
+                                       site_id="st-par", name="קרקע"))
+        maps.save_place(SRC, new_place(id="pl-par", library_id=SRC.id,
+                                       floor_id="fl-par",
+                                       rect=Rect(0, 0, 11, 9), name="סלון"))
+        maps.save_bookcase(SRC, new_bookcase(id="bc-par", library_id=SRC.id,
+                                             floor_id="fl-par",
+                                             rect=Rect(1, 0, 4, 1),
+                                             place_id="pl-par"))
+        maps.save_section(SRC, new_section(id="se-par", library_id=SRC.id,
+                                           bookcase_id="bc-par", columns=1,
+                                           default_levels=2))
+        # …with the source's real shelf standing in one of its slots, so the
+        # address has to survive the move as well as the row does.
+        moved_in = w.shelves.get_shelf(SRC, "sh-par")
+        w.shelves.save_shelf(SRC, replace(
+            moved_in, address=ShelfAddress("se-par", 1, 1)))
+
+        _merge(w)
+
+        after = maps.load_map(DST)
+        assert {s.name for s in after.sites} == {"הבית", "אצל ההורים"}
+        assert [p.rect for p in after.places] == [Rect(0, 0, 11, 9)], (
+            "the parents' room was relocated by the merge"
+        )
+        assert after.bookcases[0].place_id == "pl-par"
+        assert after.sections[0].column_levels == (2,)
+        assert maps.load_map(SRC).is_empty, "the source kept its drawing"
+        carried = w.shelves.get_shelf(DST, "sh-par")
+        assert carried.address == ShelfAddress("se-par", 1, 1)
+        assert w.shelves.get_shelf_at(
+            DST, ShelfAddress("se-par", 1, 1)).id == "sh-par"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_every_library_scoped_table_is_in_the_leftover_check():
+    """The tuple and the move loop must not drift apart, and only ONE
+    direction was loud.
+
+    Dropping a table from the MOVE aborts the merge — that half works. But
+    dropping it from `_LIBRARY_TABLES` while still moving it is silent, and
+    that is the direction that matters next time somebody adds a table:
+    the leftover check is the thing that catches a move nobody wrote.
+
+    So compare the tuple against the schema itself. Every table with a
+    `library_id` column has to be in it, and a new one fails here rather than
+    in six months as an orphan on the owner's own file.
+    """
+    from app.adapters.merge_library import _LIBRARY_TABLES
+
+    w, tmp = _world()
+    try:
+        conn = sqlite3.connect(str(w.db))
+        try:
+            scoped = set()
+            for (name,) in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ):
+                columns = {r[1] for r in conn.execute(
+                    f"PRAGMA table_info({name})")}
+                if "library_id" in columns:
+                    scoped.add(name)
+        finally:
+            conn.close()
+        assert scoped == set(_LIBRARY_TABLES), (
+            f"_LIBRARY_TABLES disagrees with the schema — missing "
+            f"{sorted(scoped - set(_LIBRARY_TABLES))}, stale "
+            f"{sorted(set(_LIBRARY_TABLES) - scoped)}"
+        )
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_two_libraries_of_different_customers_are_never_merged():
     """§4.1's boundary, over the most destructive tool in the product.
 

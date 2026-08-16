@@ -31,9 +31,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Protocol
+from typing import Mapping, Protocol
 
-from app.domain import Book, Capture, LibraryRef, Read, Shelf, Status
+from app.domain import Book, Capture, LibraryRef, Read, Shelf, ShelfAddress, Status
 
 
 class StoreError(Exception):
@@ -73,6 +73,48 @@ class DuplicateCaptureSlot(StoreError):
     That triple IS a capture's identity, so allowing two would make a shelf's
     book order ambiguous — and the ambiguity would surface much later, as a
     reconciliation diff that reorders itself between reads.
+    """
+
+
+class UnknownParent(StoreError):
+    """A record points at a parent that is not in this library.
+
+    Always a wiring bug or a stale client, never a user error: a floor whose
+    site is missing, a shelf addressed to a bookcase that was removed under
+    it. It raises rather than being coerced, for the reason
+    :class:`WrongLibrary` does — the coercion would file the room in the wrong
+    building.
+
+    ⚠ It lives HERE rather than beside ``MapStore`` because ``ShelfStore``
+    raises it too: a shelf's address names a section, and a section is not
+    this port's aggregate. ``app.ports.map`` imports it from here, which is
+    the direction that has no cycle in it.
+    """
+
+
+class DuplicateSectionOrdinal(StoreError):
+    """Two sections of one bookcase claiming the same number (MAP_PLAN §3.6).
+
+    ``ordinal`` is not decoration — it is what an address PRINTS. Two
+    sections both at 1 make *"section 1, column 2, level 3"* name two
+    different shelves, and the owner is sent to the wrong half of the
+    furniture. Declared as a unique index and raised by name so the API can
+    say which number is taken.
+    """
+
+
+class DuplicateShelfSlot(StoreError):
+    """Two shelves claiming one ``(section, column, level)`` (MAP_PLAN §3.1).
+
+    A slot in a drawing is one physical shelf. Two rows addressed to it would
+    make "the books on the third level" ambiguous — and ambiguous in the
+    direction where each read silently picks one, so half the library appears
+    to move between page loads. The schema declares it as a unique index; both
+    stores raise this by name so the API can say which slot rather than
+    surfacing a driver error.
+
+    ⚠ Merging two identities that turn out to be one physical shelf is P6.4's
+    job and a deliberate operation. This is the accident.
     """
 
 
@@ -200,6 +242,25 @@ class BookStore(Protocol):
         whole library: an empty search box is the caller's business.
         """
 
+    def deepest_copy_depth(self, library: LibraryRef) -> Mapping[str, int]:
+        """Per shelf, the deepest depth a copy of a book stands at (P6.1).
+
+        ONE method rather than two, because the map asks two questions that
+        have one answer: *is anything standing here?* (the shelf id is a key)
+        and *how far back does it stand?* (the value). Two methods would be
+        two queries that can disagree, and the second question is the one
+        whose wrong answer un-declares a book's depth.
+
+        Captures are the other half and ``ShelfStore`` answers those; a shelf
+        can hold books with **no photograph at all** — a MANUAL entry, or a
+        photo deleted later — so asking only about captures calls an occupied
+        shelf empty and hands it to the delete branch.
+
+        A mapping rather than a per-shelf call because the caller is redrawing
+        a bookcase and needs the answer for twenty shelves at once. Shelves
+        with nothing on them are simply absent.
+        """
+
     def count(self, library: LibraryRef) -> int:
         """Books in this library. Cheap enough to call on every page."""
 
@@ -248,6 +309,29 @@ class ShelfStore(Protocol):
 
     def count_shelves(self, library: LibraryRef, *, include_virtual: bool = False) -> int:
         """How many shelves. Excludes the wishlist by default, as above."""
+
+    def list_shelves_in_section(
+        self, library: LibraryRef, section_id: str
+    ) -> tuple[Shelf, ...]:
+        """The shelves standing in one section's slots, column then level.
+
+        The query behind every structural edit to a bookcase (P6.1): removing
+        a column has to know which shelves lose their slot before it can plan
+        what happens to them, and "list every shelf and filter in Python" is
+        the version that reads the whole library to redraw one case.
+
+        Ordered by ``(col, level)`` — the address's own order, so a caller
+        never sorts and then disagrees with the elevation on screen.
+        """
+
+    def get_shelf_at(
+        self, library: LibraryRef, address: ShelfAddress
+    ) -> Shelf | None:
+        """The shelf standing at one slot, or ``None`` if the slot is empty.
+
+        A slot holds at most one shelf — the schema says so with a unique
+        index, so this cannot quietly return the first of several.
+        """
 
     def delete_shelf(self, library: LibraryRef, shelf_id: str) -> bool:
         """Remove a shelf that holds no captures. Returns False if absent.

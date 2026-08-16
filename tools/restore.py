@@ -207,6 +207,37 @@ def drill(backup: Path) -> dict:
             findings["invites"] = live
             findings["checks"].append(f"{live} invites, matching")
 
+        # The map (P6.1). ⚠ Recording a count is not checking it: the manifest
+        # gained these five and a review then measured a drill PASSING on a
+        # backup with the whole drawing deleted. A hand-drawn floor plan
+        # exists nowhere else — not even in a photograph — so it is the
+        # strongest member of "cannot be re-derived", and under CLAUDE.md
+        # rule 10 the drill is what turns a backup into a fact.
+        #
+        # The ⚠ above is satisfied: v20 creates all five EMPTY and the
+        # migration test asserts it, so no backfill can turn an old backup
+        # into a permanent false alarm.
+        drawn = 0
+        conn = sqlite3.connect(str(db))
+        try:
+            for table in ("sites", "floors", "places", "bookcases", "sections"):
+                stored_rows = manifest["database"]["rows"].get(table)
+                if stored_rows is None:
+                    continue        # a backup taken before v20
+                live = conn.execute(
+                    f"SELECT count(*) FROM {table}").fetchone()[0]
+                if live != stored_rows:
+                    raise SystemExit(
+                        f"{live} {table} rows restored, manifest says "
+                        f"{stored_rows} — a restore that loses the map loses a "
+                        f"drawing that exists nowhere else"
+                    )
+                drawn += live
+        finally:
+            conn.close()
+        findings["map_rows"] = drawn
+        findings["checks"].append(f"{drawn} map rows, matching")
+
         blob_files = sum(1 for p in (room / "blobs").rglob("*") if p.is_file()) \
             if (room / "blobs").is_dir() else 0
         if blob_files != manifest["blobs"]["files"]:

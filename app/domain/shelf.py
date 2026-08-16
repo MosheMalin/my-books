@@ -64,6 +64,42 @@ class VirtualShelfHasNoDepth(DomainError):
 
 # --- entities -------------------------------------------------------------
 
+
+@dataclass(frozen=True)
+class ShelfAddress:
+    """Where a shelf is, once the map exists (pillar 6, P6.1).
+
+    ``section -> column -> level``, and nothing above it: the room, the
+    bookcase, the floor and the site are all reachable FROM the section, and
+    copying them here would be four fields that can disagree with the drawing
+    the moment a bookcase is dragged into the next room.
+
+    **Both indices are 1-based**, like ``Shelf.depths`` and unlike the lab's
+    internal array positions. That is the fail-loud choice: an off-by-one
+    raises here instead of silently addressing the shelf next door.
+
+    ``level`` counts from the **top** of the column — the lab's convention,
+    kept so the ported editor behaves identically, and stated here because
+    "level 3" has to mean one thing.
+
+    ⚠ This type lives in ``shelf.py`` rather than ``place.py`` because
+    ``Shelf`` carries it: ``place.py`` imports this module, never the reverse.
+    """
+
+    section_id: str
+    col: int
+    level: int
+
+    def __post_init__(self) -> None:
+        if not self.section_id:
+            raise DomainError("an address names the section it is a slot of")
+        if self.col < 1 or self.level < 1:
+            raise DomainError(
+                f"columns and levels are 1-based; got column {self.col}, "
+                f"level {self.level}"
+            )
+
+
 @dataclass(frozen=True)
 class Shelf:
     """The durable thing a re-read diffs against (§5.3).
@@ -93,6 +129,11 @@ class Shelf:
     depth_count: int = 1
     virtual: bool = False
     created_at: str | None = None
+    #: Where this shelf stands, once somebody has drawn it (pillar 6). ``None``
+    #: for every shelf born from a photograph — which is most of them, and
+    #: stays legal forever: §3.1 makes the drawn and the photographed ONE
+    #: population, and binding the two is P6.4's job, not a precondition.
+    address: ShelfAddress | None = None
 
     def __post_init__(self) -> None:
         if not self.library_id:
@@ -102,6 +143,13 @@ class Shelf:
         if self.virtual and self.depth_count != 1:
             raise VirtualShelfHasNoDepth(
                 f"shelf {self.id} is virtual; depth is physical (§5.7)"
+            )
+        if self.virtual and self.address is not None:
+            # Same argument as the depth above, one level out: the wishlist is
+            # a list of books the owner does not own. Giving it a slot in a
+            # bookcase would put unowned books at a location that exists.
+            raise VirtualShelfHasNoDepth(
+                f"shelf {self.id} is the wishlist; it stands nowhere (§5.7)"
             )
 
     @property
@@ -133,6 +181,16 @@ class Shelf:
         deep" means rows one and two, and an off-by-one here would silently
         mis-scope §5.6's not-seen rule."""
         return tuple(range(1, self.depth_count + 1))
+
+    @property
+    def is_addressed(self) -> bool:
+        """Whether the map knows where this shelf is.
+
+        The distinction the UI needs, and the honest one: an unaddressed shelf
+        is not *misfiled*, it is a shelf nobody has drawn yet. Most of the
+        library is in that state on the day the map ships.
+        """
+        return self.address is not None
 
     @property
     def is_stacked(self) -> bool:
@@ -207,12 +265,19 @@ def new_shelf(
     depth_count: int = 1,
     virtual: bool = False,
     created_at: str | None = None,
+    address: ShelfAddress | None = None,
 ) -> Shelf:
     """A shelf. The label is optional — see :class:`Shelf`.
 
     Default one row deep, and §5.7 says the second row must be an explicit
     action rather than a number the user is asked for up front. Same shape of
     decision as the label: nothing is demanded before the first photo.
+
+    ``address`` is how a **drawn** shelf is born (pillar 6, MAP_PLAN §3.1):
+    draw a case with 2 columns of 5 and ten real, empty, addressed shelves
+    exist that were never photographed. They are the same kind of row as the
+    photographed ones — one population, not two — which is exactly why this is
+    one more argument here and not a second constructor.
     """
     return Shelf(
         id=id,
@@ -221,7 +286,29 @@ def new_shelf(
         depth_count=depth_count,
         virtual=virtual,
         created_at=created_at,
+        address=address,
     )
+
+
+def bind_shelf(shelf: Shelf, address: ShelfAddress) -> Shelf:
+    """Give a shelf a place in the drawing — or move it to another one.
+
+    The photo-born half of the population enters the map through here (P6.4
+    binds them in bulk); a drawn shelf is simply born with the address.
+    """
+    return replace(shelf, address=address)
+
+
+def unbind_shelf(shelf: Shelf) -> Shelf:
+    """Take the address away, keeping the shelf, its label, its photos and
+    its books.
+
+    The one thing that happens to an OCCUPIED shelf whose slot is erased from
+    the drawing (``place.plan_slot_removal``). Deleting it instead would
+    destroy the record a re-read diffs against (§5.6) because somebody
+    redrew a bookcase.
+    """
+    return replace(shelf, address=None)
 
 
 def rename_shelf(shelf: Shelf, label: str) -> Shelf:

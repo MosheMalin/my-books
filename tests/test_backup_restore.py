@@ -121,6 +121,68 @@ def test_the_drill_reads_the_backup_back_through_the_stores():
         assert db.exists() and SqliteBookStore(db).count(LIB) == 3
 
 
+def _restamp(target: Path) -> None:
+    """Re-write the manifest's checksum for a deliberately edited copy, so a
+    test about ROW COUNTS is not silently answered by the integrity check."""
+    manifest_path = target / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["database"]["sha256"] = backup_tool._sha256(target / "product.db")
+    manifest_path.write_text(json.dumps(manifest, indent=2,
+                                        ensure_ascii=False), encoding="utf-8")
+
+
+def test_the_drill_fails_when_the_backup_lost_the_drawing():
+    """⚠ Recording a count is not checking it. A review took a real backup,
+    emptied the five map tables in the copy, re-stamped the checksum and ran
+    the real drill: it said **PASSED** while the whole floor plan was gone.
+
+    The map is the strongest possible member of "cannot be re-derived" — the
+    engine can re-read a shelf, and nobody at all can redraw a house from a
+    photograph — so it belongs beside the review decisions §11.3 named.
+    """
+    from app.adapters.sqlite_store import SqliteMapStore
+    from app.domain import Rect, new_floor, new_place, new_site
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        db, blobs = _a_world(root / "live")
+        maps = SqliteMapStore(db)
+        maps.save_site(LIB, new_site(id="st", library_id=LIB.id, name="הבית"))
+        maps.save_floor(LIB, new_floor(id="fl", library_id=LIB.id,
+                                       site_id="st", name="קרקע"))
+        maps.save_place(LIB, new_place(id="pl", library_id=LIB.id,
+                                       floor_id="fl", rect=Rect(0, 0, 11, 9),
+                                       name="סלון"))
+        target = backup_tool.run(db, blobs, root / "backups")
+        manifest = json.loads(
+            (target / "manifest.json").read_text(encoding="utf-8"))
+        assert manifest["database"]["rows"]["places"] == 1
+
+        # A good backup drills clean, and SAYS it checked the map.
+        found = restore_tool.drill(target)
+        assert any("map rows" in c for c in found["checks"]), found["checks"]
+
+        # Now lose the drawing the way a bad restore would, and re-stamp the
+        # checksum so the drill's own integrity check cannot be what catches
+        # it — this has to fail on the ROWS.
+        conn = sqlite3.connect(str(target / "product.db"))
+        try:
+            conn.execute("DELETE FROM places")
+            conn.commit()
+        finally:
+            conn.close()
+        _restamp(target)
+
+        try:
+            restore_tool.drill(target)
+        except SystemExit as exc:
+            assert "places" in str(exc), str(exc)
+        else:
+            raise AssertionError(
+                "the drill passed on a backup whose floor plan was deleted"
+            )
+
+
 def test_a_backup_taken_on_an_older_schema_still_comes_up():
     """The case that matters at 3am: last night's backup was written by
     yesterday's code. The drill opens it through today's stores, which

@@ -985,6 +985,127 @@ ALTER TABLE oauth_states ADD COLUMN binding_hash TEXT NOT NULL DEFAULT '';
 """
 
 
+# --- v20: the physical map (P6.1, MAP_PLAN §3) -----------------------------
+#
+# Five new tables and three new columns on `shelves`. The shape is the one
+# nine passes of `planning/map-lab` settled, transcribed:
+#
+#     sites -> floors -> places -> bookcases -> sections -> (column, level)
+#
+# Four things here are decisions, not DDL, and each is argued in the domain
+# module (`app/domain/place.py`) as well:
+#
+#   - **geometry is INTEGER**, in abstract units. A REAL column would accept
+#     the float dust that made the lab render a room as 11.000000000000004x9,
+#     and the dust propagates through the snapping magnet into the next
+#     rectangle. Declaring the type is not tidiness, it is the fix;
+#   - **a section's defaults are not a parent to read through** (§3.3). They
+#     sit on `sections` as `default_levels`/`default_depth` and are copied
+#     into a shelf when the shelf is created. `shelves.depth_count` remains
+#     the shelf's own — untouched by this step, for every existing row;
+#   - **the address goes ON `shelves`**, nullable, rather than into a join
+#     table. §3.1: a drawn slot IS a Shelf, one population and not two. A
+#     mapping table beside it would fork every query about "the books on this
+#     shelf" permanently, in the direction where one path is the surprising
+#     one. Every existing shelf keeps NULL and is untouched — the map arrives
+#     empty, and P6.4 binds the photographed shelves into it;
+#   - **ON DELETE is RESTRICT by omission, never CASCADE**, all the way down.
+#     §3.7 refuses to remove a storey with anything on it and says what is in
+#     the way; a cascade would take a bookcase's shelves — and therefore a
+#     book's only recorded location — on one tap on a floor nobody was looking
+#     at. The one exception is `sections`, which cascades from its bookcase
+#     because a section is not addressable on its own; the SHELVES standing in
+#     it are protected by their own RESTRICT to `sections`, so the delete is
+#     refused while any slot is still filled.
+#
+# `bookcases.floor_id` is NOT NULL while `place_id` IS nullable, and that
+# asymmetry is §3.7's rule in the schema: an unattached case has to be
+# somewhere rather than everywhere.
+_V20 = """
+CREATE TABLE sites (
+    id         TEXT PRIMARY KEY,
+    library_id TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    "order"    INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX sites_by_library ON sites (library_id, "order", name, id);
+
+CREATE TABLE floors (
+    id         TEXT PRIMARY KEY,
+    library_id TEXT NOT NULL,
+    site_id    TEXT NOT NULL REFERENCES sites (id),
+    name       TEXT NOT NULL,
+    "order"    INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX floors_by_site ON floors (library_id, site_id, "order", name, id);
+
+CREATE TABLE places (
+    id         TEXT PRIMARY KEY,
+    library_id TEXT NOT NULL,
+    floor_id   TEXT NOT NULL REFERENCES floors (id),
+    name       TEXT NOT NULL DEFAULT '',
+    x          INTEGER NOT NULL,
+    y          INTEGER NOT NULL,
+    w          INTEGER NOT NULL,
+    h          INTEGER NOT NULL,
+    "order"    INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX places_by_floor ON places (library_id, floor_id, "order", id);
+
+CREATE TABLE bookcases (
+    id         TEXT PRIMARY KEY,
+    library_id TEXT NOT NULL,
+    floor_id   TEXT NOT NULL REFERENCES floors (id),
+    place_id   TEXT REFERENCES places (id),
+    name       TEXT NOT NULL DEFAULT '',
+    front      TEXT NOT NULL DEFAULT 'S',
+    x          INTEGER NOT NULL,
+    y          INTEGER NOT NULL,
+    w          INTEGER NOT NULL,
+    h          INTEGER NOT NULL,
+    "order"    INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX bookcases_by_floor ON bookcases (library_id, floor_id, "order", id);
+-- "which cases move with this room" — the query behind every room drag.
+CREATE INDEX bookcases_by_place ON bookcases (library_id, place_id);
+
+CREATE TABLE sections (
+    id             TEXT PRIMARY KEY,
+    library_id     TEXT NOT NULL,
+    bookcase_id    TEXT NOT NULL REFERENCES bookcases (id) ON DELETE CASCADE,
+    ordinal        INTEGER NOT NULL DEFAULT 1,
+    column_levels  TEXT NOT NULL DEFAULT '[]',
+    default_levels INTEGER NOT NULL DEFAULT 5,
+    default_depth  INTEGER NOT NULL DEFAULT 1
+);
+
+-- Bottom-first, which is the order the elevation reverses to draw. UNIQUE,
+-- because `ordinal` is not decoration: two sections of one bookcase both at 1
+-- make `address_parts` print "section 1" for two different shelves, and the
+-- owner is then sent to the wrong half of the furniture. The lab could not
+-- express this at all (its sections are an array), so the constraint arrives
+-- with the table rather than after somebody hits it.
+CREATE UNIQUE INDEX sections_by_bookcase
+    ON sections (library_id, bookcase_id, ordinal);
+
+ALTER TABLE shelves ADD COLUMN section_id TEXT REFERENCES sections (id);
+ALTER TABLE shelves ADD COLUMN col INTEGER;
+ALTER TABLE shelves ADD COLUMN level INTEGER;
+
+-- One shelf per slot, per library. Partial, because NULL is the normal state:
+-- every shelf that exists today is unaddressed, and a plain UNIQUE over
+-- nullable columns would be satisfied by all of them anyway — saying WHERE
+-- makes the index small and the intent readable.
+CREATE UNIQUE INDEX shelves_by_slot
+    ON shelves (library_id, section_id, col, level)
+    WHERE section_id IS NOT NULL;
+"""
+
+
 # A step is either SQL to execute or a callable to run — both inside the same
 # once-only transaction. Callables exist because a derived column whose rule
 # lives in the domain must be backfilled BY that rule, not by a re-statement
@@ -1009,6 +1130,7 @@ MIGRATIONS: tuple[tuple[int, str | Step], ...] = (
     (17, _V17),
     (18, _V18),
     (19, _V19),
+    (20, _V20),
 )
 
 
