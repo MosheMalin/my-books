@@ -235,7 +235,7 @@ Three amendments the idea needs, and each is a rule rather than a detail:
 
 | the press lands on | what a drag does |
 |---|---|
-| a handle of the selected thing | resize |
+| a handle of the selected thing | resize — and the pointer shows which WAY |
 | **inside a bookcase** | move it — in every tool, since nobody draws a case inside a case |
 | a room's **border** | move that room |
 | anywhere, with a drawing tool held | draw that |
@@ -247,6 +247,11 @@ inside it, because the two gestures approach from opposite directions: you aim
 *at* the wall to grab the room and just *inside* it to draw a bookcase flush
 against it. A symmetric fingertip-wide band serves the first and ruins the
 second, and drawing a case against a wall is far commoner.
+
+**A handle says it is a handle.** It reports a directional resize arrow, not
+the move cross: a grip and the wall it sits on are a few pixels apart and do
+entirely different things, so the pointer is the only warning before the wrong
+drag starts.
 
 **A handle grabs what it draws, and never more than a third of the shape it
 sits on.** The second clause is not tidiness: a bookcase is one unit deep, so

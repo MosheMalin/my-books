@@ -37,7 +37,8 @@ seventh moved the storey onto the board and drew the icons properly.
    you hold one, **a border is still a handle** and **a bookcase is always
    grabbable**: press a wall and you move that room, press a case and you move
    the case. Press just *inside* a wall and you draw against it — the band that
-   grabs a room is deliberately mean on the inside.
+   grabs a room is deliberately mean on the inside. The little squares on a
+   selected shape show a resize arrow pointing the way they stretch.
 2. **Draw room** — drag a rectangle. Then drag a second one so it lands near
    the first: its edges **weld onto the neighbour**, exactly, so rooms attach
    and an L-shaped room is two rectangles.

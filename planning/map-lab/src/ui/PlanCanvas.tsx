@@ -90,7 +90,7 @@ export function PlanCanvas(props: Props) {
   const svgRef = useRef<SVGSVGElement | null>(null)
   const [rect, setRect] = useState<ScreenRect>({ left: 0, top: 0, width: 800, height: 600 })
   const [drag, setDrag] = useState<Drag>(null)
-  const [hover, setHover] = useState<'move' | 'room' | 'case'>('room')
+  const [hover, setHover] = useState<string>('crosshair')
   const pointers = useRef(new Map<number, Pt>())
   const pinch = useRef<{ d: number; scale: number } | null>(null)
 
@@ -164,26 +164,32 @@ export function PlanCanvas(props: Props) {
    * and the pointer handler can never disagree about it.
    */
   /**
-   * What a drag starting here would DO. One function, so the cursor, the hint
-   * and the pointer handler can never disagree — and one order, which is the
-   * whole rule (owner, 2026-08-16):
+   * What a drag starting here would do, AS A CURSOR. One function and one
+   * order, which is the whole rule (owner, 2026-08-16):
    *
-   *   a handle of the selected thing  → resize
+   *   a handle of the selected thing  → resize, and which WAY it resizes
    *   INSIDE a bookcase               → move it, always, in every tool
    *   on a room's border              → move that room
    *   the tool, if one is held        → draw that
    *   inside a room                   → draw a bookcase
    *   outside every room              → draw a room
+   *
+   * ⚠ A handle reports a **directional resize** arrow rather than the move
+   * cross. They sit a few pixels apart on a wall and do entirely different
+   * things, so the pointer is the only warning you get before you drag the
+   * wrong one.
    */
-  const intentAt = (p: Pt): 'move' | 'room' | 'case' => {
-    if (tool === 'pan') return 'move'
-    if (loneRect && handleAt(loneRect, p, grip)) return 'move'
+  const cursorAt = (p: Pt): string => {
+    if (tool === 'pan') return 'grab'
+    if (loneRect) {
+      const h = handleAt(loneRect, p, grip)
+      if (h) return resizeCursor(h)
+    }
     // Nobody draws a bookcase inside a bookcase, so its interior is never
     // anything but a grip — in the drawing tools too.
     if (caseAt(p)) return 'move'
     if (roomBorderAt(p)) return 'move'
-    if (tool !== 'auto') return tool
-    return roomAt(p) ? 'case' : 'room'
+    return 'crosshair'
   }
 
   const caseAt = (p: Pt): Bookcase | null => {
@@ -283,7 +289,7 @@ export function PlanCanvas(props: Props) {
       // Only when the ANSWER changes, not on every pixel: this runs on every
       // pointermove and a re-render per pixel is a lot of nothing.
       if (tool !== 'pan' && !props.overview) {
-        const next = intentAt(world(e))
+        const next = cursorAt(world(e))
         setHover((h) => (h === next ? h : next))
       }
       return
@@ -383,13 +389,7 @@ export function PlanCanvas(props: Props) {
   // tool first, so an edge that was genuinely grabbable still showed a
   // crosshair — the behaviour was right and the only thing telling the user
   // about it was wrong.
-  const cursor = props.overview
-    ? 'pointer'
-    : tool === 'pan'
-      ? 'grab'
-      : hover === 'move'
-        ? 'move'
-        : 'crosshair'
+  const cursor = props.overview ? 'pointer' : tool === 'pan' ? 'grab' : hover
 
   /** Where a rectangle sits RIGHT NOW, mid-drag. Everything that travels with
    *  the selection previews together, or a multi-move looks broken until the
@@ -579,6 +579,14 @@ function resolve(
   const y0 = d.handle.hy === -1 ? p.y : d.orig.y
   const y1 = d.handle.hy === 1 ? p.y : bottom(d.orig)
   return rectFrom({ x: x0, y: y0 }, { x: x1, y: y1 })
+}
+
+/** Which way a grip stretches, as the pointer names it. A corner reports its
+ *  diagonal; an edge midpoint reports its axis. */
+function resizeCursor(h: Handle): string {
+  if (h.hx === 0) return 'ns-resize'
+  if (h.hy === 0) return 'ew-resize'
+  return h.hx === h.hy ? 'nwse-resize' : 'nesw-resize'
 }
 
 function Grid({ min, max, scale }: { min: Pt; max: Pt; scale: number }) {
