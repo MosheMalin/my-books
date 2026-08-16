@@ -57,7 +57,7 @@ the owner named that appear nowhere:
 
 ## 3. The model, decided before any code
 
-Eight rules, each of which is cheap now and expensive later.
+Ten rules, each of which is cheap now and expensive later.
 
 ### 3.1 A drawn shelf slot IS a `Shelf`
 
@@ -275,6 +275,50 @@ failed drawing.** In the arrow, a click that produces a zero-size rectangle
 selects whatever is under it and says nothing — complaining about it would
 make the fluent mode the noisiest one.
 
+### 3.9 A **Site** stands above the floors, and `Place` is the room
+
+**[DECIDED 2026-08-16 — owner]**, answering §7.1: *"Add a real Site level above
+Floor."* So the grouping is two levels deep, not one:
+
+```
+Site  ("Home", "The parents' place", "The office")
+  └─ Floor  ("Ground floor", "Upstairs")        — storeys of THAT site
+       └─ Place  (the room; what the plan draws)
+            └─ Bookcase └─ Section └─ column └─ level
+```
+
+Two rules come with it, and both are the same rule §3.7 already stated about
+floors:
+
+- **a Site is a grouping, never part of an address.** The address stays
+  `place · case · section · column · level`. Adding a site to it would
+  re-address every shelf the day someone renames a house;
+- **each site has its own floors**, because "ground floor" of the parents'
+  place is not the ground floor of this one. A floor therefore belongs to
+  exactly one site, and a room to exactly one floor.
+
+⚠ **What `Place` now means, stated once so it does not drift.** VISION §4.1
+glossed a Place as *"a room, or a whole site"* — one word covering two levels.
+That gloss is **retired here**: the level the address names is the **room**, and
+that is what a `Place` row is. A whole site is a `Site` row. The VISION line is
+amended in the same commit as this decision, because a noun that means two
+things is exactly how *depth ≠ row ≠ band* happened.
+
+The editor's word for a `Place` is **room** — that is what a floor plan draws,
+and it is the only alias, documented here and in `app/domain/place.py`.
+
+**One site and one floor exist from the start** and neither renders any chrome
+until a second one does — the same rule as the library switcher, which stays a
+plain label until a second library exists. A household with one house and one
+storey never learns either word.
+
+### 3.10 Doors and windows are not in this pillar
+
+**[DECIDED 2026-08-16 — owner]**, answering §7.4: no. They make a room
+recognisable and carry no book data; nine lab passes never wanted one. They can
+be added later without touching the address, which is what makes deferring them
+cheap.
+
 ## 4. The fork, and how it was settled
 
 **[SETTLED 2026-08-16 — owner, after drawing on the first build.] Freehand
@@ -465,13 +509,26 @@ this pillar.**
 
 | # | Item | Size | State |
 |---|---|---|---|
-| **P6.0** | **The map lab** — a standalone app, no backend, outside the gate. Rectangle drawing for rooms and bookcases, room-to-room attachment, multi-select, copy/paste, explicit bookcase→room attachment, resize handles, sections, floors, the elevation editor, underlay tracing, black/white themes, visible autosave, a real undo stack. Exit: the owner draws his real house in it and exports it (§4 — the interaction model is settled; the drawing is still owed). | M | **5th pass** |
-| **P6.1** | **Address domain + migration** — `Place`, `Bookcase`, the shelf address, geometry in abstract units. Drawn slots create real empty `Shelf` rows. Naming lint. Schema vN with a real v(N-1) upgrade test. | L | |
-| **P6.2** | **API + policy** — places/bookcases through `current_library`, one capability each, contracts regenerated. | M | |
-| **P6.3** | **The port** — the chosen editor moves into `app/web`, wired to the API. **The lab is deleted in the same commit.** | M | |
+| **P6.0** | **The map lab** — a standalone app, no backend, outside the gate. Rectangle drawing for rooms and bookcases, room-to-room attachment, multi-select, copy/paste, explicit bookcase→room attachment, resize handles, sections, floors, the elevation editor, underlay tracing, black/white themes, visible autosave, a real undo stack. | M | ✅ nine passes |
+| **P6.1** | **Address domain + migration** — `Site`, `Floor`, `Place`, `Bookcase`, `Section`, the shelf address, geometry in abstract units. Drawn slots create real empty `Shelf` rows. Naming lint. Schema **v20** with a real v19→v20 upgrade test. | L | |
+| **P6.2** | **API + policy** — the map through `current_library`, one capability each, contracts regenerated. | M | |
+| **P6.3** | **The port** — the lab's editor moves into `app/web/src/map/` **verbatim** where it is framework-free, wired to the API by an adapter. **The lab is deleted in the same commit.** Behaviour identical to the lab's ninth pass — that is the acceptance test, not a rewrite. | M | |
+| **P6.3b** | **The site picker** — the one thing the lab never had (§3.9). Sites and their floors become manageable in the ported editor; a single site renders no chrome. Deliberately AFTER P6.3, so "behaves the same" is verifiable before anything new is added. | S | |
 | **P6.4** | **Binding and merge** — photo-born shelves bind into drawn slots; several identities merge into one physical shelf, with aliases. | L | |
 | **P6.5** | **The map as navigation** — three drill levels, "where is it" incl. depth, stale-depth surfacing, capture handoff. | L | |
 | **P6.6** | *Optional:* bookcase photo → proposed levels via `segment.py`, confirmed by hand. | S | |
+
+**Standing per-epic requirements** (owner, 2026-08-16 — *"use all reviewers to
+verify the code and quality along the way"*): every item runs `review-quality`;
+every server-side item runs `review-data-integrity`; every item that adds a
+route or an input runs `review-security`; every user-visible item runs
+`review-ux`; and `review-migration` runs **before** the P6.1 commit.
+
+**P6.0's exit is called** (owner, 2026-08-16 — *"P6.0 worked well. You can start
+from empty and create a file for yourself."*). The real-house export is
+therefore **not** P6.1's fixture: the fixture is a hand-authored plan in the
+exported shape, and the product starts with an empty map. The tenth pass the
+item warned about never came.
 
 ### P6.0 — the map lab
 
@@ -539,21 +596,23 @@ Rule 11 of CLAUDE.md, in its own words: three consecutive migration reviews
 - `python tools/backup.py` before any live browser-driven mutation, taken
   **before** the gate runs (importing `app.main` migrates).
 
-## 7. Open questions for the owner
+## 7. Open questions — all four closed (2026-08-16)
 
-1. **Does a Place nest?** "House → living room" and "the parents' place" are
-   both Places today (§4.1's settled rule: a Place is any location within one
-   tenant — a room *and* a whole other site). One flat list is simpler; a
-   two-level site → room is truer to a house with eight rooms. *Recommendation:
-   flat, with a free-text label, until a real collection makes it hurt.*
-2. **Can a bookcase stand off a wall** (an island shelf, a room divider)? Wall
-   snapping is the whole ergonomic win; free placement is an escape hatch that
-   costs a mode. *Recommendation: yes, but as a deliberate "detach" — snap is
-   the default, not the only option.*
-3. **Which end is column 1** for a Hebrew user? `UI_PLAN.md` §8 already has
-   this open, and the map plan inherits it — the elevation is pinned LTR, but
-   *which physical end* the leftmost cell means is a real question about a real
-   piece of furniture.
-4. **Does the plan carry doors and windows?** They make a room recognisable at
-   a glance and cost one more tool. They also carry no book data. *Recommendation:
-   in the lab, so we can see whether it reads better; decide from the drawing.*
+1. **Does a Place nest?** → **Yes: a real `Site` above `Floor`** (owner). The
+   recommendation on record was *flat until it hurts*, and it was overruled —
+   correctly, since "the parents' place, upstairs" needs two levels, not a
+   longer label. §3.9 is the decision, including what `Place` now means and
+   what VISION's gloss no longer means.
+2. **Can a bookcase stand off a wall?** → **Yes, and no mode was needed.** The
+   lab settled it by construction: a bookcase is a free rectangle, the wall is
+   a magnet, and `frontFor` only *guesses* the facing when the case happens to
+   land flush. An island shelf is drawn mid-room and turned by hand. The
+   "deliberate detach" the recommendation asked for never had to exist.
+3. **Which end is column 1?** → **The leftmost cell as you FACE the case.** The
+   elevation is a front-on view (§3.2) and is pinned LTR (§3.5), so column 1 is
+   simply the left end of the face the books look out of — `Bookcase.front`
+   already records which physical face that is. It is a fact about furniture,
+   not about the reading direction of the UI, which is why the Hebrew flip does
+   not move it. `UI_PLAN.md` §8's copy of this question is answered by the same
+   sentence.
+4. **Does the plan carry doors and windows?** → **No** (owner). §3.10.

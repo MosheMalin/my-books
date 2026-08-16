@@ -114,12 +114,20 @@ once:
   shop's stock". Separation between two libraries of one account is
   **logical, not enforced** — see the 2026-08-11 revision below for exactly
   what that buys and what it costs.
-- **Place** — where books physically stand: a room, or a whole site. Pillar 6.
+- **Place** — where books physically stand: **the room**. Pillar 6.
+- **Floor**, **Site** — the two groupings above a Place: a storey, and a whole
+  property ("home", "the parents' place"). Pillar 6.
 
 *Naming, settled 2026-08-10 before H5's lint lands at P6.1:* the noun is
 **Place**; *PhysicalLibrary* is its retired synonym and must not appear in
 code — it contains the very word it exists to be distinguished from, which is
 how "the living-room library" gets typed.
+
+*Amended 2026-08-16, owner (`planning/MAP_PLAN.md` §3.9):* the gloss above used
+to read *"a room, **or a whole site**"* — one noun covering two levels. A whole
+site is now a `Site` of its own, holding `Floor`s, holding `Place`s, and only
+the Place is part of a shelf's address. One word that meant two things is
+exactly how *depth ≠ row ≠ band* happened.
 
 **[SETTLED 2026-08-10, owner — unchanged] Ownership, never geography.** The
 discriminator for a tenant is *whose books these are*, never whose roof they
@@ -245,7 +253,9 @@ column is the honest state:
 | **Account** | the customer; **the tenancy boundary** | the boundary moves here at P3.7 (2026-08-11); until then a Library *was* the tenant |
 | **User** | a person, one identity | `app/domain/tenancy.py` (P3.1, named `Account` until P3.7). No login yet — P4.1 |
 | **Library** | a collection inside an account — logical separation | built and enforced everywhere (P3.1–P3.3) as the one PHYSICAL scope, and it stays that after P3.7 |
-| **Place** | where books are kept: home, the child's room, the office, the parents' shelves | **not built** — pillar 6 |
+| **Site** | a whole property: home, the office, the parents' | **not built** — pillar 6 (added 2026-08-16, MAP_PLAN §3.9) |
+| **Floor** | a storey of one site; a grouping over Places, never part of an address | **not built** — pillar 6 |
+| **Place** | where books are kept: **the room** — the level a shelf's address names | **not built** — pillar 6 |
 | **Bookcase** | one piece of furniture, with columns across and levels down | **not built** — pillar 6 |
 | **Shelf** | one shelf, with `depth` rows front-to-back | built as IDENTITY only (P2.1): an id, an optional label, a declared depth — deliberately **no address** |
 | **Capture** | one photograph filed at (shelf, depth) | built (P2.2/P2.3) |
