@@ -35,6 +35,7 @@ from app.domain import (
     Account,
     Alternative,
     Book,
+    Bookcase,
     Capture,
     Claim,
     ClaimTier,
@@ -44,27 +45,38 @@ from app.domain import (
     DecisionKind,
     DiffSummary,
     DuplicateQuestion,
+    Floor,
+    GroupingContents,
     Lending,
     Library,
     LibraryRef,
     Membership,
+    Place,
     Provenance,
     Read,
     ReadStatus,
+    Rect,
     Role,
+    Section,
     Shelf,
+    ShelfAddress,
+    Site,
     Status,
     User,
     WorkFields,
+    check_removable,
 )
+from app.domain.place import NotEmpty, NotOnThisFloor
 from app.domain.tenancy import remove_member, set_role
 from app.domain.search import compile_sql_like, haystack, parse
 from app.domain.search import search as domain_search
+from app.ports.map import MapSnapshot, UnknownParent
 from app.ports.store import (
     BookPage,
     BookSort,
     DuplicateBookKey,
     DuplicateCaptureSlot,
+    DuplicateShelfSlot,
     ShelfNotEmpty,
     UnknownShelf,
     WrongLibrary,
@@ -282,6 +294,15 @@ class SqliteBookStore(_SqliteStore):
         return BookPage(items=tuple(hits[offset: offset + limit]),
                         total=len(hits), offset=offset, limit=limit)
 
+    def shelf_ids_in_use(self, library: LibraryRef) -> frozenset[str]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT shelf_id FROM copies"
+                " WHERE library_id = ? AND shelf_id IS NOT NULL",
+                (library.id,),
+            ).fetchall()
+        return frozenset(r[0] for r in rows)
+
     def count(self, library: LibraryRef) -> int:
         with self._connect() as conn:
             return int(conn.execute(
@@ -312,6 +333,21 @@ class SqliteShelfStore(_SqliteStore):
                 f"not {library.id!r}"
             )
         with self._connect() as conn:
+            # Checked in Python rather than left to the foreign key, for the
+            # reason `save_capture` gives below: the FK cannot express "in
+            # THIS library", so a shelf addressed to another tenant's section
+            # satisfies it perfectly. It also turns a raw IntegrityError —
+            # which says nothing a caller can act on — into the same
+            # `UnknownParent` the map store already raises for every other
+            # parent, in both implementations.
+            if shelf.address is not None and not conn.execute(
+                "SELECT 1 FROM sections WHERE id = ? AND library_id = ?",
+                (shelf.address.section_id, library.id),
+            ).fetchone():
+                raise UnknownParent(
+                    f"no section {shelf.address.section_id!r} in library "
+                    f"{library.id!r}"
+                )
             with conn:
                 # INSERT OR REPLACE is safe HERE, unlike on books: the only
                 # unique key is the primary key, so a conflict can only be this
@@ -319,17 +355,36 @@ class SqliteShelfStore(_SqliteStore):
                 # deleting somebody else's record.) But it would fire the
                 # captures cascade on the delete half, so an explicit UPSERT it
                 # is — a rename must not destroy the shelf's photos.
-                conn.execute(
-                    "INSERT INTO shelves (id, library_id, label, depth_count,"
-                    " virtual, created_at) VALUES (?,?,?,?,?,?)"
-                    " ON CONFLICT(id) DO UPDATE SET label=excluded.label,"
-                    " depth_count=excluded.depth_count,"
-                    " virtual=excluded.virtual,"
-                    " created_at=excluded.created_at"
-                    " WHERE shelves.library_id = excluded.library_id",
-                    (shelf.id, library.id, shelf.label, shelf.depth_count,
-                     int(shelf.virtual), shelf.created_at),
-                )
+                addr = shelf.address
+                try:
+                    conn.execute(
+                        "INSERT INTO shelves (id, library_id, label,"
+                        " depth_count, virtual, created_at, section_id, col,"
+                        " level) VALUES (?,?,?,?,?,?,?,?,?)"
+                        " ON CONFLICT(id) DO UPDATE SET label=excluded.label,"
+                        " depth_count=excluded.depth_count,"
+                        " virtual=excluded.virtual,"
+                        " created_at=excluded.created_at,"
+                        " section_id=excluded.section_id, col=excluded.col,"
+                        " level=excluded.level"
+                        " WHERE shelves.library_id = excluded.library_id",
+                        (shelf.id, library.id, shelf.label, shelf.depth_count,
+                         int(shelf.virtual), shelf.created_at,
+                         addr.section_id if addr else None,
+                         addr.col if addr else None,
+                         addr.level if addr else None),
+                    )
+                except sqlite3.IntegrityError as exc:
+                    # By COLUMNS, not by index name — measured, and a PARTIAL
+                    # unique index is no exception: SQLite reports "UNIQUE
+                    # constraint failed: shelves.library_id, shelves.section_id,
+                    # …". Same shape as captures.shelf_id and books.book_key.
+                    if "shelves.section_id" in str(exc):
+                        raise DuplicateShelfSlot(
+                            f"another shelf already stands at {addr} "
+                            f"(MAP_PLAN §3.1)"
+                        ) from exc
+                    raise
 
     def get_shelf(self, library: LibraryRef, shelf_id: str) -> Shelf | None:
         with self._connect() as conn:
@@ -365,6 +420,28 @@ class SqliteShelfStore(_SqliteStore):
             return int(conn.execute(
                 f"SELECT COUNT(*) FROM shelves WHERE {clause}", params
             ).fetchone()[0])
+
+    def list_shelves_in_section(
+        self, library: LibraryRef, section_id: str
+    ) -> tuple[Shelf, ...]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM shelves WHERE library_id = ? AND section_id = ?"
+                " ORDER BY col, level, id",
+                (library.id, section_id),
+            ).fetchall()
+        return tuple(_load_shelf(r) for r in rows)
+
+    def get_shelf_at(
+        self, library: LibraryRef, address: ShelfAddress
+    ) -> Shelf | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM shelves WHERE library_id = ? AND section_id = ?"
+                " AND col = ? AND level = ?",
+                (library.id, address.section_id, address.col, address.level),
+            ).fetchone()
+        return _load_shelf(row) if row else None
 
     @staticmethod
     def _scope(library: LibraryRef, include_virtual: bool) -> tuple[str, tuple]:
@@ -1253,6 +1330,359 @@ def _load_state(row: sqlite3.Row) -> OAuthState:
                       binding_hash=row["binding_hash"])
 
 
+class SqliteMapStore(_SqliteStore):
+    """Implements ``app.ports.map.MapStore`` (P6.1).
+
+    Shares the file with every other store — the map has to be in the same
+    transaction-able place as the shelves it addresses, or "delete this
+    bookcase" spans two databases and can half-happen.
+
+    ``load_map`` is five small SELECTs on one connection rather than five
+    round trips: a house is tens of rows, and this is the query the plan
+    screen makes on every open.
+    """
+
+    def __init__(self, path: str | Path) -> None:
+        super().__init__(path, kind="SqliteMapStore")
+
+    # --- the whole drawing ------------------------------------------------
+
+    def load_map(self, library: LibraryRef) -> MapSnapshot:
+        with self._connect() as conn:
+            sites = conn.execute(
+                'SELECT * FROM sites WHERE library_id = ?'
+                ' ORDER BY "order", name, id', (library.id,)).fetchall()
+            floors = conn.execute(
+                'SELECT * FROM floors WHERE library_id = ?'
+                ' ORDER BY site_id, "order", name, id', (library.id,)).fetchall()
+            places = conn.execute(
+                'SELECT * FROM places WHERE library_id = ?'
+                ' ORDER BY floor_id, "order", id', (library.id,)).fetchall()
+            cases = conn.execute(
+                'SELECT * FROM bookcases WHERE library_id = ?'
+                ' ORDER BY floor_id, "order", id', (library.id,)).fetchall()
+            sections = conn.execute(
+                'SELECT * FROM sections WHERE library_id = ?'
+                ' ORDER BY bookcase_id, ordinal, id', (library.id,)).fetchall()
+        return MapSnapshot(
+            sites=tuple(_load_site(r) for r in sites),
+            floors=tuple(_load_floor(r) for r in floors),
+            places=tuple(_load_place(r) for r in places),
+            bookcases=tuple(_load_bookcase(r) for r in cases),
+            sections=tuple(_load_section(r) for r in sections),
+        )
+
+    # --- sites ------------------------------------------------------------
+
+    def save_site(self, library: LibraryRef, site: Site) -> None:
+        _same_library(site, library, "site")
+        with self._connect() as conn, conn:
+            conn.execute(
+                'INSERT INTO sites (id, library_id, name, "order")'
+                ' VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET'
+                ' name=excluded.name, "order"=excluded."order"'
+                ' WHERE sites.library_id = excluded.library_id',
+                (site.id, library.id, site.name, site.order))
+
+    def get_site(self, library: LibraryRef, site_id: str) -> Site | None:
+        row = self._one("sites", library, site_id)
+        return _load_site(row) if row else None
+
+    def delete_site(self, library: LibraryRef, site_id: str) -> bool:
+        with self._connect() as conn:
+            if not self._exists(conn, "sites", library, site_id):
+                return False
+            floors = self._count(
+                conn, "SELECT COUNT(*) FROM floors WHERE library_id = ? AND"
+                " site_id = ?", (library.id, site_id))
+            check_removable(f"site {site_id}",
+                            GroupingContents(floors=floors))
+            total = self._count(
+                conn, "SELECT COUNT(*) FROM sites WHERE library_id = ?",
+                (library.id,))
+            if total <= 1:
+                raise NotEmpty(
+                    f"site {site_id} is the only one; a drawing has somewhere "
+                    f"to be")
+            with conn:
+                conn.execute("DELETE FROM sites WHERE id = ? AND library_id = ?",
+                             (site_id, library.id))
+            return True
+
+    # --- floors -----------------------------------------------------------
+
+    def save_floor(self, library: LibraryRef, floor: Floor) -> None:
+        _same_library(floor, library, "floor")
+        with self._connect() as conn:
+            if not self._exists(conn, "sites", library, floor.site_id):
+                raise UnknownParent(
+                    f"no site {floor.site_id!r} in library {library.id!r}")
+            with conn:
+                conn.execute(
+                    'INSERT INTO floors (id, library_id, site_id, name,'
+                    ' "order") VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET'
+                    ' site_id=excluded.site_id, name=excluded.name,'
+                    ' "order"=excluded."order"'
+                    ' WHERE floors.library_id = excluded.library_id',
+                    (floor.id, library.id, floor.site_id, floor.name,
+                     floor.order))
+
+    def get_floor(self, library: LibraryRef, floor_id: str) -> Floor | None:
+        row = self._one("floors", library, floor_id)
+        return _load_floor(row) if row else None
+
+    def delete_floor(self, library: LibraryRef, floor_id: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM floors WHERE id = ? AND library_id = ?",
+                (floor_id, library.id)).fetchone()
+            if row is None:
+                return False
+            check_removable(f"floor {floor_id}", GroupingContents(
+                places=self._count(
+                    conn, "SELECT COUNT(*) FROM places WHERE library_id = ?"
+                    " AND floor_id = ?", (library.id, floor_id)),
+                bookcases=self._count(
+                    conn, "SELECT COUNT(*) FROM bookcases WHERE library_id = ?"
+                    " AND floor_id = ?", (library.id, floor_id)),
+            ))
+            siblings = self._count(
+                conn, "SELECT COUNT(*) FROM floors WHERE library_id = ? AND"
+                " site_id = ?", (library.id, row["site_id"]))
+            if siblings <= 1:
+                raise NotEmpty(
+                    f"floor {floor_id} is the only storey of its site; a site "
+                    f"has at least one")
+            with conn:
+                conn.execute("DELETE FROM floors WHERE id = ? AND library_id = ?",
+                             (floor_id, library.id))
+            return True
+
+    # --- places -----------------------------------------------------------
+
+    def save_place(self, library: LibraryRef, place: Place) -> None:
+        _same_library(place, library, "place")
+        with self._connect() as conn:
+            if not self._exists(conn, "floors", library, place.floor_id):
+                raise UnknownParent(
+                    f"no floor {place.floor_id!r} in library {library.id!r}")
+            with conn:
+                conn.execute(
+                    'INSERT INTO places (id, library_id, floor_id, name, x, y,'
+                    ' w, h, "order") VALUES (?,?,?,?,?,?,?,?,?)'
+                    ' ON CONFLICT(id) DO UPDATE SET floor_id=excluded.floor_id,'
+                    ' name=excluded.name, x=excluded.x, y=excluded.y,'
+                    ' w=excluded.w, h=excluded.h, "order"=excluded."order"'
+                    ' WHERE places.library_id = excluded.library_id',
+                    (place.id, library.id, place.floor_id, place.name,
+                     place.rect.x, place.rect.y, place.rect.w, place.rect.h,
+                     place.order))
+
+    def get_place(self, library: LibraryRef, place_id: str) -> Place | None:
+        row = self._one("places", library, place_id)
+        return _load_place(row) if row else None
+
+    def delete_place(self, library: LibraryRef, place_id: str) -> bool:
+        with self._connect() as conn:
+            if not self._exists(conn, "places", library, place_id):
+                return False
+            with conn:
+                # The room goes; its furniture stays, attached to no room.
+                # One transaction, because a case pointing at a deleted room
+                # is a foreign key the schema would refuse anyway — and the
+                # refusal is the wrong answer here, not the right one.
+                conn.execute(
+                    "UPDATE bookcases SET place_id = NULL"
+                    " WHERE library_id = ? AND place_id = ?",
+                    (library.id, place_id))
+                conn.execute("DELETE FROM places WHERE id = ? AND library_id = ?",
+                             (place_id, library.id))
+            return True
+
+    # --- bookcases --------------------------------------------------------
+
+    def save_bookcase(self, library: LibraryRef, bookcase: Bookcase) -> None:
+        _same_library(bookcase, library, "bookcase")
+        with self._connect() as conn:
+            if not self._exists(conn, "floors", library, bookcase.floor_id):
+                raise UnknownParent(
+                    f"no floor {bookcase.floor_id!r} in library {library.id!r}")
+            if bookcase.place_id is not None:
+                place = conn.execute(
+                    "SELECT * FROM places WHERE id = ? AND library_id = ?",
+                    (bookcase.place_id, library.id)).fetchone()
+                if place is None:
+                    raise UnknownParent(
+                        f"no place {bookcase.place_id!r} in library "
+                        f"{library.id!r}")
+                if place["floor_id"] != bookcase.floor_id:
+                    raise NotOnThisFloor(
+                        f"bookcase {bookcase.id} is on floor "
+                        f"{bookcase.floor_id!r} but room {place['id']} is on "
+                        f"{place['floor_id']!r} (MAP_PLAN §3.7)")
+            with conn:
+                conn.execute(
+                    'INSERT INTO bookcases (id, library_id, floor_id, place_id,'
+                    ' name, front, x, y, w, h, "order")'
+                    ' VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE'
+                    ' SET floor_id=excluded.floor_id, place_id=excluded.place_id,'
+                    ' name=excluded.name, front=excluded.front, x=excluded.x,'
+                    ' y=excluded.y, w=excluded.w, h=excluded.h,'
+                    ' "order"=excluded."order"'
+                    ' WHERE bookcases.library_id = excluded.library_id',
+                    (bookcase.id, library.id, bookcase.floor_id,
+                     bookcase.place_id, bookcase.name, bookcase.front,
+                     bookcase.rect.x, bookcase.rect.y, bookcase.rect.w,
+                     bookcase.rect.h, bookcase.order))
+
+    def get_bookcase(
+        self, library: LibraryRef, bookcase_id: str
+    ) -> Bookcase | None:
+        row = self._one("bookcases", library, bookcase_id)
+        return _load_bookcase(row) if row else None
+
+    def delete_bookcase(self, library: LibraryRef, bookcase_id: str) -> bool:
+        with self._connect() as conn:
+            if not self._exists(conn, "bookcases", library, bookcase_id):
+                return False
+            standing = self._count(
+                conn,
+                "SELECT COUNT(*) FROM shelves WHERE library_id = ? AND"
+                " section_id IN (SELECT id FROM sections WHERE library_id = ?"
+                " AND bookcase_id = ?)",
+                (library.id, library.id, bookcase_id))
+            if standing:
+                raise NotEmpty(
+                    f"{standing} shelf/shelves still stand in bookcase "
+                    f"{bookcase_id}; empty the slots first (MAP_PLAN §3.1)")
+            with conn:
+                # Sections cascade from the bookcase (a section is not
+                # addressable on its own); the shelves were checked above,
+                # because they are not the bookcase's to destroy.
+                conn.execute(
+                    "DELETE FROM bookcases WHERE id = ? AND library_id = ?",
+                    (bookcase_id, library.id))
+            return True
+
+    # --- sections ---------------------------------------------------------
+
+    def save_section(self, library: LibraryRef, section: Section) -> None:
+        _same_library(section, library, "section")
+        with self._connect() as conn:
+            if not self._exists(conn, "bookcases", library, section.bookcase_id):
+                raise UnknownParent(
+                    f"no bookcase {section.bookcase_id!r} in library "
+                    f"{library.id!r}")
+            with conn:
+                conn.execute(
+                    'INSERT INTO sections (id, library_id, bookcase_id, ordinal,'
+                    ' column_levels, default_levels, default_depth)'
+                    ' VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET'
+                    ' bookcase_id=excluded.bookcase_id, ordinal=excluded.ordinal,'
+                    ' column_levels=excluded.column_levels,'
+                    ' default_levels=excluded.default_levels,'
+                    ' default_depth=excluded.default_depth'
+                    ' WHERE sections.library_id = excluded.library_id',
+                    (section.id, library.id, section.bookcase_id,
+                     section.ordinal, json.dumps(list(section.column_levels)),
+                     section.default_levels, section.default_depth))
+
+    def get_section(self, library: LibraryRef, section_id: str) -> Section | None:
+        row = self._one("sections", library, section_id)
+        return _load_section(row) if row else None
+
+    def delete_section(self, library: LibraryRef, section_id: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM sections WHERE id = ? AND library_id = ?",
+                (section_id, library.id)).fetchone()
+            if row is None:
+                return False
+            siblings = self._count(
+                conn, "SELECT COUNT(*) FROM sections WHERE library_id = ? AND"
+                " bookcase_id = ?", (library.id, row["bookcase_id"]))
+            if siblings <= 1:
+                raise NotEmpty(
+                    f"section {section_id} is the only one of its bookcase; a "
+                    f"bookcase with no sections is not simpler, it is "
+                    f"unaddressable")
+            standing = self._count(
+                conn, "SELECT COUNT(*) FROM shelves WHERE library_id = ? AND"
+                " section_id = ?", (library.id, section_id))
+            if standing:
+                raise NotEmpty(
+                    f"{standing} shelf/shelves still stand in section "
+                    f"{section_id}; empty the slots first (MAP_PLAN §3.1)")
+            with conn:
+                conn.execute(
+                    "DELETE FROM sections WHERE id = ? AND library_id = ?",
+                    (section_id, library.id))
+            return True
+
+    # --- small shared helpers ---------------------------------------------
+
+    def _one(self, table: str, library: LibraryRef, row_id: str):
+        with self._connect() as conn:
+            return conn.execute(
+                f"SELECT * FROM {table} WHERE id = ? AND library_id = ?",
+                (row_id, library.id)).fetchone()
+
+    @staticmethod
+    def _exists(conn, table: str, library: LibraryRef, row_id: str) -> bool:
+        # `table` is never user input — every call site passes one of five
+        # literals from this module.
+        return conn.execute(
+            f"SELECT 1 FROM {table} WHERE id = ? AND library_id = ?",
+            (row_id, library.id)).fetchone() is not None
+
+    @staticmethod
+    def _count(conn, sql: str, params: tuple) -> int:
+        return int(conn.execute(sql, params).fetchone()[0])
+
+
+def _rect(row: sqlite3.Row) -> Rect:
+    return Rect(x=row["x"], y=row["y"], w=row["w"], h=row["h"])
+
+
+def _load_site(row: sqlite3.Row) -> Site:
+    return Site(id=row["id"], library_id=row["library_id"], name=row["name"],
+                order=row["order"])
+
+
+def _load_floor(row: sqlite3.Row) -> Floor:
+    return Floor(id=row["id"], library_id=row["library_id"],
+                 site_id=row["site_id"], name=row["name"], order=row["order"])
+
+
+def _load_place(row: sqlite3.Row) -> Place:
+    return Place(id=row["id"], library_id=row["library_id"],
+                 floor_id=row["floor_id"], rect=_rect(row), name=row["name"],
+                 order=row["order"])
+
+
+def _load_bookcase(row: sqlite3.Row) -> Bookcase:
+    return Bookcase(id=row["id"], library_id=row["library_id"],
+                    floor_id=row["floor_id"], rect=_rect(row),
+                    name=row["name"], front=row["front"],
+                    place_id=row["place_id"], order=row["order"])
+
+
+def _load_section(row: sqlite3.Row) -> Section:
+    return Section(id=row["id"], library_id=row["library_id"],
+                   bookcase_id=row["bookcase_id"], ordinal=row["ordinal"],
+                   column_levels=tuple(json.loads(row["column_levels"])),
+                   default_levels=row["default_levels"],
+                   default_depth=row["default_depth"])
+
+
+def _same_library(record, library: LibraryRef, what: str) -> None:
+    if record.library_id != library.id:
+        raise WrongLibrary(
+            f"{what} {record.id} belongs to {record.library_id!r}, "
+            f"not {library.id!r}"
+        )
+
+
 class SqliteInviteStore(_SqliteStore):
     """Implements ``app.ports.invites.InviteStore`` (P4.3)."""
 
@@ -1470,6 +1900,16 @@ def _load_book(conn: sqlite3.Connection, row: sqlite3.Row) -> Book:
 
 
 def _load_shelf(row: sqlite3.Row) -> Shelf:
+    # All three address columns or none: a half-addressed shelf is not a
+    # partial answer, it is a corrupt one, so it reads as UNADDRESSED rather
+    # than as "column 2 of nowhere".
+    section_id = row["section_id"]
+    col, level = row["col"], row["level"]
+    address = (
+        ShelfAddress(section_id, col, level)
+        if section_id and col is not None and level is not None
+        else None
+    )
     return Shelf(
         id=row["id"],
         library_id=row["library_id"],
@@ -1477,6 +1917,7 @@ def _load_shelf(row: sqlite3.Row) -> Shelf:
         depth_count=row["depth_count"],
         virtual=bool(row["virtual"]),
         created_at=row["created_at"],
+        address=address,
     )
 
 

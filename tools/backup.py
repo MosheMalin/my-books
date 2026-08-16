@@ -109,7 +109,13 @@ def _copy_database(src: Path, dst: Path) -> dict:
         for table in ("books", "copies", "provenance", "shelves", "captures",
                       "reads", "claims", "decisions", "duplicate_questions",
                       "users", "accounts", "memberships", "libraries",
-                      "invites"):
+                      "invites",
+                      # P6.1's map — the strongest possible members of "cannot
+                      # be re-derived": a hand-drawn floor plan exists nowhere
+                      # else, not even in a photograph. Without them here, a
+                      # restore that silently dropped the drawing would pass
+                      # the drill that exists to catch exactly that.
+                      "sites", "floors", "places", "bookcases", "sections"):
             try:
                 counts[table] = conn.execute(
                     f"SELECT count(*) FROM {table}").fetchone()[0]

@@ -63,7 +63,13 @@ from app.ports.blobs import BlobStore
 # and no orphan to leave behind. Keeping it here would have made the
 # leftover check below raise `no such column` on every merge.
 _LIBRARY_TABLES = ("books", "copies", "shelves", "captures", "reads",
-                   "decisions", "duplicate_questions")
+                   "decisions", "duplicate_questions",
+                   # P6.1: the map. Added here and moved below in the SAME
+                   # commit as the schema — a table in this tuple that nothing
+                   # moves aborts every merge, and a table moved but missing
+                   # from it commits an orphan. The leftover check exists to
+                   # make forgetting either one loud.
+                   "sites", "floors", "places", "bookcases", "sections")
 
 
 class MergeRefused(Exception):
@@ -293,6 +299,19 @@ def merge_library(
             reads_moved = conn.execute(
                 "UPDATE reads SET library_id = ? WHERE library_id = ?",
                 (dst_id, src_id)).rowcount
+
+            # P6.1: the drawing re-homes with its ids intact, and the two
+            # sites simply end up side by side in the target. Nothing is
+            # merged geometrically — two houses both start at 0,0, and
+            # "helpfully" laying one out beside the other would move
+            # furniture the owner placed. Renaming or emptying a site
+            # afterwards is one visible action in the editor; silently
+            # relocating a floor plan is not.
+            for table in ("sites", "floors", "places", "bookcases",
+                          "sections"):
+                conn.execute(
+                    f"UPDATE {table} SET library_id = ? WHERE library_id = ?",
+                    (dst_id, src_id))
 
             # Retire the emptied library. Memberships are untouched on
             # purpose since P3.7b: they belong to the ACCOUNT, which still

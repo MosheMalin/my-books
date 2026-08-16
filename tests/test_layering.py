@@ -180,6 +180,31 @@ def test_api_does_not_import_adapters():
     assert not bad, "\n".join(bad)
 
 
+def test_the_port_only_modules_never_reach_for_an_adapter():
+    """The three top-level orchestrators are ports-only, and nothing said so.
+
+    ``reconcile_apply.py``, ``blob_lifecycle.py`` and (P6.1) ``map_edit.py``
+    each sit directly under ``app/`` because they need BOTH the domain and
+    several ports — and each one's docstring promises it will never import
+    ``app.adapters``. Until now that promise was prose: the composition root
+    is the ONE file allowed to cross layers, and these are not it.
+
+    It matters most for the newest of them. ``map_edit`` is where a drawn slot
+    becomes a real ``Shelf``, so an adapter import here would put the rule
+    that protects a book's location behind SQLite specifically — and the API
+    ring, which runs on the memory stores, would stop exercising it.
+    """
+    bad = []
+    for module in ("app/reconcile_apply.py", "app/blob_lifecycle.py",
+                   "app/map_edit.py"):
+        bad += _violations(
+            module, {"app.adapters", "app.api", "fastapi"},
+            "a port-only module must depend on ports, not implementations "
+            "(H1; app/main.py is the one exemption)",
+        )
+    assert not bad, "\n".join(bad)
+
+
 def test_api_does_not_import_the_tuning_server():
     """The product API and the audit surface are separate applications (D2)."""
     bad = _violations(

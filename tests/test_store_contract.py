@@ -35,6 +35,7 @@ from app.adapters.memory_store import (
     MemoryBookStore,
     MemoryDecisionStore,
     MemoryDuplicateQueue,
+    MemoryMapStore,
     MemoryReadStore,
     MemoryShelfStore,
     MemoryTenancyStore,
@@ -44,6 +45,7 @@ from app.adapters.sqlite_store import (
     SqliteBookStore,
     SqliteDecisionStore,
     SqliteDuplicateQueue,
+    SqliteMapStore,
     SqliteReadStore,
     SqliteShelfStore,
     SqliteTenancyStore,
@@ -75,8 +77,13 @@ from app.domain import (
     new_book,
     new_capture,
     new_library,
+    new_bookcase,
+    new_floor,
+    new_place,
     new_read,
+    new_section,
     new_shelf,
+    new_site,
     observe,
     remove_from_shelf,
     rename_shelf,
@@ -84,11 +91,14 @@ from app.domain import (
     stop_read,
     with_diff_summary,
 )
+from app.domain import NotEmpty, NotOnThisFloor, Rect, ShelfAddress
+from app.ports.map import UnknownParent
 from app.ports.store import (
     BookPage,
     BookSort,
     DuplicateBookKey,
     DuplicateCaptureSlot,
+    DuplicateShelfSlot,
     ShelfNotEmpty,
     UnknownShelf,
     WrongLibrary,
@@ -104,6 +114,7 @@ READ_CONTRACT: list = []
 DECISION_CONTRACT: list = []
 DUPLICATE_CONTRACT: list = []
 TENANCY_CONTRACT: list = []
+MAP_CONTRACT: list = []
 
 # The tenancy suite's own axis: users, not libraries (P3.1).
 USR = User(id="usr-a", display_name="משה")
@@ -145,6 +156,19 @@ def duplicate_contract(fn):
     """Mark a function as part of the DuplicateQueue spec (P2.6). A fifth
     list, same reasoning as the others."""
     DUPLICATE_CONTRACT.append(fn)
+    return fn
+
+
+def map_contract(fn):
+    """Mark a function as part of the MapStore spec (P6.1).
+
+    ⚠ A seventh list, and the only one whose cases take a PAIR — the map store
+    and the shelf store, over one library. A slot and the shelf standing in it
+    are different aggregates by design (MAP_PLAN §3.1), so a case that could
+    only see one of them could not assert the rule that matters: an occupied
+    slot is never deleted out from under its books.
+    """
+    MAP_CONTRACT.append(fn)
     return fn
 
 
@@ -1547,6 +1571,294 @@ def a_library_is_readable_by_id_even_by_a_caller_with_no_membership(store):
     assert store.get_library("lib-nothing") is None
 
 
+# --- the map (P6.1) -------------------------------------------------------
+#
+# A seventh contract list, and the only one whose cases get TWO stores: a slot
+# and the shelf standing in it live in different aggregates on purpose
+# (MAP_PLAN §3.1 — a drawn shelf IS a Shelf, not a second concept), so every
+# rule about "may this bookcase be deleted" is a rule about both.
+
+
+def _drawn(maps, shelves, *, library=LIB, columns=2, levels=5, depth=1):
+    """One site, one floor, one room, one case, one section — the smallest
+    drawing that has every level of the address in it."""
+    maps.save_site(library, new_site(id=f"{library.id}-st",
+                                     library_id=library.id, name="הבית"))
+    maps.save_floor(library, new_floor(id=f"{library.id}-fl",
+                                       library_id=library.id,
+                                       site_id=f"{library.id}-st",
+                                       name="קומת קרקע"))
+    maps.save_place(library, new_place(id=f"{library.id}-pl",
+                                       library_id=library.id,
+                                       floor_id=f"{library.id}-fl",
+                                       rect=Rect(0, 0, 10, 8), name="סלון"))
+    maps.save_bookcase(library, new_bookcase(id=f"{library.id}-bc",
+                                             library_id=library.id,
+                                             floor_id=f"{library.id}-fl",
+                                             rect=Rect(0, 0, 4, 1),
+                                             place_id=f"{library.id}-pl"))
+    section = new_section(id=f"{library.id}-se", library_id=library.id,
+                          bookcase_id=f"{library.id}-bc", columns=columns,
+                          default_levels=levels, default_depth=depth)
+    maps.save_section(library, section)
+    return section
+
+
+@map_contract
+def saves_and_reads_back_the_whole_drawing(stores):
+    """`load_map` is the plan screen's ONE query, and it comes back ordered —
+    sites by the owner's order, sections bottom-first — so no caller sorts and
+    then disagrees with another caller that sorted differently."""
+    maps, shelves, books = stores
+    _drawn(maps, shelves)
+    snap = maps.load_map(LIB)
+    assert [s.name for s in snap.sites] == ["הבית"]
+    assert [f.name for f in snap.floors] == ["קומת קרקע"]
+    assert [p.rect for p in snap.places] == [Rect(0, 0, 10, 8)]
+    assert snap.bookcases[0].place_id == "lib-a-pl"
+    assert snap.sections[0].column_levels == (5, 5)
+    assert not snap.is_empty
+
+
+@map_contract
+def a_drawing_in_another_library_reads_as_absent(stores):
+    """§4.2's rule, one level out: a foreign record is ABSENT, never
+    forbidden, so the API can answer 404 without leaking existence."""
+    maps, shelves, books = stores
+    _drawn(maps, shelves)
+    assert maps.get_site(OTHER, "lib-a-st") is None
+    assert maps.get_floor(OTHER, "lib-a-fl") is None
+    assert maps.get_place(OTHER, "lib-a-pl") is None
+    assert maps.get_bookcase(OTHER, "lib-a-bc") is None
+    assert maps.get_section(OTHER, "lib-a-se") is None
+    assert maps.load_map(OTHER).is_empty
+
+
+@map_contract
+def a_record_written_to_the_wrong_library_raises(stores):
+    """Never a user error — always a wiring bug, and the kind that files one
+    tenant's furniture in another's house."""
+    maps, shelves, books = stores
+    _raises(WrongLibrary, maps.save_site, OTHER,
+            new_site(id="x", library_id=LIB.id, name="הבית"))
+
+
+@map_contract
+def a_floor_whose_site_is_missing_is_refused(stores):
+    """The parent check is in BOTH stores rather than left to SQLite's foreign
+    key: a rule only one implementation holds is a rule the API ring never
+    exercises."""
+    maps, shelves, books = stores
+    _raises(UnknownParent, maps.save_floor, LIB,
+            new_floor(id="f", library_id=LIB.id, site_id="nope", name="x"))
+
+
+@map_contract
+def a_bookcase_may_not_attach_to_a_room_on_another_storey(stores):
+    """MAP_PLAN §3.7: a room is found only on its own storey. Without this a
+    case drawn upstairs attaches to the kitchen underneath it — and then moves
+    with it."""
+    maps, shelves, books = stores
+    _drawn(maps, shelves)
+    maps.save_floor(LIB, new_floor(id="fl2", library_id=LIB.id,
+                                   site_id="lib-a-st", name="קומה א"))
+    _raises(NotOnThisFloor, maps.save_bookcase, LIB,
+            new_bookcase(id="bc2", library_id=LIB.id, floor_id="fl2",
+                         rect=Rect(0, 0, 3, 1), place_id="lib-a-pl"))
+
+
+@map_contract
+def deleting_a_room_leaves_its_bookcases_standing(stores):
+    """The lab's rule, and the product's own: deleting a container never
+    destroys what it held. The case stays where it is, attached to no room."""
+    maps, shelves, books = stores
+    _drawn(maps, shelves)
+    assert maps.delete_place(LIB, "lib-a-pl") is True
+    case = maps.get_bookcase(LIB, "lib-a-bc")
+    assert case is not None, "the room took its furniture with it"
+    assert case.place_id is None
+    assert case.rect == Rect(0, 0, 4, 1), "the case moved when its room went"
+
+
+@map_contract
+def a_storey_with_anything_on_it_is_never_removed(stores):
+    """§3.7 — and the message says what is in the way, because "cannot
+    delete" without a reason is what makes the next reader delete the
+    guard."""
+    maps, shelves, books = stores
+    _drawn(maps, shelves)
+    maps.save_floor(LIB, new_floor(id="fl2", library_id=LIB.id,
+                                   site_id="lib-a-st", name="קומה א"))
+    err = _raises(NotEmpty, maps.delete_floor, LIB, "lib-a-fl")
+    assert "room" in str(err) and "bookcase" in str(err), str(err)
+    assert maps.get_floor(LIB, "lib-a-fl") is not None
+
+
+@map_contract
+def the_last_storey_of_a_site_and_the_last_site_are_kept(stores):
+    """A plan has somewhere to be — the lab refused the last floor for the
+    same reason, and an empty picker is not a simpler editor."""
+    maps, shelves, books = stores
+    _drawn(maps, shelves)
+    maps.delete_bookcase(LIB, "lib-a-bc")
+    maps.delete_place(LIB, "lib-a-pl")
+    _raises(NotEmpty, maps.delete_floor, LIB, "lib-a-fl")
+    _raises(NotEmpty, maps.delete_site, LIB, "lib-a-st")
+
+
+@map_contract
+def a_bookcase_with_a_shelf_still_in_it_is_never_deleted(stores):
+    """The silent-data-loss path MAP_PLAN §2 predicted for this item. The
+    store refuses; emptying the slots is `app/map_edit.py`'s explicit job."""
+    maps, shelves, books = stores
+    section = _drawn(maps, shelves)
+    shelves.save_shelf(LIB, new_shelf(id="sh1", library_id=LIB.id,
+                                      address=ShelfAddress(section.id, 1, 1)))
+    err = _raises(NotEmpty, maps.delete_bookcase, LIB, "lib-a-bc")
+    assert "stand" in str(err)
+    assert maps.get_bookcase(LIB, "lib-a-bc") is not None
+
+
+@map_contract
+def an_emptied_bookcase_takes_its_sections_with_it(stores):
+    """A section is not addressable on its own, so it has no life after its
+    bookcase — the one place a cascade is right."""
+    maps, shelves, books = stores
+    section = _drawn(maps, shelves)
+    assert maps.delete_bookcase(LIB, "lib-a-bc") is True
+    assert maps.get_section(LIB, section.id) is None
+    assert maps.load_map(LIB).sections == ()
+
+
+@map_contract
+def the_last_section_of_a_bookcase_is_kept(stores):
+    """A bookcase with no sections is not a simpler bookcase, it is an
+    unaddressable one."""
+    maps, shelves, books = stores
+    section = _drawn(maps, shelves)
+    _raises(NotEmpty, maps.delete_section, LIB, section.id)
+
+
+@map_contract
+def deleting_something_that_is_not_there_is_false_not_an_error(stores):
+    """A second delete is not a failure — the client that retried is right."""
+    maps, shelves, books = stores
+    assert maps.delete_site(LIB, "nope") is False
+    assert maps.delete_floor(LIB, "nope") is False
+    assert maps.delete_place(LIB, "nope") is False
+    assert maps.delete_bookcase(LIB, "nope") is False
+    assert maps.delete_section(LIB, "nope") is False
+
+
+@map_contract
+def two_shelves_may_not_stand_in_one_slot(stores):
+    """MAP_PLAN §3.1: a slot in a drawing is ONE physical shelf. Two rows
+    addressed to it make "the books on level 3" answer differently on
+    different page loads."""
+    maps, shelves, books = stores
+    section = _drawn(maps, shelves)
+    at = ShelfAddress(section.id, 1, 1)
+    shelves.save_shelf(LIB, new_shelf(id="sh1", library_id=LIB.id, address=at))
+    _raises(DuplicateShelfSlot, shelves.save_shelf, LIB,
+            new_shelf(id="sh2", library_id=LIB.id, address=at))
+    # …but re-saving the SAME shelf at its own slot is an edit, not a clash.
+    shelves.save_shelf(LIB, new_shelf(id="sh1", library_id=LIB.id,
+                                      label="עליון", address=at))
+    assert shelves.get_shelf_at(LIB, at).label == "עליון"
+
+
+@map_contract
+def a_shelf_may_not_be_addressed_to_a_section_that_is_not_there(stores):
+    """Found at review: sqlite raised a raw `IntegrityError` and the memory
+    store accepted it silently — so the API ring, which runs on memory stores,
+    would have taken an address the real database refuses and turned it into
+    a 500 in production.
+
+    A foreign library's section counts as absent, which is §4.2's rule again:
+    the foreign key cannot express "in THIS library", so the check is in
+    Python — exactly as `save_capture` already does for a capture's shelf.
+    """
+    maps, shelves, books = stores
+    _drawn(maps, shelves)
+    other = _drawn(maps, shelves, library=OTHER)
+    _raises(UnknownParent, shelves.save_shelf, LIB,
+            new_shelf(id="sh", library_id=LIB.id,
+                      address=ShelfAddress("no-such-section", 1, 1)))
+    _raises(UnknownParent, shelves.save_shelf, LIB,
+            new_shelf(id="sh", library_id=LIB.id,
+                      address=ShelfAddress(other.id, 1, 1)))
+    assert shelves.get_shelf(LIB, "sh") is None
+
+
+@map_contract
+def a_shelf_holding_a_book_is_found_even_with_no_photograph(stores):
+    """The half of "is this slot occupied?" a reasonable person leaves out.
+
+    A shelf can hold books with no capture at all — a MANUAL entry, or a
+    photo deleted later. Asking only about captures calls it empty and hands
+    it to the DELETE branch of `plan_slot_removal`, which is the review
+    finding `map_edit.occupied_shelf_ids` exists to make unrepeatable.
+    """
+    maps, shelves, books = stores
+    section = _drawn(maps, shelves)
+    shelves.save_shelf(LIB, new_shelf(id="sh1", library_id=LIB.id,
+                                      address=ShelfAddress(section.id, 1, 1)))
+    assert books.shelf_ids_in_use(LIB) == frozenset()
+    books.save(LIB, _book(9, shelf_id="sh1", depth=1))
+    assert books.shelf_ids_in_use(LIB) == {"sh1"}
+    assert books.shelf_ids_in_use(OTHER) == frozenset(), (
+        "one library's occupied shelves leaked into another's"
+    )
+
+
+@map_contract
+def a_shelfs_address_survives_a_round_trip_and_orders_by_slot(stores):
+    """`list_shelves_in_section` comes back in the address's own order, so a
+    caller never sorts and then disagrees with the elevation on screen."""
+    maps, shelves, books = stores
+    section = _drawn(maps, shelves)
+    for col, level in ((2, 3), (1, 2), (1, 1)):
+        shelves.save_shelf(LIB, new_shelf(
+            id=f"sh{col}{level}", library_id=LIB.id, depth_count=2,
+            address=ShelfAddress(section.id, col, level)))
+    got = shelves.list_shelves_in_section(LIB, section.id)
+    assert [(s.address.col, s.address.level) for s in got] == [
+        (1, 1), (1, 2), (2, 3)]
+    assert got[0].depth_count == 2, "the shelf's own depth did not survive"
+    assert all(s.is_addressed for s in got)
+
+
+@map_contract
+def an_unaddressed_shelf_is_normal_and_stays_out_of_the_slot_queries(stores):
+    """Every shelf that exists today is unaddressed, and that stays legal
+    forever — §3.1 makes the drawn and the photographed ONE population, and
+    P6.4 binds them rather than this item requiring it."""
+    maps, shelves, books = stores
+    section = _drawn(maps, shelves)
+    shelves.save_shelf(LIB, new_shelf(id="photo", library_id=LIB.id,
+                                      label="מהתמונה"))
+    assert shelves.get_shelf(LIB, "photo").address is None
+    assert shelves.get_shelf(LIB, "photo").is_addressed is False
+    assert shelves.list_shelves_in_section(LIB, section.id) == ()
+    assert len(shelves.list_shelves(LIB)) == 1
+
+
+@map_contract
+def one_librarys_slots_are_invisible_to_another(stores):
+    """Tenant isolation on the newest aggregate — the same suite every other
+    port here carries, written against two refs from the first day."""
+    maps, shelves, books = stores
+    a = _drawn(maps, shelves)
+    b = _drawn(maps, shelves, library=OTHER)
+    shelves.save_shelf(LIB, new_shelf(id="sh-a", library_id=LIB.id,
+                                      address=ShelfAddress(a.id, 1, 1)))
+    shelves.save_shelf(OTHER, new_shelf(id="sh-b", library_id=OTHER.id,
+                                        address=ShelfAddress(b.id, 1, 1)))
+    assert [s.id for s in shelves.list_shelves_in_section(LIB, a.id)] == ["sh-a"]
+    assert shelves.get_shelf_at(OTHER, ShelfAddress(a.id, 1, 1)) is None
+    assert len(maps.load_map(OTHER).sites) == 1
+
+
 # --- registration ---------------------------------------------------------
 
 # ⚠ Every sqlite store here starts from a COPY of an already-migrated file,
@@ -1650,6 +1962,34 @@ def _sqlite_duplicate_queue():
 
 
 @contextmanager
+def _memory_map_stores():
+    """The map, the shelves and the books, over one in-memory world.
+
+    All three, because the rules this suite exists for span all three: a slot
+    is a ``MapStore`` row, the shelf standing in it is a ``ShelfStore`` row,
+    and whether that shelf may be erased depends on a ``BookStore`` one.
+
+    ``bind_shelves``/``bind_map`` are the in-memory stand-in for what SQLite
+    gets free — one file, so "does a shelf still stand in this section" and
+    "is that section real" are joins. Without them the memory store would
+    accept what the SQL one refuses, and the contract would be asserting
+    SQLite's behaviour instead of the spec's.
+    """
+    shelves = MemoryShelfStore()
+    maps = MemoryMapStore()
+    maps.bind_shelves(shelves)
+    shelves.bind_map(maps)
+    yield maps, shelves, MemoryBookStore()
+
+
+@contextmanager
+def _sqlite_map_stores():
+    with _fresh_db("booksnap-map-") as path:
+        yield (SqliteMapStore(path), SqliteShelfStore(path),
+               SqliteBookStore(path))
+
+
+@contextmanager
 def _memory_tenancy_store():
     yield MemoryTenancyStore()
 
@@ -1671,6 +2011,8 @@ DUPLICATE_IMPLEMENTATIONS = (("memory", _memory_duplicate_queue),
                              ("sqlite", _sqlite_duplicate_queue))
 TENANCY_IMPLEMENTATIONS = (("memory", _memory_tenancy_store),
                            ("sqlite", _sqlite_tenancy_store))
+MAP_IMPLEMENTATIONS = (("memory", _memory_map_stores),
+                       ("sqlite", _sqlite_map_stores))
 
 
 def _bind(fn, factory, name):
@@ -1712,6 +2054,13 @@ for _label, _factory in DUPLICATE_IMPLEMENTATIONS:
 
 for _label, _factory in TENANCY_IMPLEMENTATIONS:
     for _fn in TENANCY_CONTRACT:
+        _name = f"test_{_fn.__name__}__{_label}"
+        globals()[_name] = _bind(_fn, _factory, _name)
+
+# The map's factory yields a PAIR, which `_bind` passes through as one
+# argument — the cases unpack it. No second binder needed.
+for _label, _factory in MAP_IMPLEMENTATIONS:
+    for _fn in MAP_CONTRACT:
         _name = f"test_{_fn.__name__}__{_label}"
         globals()[_name] = _bind(_fn, _factory, _name)
 
@@ -3438,6 +3787,144 @@ def test_the_browser_binding_survives_a_round_trip_through_both_stores():
             unbound = store.consume_state(hash_token("old"),
                                           now="2026-08-13T12:05:00+00:00")
             assert not unbound.belongs_to("anything at all")
+
+
+def test_a_v19_database_gains_the_map_and_keeps_its_shelves_unaddressed():
+    """v20 on an UPGRADED file — CLAUDE.md rule 11, whose whole point is that
+    folding new DDL into the previous step keeps every clone green while the
+    one database that matters never gains the tables.
+
+    It asserts the thing this migration is actually FOR: a library that has
+    been photographed for months arrives with real shelves, and after the
+    upgrade those shelves are still there, still theirs, and simply have no
+    address yet (MAP_PLAN §3.1 — one population, and P6.4 binds them). Index
+    names are pinned too, including the partial one that makes a slot unique.
+    """
+    import sqlite3
+
+    from app.adapters.migrations import MIGRATIONS, SCHEMA_VERSION, current_version
+    from app.adapters.sqlite_store import SqliteMapStore, SqliteShelfStore
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "v19.db"
+        conn = sqlite3.connect(str(path))
+        try:
+            for version, step in MIGRATIONS:
+                if version > 19:
+                    break
+                if isinstance(step, str):
+                    conn.executescript(step)
+                else:
+                    step(conn)
+            conn.execute("PRAGMA user_version = 19")
+            conn.execute("INSERT INTO users (id, display_name) VALUES"
+                         " ('u1', 'משה')")
+            conn.execute("INSERT INTO accounts (id, label) VALUES ('acc', '')")
+            conn.execute("INSERT INTO libraries (id, account_id, label)"
+                         " VALUES ('lib', 'acc', 'הבית')")
+            conn.execute(
+                "INSERT INTO shelves (id, library_id, label, depth_count,"
+                " virtual, created_at) VALUES"
+                " ('sh-old', 'lib', 'מדף הסלון', 2, 0, '2026-01-02T00:00:00Z')")
+            conn.execute(
+                "INSERT INTO captures (id, shelf_id, library_id, depth,"
+                ' "order", image_id, captured_at) VALUES'
+                " ('cap', 'sh-old', 'lib', 1, 0, 'img', '2026-01-02T00:00:00Z')")
+            conn.execute(
+                "INSERT INTO books (id, library_id, title, author, norm_title,"
+                " norm_author, book_key, notes, search_text, sort_author)"
+                " VALUES ('b1','lib','ספר','','ספר','','k','','ספר','')")
+            conn.commit()
+        finally:
+            conn.close()
+
+        # ⚠ BEFORE the store opens it: at v19 none of this exists. Without
+        # these four lines the test follows `MIGRATIONS` wherever the DDL is
+        # written, so folding v20's tables into `_V19` — the exact forbidden
+        # edit rule 11 names — leaves it GREEN. Measured at review: the
+        # mutation passed the whole suite while the one database that matters,
+        # sitting at 19, never gained a table.
+        before = sqlite3.connect(str(path))
+        try:
+            at19 = {r[0] for r in before.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'")}
+            assert not at19 & {"sites", "floors", "places", "bookcases",
+                               "sections"}, "v20's tables arrived before v20"
+            assert "section_id" not in {
+                r[1] for r in before.execute("PRAGMA table_info(shelves)")}
+        finally:
+            before.close()
+
+        shelves = SqliteShelfStore(path)          # migrates 19 -> 20
+        maps = SqliteMapStore(path)
+        check = sqlite3.connect(str(path))
+        try:
+            assert current_version(check) == SCHEMA_VERSION
+            assert check.execute(
+                "SELECT count(*) FROM shelves").fetchone()[0] == 1
+            assert check.execute(
+                "SELECT count(*) FROM captures").fetchone()[0] == 1
+            assert check.execute("PRAGMA foreign_key_check").fetchall() == []
+            tables = {r[0] for r in check.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'")}
+            for wanted in ("sites", "floors", "places", "bookcases", "sections"):
+                assert wanted in tables, f"v20's {wanted} table is gone"
+            names = {r[0] for r in check.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'")}
+            for wanted in ("sites_by_library", "floors_by_site",
+                           "places_by_floor", "bookcases_by_floor",
+                           "bookcases_by_place", "sections_by_bookcase",
+                           "shelves_by_slot"):
+                assert wanted in names, f"v20's {wanted} index is gone"
+        finally:
+            check.close()
+
+        # The shelf that predates the map kept everything, and stands nowhere.
+        lib = LibraryRef("lib")
+        carried = shelves.get_shelf(lib, "sh-old")
+        assert carried is not None
+        assert carried.label == "מדף הסלון" and carried.depth_count == 2
+        assert carried.address is None and carried.is_addressed is False
+        # Counted, not `is_empty` — that property answers a SCREEN's question
+        # ("is there anything to show?") and ignores sites and floors, so it
+        # would pass with stray rows a bad step left behind.
+        empty = sqlite3.connect(str(path))
+        try:
+            for table in ("sites", "floors", "places", "bookcases", "sections"):
+                assert empty.execute(
+                    f"SELECT count(*) FROM {table}").fetchone()[0] == 0, (
+                    f"the migration invented {table} rows")
+        finally:
+            empty.close()
+
+        # …and the upgraded file takes a drawing, with a real shelf in a slot.
+        maps.save_site(lib, new_site(id="st", library_id="lib", name="הבית"))
+        maps.save_floor(lib, new_floor(id="fl", library_id="lib",
+                                       site_id="st", name="קרקע"))
+        maps.save_place(lib, new_place(id="pl", library_id="lib",
+                                       floor_id="fl", rect=Rect(0, 0, 9, 7)))
+        maps.save_bookcase(lib, new_bookcase(id="bc", library_id="lib",
+                                             floor_id="fl",
+                                             rect=Rect(1, 0, 4, 1),
+                                             place_id="pl"))
+        section = new_section(id="se", library_id="lib", bookcase_id="bc")
+        maps.save_section(lib, section)
+        shelves.save_shelf(lib, new_shelf(
+            id="sh-drawn", library_id="lib",
+            address=ShelfAddress("se", 1, 1)))
+        assert shelves.get_shelf_at(lib, ShelfAddress("se", 1, 1)).id == "sh-drawn"
+        assert maps.load_map(lib).sections[0].column_levels == (5, 5)
+
+        # ⚠ AGAIN, and this is the one that counts. The check above ran while
+        # every map table was empty and every shelf's section_id was NULL, so
+        # it tested v1–v19's constraints and not one of v20's. Now there is a
+        # site → floor → place → bookcase → section → addressed shelf chain to
+        # check.
+        after = sqlite3.connect(str(path))
+        try:
+            assert after.execute("PRAGMA foreign_key_check").fetchall() == []
+        finally:
+            after.close()
 
 
 def test_a_v18_database_gains_the_binding_column_and_keeps_its_rows():

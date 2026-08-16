@@ -516,22 +516,28 @@ def test_depth_is_never_called_row_or_band_in_the_shelf_module():
     Identifiers only — prose may say "row" (the UI string is *"add a row
     behind this one"*), and the ban is on what code calls it.
     """
-    src = (REPO_ROOT / "app" / "domain" / "shelf.py").read_text(encoding="utf-8")
     banned = {"row", "rows", "band", "bands"}
-    offenders = sorted({
-        node.id if isinstance(node, ast.Name) else node.attr
-        for node in ast.walk(ast.parse(src))
-        if (isinstance(node, ast.Name) and node.id in banned)
-        or (isinstance(node, ast.Attribute) and node.attr in banned)
-    } | {
-        a.arg for fn in ast.walk(ast.parse(src))
-        if isinstance(fn, ast.FunctionDef)
-        for a in fn.args.args + fn.args.kwonlyargs if a.arg in banned
-    })
-    assert not offenders, (
-        f"§5.7: call it depth, never {offenders} — it collides with "
-        "segment.py's horizontal bands"
-    )
+    # ⚠ `place.py` joined this list at P6.1, and it is the module most likely
+    # to break the rule, because it is full of grids: a section has columns
+    # ACROSS and levels DOWN, and "row" is the word an unwary reader reaches
+    # for to mean a level. It would then sit two lines from a depth, which is
+    # exactly the collision §5.7 named.
+    for module in ("shelf.py", "place.py"):
+        src = (REPO_ROOT / "app" / "domain" / module).read_text(encoding="utf-8")
+        offenders = sorted({
+            node.id if isinstance(node, ast.Name) else node.attr
+            for node in ast.walk(ast.parse(src))
+            if (isinstance(node, ast.Name) and node.id in banned)
+            or (isinstance(node, ast.Attribute) and node.attr in banned)
+        } | {
+            a.arg for fn in ast.walk(ast.parse(src))
+            if isinstance(fn, ast.FunctionDef)
+            for a in fn.args.args + fn.args.kwonlyargs if a.arg in banned
+        })
+        assert not offenders, (
+            f"§5.7: in {module}, call it depth or level, never {offenders} — "
+            "it collides with segment.py's horizontal bands"
+        )
 
 
 def test_a_shelf_needs_no_label_because_identity_is_free():
@@ -2195,3 +2201,272 @@ def test_the_token_endpoint_cannot_redirect_us_somewhere_else():
         None, None, 302, "Found", {}, "https://evil.test/token") is None, (
         "a redirect off the pinned token endpoint would be followed"
     )
+
+
+# --- the physical map (P6.1, MAP_PLAN §3) ---------------------------------
+#
+# One test per reversible sentence, as everywhere else in this file. The
+# sentences come from `planning/MAP_PLAN.md`, which nine passes of a
+# standalone lab settled before any of this was written.
+
+
+def _rect_args(**over):
+    base = {"x": 0, "y": 0, "w": 4, "h": 2}
+    base.update(over)
+    return base
+
+
+def test_plan_geometry_is_whole_abstract_units():
+    """MAP_PLAN §3.4, and it is a bug fix rather than tidiness.
+
+    Snapping moves a rectangle by ADDING a correction, and `x + (round(x)-x)`
+    is not `round(x)` in floating point. The lab shipped a room that rendered
+    as 11.000000000000004x9, and the dust then became a snap candidate for the
+    next rectangle, which inherited it. The client sweeps it at both
+    constructors; this refuses it at the door, because a canvas resize, a
+    phone rotation or a zoom must never be able to corrupt a stored plan.
+    """
+    from app.domain import Rect
+
+    assert Rect(1, 2, 3, 4).w == 3
+    for bad in (_rect_args(x=1.5), _rect_args(w=11.000000000000004),
+                _rect_args(y=True)):
+        try:
+            Rect(**bad)
+        except DomainError:
+            continue
+        raise AssertionError(f"a plan accepted non-integer geometry: {bad}")
+    for empty in (_rect_args(w=0), _rect_args(h=-3)):
+        try:
+            Rect(**empty)
+        except DomainError:
+            continue
+        raise AssertionError(f"a plan accepted a sizeless rectangle: {empty}")
+
+
+def test_a_sections_depth_default_is_copied_at_creation_never_read_live():
+    """MAP_PLAN §3.3 — the trap this whole model is shaped around.
+
+    If a case's depth were read live, editing it from 2 to 1 would silently
+    delete the location of every book standing in the back row. So the default
+    is copied into a shelf when the shelf is CREATED, and changing it
+    afterwards touches nothing.
+    """
+    from app.domain import new_section, new_shelf, with_default_depth
+
+    section = new_section(id="se", library_id="lib", bookcase_id="bc",
+                          columns=1, default_levels=2, default_depth=2)
+    standing = new_shelf(id="a", library_id="lib", depth_count=2)
+    shallower = with_default_depth(section, 1)
+    assert shallower.default_depth == 1
+    assert standing.depth_count == 2, (
+        "editing the section's default reached back into an existing shelf"
+    )
+
+
+def test_applying_a_depth_default_never_goes_below_an_occupied_row():
+    """§3.3's last clause, and the one the lab could NOT implement because it
+    had no books. Books stand behind; the depth stays, and the caller is told
+    which shelves kept theirs so the screen can say so rather than silently
+    doing less than it was asked."""
+    from app.domain import apply_default_depth, new_section, new_shelf
+
+    section = new_section(id="se", library_id="lib", bookcase_id="bc",
+                          columns=1, default_levels=1, default_depth=1)
+    empty = new_shelf(id="empty", library_id="lib", depth_count=3)
+    occupied = new_shelf(id="full", library_id="lib", depth_count=3)
+    result = apply_default_depth(section, [empty, occupied],
+                                 deepest_occupied={"full": 2})
+    by_id = {s.id: s for s in result.shelves}
+    assert by_id["empty"].depth_count == 1, "an empty shelf resisted the default"
+    assert by_id["full"].depth_count == 2, (
+        "a book at depth 2 lost its location to a section default of 1"
+    )
+    assert [s.id for s in result.kept] == ["full"]
+
+
+def test_erasing_a_slot_deletes_an_empty_shelf_and_detaches_an_occupied_one():
+    """MAP_PLAN §3.1 plus §5.6's "never auto-remove", together.
+
+    A drawn-but-never-used shelf is scaffolding and goes with its slot. A
+    shelf holding captures or copies SURVIVES, unaddressed — its books keep
+    their shelf, and what they lose is a location the owner has just erased
+    from the drawing. Deleting it instead would destroy the record a re-read
+    diffs against, because somebody redrew a bookcase.
+    """
+    from app.domain import ShelfAddress, new_shelf, plan_slot_removal
+
+    scaffold = new_shelf(id="never-used", library_id="lib",
+                         address=ShelfAddress("se", 1, 1))
+    photographed = new_shelf(id="has-books", library_id="lib",
+                             address=ShelfAddress("se", 1, 2))
+    plan = plan_slot_removal([scaffold, photographed],
+                             occupied_ids=["has-books"])
+    assert plan.deleted == ("never-used",)
+    assert plan.detached == ("has-books",), (
+        "an occupied shelf was queued for deletion, not detachment"
+    )
+    assert plan.total == 2
+
+
+def test_a_storey_or_a_site_with_anything_on_it_is_never_removed():
+    """§3.7, and the refusal SAYS what is in the way — "cannot delete" with no
+    reason is what makes the next reader delete the guard."""
+    from app.domain import GroupingContents, NotEmpty, check_removable
+
+    check_removable("floor f", GroupingContents())     # empty: silent
+    try:
+        check_removable("floor f", GroupingContents(places=2, bookcases=1))
+    except NotEmpty as err:
+        assert "2 room(s)" in str(err) and "1 bookcase(s)" in str(err), str(err)
+    else:
+        raise AssertionError("a storey with two rooms on it was removed")
+
+
+def test_containment_reassigns_a_bookcase_and_never_orphans_it():
+    """MAP_PLAN §4's third pass, promoted to a DOMAIN rule rather than an
+    editor behaviour.
+
+    Without it, nudging a case half a unit past its own wall silently loses
+    its room — and a bookcase belongs to a room the way furniture does, not
+    the way one rectangle overlaps another. Detaching is explicit.
+    """
+    from app.domain import (Rect, detach_bookcase, new_bookcase, new_place,
+                            reattach_bookcase)
+
+    salon = new_place(id="pl", library_id="lib", floor_id="fl",
+                      rect=Rect(0, 0, 10, 8), name="סלון")
+    case = new_bookcase(id="bc", library_id="lib", floor_id="fl",
+                        rect=Rect(0, 0, 4, 1), place_id="pl")
+    assert reattach_bookcase(case, None).place_id == "pl", (
+        "a case dragged off every room was orphaned by geometry"
+    )
+    assert reattach_bookcase(case, salon).place_id == "pl"
+    assert detach_bookcase(case).place_id is None, "detach must still work"
+
+
+def test_a_bookcase_takes_its_rooms_storey_when_it_attaches():
+    """§3.7: a case carries its own floor so an unattached one is SOMEWHERE
+    rather than everywhere — and the two fields can never be set apart, or a
+    case attached to the kitchen is recorded upstairs."""
+    from app.domain import Rect, attach_bookcase, new_bookcase, new_place
+
+    upstairs = new_place(id="pl2", library_id="lib", floor_id="fl2",
+                         rect=Rect(0, 0, 6, 6))
+    case = new_bookcase(id="bc", library_id="lib", floor_id="fl",
+                        rect=Rect(0, 0, 4, 1))
+    moved = attach_bookcase(case, upstairs)
+    assert (moved.place_id, moved.floor_id) == ("pl2", "fl2")
+
+
+def test_a_site_and_a_floor_are_never_part_of_an_address():
+    """§3.7/§3.9, structurally — the same shape of assertion that keeps a
+    bookcase out of `shelf.py`. Putting either into the address would
+    re-address every shelf in the house the day somebody renames a building.
+    """
+    from dataclasses import fields
+
+    from app.domain import ShelfAddress
+
+    names = {f.name for f in fields(ShelfAddress)}
+    assert names == {"section_id", "col", "level"}, names
+
+
+def test_an_address_prints_only_what_discriminates():
+    """§3.6: *a one-section case never says "section 1", because saying it
+    would imply there is a section 2.* Applied to a single COLUMN too, by the
+    same argument."""
+    from app.domain import (Rect, ShelfAddress, address_parts, new_bookcase,
+                            new_place, new_section)
+
+    salon = new_place(id="pl", library_id="lib", floor_id="fl",
+                      rect=Rect(0, 0, 9, 7), name="סלון")
+    case = new_bookcase(id="bc", library_id="lib", floor_id="fl",
+                        rect=Rect(0, 0, 4, 1), name="הכוננית הגדולה")
+    plain = new_section(id="se", library_id="lib", bookcase_id="bc", columns=1)
+    parts = address_parts(place=salon, bookcase=case, section=plain,
+                          section_count=1, address=ShelfAddress("se", 1, 3))
+    assert parts.section is None, "a one-section case announced section 1"
+    assert parts.column is None, "a one-column case announced column 1"
+    assert (parts.place, parts.bookcase, parts.level) == (
+        "סלון", "הכוננית הגדולה", 3)
+    assert parts.depth is None, "the front row announced itself"
+
+    wide = new_section(id="se2", library_id="lib", bookcase_id="bc",
+                       ordinal=2, columns=3)
+    told = address_parts(place=salon, bookcase=case, section=wide,
+                         section_count=2, address=ShelfAddress("se2", 2, 1),
+                         depth=2)
+    assert (told.section, told.column, told.depth) == (2, 2, 2)
+
+
+def test_a_drawn_section_creates_one_slot_per_column_and_level():
+    """MAP_PLAN §3.1: draw a case with 2 columns of 5 and TEN real shelves
+    exist that were never photographed. The slot list is what `map_edit` fills
+    — a section reporting the wrong slots would create shelves nobody can
+    reach."""
+    from app.domain import (ShelfAddress, new_section, with_column_count,
+                            with_column_levels)
+
+    section = new_section(id="se", library_id="lib", bookcase_id="bc",
+                          columns=2, default_levels=5)
+    assert len(section.addresses) == 10
+    assert section.column_count == 2
+    assert min(a.col for a in section.addresses) == 1, "columns are 1-based"
+    assert min(a.level for a in section.addresses) == 1, "levels are 1-based"
+    # …and 1-based means a 0 is REFUSED, not quietly re-based. An off-by-one
+    # that raises is an off-by-one somebody fixes; one that silently addresses
+    # the shelf next door is a book filed where it is not.
+    for wrong in ((0, 1), (1, 0), (-1, 2)):
+        try:
+            ShelfAddress("se", *wrong)
+        except DomainError:
+            continue
+        raise AssertionError(f"a 0-based address was accepted: {wrong}")
+
+    grown = with_column_count(section, 3)
+    assert len(grown.added) == 5 and grown.dropped == ()
+    assert grown.section.column_levels == (5, 5, 5)
+
+    # ⚠ UNEVEN columns, deliberately. With every column the same height,
+    # dropping from the front and dropping from the end produce an IDENTICAL
+    # address set — the mutation check caught this test passing either way. A
+    # column is identified by its position across the face, so removing one
+    # from the front renumbers every shelf to its right, and those numbers are
+    # printed on addresses somebody has already been sent to find.
+    ragged = with_column_levels(grown.section, 1, 2).section
+    assert ragged.column_levels == (2, 5, 5)
+    shrunk = with_column_count(ragged, 1)
+    assert shrunk.section.column_levels == (2,), "the wrong column was kept"
+    assert shrunk.added == (), "shrinking a section created a slot"
+    assert len(shrunk.dropped) == 10
+    assert {a.col for a in shrunk.dropped} == {2, 3}, (
+        "shrinking took columns from somewhere other than the end"
+    )
+
+
+def test_a_column_shrinks_from_the_bottom_because_level_1_is_the_top():
+    """The lab's convention, kept deliberately so the ported editor behaves
+    identically — and written down because "level 3" has to mean one thing."""
+    from app.domain import new_section, with_column_levels
+
+    section = new_section(id="se", library_id="lib", bookcase_id="bc",
+                          columns=1, default_levels=5)
+    change = with_column_levels(section, 1, 3)
+    assert {a.level for a in change.dropped} == {4, 5}, (
+        "a column shrank from the top, so every printed address moved"
+    )
+
+
+def test_the_wishlist_stands_nowhere():
+    """§5.7, one level out from the depth rule it already had: the wishlist is
+    a list of books the owner does not own. Giving it a slot in a bookcase
+    would put unowned books at a location that exists."""
+    from app.domain import ShelfAddress, VirtualShelfHasNoDepth, new_shelf
+
+    try:
+        new_shelf(id="wish", library_id="lib", virtual=True,
+                  address=ShelfAddress("se", 1, 1))
+    except VirtualShelfHasNoDepth:
+        return
+    raise AssertionError("the wishlist was given a shelf in a bookcase")

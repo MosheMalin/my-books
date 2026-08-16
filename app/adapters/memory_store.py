@@ -21,26 +21,37 @@ from app.domain.oauth import OAuthState
 from app.domain import (
     Account,
     Book,
+    Bookcase,
     Capture,
     Decision,
     DuplicateQuestion,
+    Floor,
+    GroupingContents,
     Library,
     LibraryRef,
     Membership,
+    Place,
     Read,
     Role,
+    Section,
     Shelf,
+    ShelfAddress,
+    Site,
     Status,
     User,
+    check_removable,
 )
+from app.domain.place import NotEmpty, NotOnThisFloor
 from app.domain.tenancy import remove_member, set_role
 from app.domain.search import parse
 from app.domain.search import search as domain_search
+from app.ports.map import MapSnapshot, UnknownParent
 from app.ports.store import (
     BookPage,
     BookSort,
     DuplicateBookKey,
     DuplicateCaptureSlot,
+    DuplicateShelfSlot,
     ShelfNotEmpty,
     UnknownShelf,
     WrongLibrary,
@@ -140,6 +151,14 @@ class MemoryBookStore:
         return BookPage(items=tuple(hits[offset: offset + limit]),
                         total=len(hits), offset=offset, limit=limit)
 
+    def shelf_ids_in_use(self, library: LibraryRef) -> frozenset[str]:
+        return frozenset(
+            copy.shelf_id
+            for book in self._shelf(library).values()
+            for copy in book.copies
+            if copy.shelf_id
+        )
+
     def count(self, library: LibraryRef) -> int:
         return len(self._shelf(library))
 
@@ -155,6 +174,16 @@ class MemoryShelfStore:
     def __init__(self) -> None:
         self._shelves: dict[str, dict[str, Shelf]] = {}
         self._captures: dict[str, dict[str, Capture]] = {}
+        #: The sections this store may address a shelf to. SQLite gets the
+        #: same check free — one file, one foreign key — so without it the
+        #: memory store would ACCEPT an address the real database refuses,
+        #: and the API ring (which runs on memory stores) would never see it.
+        self._sections: "MemoryMapStore | None" = None
+
+    def bind_map(self, maps: "MemoryMapStore") -> None:
+        """Tell this store where the sections are, so an address can be
+        checked against one."""
+        self._sections = maps
 
     def _s(self, library: LibraryRef) -> dict[str, Shelf]:
         return self._shelves.setdefault(library.id, {})
@@ -170,6 +199,24 @@ class MemoryShelfStore:
                 f"shelf {shelf.id} belongs to {shelf.library_id!r}, "
                 f"not {library.id!r}"
             )
+        # The slot's unique index and its foreign key, in Python. Without
+        # them this store would accept what the SQL one refuses, and the
+        # contract suite would be asserting SQLite's behaviour rather than
+        # the spec's.
+        if shelf.address is not None:
+            if (self._sections is not None
+                    and self._sections.get_section(
+                        library, shelf.address.section_id) is None):
+                raise UnknownParent(
+                    f"no section {shelf.address.section_id!r} in library "
+                    f"{library.id!r}"
+                )
+            sitting = self.get_shelf_at(library, shelf.address)
+            if sitting is not None and sitting.id != shelf.id:
+                raise DuplicateShelfSlot(
+                    f"shelf {sitting.id} already stands at {shelf.address} "
+                    f"(MAP_PLAN §3.1)"
+                )
         self._s(library)[shelf.id] = shelf
 
     def get_shelf(self, library: LibraryRef, shelf_id: str) -> Shelf | None:
@@ -193,6 +240,22 @@ class MemoryShelfStore:
         self, library: LibraryRef, *, include_virtual: bool = False
     ) -> int:
         return len(self.list_shelves(library, include_virtual=include_virtual))
+
+    def list_shelves_in_section(
+        self, library: LibraryRef, section_id: str
+    ) -> tuple[Shelf, ...]:
+        rows = [s for s in self._s(library).values()
+                if s.address is not None and s.address.section_id == section_id]
+        rows.sort(key=lambda s: (s.address.col, s.address.level, s.id))
+        return tuple(rows)
+
+    def get_shelf_at(
+        self, library: LibraryRef, address: ShelfAddress
+    ) -> Shelf | None:
+        for shelf in self._s(library).values():
+            if shelf.address == address:
+                return shelf
+        return None
 
     def delete_shelf(self, library: LibraryRef, shelf_id: str) -> bool:
         if shelf_id not in self._s(library):
@@ -635,6 +698,231 @@ class MemoryOAuthStateStore:
             for h in dead:
                 del self._states[h]
             return len(dead)
+
+
+class MemoryMapStore:
+    """Implements ``app.ports.map.MapStore`` (P6.1).
+
+    Five dictionaries rather than one nested tree, because that is what the
+    SQL adapter has and the contract suite has to be able to hold both to the
+    same answers — a tree here would make "which floors belong to this site"
+    free in one implementation and a scan in the other, and the spec would
+    quietly become the tree's.
+
+    The refusals (``NotEmpty``, ``UnknownParent``) are enforced HERE as well
+    as by the schema's foreign keys, for the same reason: a rule that only
+    SQLite holds is a rule the API ring never exercises.
+    """
+
+    def __init__(self) -> None:
+        self._sites: dict[str, dict[str, Site]] = {}
+        self._floors: dict[str, dict[str, Floor]] = {}
+        self._places: dict[str, dict[str, Place]] = {}
+        self._cases: dict[str, dict[str, Bookcase]] = {}
+        self._sections: dict[str, dict[str, Section]] = {}
+        #: Shelves live in ``MemoryShelfStore``, so this store cannot see
+        #: whether a slot is filled. The composition root hands it the shelf
+        #: store's own view; without one, "is this section empty" answers
+        #: honestly that it does not know and the refusal falls to the layer
+        #: that does (``app/map_edit.py``).
+        self._occupied: "MemoryShelfStore | None" = None
+
+    def bind_shelves(self, shelves: "MemoryShelfStore") -> None:
+        """Tell this store where the shelves are, so it can refuse to delete a
+        bookcase out from under one. The SQL adapter gets this free — one
+        file, one query."""
+        self._occupied = shelves
+
+    def _t(self, table: dict, library: LibraryRef) -> dict:
+        return table.setdefault(library.id, {})
+
+    # --- the whole drawing ------------------------------------------------
+
+    def load_map(self, library: LibraryRef) -> MapSnapshot:
+        sites = sorted(self._t(self._sites, library).values(),
+                       key=lambda s: (s.order, s.name, s.id))
+        floors = sorted(self._t(self._floors, library).values(),
+                        key=lambda f: (f.site_id, f.order, f.name, f.id))
+        places = sorted(self._t(self._places, library).values(),
+                        key=lambda p: (p.floor_id, p.order, p.id))
+        cases = sorted(self._t(self._cases, library).values(),
+                       key=lambda c: (c.floor_id, c.order, c.id))
+        sections = sorted(self._t(self._sections, library).values(),
+                          key=lambda s: (s.bookcase_id, s.ordinal, s.id))
+        return MapSnapshot(tuple(sites), tuple(floors), tuple(places),
+                           tuple(cases), tuple(sections))
+
+    # --- sites ------------------------------------------------------------
+
+    def save_site(self, library: LibraryRef, site: Site) -> None:
+        _same_library(site, library, "site")
+        self._t(self._sites, library)[site.id] = site
+
+    def get_site(self, library: LibraryRef, site_id: str) -> Site | None:
+        return self._t(self._sites, library).get(site_id)
+
+    def delete_site(self, library: LibraryRef, site_id: str) -> bool:
+        sites = self._t(self._sites, library)
+        if site_id not in sites:
+            return False
+        floors = [f for f in self._t(self._floors, library).values()
+                  if f.site_id == site_id]
+        check_removable(f"site {site_id}", GroupingContents(floors=len(floors)))
+        if len(sites) <= 1:
+            raise NotEmpty(
+                f"site {site_id} is the only one; a drawing has somewhere to be"
+            )
+        del sites[site_id]
+        return True
+
+    # --- floors -----------------------------------------------------------
+
+    def save_floor(self, library: LibraryRef, floor: Floor) -> None:
+        _same_library(floor, library, "floor")
+        if floor.site_id not in self._t(self._sites, library):
+            raise UnknownParent(
+                f"no site {floor.site_id!r} in library {library.id!r}"
+            )
+        self._t(self._floors, library)[floor.id] = floor
+
+    def get_floor(self, library: LibraryRef, floor_id: str) -> Floor | None:
+        return self._t(self._floors, library).get(floor_id)
+
+    def delete_floor(self, library: LibraryRef, floor_id: str) -> bool:
+        floors = self._t(self._floors, library)
+        floor = floors.get(floor_id)
+        if floor is None:
+            return False
+        check_removable(f"floor {floor_id}", GroupingContents(
+            places=sum(1 for p in self._t(self._places, library).values()
+                       if p.floor_id == floor_id),
+            bookcases=sum(1 for c in self._t(self._cases, library).values()
+                          if c.floor_id == floor_id),
+        ))
+        siblings = [f for f in floors.values() if f.site_id == floor.site_id]
+        if len(siblings) <= 1:
+            raise NotEmpty(
+                f"floor {floor_id} is the only storey of its site; a site has "
+                f"at least one"
+            )
+        del floors[floor_id]
+        return True
+
+    # --- places -----------------------------------------------------------
+
+    def save_place(self, library: LibraryRef, place: Place) -> None:
+        _same_library(place, library, "place")
+        if place.floor_id not in self._t(self._floors, library):
+            raise UnknownParent(
+                f"no floor {place.floor_id!r} in library {library.id!r}"
+            )
+        self._t(self._places, library)[place.id] = place
+
+    def get_place(self, library: LibraryRef, place_id: str) -> Place | None:
+        return self._t(self._places, library).get(place_id)
+
+    def delete_place(self, library: LibraryRef, place_id: str) -> bool:
+        places = self._t(self._places, library)
+        if place_id not in places:
+            return False
+        # The room goes; its furniture stays, attached to no room. Deleting a
+        # container never destroys what it held — the rule the lab drew and
+        # the product already holds for shelves and copies.
+        cases = self._t(self._cases, library)
+        for case_id, case in list(cases.items()):
+            if case.place_id == place_id:
+                cases[case_id] = replace(case, place_id=None)
+        del places[place_id]
+        return True
+
+    # --- bookcases --------------------------------------------------------
+
+    def save_bookcase(self, library: LibraryRef, bookcase: Bookcase) -> None:
+        _same_library(bookcase, library, "bookcase")
+        if bookcase.floor_id not in self._t(self._floors, library):
+            raise UnknownParent(
+                f"no floor {bookcase.floor_id!r} in library {library.id!r}"
+            )
+        if bookcase.place_id is not None:
+            place = self._t(self._places, library).get(bookcase.place_id)
+            if place is None:
+                raise UnknownParent(
+                    f"no place {bookcase.place_id!r} in library {library.id!r}"
+                )
+            if place.floor_id != bookcase.floor_id:
+                raise NotOnThisFloor(
+                    f"bookcase {bookcase.id} is on floor {bookcase.floor_id!r} "
+                    f"but room {place.id} is on {place.floor_id!r} "
+                    f"(MAP_PLAN §3.7)"
+                )
+        self._t(self._cases, library)[bookcase.id] = bookcase
+
+    def get_bookcase(
+        self, library: LibraryRef, bookcase_id: str
+    ) -> Bookcase | None:
+        return self._t(self._cases, library).get(bookcase_id)
+
+    def delete_bookcase(self, library: LibraryRef, bookcase_id: str) -> bool:
+        cases = self._t(self._cases, library)
+        if bookcase_id not in cases:
+            return False
+        sections = self._t(self._sections, library)
+        mine = [s for s in sections.values() if s.bookcase_id == bookcase_id]
+        for section in mine:
+            self._refuse_if_filled(library, section)
+        for section in mine:
+            del sections[section.id]
+        del cases[bookcase_id]
+        return True
+
+    # --- sections ---------------------------------------------------------
+
+    def save_section(self, library: LibraryRef, section: Section) -> None:
+        _same_library(section, library, "section")
+        if section.bookcase_id not in self._t(self._cases, library):
+            raise UnknownParent(
+                f"no bookcase {section.bookcase_id!r} in library {library.id!r}"
+            )
+        self._t(self._sections, library)[section.id] = section
+
+    def get_section(
+        self, library: LibraryRef, section_id: str
+    ) -> Section | None:
+        return self._t(self._sections, library).get(section_id)
+
+    def delete_section(self, library: LibraryRef, section_id: str) -> bool:
+        sections = self._t(self._sections, library)
+        section = sections.get(section_id)
+        if section is None:
+            return False
+        siblings = [s for s in sections.values()
+                    if s.bookcase_id == section.bookcase_id]
+        if len(siblings) <= 1:
+            raise NotEmpty(
+                f"section {section_id} is the only one of its bookcase; a "
+                f"bookcase with no sections is not simpler, it is unaddressable"
+            )
+        self._refuse_if_filled(library, section)
+        del sections[section_id]
+        return True
+
+    def _refuse_if_filled(self, library: LibraryRef, section: Section) -> None:
+        if self._occupied is None:
+            return
+        standing = self._occupied.list_shelves_in_section(library, section.id)
+        if standing:
+            raise NotEmpty(
+                f"{len(standing)} shelf/shelves still stand in section "
+                f"{section.id}; empty the slots first (MAP_PLAN §3.1)"
+            )
+
+
+def _same_library(record, library: LibraryRef, what: str) -> None:
+    if record.library_id != library.id:
+        raise WrongLibrary(
+            f"{what} {record.id} belongs to {record.library_id!r}, "
+            f"not {library.id!r}"
+        )
 
 
 class MemoryInviteStore:
