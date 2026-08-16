@@ -44,6 +44,7 @@ from app.adapters.memory_store import (
     MemoryDecisionStore,
     MemoryDuplicateQueue,
     MemoryReadStore,
+    MemoryMapStore,
     MemoryShelfStore,
     MemoryTenancyStore,
 )
@@ -185,7 +186,7 @@ def after_each() -> None:
 def _app(principal: StubPrincipal | None = None, store=None, shelves=None,
          blobs=None, reads=None, reader=None, jobs=None, decisions=None,
          duplicates=None, tenancy=None, auth=None, mailer=None, clock=None,
-         invites=None, oauth_states=None, providers=None,
+         invites=None, oauth_states=None, providers=None, maps=None,
          principal_provider=None, recycle: bool = True):
     """Build (or recycle) an app with these ports bound.
 
@@ -193,6 +194,15 @@ def _app(principal: StubPrincipal | None = None, store=None, shelves=None,
         must not inherit. Everything else is recycled at the end of the test.
     """
     p = principal or StubPrincipal()
+    # ⚠ The map and shelf stores are WIRED TO EACH OTHER. SQLite gets that
+    # free — one file, one foreign key — so the memory pair has to be told,
+    # and since P6.1 they refuse to answer rather than answering weakly when
+    # they have not been. `_memory_map_stores` in the contract suite does the
+    # same; this is the API ring's copy of the one composition step.
+    shelf_store = shelves if shelves is not None else MemoryShelfStore()
+    map_store = maps if maps is not None else MemoryMapStore()
+    map_store.bind_shelves(shelf_store)
+    shelf_store.bind_map(map_store)
     ports = dict(
         # A raw provider wins: the session tests bind the REAL
         # session_principal dependency; everything else gets the stub.
@@ -200,7 +210,8 @@ def _app(principal: StubPrincipal | None = None, store=None, shelves=None,
                             is not None else (lambda: p)),
         tenancy_store=tenancy if tenancy is not None else _tenancy(p),
         book_store=store if store is not None else MemoryBookStore(),
-        shelf_store=shelves if shelves is not None else MemoryShelfStore(),
+        shelf_store=shelf_store,
+        map_store=map_store,
         blob_store=blobs,
         read_store=reads if reads is not None else MemoryReadStore(),
         decision_store=decisions if decisions is not None else MemoryDecisionStore(),
@@ -5422,3 +5433,302 @@ def test_a_next_that_is_absurdly_long_is_cut_down():
     assert stored and all(len(s) <= _MAX_NEXT for s in stored), (
         f"stored {max(len(s) for s in stored)} characters"
     )
+
+
+# --- the physical map (P6.2, MAP_PLAN §3) --------------------------------
+#
+# The route ring, not the store ring: what is asserted here is the HTTP
+# shape and the status codes that carry meaning — 404 for foreign or
+# fictional, 409 for a refusal that names what is in the way, and a
+# structural edit reporting what it cost the shelves.
+
+
+def _drawn_map(client, *, columns=2, levels=5, depth=1):
+    """One site, one floor, one room and one bookcase, through the routes —
+    which is also a test that the create chain works end to end."""
+    site = client.post("/api/v1/map/sites", json={"name": "הבית"})
+    assert site.status_code == 201, site.text
+    floor = client.post("/api/v1/map/floors", json={
+        "site_id": site.json()["id"], "name": "קומת קרקע"})
+    assert floor.status_code == 201, floor.text
+    place = client.post("/api/v1/map/places", json={
+        "floor_id": floor.json()["id"], "name": "סלון",
+        "rect": {"x": 0, "y": 0, "w": 12, "h": 9}})
+    assert place.status_code == 201, place.text
+    case = client.post("/api/v1/map/bookcases", json={
+        "floor_id": floor.json()["id"], "place_id": place.json()["id"],
+        "name": "הכוננית", "rect": {"x": 0, "y": 0, "w": 4, "h": 1},
+        "columns": columns, "levels": levels, "depth": depth})
+    assert case.status_code == 201, case.text
+    return {"site": site.json(), "floor": floor.json(),
+            "place": place.json(), "case": case.json()}
+
+
+def test_an_undrawn_library_answers_with_an_empty_map_not_an_error():
+    """The state every library is in on the day the map ships, and most stay
+    in. An editor opening on a 404 would be a bug that reads as "the feature
+    is broken" rather than "you have not drawn anything"."""
+    with TestClient(_app()) as client:
+        got = client.get("/api/v1/map")
+        assert got.status_code == 200
+        assert got.json() == {"sites": [], "floors": [], "places": [],
+                              "bookcases": [], "sections": []}
+
+
+def test_drawing_a_bookcase_creates_its_shelves_and_they_carry_an_address():
+    """MAP_PLAN §3.1 through the wire: ask for 2 columns of 5 and TEN real
+    shelves exist, each addressed, each carrying the section's depth as a
+    copy. The shelves route sees them too — one population, not two."""
+    with TestClient(_app()) as client:
+        world = _drawn_map(client, columns=2, levels=5, depth=2)
+
+        drawing = client.get("/api/v1/map").json()
+        assert len(drawing["sections"]) == 1
+        section = drawing["sections"][0]
+        assert section["column_levels"] == [5, 5]
+        assert section["ordinal"] == 1
+        assert section["bookcase_id"] == world["case"]["id"]
+
+        shelves = client.get("/api/v1/shelves").json()
+        assert len(shelves) == 10, "a drawn slot is a real Shelf"
+        addressed = [s for s in shelves if s["address"]]
+        assert len(addressed) == 10
+        assert all(s["depth_count"] == 2 for s in shelves), (
+            "the section's depth was not copied into its shelves"
+        )
+        assert {(s["address"]["col"], s["address"]["level"])
+                for s in shelves} == {(c, lvl) for c in (1, 2)
+                                      for lvl in range(1, 6)}
+        assert all(s["address"]["section_id"] == section["id"]
+                   for s in shelves)
+
+
+def test_a_photographed_shelf_has_no_address_and_that_is_normal():
+    """Every shelf that exists before the map does. The field is null, not
+    absent and not an error — P6.4 binds them, and until then "unaddressed"
+    is a state the client renders rather than a gap it works around."""
+    with TestClient(_app()) as client:
+        made = client.post("/api/v1/shelves", json={"label": "מהתמונה"})
+        assert made.status_code == 201, made.text
+        assert made.json()["address"] is None
+
+
+def test_shrinking_a_section_says_what_it_cost_the_shelves():
+    """A column removed is real shelves removed (§3.1), so the response says
+    which went and which SURVIVED unaddressed. Silence here would be the API
+    telling the owner nothing happened to their books' location."""
+    with TestClient(_app()) as client:
+        world = _drawn_map(client, columns=2, levels=1)
+        section = client.get("/api/v1/map").json()["sections"][0]
+        shelves = client.get("/api/v1/shelves").json()
+        keeper = [s for s in shelves if s["address"]["col"] == 2][0]
+
+        # Put a photo on the shelf about to lose its slot.
+        client.post("/api/v1/captures", json={"shelf_id": keeper["id"]})
+
+        edit = client.patch(f"/api/v1/map/sections/{section['id']}",
+                            json={"columns": 1})
+        assert edit.status_code == 200, edit.text
+        body = edit.json()
+        assert body["section"]["column_levels"] == [1]
+        assert body["removal"]["detached"] == [keeper["id"]]
+        assert body["removal"]["deleted"] == []
+
+        survivor = client.get(f"/api/v1/shelves/{keeper['id']}")
+        assert survivor.status_code == 200, "a shelf with a photo was deleted"
+        assert survivor.json()["address"] is None
+
+
+def test_a_bookcase_is_emptied_before_it_is_deleted_and_says_so_first():
+    """409 with the count, then an explicit clear, then the delete. A delete
+    that quietly emptied the slots is the silent data-loss path MAP_PLAN §2
+    named for this pillar."""
+    with TestClient(_app()) as client:
+        world = _drawn_map(client, columns=1, levels=2)
+        case_id = world["case"]["id"]
+
+        refused = client.delete(f"/api/v1/map/bookcases/{case_id}")
+        assert refused.status_code == 409
+        assert "stand" in refused.json()["detail"]
+
+        cleared = client.delete(f"/api/v1/map/bookcases/{case_id}/slots")
+        assert cleared.status_code == 200, cleared.text
+        assert len(cleared.json()["deleted"]) == 2
+
+        gone = client.delete(f"/api/v1/map/bookcases/{case_id}")
+        assert gone.status_code == 204
+        assert client.get("/api/v1/map").json()["sections"] == []
+
+
+def test_removing_a_storey_with_anything_on_it_is_refused_by_name():
+    """§3.7. The message says what is in the way, because "cannot delete"
+    with no reason is what makes the next reader delete the guard."""
+    with TestClient(_app()) as client:
+        world = _drawn_map(client)
+        refused = client.delete(f"/api/v1/map/floors/{world['floor']['id']}")
+        assert refused.status_code == 409
+        detail = refused.json()["detail"]
+        assert "room" in detail and "bookcase" in detail, detail
+
+
+def test_deleting_a_room_leaves_its_bookcase_standing():
+    """Deleting a container never destroys what it held. The case stays where
+    it is, attached to no room — the lab's rule and the product's."""
+    with TestClient(_app()) as client:
+        world = _drawn_map(client)
+        assert client.delete(
+            f"/api/v1/map/places/{world['place']['id']}").status_code == 204
+        cases = client.get("/api/v1/map").json()["bookcases"]
+        assert len(cases) == 1
+        assert cases[0]["place_id"] is None
+        assert cases[0]["rect"] == {"x": 0, "y": 0, "w": 4, "h": 1}
+
+
+def test_a_case_attaches_to_a_room_and_detaching_is_explicit():
+    """`place_id` and `detach` are two fields because a JSON null cannot mean
+    both "unchanged" and "let go". Attaching moves the case onto that room's
+    storey with it (§3.7)."""
+    with TestClient(_app()) as client:
+        world = _drawn_map(client)
+        upstairs = client.post("/api/v1/map/floors", json={
+            "site_id": world["site"]["id"], "name": "קומה א"}).json()
+        bedroom = client.post("/api/v1/map/places", json={
+            "floor_id": upstairs["id"], "name": "חדר שינה",
+            "rect": {"x": 0, "y": 0, "w": 6, "h": 6}}).json()
+
+        moved = client.patch(f"/api/v1/map/bookcases/{world['case']['id']}",
+                             json={"place_id": bedroom["id"]})
+        assert moved.status_code == 200, moved.text
+        assert moved.json()["place_id"] == bedroom["id"]
+        assert moved.json()["floor_id"] == upstairs["id"], (
+            "the case stayed on its old storey while claiming a room on "
+            "another one"
+        )
+
+        loose = client.patch(f"/api/v1/map/bookcases/{world['case']['id']}",
+                             json={"detach": True})
+        assert loose.status_code == 200
+        assert loose.json()["place_id"] is None
+        assert loose.json()["floor_id"] == upstairs["id"]
+
+        both = client.patch(f"/api/v1/map/bookcases/{world['case']['id']}",
+                            json={"detach": True, "place_id": bedroom["id"]})
+        assert both.status_code == 400, "two contradictory instructions"
+
+
+def test_applying_a_depth_default_reports_the_shelves_it_could_not_shallow():
+    """§3.3's explicit half, and its clamp. A shelf with a book in the back
+    row keeps its depth, and the response NAMES it — so the screen says what
+    it did rather than claiming it did everything."""
+    store = MemoryBookStore()
+    with TestClient(_app(store=store)) as client:
+        _drawn_map(client, columns=1, levels=2, depth=3)
+        section = client.get("/api/v1/map").json()["sections"][0]
+        shelves = client.get("/api/v1/shelves").json()
+        deep = shelves[0]
+        # ⚠ Seeded through the STORE, not a route: no API route places a copy
+        # on a shelf at a depth — a copy is located by a read settling
+        # (`reconcile_apply`), and `CopyCreate` says so in as many words. The
+        # book still has to be there, because it is the whole subject of the
+        # clamp.
+        store.save(TEST_LIBRARY, new_book(
+            id="b-deep", library_id=TEST_LIBRARY.id, title="ספר",
+            author="סופר", copy_id="c-deep", shelf_id=deep["id"], depth=2))
+
+        client.patch(f"/api/v1/map/sections/{section['id']}",
+                     json={"default_depth": 1})
+        applied = client.post(f"/api/v1/map/sections/{section['id']}/depth")
+        assert applied.status_code == 200, applied.text
+        assert applied.json()["kept"] == [deep["id"]]
+        assert client.get(
+            f"/api/v1/shelves/{deep['id']}").json()["depth_count"] == 2
+
+
+def test_setting_a_default_touches_no_existing_shelf():
+    """The whole reason the defaults are creation-time values. Read live,
+    dropping the section from 2 to 1 would delete the location of every book
+    standing in the back row."""
+    with TestClient(_app()) as client:
+        _drawn_map(client, columns=1, levels=2, depth=2)
+        section = client.get("/api/v1/map").json()["sections"][0]
+        edit = client.patch(f"/api/v1/map/sections/{section['id']}",
+                            json={"default_depth": 1})
+        assert edit.status_code == 200, edit.text
+        assert edit.json()["section"]["default_depth"] == 1
+        assert edit.json()["created"] == 0 and edit.json()["removal"] == {
+            "deleted": [], "detached": []}
+        assert all(s["depth_count"] == 2
+                   for s in client.get("/api/v1/shelves").json())
+
+
+def test_a_second_section_copies_the_shape_of_the_one_it_stands_on():
+    """A hutch usually has about as many columns as its base, so re-entering
+    what is already on screen is not a feature."""
+    with TestClient(_app()) as client:
+        world = _drawn_map(client, columns=3, levels=4)
+        added = client.post("/api/v1/map/sections", json={
+            "bookcase_id": world["case"]["id"], "where": "top"})
+        assert added.status_code == 201, added.text
+        assert added.json()["section"]["ordinal"] == 2
+        assert added.json()["section"]["column_levels"] == [4, 4, 4]
+        assert added.json()["created"] == 12
+        sections = client.get("/api/v1/map").json()["sections"]
+        assert [s["ordinal"] for s in sections] == [1, 2], (
+            "sections came back top-first; the elevation would draw the "
+            "hutch as the base"
+        )
+
+
+def test_a_map_object_of_another_library_is_404_and_never_403():
+    """§4.2, and it fires BEFORE any capability check: absent and foreign are
+    the same answer, so the route cannot leak existence even by accident."""
+    other = StubPrincipal(library=LibraryRef("lib-other", "אחר"))
+    with TestClient(_app()) as mine, TestClient(_app(other)) as theirs:
+        world = _drawn_map(mine)
+        for path in (f"/api/v1/map/sites/{world['site']['id']}",
+                     f"/api/v1/map/floors/{world['floor']['id']}",
+                     f"/api/v1/map/places/{world['place']['id']}",
+                     f"/api/v1/map/bookcases/{world['case']['id']}"):
+            assert theirs.delete(path).status_code == 404, path
+            assert theirs.patch(path, json={}).status_code == 404, path
+        assert theirs.get("/api/v1/map").json()["places"] == []
+        assert mine.get("/api/v1/map").json()["places"] != []
+
+
+def test_a_viewer_may_read_the_map_and_may_not_draw_on_it():
+    """Two capabilities and only two: reading is BROWSE, the same row as
+    seeing the shelves; every write is EDIT_MAP, §4.2's row 7 — declared in
+    the policy matrix since P4.0 and, until now, reachable by no route."""
+    p, tenancy = _viewer_of_second_library()
+    lib2 = {deps.LIBRARY_HEADER: "lib-2"}
+    with TestClient(_app(principal=p, tenancy=tenancy)) as client:
+        assert client.get("/api/v1/map", headers=lib2).status_code == 200
+        refused = client.post("/api/v1/map/sites", json={"name": "הבית"},
+                              headers=lib2)
+        assert refused.status_code == 403
+        assert "edit_map" in refused.json()["detail"]
+
+
+def test_a_nonsense_rectangle_is_refused_at_the_door():
+    """§3.4: geometry is whole abstract units, and a zero-width room is not a
+    room. Refused by the DTO, so the domain's own guard is redundancy rather
+    than the only line."""
+    with TestClient(_app()) as client:
+        site = client.post("/api/v1/map/sites", json={"name": "הבית"}).json()
+        floor = client.post("/api/v1/map/floors", json={
+            "site_id": site["id"], "name": "קרקע"}).json()
+        for rect in ({"x": 0, "y": 0, "w": 0, "h": 4},
+                     {"x": 0, "y": 0, "w": -3, "h": 4}):
+            bad = client.post("/api/v1/map/places",
+                              json={"floor_id": floor["id"], "rect": rect})
+            assert bad.status_code == 422, (rect, bad.text)
+
+
+def test_a_floor_naming_a_site_that_is_not_there_is_404():
+    """A client naming a parent this library does not have is naming
+    something that, as far as this library is concerned, does not exist —
+    the same answer §4.2 gives for a foreign one."""
+    with TestClient(_app()) as client:
+        missing = client.post("/api/v1/map/floors",
+                              json={"site_id": "nope", "name": "קרקע"})
+        assert missing.status_code == 404, missing.text
