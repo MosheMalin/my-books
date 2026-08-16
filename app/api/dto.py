@@ -21,8 +21,13 @@ from typing import Mapping
 from pydantic import BaseModel, Field
 
 from app.domain import (
+    DEFAULT_COLUMNS,
+    DEFAULT_DEPTH,
+    DEFAULT_LEVELS,
+    MAX_DEPTH,
     Alternative,
     Book,
+    Bookcase,
     Capture,
     Claim,
     Copy,
@@ -32,9 +37,17 @@ from app.domain import (
     Library,
     Membership,
     Provenance,
+    Floor,
+    Place,
     Read,
+    Rect,
+    Section,
     Shelf,
+    ShelfAddress,
+    Site,
+    SlotRemoval,
 )
+from app.ports.map import MapSnapshot
 from app.ports.blobs import Blob
 
 
@@ -407,8 +420,27 @@ class LendRequest(BaseModel):
 
 # --- shelves and captures (P2.1/P2.2) ------------------------------------
 
+class ShelfAddressDTO(BaseModel):
+    """Where a shelf stands, once somebody has drawn it (pillar 6).
+
+    ``section -> column -> level`` and nothing above it: the room, the case,
+    the storey and the site are all reachable FROM the section, and copying
+    them here would be four fields that disagree with the drawing the moment
+    a bookcase moves. Both indices are **1-based**.
+    """
+
+    section_id: str
+    col: int = Field(ge=1)
+    level: int = Field(ge=1, description="Counts from the TOP of the column.")
+
+    @classmethod
+    def of(cls, address: ShelfAddress) -> "ShelfAddressDTO":
+        return cls(section_id=address.section_id, col=address.col,
+                   level=address.level)
+
+
 class ShelfDTO(BaseModel):
-    """A shelf's identity. No address — that is pillar 6 (plan §1.1)."""
+    """A shelf's identity, and — since P6.1 — where it stands, if anywhere."""
 
     id: str
     label: str = Field(
@@ -428,6 +460,13 @@ class ShelfDTO(BaseModel):
     capture_count: int = Field(
         description="Photos filed against this shelf, across every depth.",
     )
+    address: ShelfAddressDTO | None = Field(
+        default=None,
+        description="Null for every shelf born from a photograph — which is "
+                    "most of them, and stays legal forever: the drawn and the "
+                    "photographed are ONE population, and binding them is "
+                    "P6.4's job rather than a precondition.",
+    )
 
     @classmethod
     def of(cls, shelf: Shelf, *, capture_count: int) -> "ShelfDTO":
@@ -435,6 +474,8 @@ class ShelfDTO(BaseModel):
             id=shelf.id, label=shelf.label, depth_count=shelf.depth_count,
             virtual=shelf.virtual, created_at=shelf.created_at,
             capture_count=capture_count,
+            address=(ShelfAddressDTO.of(shelf.address)
+                     if shelf.address else None),
         )
 
 
@@ -1005,3 +1046,328 @@ class DuplicateAnswerIn(BaseModel):
                     "book has more than one (§5.4). Omit to use the "
                     "preselected default_copy_id.",
     )
+
+
+# --- the physical map (P6.2, MAP_PLAN §3) --------------------------------
+#
+# The whole drawing is READ in one call and WRITTEN one object at a time —
+# `app/ports/map.py` argues both halves. The DTOs follow that shape: one
+# `MapDTO` out, a small Create/Patch per object in.
+#
+# ⚠ Geometry is `x/y/w/h` INTEGERS in abstract units, and the API says so in
+# every description it can. §3.4 forbids the system deriving a capacity, a
+# centimetre or a book count from a length — a plausible number nobody
+# measured is exactly what a later reader adds because it looks like free
+# value, and this is the layer where such a field would be added.
+
+#: Plans are bounded because houses are. A review stored a rectangle
+#: 4.6e18 units wide (accepted, echoed on every GET) and crashed the adapter
+#: with 2**64 — `OverflowError: Python int too large to convert to SQLite
+#: INTEGER`, a 500 on a write. The memory store took all of it happily, so
+#: the API ring could never have seen either.
+_PLAN_LIMIT = 100_000
+
+
+class RectDTO(BaseModel):
+    """A rectangle in **abstract units** — never pixels, never centimetres."""
+
+    x: int = Field(ge=-_PLAN_LIMIT, le=_PLAN_LIMIT)
+    y: int = Field(ge=-_PLAN_LIMIT, le=_PLAN_LIMIT)
+    w: int = Field(gt=0, le=_PLAN_LIMIT)
+    h: int = Field(gt=0, le=_PLAN_LIMIT)
+
+    @classmethod
+    def of(cls, rect: Rect) -> "RectDTO":
+        return cls(x=rect.x, y=rect.y, w=rect.w, h=rect.h)
+
+    def to_domain(self) -> Rect:
+        return Rect(x=self.x, y=self.y, w=self.w, h=self.h)
+
+
+class SiteDTO(BaseModel):
+    """A whole property: home, the office, the parents' place."""
+
+    id: str
+    name: str
+    order: int = Field(default=0, ge=-_PLAN_LIMIT, le=_PLAN_LIMIT)
+
+    @classmethod
+    def of(cls, site: Site) -> "SiteDTO":
+        return cls(id=site.id, name=site.name, order=site.order)
+
+
+class FloorDTO(BaseModel):
+    """A storey **of one site**. Never part of a shelf's address (§3.7)."""
+
+    id: str
+    site_id: str
+    name: str
+    order: int = Field(default=0, ge=-_PLAN_LIMIT, le=_PLAN_LIMIT)
+
+    @classmethod
+    def of(cls, floor: Floor) -> "FloorDTO":
+        return cls(id=floor.id, site_id=floor.site_id, name=floor.name,
+                   order=floor.order)
+
+
+class PlaceDTO(BaseModel):
+    """A room, drawn as a rectangle on its floor's plan."""
+
+    id: str
+    floor_id: str
+    name: str = ""
+    rect: RectDTO
+    order: int = Field(
+        default=0, ge=-_PLAN_LIMIT, le=_PLAN_LIMIT,
+        description="Drawing order, and therefore z-order: the last one drawn "
+                    "is on top, which is what decides an overlapping tap.",
+    )
+
+    @classmethod
+    def of(cls, place: Place) -> "PlaceDTO":
+        return cls(id=place.id, floor_id=place.floor_id, name=place.name,
+                   rect=RectDTO.of(place.rect), order=place.order)
+
+
+class BookcaseDTO(BaseModel):
+    """One piece of furniture: one footprint, one name, one room it moves
+    with."""
+
+    id: str
+    floor_id: str
+    place_id: str | None = Field(
+        default=None,
+        description="The room it stands in. Null is legal — a case drawn "
+                    "before its room is somewhere rather than nowhere, and it "
+                    "carries its own floor for that reason (§3.7).",
+    )
+    name: str = ""
+    front: str = Field(
+        default="S",
+        description="N/E/S/W — which face the books look out of, and "
+                    "therefore whose LEFT END is column 1. A fact about the "
+                    "furniture, so the UI's reading direction never moves it.",
+    )
+    rect: RectDTO
+    order: int = Field(default=0, ge=-_PLAN_LIMIT, le=_PLAN_LIMIT)
+
+    @classmethod
+    def of(cls, case: Bookcase) -> "BookcaseDTO":
+        return cls(id=case.id, floor_id=case.floor_id, place_id=case.place_id,
+                   name=case.name, front=case.front,
+                   rect=RectDTO.of(case.rect), order=case.order)
+
+
+class SectionDTO(BaseModel):
+    """One built unit of a bookcase — a low base, or the case standing on it.
+
+    ``column_levels`` holds one entry per column, being that column's level
+    count; the column count is that list's length and there is no second
+    field that could disagree with it.
+    """
+
+    id: str
+    bookcase_id: str
+    ordinal: int = Field(
+        description="1-based, BOTTOM first: section 1 stands on the floor. "
+                    "Unique per bookcase, because it is what an address "
+                    "prints.",
+    )
+    column_levels: list[int]
+    default_levels: int = Field(
+        description="Applied when a COLUMN is created. Editing it does not "
+                    "reach back into existing columns (§3.3).",
+    )
+    default_depth: int = Field(
+        description="Applied when a SHELF is created. Editing it does not "
+                    "reach back into existing shelves — read live, dropping "
+                    "it from 2 to 1 would delete the location of every book "
+                    "in the back row.",
+    )
+
+    @classmethod
+    def of(cls, section: Section) -> "SectionDTO":
+        return cls(id=section.id, bookcase_id=section.bookcase_id,
+                   ordinal=section.ordinal,
+                   column_levels=list(section.column_levels),
+                   default_levels=section.default_levels,
+                   default_depth=section.default_depth)
+
+
+class MapDTO(BaseModel):
+    """One library's whole drawing, in one response.
+
+    Read whole because that is what an editor needs — the canvas cannot draw
+    a room without knowing which storey is showing, nor a bookcase without
+    its columns — and because a house is tens of rows, not thousands.
+    """
+
+    sites: list[SiteDTO] = []
+    floors: list[FloorDTO] = []
+    places: list[PlaceDTO] = []
+    bookcases: list[BookcaseDTO] = []
+    sections: list[SectionDTO] = []
+
+    @classmethod
+    def of(cls, snapshot: MapSnapshot) -> "MapDTO":
+        return cls(
+            sites=[SiteDTO.of(s) for s in snapshot.sites],
+            floors=[FloorDTO.of(f) for f in snapshot.floors],
+            places=[PlaceDTO.of(p) for p in snapshot.places],
+            bookcases=[BookcaseDTO.of(b) for b in snapshot.bookcases],
+            sections=[SectionDTO.of(s) for s in snapshot.sections],
+        )
+
+
+class SiteCreate(BaseModel):
+    """A site is NAMED — it exists only because there are two of them, and an
+    unnamed one in a picker is unusable."""
+
+    name: str = Field(min_length=1, max_length=120)
+    order: int = Field(default=0, ge=-_PLAN_LIMIT, le=_PLAN_LIMIT)
+
+
+class SitePatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1,
+                             max_length=120)
+    order: int | None = Field(default=None, ge=-_PLAN_LIMIT,
+                              le=_PLAN_LIMIT)
+
+
+class FloorCreate(BaseModel):
+    site_id: str = Field(min_length=1)
+    name: str = Field(min_length=1, max_length=120)
+    order: int = Field(default=0, ge=-_PLAN_LIMIT, le=_PLAN_LIMIT)
+
+
+class FloorPatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1,
+                             max_length=120)
+    order: int | None = Field(default=None, ge=-_PLAN_LIMIT,
+                              le=_PLAN_LIMIT)
+
+
+class PlaceCreate(BaseModel):
+    """A room's NAME is optional, deliberately: a plan that demands eight
+    names before it shows you anything is a toll."""
+
+    floor_id: str = Field(min_length=1)
+    rect: RectDTO
+    name: str = Field(default="", max_length=120)
+    order: int = Field(default=0, ge=-_PLAN_LIMIT, le=_PLAN_LIMIT)
+
+
+class PlacePatch(BaseModel):
+    name: str | None = Field(default=None, max_length=120)
+    rect: RectDTO | None = None
+    floor_id: str | None = None
+    order: int | None = Field(default=None, ge=-_PLAN_LIMIT,
+                              le=_PLAN_LIMIT)
+
+
+class BookcaseCreate(BaseModel):
+    """Draw a bookcase — and, with it, every shelf its first section
+    describes (§3.1: a drawn slot IS a Shelf)."""
+
+    floor_id: str = Field(min_length=1)
+    rect: RectDTO
+    name: str = ""
+    front: str = Field(default="S", pattern="^[NESW]$")
+    place_id: str | None = None
+    order: int = Field(default=0, ge=-_PLAN_LIMIT, le=_PLAN_LIMIT)
+    columns: int = Field(default=DEFAULT_COLUMNS, ge=1, le=40)
+    levels: int = Field(default=DEFAULT_LEVELS, ge=1, le=40)
+    depth: int = Field(default=DEFAULT_DEPTH, ge=1, le=MAX_DEPTH)
+
+
+class BookcasePatch(BaseModel):
+    name: str | None = Field(default=None, max_length=120)
+    rect: RectDTO | None = None
+    front: str | None = Field(default=None, pattern="^[NESW]$")
+    order: int | None = Field(default=None, ge=-_PLAN_LIMIT,
+                              le=_PLAN_LIMIT)
+    place_id: str | None = Field(
+        default=None,
+        description="Point the case at a room; it moves onto that room's "
+                    "storey with it. Use `detach` to let go — null here means "
+                    "'unchanged', because a JSON null cannot mean both.",
+    )
+    floor_id: str | None = Field(
+        default=None,
+        description="Move a DETACHED case to another storey. A case attached "
+                    "to a room moves with the room instead (PATCH the room), "
+                    "because furniture and its room are on one storey by "
+                    "construction.",
+    )
+    detach: bool = Field(
+        default=False,
+        description="Let go of the room, keeping the storey. Explicit, "
+                    "because containment may only ever REASSIGN a case, never "
+                    "orphan one (§4).",
+    )
+
+
+class SectionCreate(BaseModel):
+    """Add a section to a bookcase. It copies the shape of the one it stands
+    against — a hutch usually has about as many columns as its base."""
+
+    bookcase_id: str = Field(min_length=1)
+    where: str = Field(default="top", pattern="^(top|bottom)$")
+
+
+class SectionPatch(BaseModel):
+    """Change the grid, or the defaults. Both halves report what happened to
+    the shelves, because a column removed is real shelves removed."""
+
+    columns: int | None = Field(default=None, ge=1, le=40)
+    column: int | None = Field(
+        default=None, ge=1,
+        description="With `levels`, changes ONE column's level count.",
+    )
+    levels: int | None = Field(default=None, ge=1, le=40)
+    default_levels: int | None = Field(default=None, ge=1, le=40)
+    default_depth: int | None = Field(default=None, ge=1, le=MAX_DEPTH)
+
+
+class SlotRemovalDTO(BaseModel):
+    """What a structural edit did to the shelves standing in the slots.
+
+    Two outcomes, never one — and the API returns both because the owner is
+    entitled to know that a shelf survived rather than vanished.
+    """
+
+    deleted: list[str] = Field(
+        default=[],
+        description="Empty shelves that went with their slot. Scaffolding.",
+    )
+    detached: list[str] = Field(
+        default=[],
+        description="Shelves holding photos or books. They SURVIVE, without "
+                    "an address — their books keep their shelf; what they "
+                    "lose is a location the drawing no longer has.",
+    )
+
+    @classmethod
+    def of(cls, removal: SlotRemoval) -> "SlotRemovalDTO":
+        return cls(deleted=list(removal.deleted),
+                   detached=list(removal.detached))
+
+
+class SectionEditDTO(BaseModel):
+    """A section after an edit, with what it cost the shelves."""
+
+    section: SectionDTO
+    created: int = Field(
+        default=0, description="New empty shelves, one per new slot.")
+    removal: SlotRemovalDTO = SlotRemovalDTO()
+
+
+class DepthApplyDTO(BaseModel):
+    """The explicit application of a section's depth default.
+
+    ``kept`` names the shelves that could NOT be shallowed because books
+    stand behind — reported rather than silently skipped, so the screen says
+    what it did instead of claiming it did everything.
+    """
+
+    kept: list[str] = []

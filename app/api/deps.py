@@ -24,6 +24,7 @@ from app.ports.blobs import BlobStore
 from app.ports.decisions import DecisionStore
 from app.ports.duplicates import DuplicateQueue
 from app.ports.jobs import JobRunner
+from app.ports.map import MapStore
 from app.ports.reader import Reader
 from app.ports.store import BookStore, ReadStore, ShelfStore
 from app.ports.tenancy import TenancyStore
@@ -296,6 +297,10 @@ def get_blob_store() -> BlobStore:
 
 def get_read_store() -> ReadStore:
     raise RuntimeError("no ReadStore bound; build the app via create_app")
+
+
+def get_map_store() -> MapStore:
+    raise RuntimeError("no MapStore bound; build the app via create_app")
 
 
 def get_decision_store() -> DecisionStore:

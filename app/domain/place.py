@@ -62,6 +62,21 @@ DEFAULT_DEPTH = 1
 #: Two, because most bookcases are (owner, 2026-08-16). One was a modelling
 #: minimum masquerading as a default.
 DEFAULT_COLUMNS = 2
+#: The most slots one bookcase may hold, across every section.
+#:
+#: ⚠ A resource limit, not a modelling opinion, and it exists because a
+#: security review measured what its absence costs: a 110-byte request asking
+#: for 40 columns of 40 wrote 1600 shelf rows in 16.5 seconds, and a 40-BYTE
+#: *add a section* request — which states no size at all, because it copies
+#: its neighbour — added 1600 more. Thirty of those took 47 seconds and 3000
+#: rows.
+#:
+#: 400 is far above any real bookcase (a large one is 6 columns of 8) and far
+#: below the number that hurts. A refusal names the number, so the owner of a
+#: genuinely enormous case knows what to argue with.
+MAX_SLOTS_PER_BOOKCASE = 400
+#: Sections stack bottom to top; more than a handful is not furniture.
+MAX_SECTIONS_PER_BOOKCASE = 8
 #: The ceiling on a section's DEFAULT depth only. An existing shelf is not
 #: clamped by it: ``Shelf.depth_count`` has never had a maximum, and inventing
 #: one here would refuse data the owner already declared.
@@ -84,6 +99,17 @@ class NotEmpty(DomainError):
     as §5.6's rule that a not-seen book stays. The message names the counts,
     because "cannot delete" without a reason is what makes the next reader
     delete the guard.
+    """
+
+
+class TooManySlots(DomainError):
+    """A bookcase would hold more shelves than :data:`MAX_SLOTS_PER_BOOKCASE`.
+
+    A resource limit with a real reason (see the constant): every slot is a
+    row, and a request that states no size — *add a section*, which copies its
+    neighbour — can otherwise multiply a large case indefinitely. The message
+    names the count and the ceiling, because a refusal the owner cannot
+    interpret is one they retry.
     """
 
 
@@ -622,6 +648,27 @@ def renumber_sections(sections: Iterable[Section]) -> tuple[Section, ...]:
         for i, section in enumerate(
             sorted(sections, key=lambda s: s.ordinal), start=1)
     )
+
+
+def check_bookcase_size(sections: Iterable[Section]) -> None:
+    """Refuse a bookcase that would hold more slots than anyone builds.
+
+    Called with the sections a write would LEAVE behind, so it catches the
+    request that states no size at all — *add a section* copies its
+    neighbour's shape, so the client never says what it is asking for.
+    """
+    listed = list(sections)
+    if len(listed) > MAX_SECTIONS_PER_BOOKCASE:
+        raise TooManySlots(
+            f"a bookcase holds at most {MAX_SECTIONS_PER_BOOKCASE} sections; "
+            f"this would have {len(listed)}"
+        )
+    slots = sum(len(s.addresses) for s in listed)
+    if slots > MAX_SLOTS_PER_BOOKCASE:
+        raise TooManySlots(
+            f"a bookcase holds at most {MAX_SLOTS_PER_BOOKCASE} shelves; "
+            f"this would have {slots}"
+        )
 
 
 def shelves_differing_from_default_depth(

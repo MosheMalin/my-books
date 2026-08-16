@@ -34,6 +34,7 @@ from app.api.deps import (
     get_principal,
     get_read_store,
     get_reader,
+    get_map_store,
     get_shelf_store,
     get_tenancy_store,
 )
@@ -44,6 +45,7 @@ from app.api.routers import (
     duplicates,
     images,
     libraries,
+    map,
     meta,
     reads,
     shelves,
@@ -56,6 +58,7 @@ from app.ports.blobs import BlobStore
 from app.ports.decisions import DecisionStore
 from app.ports.duplicates import DuplicateQueue
 from app.ports.jobs import JobRunner
+from app.ports.map import MapStore
 from app.ports.reader import Reader
 from app.ports.store import BookStore, ReadStore, ShelfStore
 from app.ports.tenancy import TenancyStore
@@ -88,6 +91,7 @@ def bind_ports(
     clock: Clock | None = None,
     id_gen: IdGen | None = None,
     shelf_store: ShelfStore | None = None,
+    map_store: MapStore | None = None,
     blob_store: BlobStore | None = None,
     read_store: ReadStore | None = None,
     decision_store: DecisionStore | None = None,
@@ -121,6 +125,7 @@ def bind_ports(
         app.dependency_overrides[get_session_secure] = _always(session_secure)
     for dep, impl in ((get_book_store, book_store), (get_clock, clock),
                       (get_id_gen, id_gen), (get_shelf_store, shelf_store),
+                      (get_map_store, map_store),
                       (get_blob_store, blob_store), (get_read_store, read_store),
                       (get_decision_store, decision_store),
                       (get_duplicate_queue, duplicate_queue),
@@ -142,6 +147,7 @@ def create_app(
     clock: Clock | None = None,
     id_gen: IdGen | None = None,
     shelf_store: ShelfStore | None = None,
+    map_store: MapStore | None = None,
     blob_store: BlobStore | None = None,
     read_store: ReadStore | None = None,
     decision_store: DecisionStore | None = None,
@@ -202,12 +208,17 @@ def create_app(
     app.include_router(images.router, prefix=API_PREFIX)
     app.include_router(reads.router, prefix=API_PREFIX)
     app.include_router(duplicates.router, prefix=API_PREFIX)
+    # P6.2: the physical map. Last of the library-scoped routers, and the
+    # only one whose writes declare EDIT_MAP — §4.2's row 7, in the policy
+    # matrix since P4.0 waiting for exactly these routes.
+    app.include_router(map.router, prefix=API_PREFIX)
 
     bind_ports(
         app,
         principal_provider=principal_provider,
         book_store=book_store, clock=clock, id_gen=id_gen,
-        shelf_store=shelf_store, blob_store=blob_store,
+        shelf_store=shelf_store, map_store=map_store,
+        blob_store=blob_store,
         read_store=read_store, decision_store=decision_store,
         duplicate_queue=duplicate_queue, reader=reader,
         job_runner=job_runner, tenancy_store=tenancy_store,

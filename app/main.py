@@ -46,6 +46,7 @@ from app.adapters.sqlite_store import (
     SqliteDecisionStore,
     SqliteDuplicateQueue,
     SqliteReadStore,
+    SqliteMapStore,
     SqliteShelfStore,
     SqliteTenancyStore,
 )
@@ -247,6 +248,11 @@ def build() -> object:
         # database, so a capture, the reads of it and the books they produce
         # cannot end up in different places.
         shelf_store=SqliteShelfStore(path),
+        # P6.1/P6.2: a SEVENTH aggregate, same file, same reasoning — a
+        # bookcase and the shelves standing in its slots must be removable
+        # in one transaction, and "delete this case" spanning two databases
+        # is a delete that can half-happen.
+        map_store=SqliteMapStore(path),
         read_store=SqliteReadStore(path),
         # P2.5: a fourth aggregate, same file, same reasoning — a decision
         # made about a claim from a specific read must live next to that

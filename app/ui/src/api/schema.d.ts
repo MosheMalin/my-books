@@ -728,6 +728,347 @@ export interface paths {
         patch: operations["patch_library_api_v1_libraries__library_id__patch"];
         trace?: never;
     };
+    "/api/v1/map": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Map
+         * @description Every site, floor, room, bookcase and section of this library.
+         *
+         *     One call, because that is what an editor needs and because a house is
+         *     tens of rows. An undrawn library answers with empty lists, which is the
+         *     normal state and not an error.
+         */
+        get: operations["get_map_api_v1_map_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/map/bookcases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Bookcase
+         * @description Draw a bookcase — **and every shelf its first section describes.**
+         *
+         *     §3.1: a drawn slot IS a Shelf. Ask for 2 columns of 5 and ten real, empty,
+         *     addressed shelves come into existence, each carrying the section's depth
+         *     as a COPY. That is the point of the route, not a side effect of it.
+         */
+        post: operations["create_bookcase_api_v1_map_bookcases_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/map/bookcases/{case_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Bookcase
+         * @description Remove a case and its sections. **409** while any shelf still stands in
+         *     one of its slots — empty them first, through ``DELETE .../slots``.
+         */
+        delete: operations["delete_bookcase_api_v1_map_bookcases__case_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Patch Bookcase
+         * @description Move, resize, rename, turn — or point the case at another room.
+         *
+         *     ⚠ ``place_id`` and ``detach`` are two fields because a JSON null cannot
+         *     mean both *"unchanged"* and *"let go of the room"*. Letting go is
+         *     explicit, always: containment may only ever REASSIGN a case, never orphan
+         *     one, and the lab found that the hard way twice.
+         */
+        patch: operations["patch_bookcase_api_v1_map_bookcases__case_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/map/bookcases/{case_id}/slots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Clear Bookcase
+         * @description Empty every slot of a bookcase, so the case can then be deleted.
+         *
+         *     A separate call from the delete on purpose: the owner sees the counts
+         *     first, and an occupied shelf is DETACHED rather than destroyed. A delete
+         *     that quietly emptied the slots itself is the silent data-loss path
+         *     MAP_PLAN §2 predicted for this pillar.
+         */
+        delete: operations["clear_bookcase_api_v1_map_bookcases__case_id__slots_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/map/floors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Floor */
+        post: operations["create_floor_api_v1_map_floors_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/map/floors/{floor_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Floor
+         * @description **409** naming the rooms and cases still on it, or if it is its site's
+         *     only storey — the way out of that is to remove the site.
+         */
+        delete: operations["delete_floor_api_v1_map_floors__floor_id__delete"];
+        options?: never;
+        head?: never;
+        /** Patch Floor */
+        patch: operations["patch_floor_api_v1_map_floors__floor_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/map/places": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Place */
+        post: operations["create_place_api_v1_map_places_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/map/places/{place_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Place
+         * @description Remove a room. **Its bookcases stay** where they stand, attached to no
+         *     room — deleting a container never destroys what it held.
+         */
+        delete: operations["delete_place_api_v1_map_places__place_id__delete"];
+        options?: never;
+        head?: never;
+        /** Patch Place */
+        patch: operations["patch_place_api_v1_map_places__place_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/map/sections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Section
+         * @description Add a section — a hutch on the base, or a plinth under it.
+         *
+         *     It copies the shape of the section it stands against, because a hutch
+         *     usually has about as many columns as its base and re-entering what is
+         *     already on screen is not a feature. Adding at the BOTTOM renumbers the
+         *     ones above: ``ordinal`` is bottom-first, unique, and printed in addresses.
+         */
+        post: operations["create_section_api_v1_map_sections_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/map/sections/{section_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Section
+         * @description **409** for the last section of a bookcase (a case with none is not
+         *     simpler, it is unaddressable) and while any of its slots is filled.
+         */
+        delete: operations["delete_section_api_v1_map_sections__section_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Patch Section
+         * @description Change the grid, or the defaults.
+         *
+         *     The defaults are creation-time values (§3.3) — setting one touches no
+         *     existing shelf, and applying it is a separate, explicit call. The grid
+         *     changes DO touch shelves, which is what the response reports.
+         */
+        patch: operations["patch_section_api_v1_map_sections__section_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/map/sections/{section_id}/depth": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply Depth
+         * @description Push the section's depth default onto its existing shelves.
+         *
+         *     §3.3's explicit half, and the one with the clamp: a shelf with a book in
+         *     the back row keeps its depth, and the response NAMES those shelves so the
+         *     screen can say so instead of claiming it did everything.
+         */
+        post: operations["apply_depth_api_v1_map_sections__section_id__depth_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/map/sections/{section_id}/levels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply Levels
+         * @description Level every column to the section's default — the explicit, opt-in
+         *     half of the level default.
+         */
+        post: operations["apply_levels_api_v1_map_sections__section_id__levels_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/map/sections/{section_id}/slots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Clear Section
+         * @description Empty ONE section's slots. Separate from the bookcase's, because a
+         *     case with a base and a hutch has two, and *"remove the hutch"* must not
+         *     touch the base.
+         */
+        delete: operations["clear_section_api_v1_map_sections__section_id__slots_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/map/sites": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Site */
+        post: operations["create_site_api_v1_map_sites_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/map/sites/{site_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Site
+         * @description Remove a site and its EMPTY storeys. **409** if a room or a bookcase
+         *     still stands on one of them, or if it is the only site.
+         */
+        delete: operations["delete_site_api_v1_map_sites__site_id__delete"];
+        options?: never;
+        head?: never;
+        /** Patch Site */
+        patch: operations["patch_site_api_v1_map_sites__site_id__patch"];
+        trace?: never;
+    };
     "/api/v1/members": {
         parameters: {
             query?: never;
@@ -1464,6 +1805,107 @@ export interface components {
          */
         BookSort: "title" | "author" | "recently_added";
         /**
+         * BookcaseCreate
+         * @description Draw a bookcase — and, with it, every shelf its first section
+         *     describes (§3.1: a drawn slot IS a Shelf).
+         */
+        BookcaseCreate: {
+            /**
+             * Columns
+             * @default 2
+             */
+            columns: number;
+            /**
+             * Depth
+             * @default 1
+             */
+            depth: number;
+            /** Floor Id */
+            floor_id: string;
+            /**
+             * Front
+             * @default S
+             */
+            front: string;
+            /**
+             * Levels
+             * @default 5
+             */
+            levels: number;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /**
+             * Order
+             * @default 0
+             */
+            order: number;
+            /** Place Id */
+            place_id?: string | null;
+            rect: components["schemas"]["RectDTO"];
+        };
+        /**
+         * BookcaseDTO
+         * @description One piece of furniture: one footprint, one name, one room it moves
+         *     with.
+         */
+        BookcaseDTO: {
+            /** Floor Id */
+            floor_id: string;
+            /**
+             * Front
+             * @description N/E/S/W — which face the books look out of, and therefore whose LEFT END is column 1. A fact about the furniture, so the UI's reading direction never moves it.
+             * @default S
+             */
+            front: string;
+            /** Id */
+            id: string;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /**
+             * Order
+             * @default 0
+             */
+            order: number;
+            /**
+             * Place Id
+             * @description The room it stands in. Null is legal — a case drawn before its room is somewhere rather than nowhere, and it carries its own floor for that reason (§3.7).
+             */
+            place_id?: string | null;
+            rect: components["schemas"]["RectDTO"];
+        };
+        /** BookcasePatch */
+        BookcasePatch: {
+            /**
+             * Detach
+             * @description Let go of the room, keeping the storey. Explicit, because containment may only ever REASSIGN a case, never orphan one (§4).
+             * @default false
+             */
+            detach: boolean;
+            /**
+             * Floor Id
+             * @description Move a DETACHED case to another storey. A case attached to a room moves with the room instead (PATCH the room), because furniture and its room are on one storey by construction.
+             */
+            floor_id?: string | null;
+            /** Front */
+            front?: string | null;
+            /** Name */
+            name?: string | null;
+            /** Order */
+            order?: number | null;
+            /**
+             * Place Id
+             * @description Point the case at a room; it moves onto that room's storey with it. Use `detach` to let go — null here means 'unchanged', because a JSON null cannot mean both.
+             */
+            place_id?: string | null;
+            rect?: components["schemas"]["RectDTO"] | null;
+        };
+        /**
          * CaptureBinding
          * @description What :meth:`create` produced — the photo AND the shelf it landed on.
          *
@@ -1708,6 +2150,21 @@ export interface components {
             tags?: string[] | null;
         };
         /**
+         * DepthApplyDTO
+         * @description The explicit application of a section's depth default.
+         *
+         *     ``kept`` names the shelves that could NOT be shallowed because books
+         *     stand behind — reported rather than silently skipped, so the screen says
+         *     what it did instead of claiming it did everything.
+         */
+        DepthApplyDTO: {
+            /**
+             * Kept
+             * @default []
+             */
+            kept: string[];
+        };
+        /**
          * DepthStatusDTO
          * @description One row's last-read date, for the shelf-detail screen's soft
          *     staleness line (UI_PLAN §3: *"rows 2, 3 not read since 11.3.2026"*) —
@@ -1892,6 +2349,42 @@ export interface components {
             tier: string;
             /** Title */
             title: string;
+        };
+        /** FloorCreate */
+        FloorCreate: {
+            /** Name */
+            name: string;
+            /**
+             * Order
+             * @default 0
+             */
+            order: number;
+            /** Site Id */
+            site_id: string;
+        };
+        /**
+         * FloorDTO
+         * @description A storey **of one site**. Never part of a shelf's address (§3.7).
+         */
+        FloorDTO: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Order
+             * @default 0
+             */
+            order: number;
+            /** Site Id */
+            site_id: string;
+        };
+        /** FloorPatch */
+        FloorPatch: {
+            /** Name */
+            name?: string | null;
+            /** Order */
+            order?: number | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -2133,6 +2626,41 @@ export interface components {
             title: string;
         };
         /**
+         * MapDTO
+         * @description One library's whole drawing, in one response.
+         *
+         *     Read whole because that is what an editor needs — the canvas cannot draw
+         *     a room without knowing which storey is showing, nor a bookcase without
+         *     its columns — and because a house is tens of rows, not thousands.
+         */
+        MapDTO: {
+            /**
+             * Bookcases
+             * @default []
+             */
+            bookcases: components["schemas"]["BookcaseDTO"][];
+            /**
+             * Floors
+             * @default []
+             */
+            floors: components["schemas"]["FloorDTO"][];
+            /**
+             * Places
+             * @default []
+             */
+            places: components["schemas"]["PlaceDTO"][];
+            /**
+             * Sections
+             * @default []
+             */
+            sections: components["schemas"]["SectionDTO"][];
+            /**
+             * Sites
+             * @default []
+             */
+            sites: components["schemas"]["SiteDTO"][];
+        };
+        /**
          * MemberDTO
          * @description One person in the account, with the role covering every library it
          *     owns (§4.1 — a role is held per account).
@@ -2187,6 +2715,58 @@ export interface components {
             book: components["schemas"]["BookDTO"];
             /** Copy Id */
             copy_id: string;
+        };
+        /**
+         * PlaceCreate
+         * @description A room's NAME is optional, deliberately: a plan that demands eight
+         *     names before it shows you anything is a toll.
+         */
+        PlaceCreate: {
+            /** Floor Id */
+            floor_id: string;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /**
+             * Order
+             * @default 0
+             */
+            order: number;
+            rect: components["schemas"]["RectDTO"];
+        };
+        /**
+         * PlaceDTO
+         * @description A room, drawn as a rectangle on its floor's plan.
+         */
+        PlaceDTO: {
+            /** Floor Id */
+            floor_id: string;
+            /** Id */
+            id: string;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /**
+             * Order
+             * @description Drawing order, and therefore z-order: the last one drawn is on top, which is what decides an overlapping tap.
+             * @default 0
+             */
+            order: number;
+            rect: components["schemas"]["RectDTO"];
+        };
+        /** PlacePatch */
+        PlacePatch: {
+            /** Floor Id */
+            floor_id?: string | null;
+            /** Name */
+            name?: string | null;
+            /** Order */
+            order?: number | null;
+            rect?: components["schemas"]["RectDTO"] | null;
         };
         /**
          * ProvidersDTO
@@ -2296,6 +2876,105 @@ export interface components {
             status: string;
         };
         /**
+         * RectDTO
+         * @description A rectangle in **abstract units** — never pixels, never centimetres.
+         */
+        RectDTO: {
+            /** H */
+            h: number;
+            /** W */
+            w: number;
+            /** X */
+            x: number;
+            /** Y */
+            y: number;
+        };
+        /**
+         * SectionCreate
+         * @description Add a section to a bookcase. It copies the shape of the one it stands
+         *     against — a hutch usually has about as many columns as its base.
+         */
+        SectionCreate: {
+            /** Bookcase Id */
+            bookcase_id: string;
+            /**
+             * Where
+             * @default top
+             */
+            where: string;
+        };
+        /**
+         * SectionDTO
+         * @description One built unit of a bookcase — a low base, or the case standing on it.
+         *
+         *     ``column_levels`` holds one entry per column, being that column's level
+         *     count; the column count is that list's length and there is no second
+         *     field that could disagree with it.
+         */
+        SectionDTO: {
+            /** Bookcase Id */
+            bookcase_id: string;
+            /** Column Levels */
+            column_levels: number[];
+            /**
+             * Default Depth
+             * @description Applied when a SHELF is created. Editing it does not reach back into existing shelves — read live, dropping it from 2 to 1 would delete the location of every book in the back row.
+             */
+            default_depth: number;
+            /**
+             * Default Levels
+             * @description Applied when a COLUMN is created. Editing it does not reach back into existing columns (§3.3).
+             */
+            default_levels: number;
+            /** Id */
+            id: string;
+            /**
+             * Ordinal
+             * @description 1-based, BOTTOM first: section 1 stands on the floor. Unique per bookcase, because it is what an address prints.
+             */
+            ordinal: number;
+        };
+        /**
+         * SectionEditDTO
+         * @description A section after an edit, with what it cost the shelves.
+         */
+        SectionEditDTO: {
+            /**
+             * Created
+             * @description New empty shelves, one per new slot.
+             * @default 0
+             */
+            created: number;
+            /**
+             * @default {
+             *       "deleted": [],
+             *       "detached": []
+             *     }
+             */
+            removal: components["schemas"]["SlotRemovalDTO"];
+            section: components["schemas"]["SectionDTO"];
+        };
+        /**
+         * SectionPatch
+         * @description Change the grid, or the defaults. Both halves report what happened to
+         *     the shelves, because a column removed is real shelves removed.
+         */
+        SectionPatch: {
+            /**
+             * Column
+             * @description With `levels`, changes ONE column's level count.
+             */
+            column?: number | null;
+            /** Columns */
+            columns?: number | null;
+            /** Default Depth */
+            default_depth?: number | null;
+            /** Default Levels */
+            default_levels?: number | null;
+            /** Levels */
+            levels?: number | null;
+        };
+        /**
          * SessionCreate
          * @description Redeem an emailed token for a session cookie.
          */
@@ -2305,6 +2984,26 @@ export interface components {
              * @description The token from the sign-in link, verbatim.
              */
             token: string;
+        };
+        /**
+         * ShelfAddressDTO
+         * @description Where a shelf stands, once somebody has drawn it (pillar 6).
+         *
+         *     ``section -> column -> level`` and nothing above it: the room, the case,
+         *     the storey and the site are all reachable FROM the section, and copying
+         *     them here would be four fields that disagree with the drawing the moment
+         *     a bookcase moves. Both indices are **1-based**.
+         */
+        ShelfAddressDTO: {
+            /** Col */
+            col: number;
+            /**
+             * Level
+             * @description Counts from the TOP of the column.
+             */
+            level: number;
+            /** Section Id */
+            section_id: string;
         };
         /**
          * ShelfCreate
@@ -2324,9 +3023,11 @@ export interface components {
         };
         /**
          * ShelfDTO
-         * @description A shelf's identity. No address — that is pillar 6 (plan §1.1).
+         * @description A shelf's identity, and — since P6.1 — where it stands, if anywhere.
          */
         ShelfDTO: {
+            /** @description Null for every shelf born from a photograph — which is most of them, and stays legal forever: the drawn and the photographed are ONE population, and binding them is P6.4's job rather than a precondition. */
+            address?: components["schemas"]["ShelfAddressDTO"] | null;
             /**
              * Capture Count
              * @description Photos filed against this shelf, across every depth.
@@ -2402,6 +3103,63 @@ export interface components {
             shelf_id?: string | null;
             /** Spine Id */
             spine_id: string;
+        };
+        /**
+         * SiteCreate
+         * @description A site is NAMED — it exists only because there are two of them, and an
+         *     unnamed one in a picker is unusable.
+         */
+        SiteCreate: {
+            /** Name */
+            name: string;
+            /**
+             * Order
+             * @default 0
+             */
+            order: number;
+        };
+        /**
+         * SiteDTO
+         * @description A whole property: home, the office, the parents' place.
+         */
+        SiteDTO: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Order
+             * @default 0
+             */
+            order: number;
+        };
+        /** SitePatch */
+        SitePatch: {
+            /** Name */
+            name?: string | null;
+            /** Order */
+            order?: number | null;
+        };
+        /**
+         * SlotRemovalDTO
+         * @description What a structural edit did to the shelves standing in the slots.
+         *
+         *     Two outcomes, never one — and the API returns both because the owner is
+         *     entitled to know that a shelf survived rather than vanished.
+         */
+        SlotRemovalDTO: {
+            /**
+             * Deleted
+             * @description Empty shelves that went with their slot. Scaffolding.
+             * @default []
+             */
+            deleted: string[];
+            /**
+             * Detached
+             * @description Shelves holding photos or books. They SURVIVE, without an address — their books keep their shelf; what they lose is a location the drawing no longer has.
+             * @default []
+             */
+            detached: string[];
         };
         /**
          * Status
@@ -3498,6 +4256,635 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LibraryDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_map_api_v1_map_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MapDTO"];
+                };
+            };
+        };
+    };
+    create_bookcase_api_v1_map_bookcases_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BookcaseCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookcaseDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_bookcase_api_v1_map_bookcases__case_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_bookcase_api_v1_map_bookcases__case_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BookcasePatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookcaseDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clear_bookcase_api_v1_map_bookcases__case_id__slots_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SlotRemovalDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_floor_api_v1_map_floors_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FloorCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FloorDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_floor_api_v1_map_floors__floor_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                floor_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_floor_api_v1_map_floors__floor_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                floor_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FloorPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FloorDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_place_api_v1_map_places_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlaceCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlaceDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_place_api_v1_map_places__place_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                place_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_place_api_v1_map_places__place_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                place_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlacePatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlaceDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_section_api_v1_map_sections_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SectionCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SectionEditDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_section_api_v1_map_sections__section_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                section_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_section_api_v1_map_sections__section_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                section_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SectionPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SectionEditDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    apply_depth_api_v1_map_sections__section_id__depth_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                section_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DepthApplyDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    apply_levels_api_v1_map_sections__section_id__levels_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                section_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SectionEditDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clear_section_api_v1_map_sections__section_id__slots_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                section_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SlotRemovalDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_site_api_v1_map_sites_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SiteCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SiteDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_site_api_v1_map_sites__site_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                site_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_site_api_v1_map_sites__site_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                site_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SitePatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SiteDTO"];
                 };
             };
             /** @description Validation Error */

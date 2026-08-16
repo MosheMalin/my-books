@@ -198,40 +198,47 @@ class MemoryShelfStore:
     # --- shelves ---------------------------------------------------------
 
     def save_shelf(self, library: LibraryRef, shelf: Shelf) -> None:
+        self._check_shelf(library, shelf, self._s(library))
+        self._s(library)[shelf.id] = shelf
+
+    def _check_shelf(self, library: LibraryRef, shelf: Shelf,
+                     against: dict) -> None:
+        """Every refusal the SQL store's constraints produce, in Python.
+
+        Shared by the single and the batch write so the two cannot drift —
+        without these this store would accept what the real database refuses,
+        and the contract suite would be asserting SQLite's behaviour rather
+        than the spec's.
+        """
         if shelf.library_id != library.id:
             raise WrongLibrary(
                 f"shelf {shelf.id} belongs to {shelf.library_id!r}, "
                 f"not {library.id!r}"
             )
-        # The slot's unique index and its foreign key, in Python. Without
-        # them this store would accept what the SQL one refuses, and the
-        # contract suite would be asserting SQLite's behaviour rather than
-        # the spec's.
-        if shelf.address is not None:
-            # ⚠ FAIL CLOSED when unbound. This guard used to be conditional on
-            # the binding, so a bare `MemoryShelfStore()` — which is what
-            # `app/main.py` and most tests construct — silently skipped it and
-            # accepted an address the real database refuses. A guard whose
-            # default is "skip me" is the same shape as the `occupied_ids`
-            # default a review already measured.
-            if self._sections is None:
-                raise RuntimeError(
-                    "MemoryShelfStore was given an addressed shelf before "
-                    "bind_map(); it cannot check the section exists"
-                )
-            if self._sections.get_section(
-                    library, shelf.address.section_id) is None:
-                raise UnknownParent(
-                    f"no section {shelf.address.section_id!r} in library "
-                    f"{library.id!r}"
-                )
-            sitting = self.get_shelf_at(library, shelf.address)
-            if sitting is not None and sitting.id != shelf.id:
+        if shelf.address is None:
+            return
+        # ⚠ FAIL CLOSED when unbound. This guard used to be conditional on the
+        # binding, so a bare `MemoryShelfStore()` silently skipped it and
+        # accepted an address the real database refuses. A guard whose default
+        # is "skip me" is the same shape as the `occupied_ids` default a
+        # review already measured.
+        if self._sections is None:
+            raise RuntimeError(
+                "MemoryShelfStore was given an addressed shelf before "
+                "bind_map(); it cannot check the section exists"
+            )
+        if self._sections.get_section(
+                library, shelf.address.section_id) is None:
+            raise UnknownParent(
+                f"no section {shelf.address.section_id!r} in library "
+                f"{library.id!r}"
+            )
+        for other in against.values():
+            if other.address == shelf.address and other.id != shelf.id:
                 raise DuplicateShelfSlot(
-                    f"shelf {sitting.id} already stands at {shelf.address} "
+                    f"shelf {other.id} already stands at {shelf.address} "
                     f"(MAP_PLAN §3.1)"
                 )
-        self._s(library)[shelf.id] = shelf
 
     def get_shelf(self, library: LibraryRef, shelf_id: str) -> Shelf | None:
         return self._s(library).get(shelf_id)
@@ -262,6 +269,23 @@ class MemoryShelfStore:
                 if s.address is not None and s.address.section_id == section_id]
         rows.sort(key=lambda s: (s.address.col, s.address.level, s.id))
         return tuple(rows)
+
+    def save_shelves(self, library: LibraryRef,
+                     shelves: tuple[Shelf, ...]) -> None:
+        # All-or-nothing, like the SQL one's transaction: validate every
+        # shelf before writing any, so a rejected member leaves none written.
+        staged = dict(self._s(library))
+        for shelf in shelves:
+            self._check_shelf(library, shelf, staged)
+            staged[shelf.id] = shelf
+        self._shelves[library.id] = staged
+
+    def deepest_capture_depth(self, library: LibraryRef) -> dict[str, int]:
+        deepest: dict[str, int] = {}
+        for capture in self._c(library).values():
+            if capture.depth > deepest.get(capture.shelf_id, 0):
+                deepest[capture.shelf_id] = capture.depth
+        return deepest
 
     def get_shelf_at(
         self, library: LibraryRef, address: ShelfAddress
@@ -930,6 +954,47 @@ class MemoryMapStore:
                     f"of bookcase {section.bookcase_id}"
                 )
         self._t(self._sections, library)[section.id] = section
+
+    def save_sections(self, library: LibraryRef,
+                      sections: tuple[Section, ...]) -> None:
+        # All-or-nothing, and the ordinal check runs against the FINAL set
+        # rather than the live one: "push everything up by one" transiently
+        # collides at every step, and refusing that would make the operation
+        # the review found broken impossible rather than atomic.
+        staged = dict(self._t(self._sections, library))
+        for section in sections:
+            _same_library(section, library, "section")
+            if section.bookcase_id not in self._t(self._cases, library):
+                raise UnknownParent(
+                    f"no bookcase {section.bookcase_id!r} in library "
+                    f"{library.id!r}")
+            staged[section.id] = section
+        seen: set = set()
+        for section in staged.values():
+            key = (section.bookcase_id, section.ordinal)
+            if key in seen:
+                raise DuplicateSectionOrdinal(
+                    f"two sections would both be number {section.ordinal} of "
+                    f"bookcase {section.bookcase_id}")
+            seen.add(key)
+        self._sections[library.id] = staged
+
+    def move_place(self, library: LibraryRef, place: Place,
+                   floor_id: str) -> Place:
+        if floor_id not in self._t(self._floors, library):
+            raise UnknownParent(
+                f"no floor {floor_id!r} in library {library.id!r}")
+        moved = replace(place, floor_id=floor_id)
+        self._t(self._places, library)[place.id] = moved
+        # …and the furniture goes with the room, in the same call. A review
+        # left a room upstairs and its bookcase on the ground floor, and the
+        # case was then un-renamable forever: every write re-checked
+        # `NotOnThisFloor` and answered 409.
+        cases = self._t(self._cases, library)
+        for case_id, case in list(cases.items()):
+            if case.place_id == place.id:
+                cases[case_id] = replace(case, floor_id=floor_id)
+        return moved
 
     def get_section(
         self, library: LibraryRef, section_id: str

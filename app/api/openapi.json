@@ -288,6 +288,211 @@
         "title": "BookSort",
         "type": "string"
       },
+      "BookcaseCreate": {
+        "description": "Draw a bookcase — and, with it, every shelf its first section\ndescribes (§3.1: a drawn slot IS a Shelf).",
+        "properties": {
+          "columns": {
+            "default": 2,
+            "maximum": 40.0,
+            "minimum": 1.0,
+            "title": "Columns",
+            "type": "integer"
+          },
+          "depth": {
+            "default": 1,
+            "maximum": 4.0,
+            "minimum": 1.0,
+            "title": "Depth",
+            "type": "integer"
+          },
+          "floor_id": {
+            "minLength": 1,
+            "title": "Floor Id",
+            "type": "string"
+          },
+          "front": {
+            "default": "S",
+            "pattern": "^[NESW]$",
+            "title": "Front",
+            "type": "string"
+          },
+          "levels": {
+            "default": 5,
+            "maximum": 40.0,
+            "minimum": 1.0,
+            "title": "Levels",
+            "type": "integer"
+          },
+          "name": {
+            "default": "",
+            "title": "Name",
+            "type": "string"
+          },
+          "order": {
+            "default": 0,
+            "maximum": 100000.0,
+            "minimum": -100000.0,
+            "title": "Order",
+            "type": "integer"
+          },
+          "place_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Place Id"
+          },
+          "rect": {
+            "$ref": "#/components/schemas/RectDTO"
+          }
+        },
+        "required": [
+          "floor_id",
+          "rect"
+        ],
+        "title": "BookcaseCreate",
+        "type": "object"
+      },
+      "BookcaseDTO": {
+        "description": "One piece of furniture: one footprint, one name, one room it moves\nwith.",
+        "properties": {
+          "floor_id": {
+            "title": "Floor Id",
+            "type": "string"
+          },
+          "front": {
+            "default": "S",
+            "description": "N/E/S/W — which face the books look out of, and therefore whose LEFT END is column 1. A fact about the furniture, so the UI's reading direction never moves it.",
+            "title": "Front",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "default": "",
+            "title": "Name",
+            "type": "string"
+          },
+          "order": {
+            "default": 0,
+            "maximum": 100000.0,
+            "minimum": -100000.0,
+            "title": "Order",
+            "type": "integer"
+          },
+          "place_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The room it stands in. Null is legal — a case drawn before its room is somewhere rather than nowhere, and it carries its own floor for that reason (§3.7).",
+            "title": "Place Id"
+          },
+          "rect": {
+            "$ref": "#/components/schemas/RectDTO"
+          }
+        },
+        "required": [
+          "id",
+          "floor_id",
+          "rect"
+        ],
+        "title": "BookcaseDTO",
+        "type": "object"
+      },
+      "BookcasePatch": {
+        "properties": {
+          "detach": {
+            "default": false,
+            "description": "Let go of the room, keeping the storey. Explicit, because containment may only ever REASSIGN a case, never orphan one (§4).",
+            "title": "Detach",
+            "type": "boolean"
+          },
+          "floor_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Move a DETACHED case to another storey. A case attached to a room moves with the room instead (PATCH the room), because furniture and its room are on one storey by construction.",
+            "title": "Floor Id"
+          },
+          "front": {
+            "anyOf": [
+              {
+                "pattern": "^[NESW]$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Front"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "order": {
+            "anyOf": [
+              {
+                "maximum": 100000.0,
+                "minimum": -100000.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order"
+          },
+          "place_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Point the case at a room; it moves onto that room's storey with it. Use `detach` to let go — null here means 'unchanged', because a JSON null cannot mean both.",
+            "title": "Place Id"
+          },
+          "rect": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RectDTO"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "BookcasePatch",
+        "type": "object"
+      },
       "CaptureBinding": {
         "description": "What :meth:`create` produced — the photo AND the shelf it landed on.\n\nBoth, never just the capture: when the shelf was auto-created the client\nhas no other way to learn its id, and a second round trip to discover the\nthing you just implicitly made is the sort of gap that gets papered over\nwith a client-side guess. Same reasoning as the copy routes returning the\nwhole ``BookDTO``.",
         "properties": {
@@ -779,6 +984,21 @@
         "title": "CopyPatch",
         "type": "object"
       },
+      "DepthApplyDTO": {
+        "description": "The explicit application of a section's depth default.\n\n``kept`` names the shelves that could NOT be shallowed because books\nstand behind — reported rather than silently skipped, so the screen says\nwhat it did instead of claiming it did everything.",
+        "properties": {
+          "kept": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Kept",
+            "type": "array"
+          }
+        },
+        "title": "DepthApplyDTO",
+        "type": "object"
+      },
       "DepthStatusDTO": {
         "description": "One row's last-read date, for the shelf-detail screen's soft\nstaleness line (UI_PLAN §3: *\"rows 2, 3 not read since 11.3.2026\"*) —\nsee ``app.domain.history.depth_staleness``.",
         "properties": {
@@ -1068,6 +1288,97 @@
           "tier"
         ],
         "title": "FindingMatchDTO",
+        "type": "object"
+      },
+      "FloorCreate": {
+        "properties": {
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "order": {
+            "default": 0,
+            "maximum": 100000.0,
+            "minimum": -100000.0,
+            "title": "Order",
+            "type": "integer"
+          },
+          "site_id": {
+            "minLength": 1,
+            "title": "Site Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "site_id",
+          "name"
+        ],
+        "title": "FloorCreate",
+        "type": "object"
+      },
+      "FloorDTO": {
+        "description": "A storey **of one site**. Never part of a shelf's address (§3.7).",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "order": {
+            "default": 0,
+            "maximum": 100000.0,
+            "minimum": -100000.0,
+            "title": "Order",
+            "type": "integer"
+          },
+          "site_id": {
+            "title": "Site Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "site_id",
+          "name"
+        ],
+        "title": "FloorDTO",
+        "type": "object"
+      },
+      "FloorPatch": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "order": {
+            "anyOf": [
+              {
+                "maximum": 100000.0,
+                "minimum": -100000.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order"
+          }
+        },
+        "title": "FloorPatch",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -1428,6 +1739,53 @@
         "title": "ManualFindingIn",
         "type": "object"
       },
+      "MapDTO": {
+        "description": "One library's whole drawing, in one response.\n\nRead whole because that is what an editor needs — the canvas cannot draw\na room without knowing which storey is showing, nor a bookcase without\nits columns — and because a house is tens of rows, not thousands.",
+        "properties": {
+          "bookcases": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/BookcaseDTO"
+            },
+            "title": "Bookcases",
+            "type": "array"
+          },
+          "floors": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/FloorDTO"
+            },
+            "title": "Floors",
+            "type": "array"
+          },
+          "places": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/PlaceDTO"
+            },
+            "title": "Places",
+            "type": "array"
+          },
+          "sections": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SectionDTO"
+            },
+            "title": "Sections",
+            "type": "array"
+          },
+          "sites": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SiteDTO"
+            },
+            "title": "Sites",
+            "type": "array"
+          }
+        },
+        "title": "MapDTO",
+        "type": "object"
+      },
       "MemberDTO": {
         "description": "One person in the account, with the role covering every library it\nowns (§4.1 — a role is held per account).",
         "properties": {
@@ -1517,6 +1875,126 @@
           "copy_id"
         ],
         "title": "NotSeenEntryDTO",
+        "type": "object"
+      },
+      "PlaceCreate": {
+        "description": "A room's NAME is optional, deliberately: a plan that demands eight\nnames before it shows you anything is a toll.",
+        "properties": {
+          "floor_id": {
+            "minLength": 1,
+            "title": "Floor Id",
+            "type": "string"
+          },
+          "name": {
+            "default": "",
+            "maxLength": 120,
+            "title": "Name",
+            "type": "string"
+          },
+          "order": {
+            "default": 0,
+            "maximum": 100000.0,
+            "minimum": -100000.0,
+            "title": "Order",
+            "type": "integer"
+          },
+          "rect": {
+            "$ref": "#/components/schemas/RectDTO"
+          }
+        },
+        "required": [
+          "floor_id",
+          "rect"
+        ],
+        "title": "PlaceCreate",
+        "type": "object"
+      },
+      "PlaceDTO": {
+        "description": "A room, drawn as a rectangle on its floor's plan.",
+        "properties": {
+          "floor_id": {
+            "title": "Floor Id",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "default": "",
+            "title": "Name",
+            "type": "string"
+          },
+          "order": {
+            "default": 0,
+            "description": "Drawing order, and therefore z-order: the last one drawn is on top, which is what decides an overlapping tap.",
+            "maximum": 100000.0,
+            "minimum": -100000.0,
+            "title": "Order",
+            "type": "integer"
+          },
+          "rect": {
+            "$ref": "#/components/schemas/RectDTO"
+          }
+        },
+        "required": [
+          "id",
+          "floor_id",
+          "rect"
+        ],
+        "title": "PlaceDTO",
+        "type": "object"
+      },
+      "PlacePatch": {
+        "properties": {
+          "floor_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Floor Id"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "order": {
+            "anyOf": [
+              {
+                "maximum": 100000.0,
+                "minimum": -100000.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order"
+          },
+          "rect": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RectDTO"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "PlacePatch",
         "type": "object"
       },
       "ProvidersDTO": {
@@ -1769,6 +2247,207 @@
         "title": "ReadSummaryDTO",
         "type": "object"
       },
+      "RectDTO": {
+        "description": "A rectangle in **abstract units** — never pixels, never centimetres.",
+        "properties": {
+          "h": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 100000.0,
+            "title": "H",
+            "type": "integer"
+          },
+          "w": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 100000.0,
+            "title": "W",
+            "type": "integer"
+          },
+          "x": {
+            "maximum": 100000.0,
+            "minimum": -100000.0,
+            "title": "X",
+            "type": "integer"
+          },
+          "y": {
+            "maximum": 100000.0,
+            "minimum": -100000.0,
+            "title": "Y",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "x",
+          "y",
+          "w",
+          "h"
+        ],
+        "title": "RectDTO",
+        "type": "object"
+      },
+      "SectionCreate": {
+        "description": "Add a section to a bookcase. It copies the shape of the one it stands\nagainst — a hutch usually has about as many columns as its base.",
+        "properties": {
+          "bookcase_id": {
+            "minLength": 1,
+            "title": "Bookcase Id",
+            "type": "string"
+          },
+          "where": {
+            "default": "top",
+            "pattern": "^(top|bottom)$",
+            "title": "Where",
+            "type": "string"
+          }
+        },
+        "required": [
+          "bookcase_id"
+        ],
+        "title": "SectionCreate",
+        "type": "object"
+      },
+      "SectionDTO": {
+        "description": "One built unit of a bookcase — a low base, or the case standing on it.\n\n``column_levels`` holds one entry per column, being that column's level\ncount; the column count is that list's length and there is no second\nfield that could disagree with it.",
+        "properties": {
+          "bookcase_id": {
+            "title": "Bookcase Id",
+            "type": "string"
+          },
+          "column_levels": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Column Levels",
+            "type": "array"
+          },
+          "default_depth": {
+            "description": "Applied when a SHELF is created. Editing it does not reach back into existing shelves — read live, dropping it from 2 to 1 would delete the location of every book in the back row.",
+            "title": "Default Depth",
+            "type": "integer"
+          },
+          "default_levels": {
+            "description": "Applied when a COLUMN is created. Editing it does not reach back into existing columns (§3.3).",
+            "title": "Default Levels",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "ordinal": {
+            "description": "1-based, BOTTOM first: section 1 stands on the floor. Unique per bookcase, because it is what an address prints.",
+            "title": "Ordinal",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "bookcase_id",
+          "ordinal",
+          "column_levels",
+          "default_levels",
+          "default_depth"
+        ],
+        "title": "SectionDTO",
+        "type": "object"
+      },
+      "SectionEditDTO": {
+        "description": "A section after an edit, with what it cost the shelves.",
+        "properties": {
+          "created": {
+            "default": 0,
+            "description": "New empty shelves, one per new slot.",
+            "title": "Created",
+            "type": "integer"
+          },
+          "removal": {
+            "$ref": "#/components/schemas/SlotRemovalDTO",
+            "default": {
+              "deleted": [],
+              "detached": []
+            }
+          },
+          "section": {
+            "$ref": "#/components/schemas/SectionDTO"
+          }
+        },
+        "required": [
+          "section"
+        ],
+        "title": "SectionEditDTO",
+        "type": "object"
+      },
+      "SectionPatch": {
+        "description": "Change the grid, or the defaults. Both halves report what happened to\nthe shelves, because a column removed is real shelves removed.",
+        "properties": {
+          "column": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "With `levels`, changes ONE column's level count.",
+            "title": "Column"
+          },
+          "columns": {
+            "anyOf": [
+              {
+                "maximum": 40.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Columns"
+          },
+          "default_depth": {
+            "anyOf": [
+              {
+                "maximum": 4.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Depth"
+          },
+          "default_levels": {
+            "anyOf": [
+              {
+                "maximum": 40.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Levels"
+          },
+          "levels": {
+            "anyOf": [
+              {
+                "maximum": 40.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Levels"
+          }
+        },
+        "title": "SectionPatch",
+        "type": "object"
+      },
       "SessionCreate": {
         "description": "Redeem an emailed token for a session cookie.",
         "properties": {
@@ -1783,6 +2462,33 @@
           "token"
         ],
         "title": "SessionCreate",
+        "type": "object"
+      },
+      "ShelfAddressDTO": {
+        "description": "Where a shelf stands, once somebody has drawn it (pillar 6).\n\n``section -> column -> level`` and nothing above it: the room, the case,\nthe storey and the site are all reachable FROM the section, and copying\nthem here would be four fields that disagree with the drawing the moment\na bookcase moves. Both indices are **1-based**.",
+        "properties": {
+          "col": {
+            "minimum": 1.0,
+            "title": "Col",
+            "type": "integer"
+          },
+          "level": {
+            "description": "Counts from the TOP of the column.",
+            "minimum": 1.0,
+            "title": "Level",
+            "type": "integer"
+          },
+          "section_id": {
+            "title": "Section Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "section_id",
+          "col",
+          "level"
+        ],
+        "title": "ShelfAddressDTO",
         "type": "object"
       },
       "ShelfCreate": {
@@ -1803,8 +2509,19 @@
         "type": "object"
       },
       "ShelfDTO": {
-        "description": "A shelf's identity. No address — that is pillar 6 (plan §1.1).",
+        "description": "A shelf's identity, and — since P6.1 — where it stands, if anywhere.",
         "properties": {
+          "address": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ShelfAddressDTO"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Null for every shelf born from a photograph — which is most of them, and stays legal forever: the drawn and the photographed are ONE population, and binding them is P6.4's job rather than a precondition."
+          },
           "capture_count": {
             "description": "Photos filed against this shelf, across every depth.",
             "title": "Capture Count",
@@ -1954,6 +2671,112 @@
           "spine_id"
         ],
         "title": "SightingDTO",
+        "type": "object"
+      },
+      "SiteCreate": {
+        "description": "A site is NAMED — it exists only because there are two of them, and an\nunnamed one in a picker is unusable.",
+        "properties": {
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "order": {
+            "default": 0,
+            "maximum": 100000.0,
+            "minimum": -100000.0,
+            "title": "Order",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "SiteCreate",
+        "type": "object"
+      },
+      "SiteDTO": {
+        "description": "A whole property: home, the office, the parents' place.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "order": {
+            "default": 0,
+            "maximum": 100000.0,
+            "minimum": -100000.0,
+            "title": "Order",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "SiteDTO",
+        "type": "object"
+      },
+      "SitePatch": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "order": {
+            "anyOf": [
+              {
+                "maximum": 100000.0,
+                "minimum": -100000.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order"
+          }
+        },
+        "title": "SitePatch",
+        "type": "object"
+      },
+      "SlotRemovalDTO": {
+        "description": "What a structural edit did to the shelves standing in the slots.\n\nTwo outcomes, never one — and the API returns both because the owner is\nentitled to know that a shelf survived rather than vanished.",
+        "properties": {
+          "deleted": {
+            "default": [],
+            "description": "Empty shelves that went with their slot. Scaffolding.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Deleted",
+            "type": "array"
+          },
+          "detached": {
+            "default": [],
+            "description": "Shelves holding photos or books. They SURVIVE, without an address — their books keep their shelf; what they lose is a location the drawing no longer has.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Detached",
+            "type": "array"
+          }
+        },
+        "title": "SlotRemovalDTO",
         "type": "object"
       },
       "Status": {
@@ -3599,6 +4422,839 @@
         "summary": "Rename a library",
         "tags": [
           "libraries"
+        ]
+      }
+    },
+    "/api/v1/map": {
+      "get": {
+        "description": "Every site, floor, room, bookcase and section of this library.\n\nOne call, because that is what an editor needs and because a house is\ntens of rows. An undrawn library answers with empty lists, which is the\nnormal state and not an error.",
+        "operationId": "get_map_api_v1_map_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MapDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Map",
+        "tags": [
+          "map"
+        ]
+      }
+    },
+    "/api/v1/map/bookcases": {
+      "post": {
+        "description": "Draw a bookcase — **and every shelf its first section describes.**\n\n§3.1: a drawn slot IS a Shelf. Ask for 2 columns of 5 and ten real, empty,\naddressed shelves come into existence, each carrying the section's depth\nas a COPY. That is the point of the route, not a side effect of it.",
+        "operationId": "create_bookcase_api_v1_map_bookcases_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BookcaseCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookcaseDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Bookcase",
+        "tags": [
+          "map"
+        ]
+      }
+    },
+    "/api/v1/map/bookcases/{case_id}": {
+      "delete": {
+        "description": "Remove a case and its sections. **409** while any shelf still stands in\none of its slots — empty them first, through ``DELETE .../slots``.",
+        "operationId": "delete_bookcase_api_v1_map_bookcases__case_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "title": "Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Bookcase",
+        "tags": [
+          "map"
+        ]
+      },
+      "patch": {
+        "description": "Move, resize, rename, turn — or point the case at another room.\n\n⚠ ``place_id`` and ``detach`` are two fields because a JSON null cannot\nmean both *\"unchanged\"* and *\"let go of the room\"*. Letting go is\nexplicit, always: containment may only ever REASSIGN a case, never orphan\none, and the lab found that the hard way twice.",
+        "operationId": "patch_bookcase_api_v1_map_bookcases__case_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "title": "Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BookcasePatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookcaseDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Bookcase",
+        "tags": [
+          "map"
+        ]
+      }
+    },
+    "/api/v1/map/bookcases/{case_id}/slots": {
+      "delete": {
+        "description": "Empty every slot of a bookcase, so the case can then be deleted.\n\nA separate call from the delete on purpose: the owner sees the counts\nfirst, and an occupied shelf is DETACHED rather than destroyed. A delete\nthat quietly emptied the slots itself is the silent data-loss path\nMAP_PLAN §2 predicted for this pillar.",
+        "operationId": "clear_bookcase_api_v1_map_bookcases__case_id__slots_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "title": "Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SlotRemovalDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Clear Bookcase",
+        "tags": [
+          "map"
+        ]
+      }
+    },
+    "/api/v1/map/floors": {
+      "post": {
+        "operationId": "create_floor_api_v1_map_floors_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FloorCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FloorDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Floor",
+        "tags": [
+          "map"
+        ]
+      }
+    },
+    "/api/v1/map/floors/{floor_id}": {
+      "delete": {
+        "description": "**409** naming the rooms and cases still on it, or if it is its site's\nonly storey — the way out of that is to remove the site.",
+        "operationId": "delete_floor_api_v1_map_floors__floor_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "floor_id",
+            "required": true,
+            "schema": {
+              "title": "Floor Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Floor",
+        "tags": [
+          "map"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_floor_api_v1_map_floors__floor_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "floor_id",
+            "required": true,
+            "schema": {
+              "title": "Floor Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FloorPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FloorDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Floor",
+        "tags": [
+          "map"
+        ]
+      }
+    },
+    "/api/v1/map/places": {
+      "post": {
+        "operationId": "create_place_api_v1_map_places_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaceCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaceDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Place",
+        "tags": [
+          "map"
+        ]
+      }
+    },
+    "/api/v1/map/places/{place_id}": {
+      "delete": {
+        "description": "Remove a room. **Its bookcases stay** where they stand, attached to no\nroom — deleting a container never destroys what it held.",
+        "operationId": "delete_place_api_v1_map_places__place_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "place_id",
+            "required": true,
+            "schema": {
+              "title": "Place Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Place",
+        "tags": [
+          "map"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_place_api_v1_map_places__place_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "place_id",
+            "required": true,
+            "schema": {
+              "title": "Place Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlacePatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaceDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Place",
+        "tags": [
+          "map"
+        ]
+      }
+    },
+    "/api/v1/map/sections": {
+      "post": {
+        "description": "Add a section — a hutch on the base, or a plinth under it.\n\nIt copies the shape of the section it stands against, because a hutch\nusually has about as many columns as its base and re-entering what is\nalready on screen is not a feature. Adding at the BOTTOM renumbers the\nones above: ``ordinal`` is bottom-first, unique, and printed in addresses.",
+        "operationId": "create_section_api_v1_map_sections_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SectionCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SectionEditDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Section",
+        "tags": [
+          "map"
+        ]
+      }
+    },
+    "/api/v1/map/sections/{section_id}": {
+      "delete": {
+        "description": "**409** for the last section of a bookcase (a case with none is not\nsimpler, it is unaddressable) and while any of its slots is filled.",
+        "operationId": "delete_section_api_v1_map_sections__section_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "section_id",
+            "required": true,
+            "schema": {
+              "title": "Section Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Section",
+        "tags": [
+          "map"
+        ]
+      },
+      "patch": {
+        "description": "Change the grid, or the defaults.\n\nThe defaults are creation-time values (§3.3) — setting one touches no\nexisting shelf, and applying it is a separate, explicit call. The grid\nchanges DO touch shelves, which is what the response reports.",
+        "operationId": "patch_section_api_v1_map_sections__section_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "section_id",
+            "required": true,
+            "schema": {
+              "title": "Section Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SectionPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SectionEditDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Section",
+        "tags": [
+          "map"
+        ]
+      }
+    },
+    "/api/v1/map/sections/{section_id}/depth": {
+      "post": {
+        "description": "Push the section's depth default onto its existing shelves.\n\n§3.3's explicit half, and the one with the clamp: a shelf with a book in\nthe back row keeps its depth, and the response NAMES those shelves so the\nscreen can say so instead of claiming it did everything.",
+        "operationId": "apply_depth_api_v1_map_sections__section_id__depth_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "section_id",
+            "required": true,
+            "schema": {
+              "title": "Section Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DepthApplyDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Apply Depth",
+        "tags": [
+          "map"
+        ]
+      }
+    },
+    "/api/v1/map/sections/{section_id}/levels": {
+      "post": {
+        "description": "Level every column to the section's default — the explicit, opt-in\nhalf of the level default.",
+        "operationId": "apply_levels_api_v1_map_sections__section_id__levels_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "section_id",
+            "required": true,
+            "schema": {
+              "title": "Section Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SectionEditDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Apply Levels",
+        "tags": [
+          "map"
+        ]
+      }
+    },
+    "/api/v1/map/sections/{section_id}/slots": {
+      "delete": {
+        "description": "Empty ONE section's slots. Separate from the bookcase's, because a\ncase with a base and a hutch has two, and *\"remove the hutch\"* must not\ntouch the base.",
+        "operationId": "clear_section_api_v1_map_sections__section_id__slots_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "section_id",
+            "required": true,
+            "schema": {
+              "title": "Section Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SlotRemovalDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Clear Section",
+        "tags": [
+          "map"
+        ]
+      }
+    },
+    "/api/v1/map/sites": {
+      "post": {
+        "operationId": "create_site_api_v1_map_sites_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SiteCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SiteDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Site",
+        "tags": [
+          "map"
+        ]
+      }
+    },
+    "/api/v1/map/sites/{site_id}": {
+      "delete": {
+        "description": "Remove a site and its EMPTY storeys. **409** if a room or a bookcase\nstill stands on one of them, or if it is the only site.",
+        "operationId": "delete_site_api_v1_map_sites__site_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "site_id",
+            "required": true,
+            "schema": {
+              "title": "Site Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Site",
+        "tags": [
+          "map"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_site_api_v1_map_sites__site_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "site_id",
+            "required": true,
+            "schema": {
+              "title": "Site Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SitePatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SiteDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Site",
+        "tags": [
+          "map"
         ]
       }
     },

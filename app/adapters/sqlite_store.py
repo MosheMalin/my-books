@@ -356,64 +356,71 @@ class SqliteShelfStore(_SqliteStore):
     # --- shelves ---------------------------------------------------------
 
     def save_shelf(self, library: LibraryRef, shelf: Shelf) -> None:
+        with self._connect() as conn, _immediate(conn):
+            self._write_shelf(conn, library, shelf)
+
+    @staticmethod
+    def _write_shelf(conn, library: LibraryRef, shelf: Shelf) -> None:
+        """One shelf, on a caller-owned transaction.
+
+        Split out so :meth:`save_shelves` can write a whole bookcase on one
+        connection — the checks and the UPSERT are identical, and two copies
+        of them would be two chances to fix only one.
+        """
         if shelf.library_id != library.id:
             raise WrongLibrary(
                 f"shelf {shelf.id} belongs to {shelf.library_id!r}, "
                 f"not {library.id!r}"
             )
-        with self._connect() as conn:
-            # Checked in Python rather than left to the foreign key, for the
-            # reason `save_capture` gives below: the FK cannot express "in
-            # THIS library", so a shelf addressed to another tenant's section
-            # satisfies it perfectly. It also turns a raw IntegrityError —
-            # which says nothing a caller can act on — into the same
-            # `UnknownParent` the map store already raises for every other
-            # parent, in both implementations.
-            if shelf.address is not None and not conn.execute(
-                "SELECT 1 FROM sections WHERE id = ? AND library_id = ?",
-                (shelf.address.section_id, library.id),
-            ).fetchone():
-                raise UnknownParent(
-                    f"no section {shelf.address.section_id!r} in library "
-                    f"{library.id!r}"
-                )
-            with conn:
-                # INSERT OR REPLACE is safe HERE, unlike on books: the only
-                # unique key is the primary key, so a conflict can only be this
-                # same shelf. (On books it would resolve a book_key collision by
-                # deleting somebody else's record.) But it would fire the
-                # captures cascade on the delete half, so an explicit UPSERT it
-                # is — a rename must not destroy the shelf's photos.
-                addr = shelf.address
-                try:
-                    conn.execute(
-                        "INSERT INTO shelves (id, library_id, label,"
-                        " depth_count, virtual, created_at, section_id, col,"
-                        " level) VALUES (?,?,?,?,?,?,?,?,?)"
-                        " ON CONFLICT(id) DO UPDATE SET label=excluded.label,"
-                        " depth_count=excluded.depth_count,"
-                        " virtual=excluded.virtual,"
-                        " created_at=excluded.created_at,"
-                        " section_id=excluded.section_id, col=excluded.col,"
-                        " level=excluded.level"
-                        " WHERE shelves.library_id = excluded.library_id",
-                        (shelf.id, library.id, shelf.label, shelf.depth_count,
-                         int(shelf.virtual), shelf.created_at,
-                         addr.section_id if addr else None,
-                         addr.col if addr else None,
-                         addr.level if addr else None),
-                    )
-                except sqlite3.IntegrityError as exc:
-                    # By COLUMNS, not by index name — measured, and a PARTIAL
-                    # unique index is no exception: SQLite reports "UNIQUE
-                    # constraint failed: shelves.library_id, shelves.section_id,
-                    # …". Same shape as captures.shelf_id and books.book_key.
-                    if "shelves.section_id" in str(exc):
-                        raise DuplicateShelfSlot(
-                            f"another shelf already stands at {addr} "
-                            f"(MAP_PLAN §3.1)"
-                        ) from exc
-                    raise
+        # Checked in Python rather than left to the foreign key, for the
+        # reason `save_capture` gives below: the FK cannot express "in THIS
+        # library", so a shelf addressed to another tenant's section satisfies
+        # it perfectly. It also turns a raw IntegrityError — which says
+        # nothing a caller can act on — into the same `UnknownParent` the map
+        # store raises for every other parent, in both implementations.
+        if shelf.address is not None and not conn.execute(
+            "SELECT 1 FROM sections WHERE id = ? AND library_id = ?",
+            (shelf.address.section_id, library.id),
+        ).fetchone():
+            raise UnknownParent(
+                f"no section {shelf.address.section_id!r} in library "
+                f"{library.id!r}"
+            )
+        # INSERT OR REPLACE is safe HERE, unlike on books: the only unique key
+        # is the primary key, so a conflict can only be this same shelf. (On
+        # books it would resolve a book_key collision by deleting somebody
+        # else's record.) But it would fire the captures cascade on the delete
+        # half, so an explicit UPSERT it is — a rename must not destroy the
+        # shelf's photos.
+        addr = shelf.address
+        try:
+            conn.execute(
+                "INSERT INTO shelves (id, library_id, label,"
+                " depth_count, virtual, created_at, section_id, col,"
+                " level) VALUES (?,?,?,?,?,?,?,?,?)"
+                " ON CONFLICT(id) DO UPDATE SET label=excluded.label,"
+                " depth_count=excluded.depth_count,"
+                " virtual=excluded.virtual,"
+                " created_at=excluded.created_at,"
+                " section_id=excluded.section_id, col=excluded.col,"
+                " level=excluded.level"
+                " WHERE shelves.library_id = excluded.library_id",
+                (shelf.id, library.id, shelf.label, shelf.depth_count,
+                 int(shelf.virtual), shelf.created_at,
+                 addr.section_id if addr else None,
+                 addr.col if addr else None,
+                 addr.level if addr else None),
+            )
+        except sqlite3.IntegrityError as exc:
+            # By COLUMNS, not by index name — measured, and a PARTIAL unique
+            # index is no exception: SQLite reports "UNIQUE constraint failed:
+            # shelves.library_id, shelves.section_id, …". Same shape as
+            # captures.shelf_id and books.book_key.
+            if "shelves.section_id" in str(exc):
+                raise DuplicateShelfSlot(
+                    f"another shelf already stands at {addr} (MAP_PLAN §3.1)"
+                ) from exc
+            raise
 
     def get_shelf(self, library: LibraryRef, shelf_id: str) -> Shelf | None:
         with self._connect() as conn:
@@ -460,6 +467,27 @@ class SqliteShelfStore(_SqliteStore):
                 (library.id, section_id),
             ).fetchall()
         return tuple(_load_shelf(r) for r in rows)
+
+    def save_shelves(self, library: LibraryRef,
+                     shelves: tuple[Shelf, ...]) -> None:
+        # ONE connection, ONE transaction, for the whole bookcase. A security
+        # review measured the per-shelf version: 40 columns of 40 took 16.5s
+        # and 1600 connections from a 110-byte request, and *add a section*
+        # cost 17s more from 40 bytes.
+        if not shelves:
+            return
+        with self._connect() as conn, _immediate(conn):
+            for shelf in shelves:
+                self._write_shelf(conn, library, shelf)
+
+    def deepest_capture_depth(self, library: LibraryRef) -> dict[str, int]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT shelf_id, MAX(depth) FROM captures"
+                " WHERE library_id = ? GROUP BY shelf_id",
+                (library.id,),
+            ).fetchall()
+        return {r[0]: int(r[1]) for r in rows}
 
     def get_shelf_at(
         self, library: LibraryRef, address: ShelfAddress
@@ -1418,7 +1446,10 @@ class SqliteMapStore(_SqliteStore):
         return _load_site(row) if row else None
 
     def delete_site(self, library: LibraryRef, site_id: str) -> bool:
-        with self._connect() as conn:
+        # One exclusive transaction, for the reason `delete_bookcase` states:
+        # a floor created between the count and the DELETE turns the refusal
+        # into a raw IntegrityError, which is a 500 where the answer is 409.
+        with self._connect() as conn, _immediate(conn):
             if not self._exists(conn, "sites", library, site_id):
                 return False
             # ⚠ Measured at review: refusing a site that holds ANY floor made
@@ -1448,12 +1479,11 @@ class SqliteMapStore(_SqliteStore):
                 raise NotEmpty(
                     f"site {site_id} is the only one; a drawing has somewhere "
                     f"to be")
-            with conn:
-                conn.execute(
-                    "DELETE FROM floors WHERE library_id = ? AND site_id = ?",
-                    (library.id, site_id))
-                conn.execute("DELETE FROM sites WHERE id = ? AND library_id = ?",
-                             (site_id, library.id))
+            conn.execute(
+                "DELETE FROM floors WHERE library_id = ? AND site_id = ?",
+                (library.id, site_id))
+            conn.execute("DELETE FROM sites WHERE id = ? AND library_id = ?",
+                         (site_id, library.id))
             return True
 
     # --- floors -----------------------------------------------------------
@@ -1479,7 +1509,7 @@ class SqliteMapStore(_SqliteStore):
         return _load_floor(row) if row else None
 
     def delete_floor(self, library: LibraryRef, floor_id: str) -> bool:
-        with self._connect() as conn:
+        with self._connect() as conn, _immediate(conn):
             row = conn.execute(
                 "SELECT * FROM floors WHERE id = ? AND library_id = ?",
                 (floor_id, library.id)).fetchone()
@@ -1500,9 +1530,8 @@ class SqliteMapStore(_SqliteStore):
                 raise NotEmpty(
                     f"floor {floor_id} is the only storey of its site; a site "
                     f"has at least one")
-            with conn:
-                conn.execute("DELETE FROM floors WHERE id = ? AND library_id = ?",
-                             (floor_id, library.id))
+            conn.execute("DELETE FROM floors WHERE id = ? AND library_id = ?",
+                         (floor_id, library.id))
             return True
 
     # --- places -----------------------------------------------------------
@@ -1528,6 +1557,27 @@ class SqliteMapStore(_SqliteStore):
     def get_place(self, library: LibraryRef, place_id: str) -> Place | None:
         row = self._one("places", library, place_id)
         return _load_place(row) if row else None
+
+    def move_place(self, library: LibraryRef, place: Place,
+                   floor_id: str) -> Place:
+        moved = replace(place, floor_id=floor_id)
+        with self._connect() as conn, _immediate(conn):
+            if not self._exists(conn, "floors", library, floor_id):
+                raise UnknownParent(
+                    f"no floor {floor_id!r} in library {library.id!r}")
+            conn.execute(
+                'UPDATE places SET floor_id = ? WHERE id = ? AND library_id = ?',
+                (floor_id, place.id, library.id))
+            # …and the furniture goes with the room. One statement, one
+            # transaction: a review left a room upstairs and its bookcase on
+            # the ground floor, which bricked the case — every later write
+            # re-checked `NotOnThisFloor` and answered 409 about a mismatch
+            # the owner never created.
+            conn.execute(
+                'UPDATE bookcases SET floor_id = ?'
+                ' WHERE library_id = ? AND place_id = ?',
+                (floor_id, library.id, place.id))
+        return moved
 
     def delete_place(self, library: LibraryRef, place_id: str) -> bool:
         with self._connect() as conn:
@@ -1625,31 +1675,65 @@ class SqliteMapStore(_SqliteStore):
                 raise UnknownParent(
                     f"no bookcase {section.bookcase_id!r} in library "
                     f"{library.id!r}")
-            try:
-                with conn:
-                    conn.execute(
-                        'INSERT INTO sections (id, library_id, bookcase_id,'
-                        ' ordinal, column_levels, default_levels,'
-                        ' default_depth) VALUES (?,?,?,?,?,?,?)'
-                        ' ON CONFLICT(id) DO UPDATE SET'
-                        ' bookcase_id=excluded.bookcase_id,'
-                        ' ordinal=excluded.ordinal,'
-                        ' column_levels=excluded.column_levels,'
-                        ' default_levels=excluded.default_levels,'
-                        ' default_depth=excluded.default_depth'
-                        ' WHERE sections.library_id = excluded.library_id',
-                        (section.id, library.id, section.bookcase_id,
-                         section.ordinal,
-                         json.dumps(list(section.column_levels)),
-                         section.default_levels, section.default_depth))
-            except sqlite3.IntegrityError as exc:
-                # By columns, like every other unique index in this file.
-                if "sections.bookcase_id" in str(exc):
-                    raise DuplicateSectionOrdinal(
-                        f"another section is already number {section.ordinal} "
-                        f"of bookcase {section.bookcase_id} (MAP_PLAN §3.6)"
-                    ) from exc
-                raise
+            with conn:
+                self._write_section(conn, library, section)
+
+    @staticmethod
+    def _write_section(conn, library: LibraryRef, section: Section) -> None:
+        """One section, on a caller-owned transaction — shared with
+        :meth:`save_sections` so the UPSERT and its refusal exist once."""
+        try:
+            conn.execute(
+                'INSERT INTO sections (id, library_id, bookcase_id,'
+                ' ordinal, column_levels, default_levels,'
+                ' default_depth) VALUES (?,?,?,?,?,?,?)'
+                ' ON CONFLICT(id) DO UPDATE SET'
+                ' bookcase_id=excluded.bookcase_id,'
+                ' ordinal=excluded.ordinal,'
+                ' column_levels=excluded.column_levels,'
+                ' default_levels=excluded.default_levels,'
+                ' default_depth=excluded.default_depth'
+                ' WHERE sections.library_id = excluded.library_id',
+                (section.id, library.id, section.bookcase_id,
+                 section.ordinal,
+                 json.dumps(list(section.column_levels)),
+                 section.default_levels, section.default_depth))
+        except sqlite3.IntegrityError as exc:
+            # By columns, like every other unique index in this file.
+            if "sections.bookcase_id" in str(exc):
+                raise DuplicateSectionOrdinal(
+                    f"another section is already number {section.ordinal} "
+                    f"of bookcase {section.bookcase_id} (MAP_PLAN §3.6)"
+                ) from exc
+            raise
+
+    def save_sections(self, library: LibraryRef,
+                      sections: tuple[Section, ...]) -> None:
+        if not sections:
+            return
+        with self._connect() as conn, _immediate(conn):
+            for section in sections:
+                _same_library(section, library, "section")
+                if not self._exists(conn, "bookcases", library,
+                                    section.bookcase_id):
+                    raise UnknownParent(
+                        f"no bookcase {section.bookcase_id!r} in library "
+                        f"{library.id!r}")
+            # ⚠ Ordinals are cleared FIRST, in one statement, then rewritten.
+            # Writing them one by one in any order collides with the unique
+            # (bookcase, ordinal) index the moment a section moves onto a
+            # number a not-yet-moved sibling still holds — which is what
+            # "push everything up by one" always does. A negative parking
+            # number is outside every legal ordinal, so the intermediate
+            # state cannot collide with anything.
+            ids = [s.id for s in sections]
+            marks = ",".join("?" * len(ids))
+            conn.execute(
+                f"UPDATE sections SET ordinal = -ordinal"
+                f" WHERE library_id = ? AND id IN ({marks})",
+                (library.id, *ids))
+            for section in sections:
+                self._write_section(conn, library, section)
 
     def get_section(self, library: LibraryRef, section_id: str) -> Section | None:
         row = self._one("sections", library, section_id)
