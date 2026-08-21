@@ -521,6 +521,18 @@ class SqliteShelfStore(_SqliteStore):
                     f"shelf {shelf_id} still has captures; deleting it would "
                     "destroy the record a re-read diffs against (§5.6)"
                 )
+            # ⚠ And the books, which no foreign key can speak for: `copies`
+            # predates `shelves` by four schema versions and names it in a
+            # plain column, so `foreign_key_check` reports a clean file over a
+            # library whose locations have been silently emptied.
+            if conn.execute(
+                "SELECT 1 FROM copies WHERE shelf_id = ? AND library_id = ?",
+                (shelf_id, library.id),
+            ).fetchone():
+                raise ShelfNotEmpty(
+                    f"shelf {shelf_id} still holds books; deleting it would "
+                    "leave them with a location nothing can open (§5.6)"
+                )
             with conn:
                 cur = conn.execute(
                     "DELETE FROM shelves WHERE id = ? AND library_id = ?",

@@ -93,6 +93,7 @@ def _world():
     books = MemoryBookStore()
     maps.bind_shelves(shelves)
     shelves.bind_map(maps)
+    shelves.bind_books(books)
     maps.save_site(LIB, new_site(id="st", library_id=LIB.id, name="הבית"))
     maps.save_floor(LIB, new_floor(id="fl", library_id=LIB.id, site_id="st",
                                    name="קומת קרקע"))

@@ -183,11 +183,22 @@ class MemoryShelfStore:
         #: memory store would ACCEPT an address the real database refuses,
         #: and the API ring (which runs on memory stores) would never see it.
         self._sections: "MemoryMapStore | None" = None
+        #: The books this store must ask about before deleting a shelf.
+        #: SQLite does NOT get this one free — `copies.shelf_id` has no
+        #: foreign key, it predates the `shelves` table by four schema
+        #: versions — so the real database is as blind to it as this dict is,
+        #: and both implementations have to be told the same rule by hand.
+        self._books: "MemoryBookStore | None" = None
 
     def bind_map(self, maps: "MemoryMapStore") -> None:
         """Tell this store where the sections are, so an address can be
         checked against one."""
         self._sections = maps
+
+    def bind_books(self, books: "MemoryBookStore") -> None:
+        """Tell this store where the books are, so a shelf holding one cannot
+        be deleted out from under it."""
+        self._books = books
 
     def _s(self, library: LibraryRef) -> dict[str, Shelf]:
         return self._shelves.setdefault(library.id, {})
@@ -302,6 +313,25 @@ class MemoryShelfStore:
             raise ShelfNotEmpty(
                 f"shelf {shelf_id} still has captures; deleting it would "
                 "destroy the record a re-read diffs against (§5.6)"
+            )
+        # ⚠ FAIL CLOSED when unbound, exactly as the address check does and
+        # for the same reason its comment gives: a guard whose default is
+        # "skip me" is the shape of the `occupied_ids` default a review
+        # already measured. An unbound store cannot answer "does a book stand
+        # here", so it must not answer "yes, deleted".
+        if self._books is None:
+            raise RuntimeError(
+                "MemoryShelfStore was asked to delete a shelf before "
+                "bind_books(); it cannot check whether a book stands on it"
+            )
+        # `deepest_copy_depth` is the port method the map's own occupancy
+        # check already asks this question with (`map_edit`), so the two
+        # doors cannot answer it differently — and it needs no reach into
+        # another store's internals.
+        if shelf_id in self._books.deepest_copy_depth(library):
+            raise ShelfNotEmpty(
+                f"shelf {shelf_id} still holds books; deleting it would "
+                "leave them with a location nothing can open (§5.6)"
             )
         del self._s(library)[shelf_id]
         return True

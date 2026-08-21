@@ -43,8 +43,19 @@ function fakeMapServer() {
     places: [] as { id: string; floor_id: string; name: string;
                     rect: { x: number; y: number; w: number; h: number };
                     order: number }[],
-    /** Refuse the next write with this status, the way a 409 arrives. */
+    /** Refuse the next POST with this status, the way a 409 arrives. */
     refuseNext: null as number | null,
+    /**
+     * ⚠ Refuse the next DELETE specifically.
+     *
+     * One flag saying "the next write" is ambiguous the moment a flow makes
+     * several, and this one does: adding a site is a POST, and the loader then
+     * mints that site's first storey with another. A test arming a refusal for
+     * a REMOVAL had it eaten by a create it never thought about — the removal
+     * then succeeded and the test failed asserting a banner that was never
+     * shown. Intermittent, and mine.
+     */
+    refuseDeleteNext: null as number | null,
     /** Drop the next write the way a lift does: no response at all. */
     dropNext: false,
     /** Hold every POST until `release()`, so a test can make an edit arrive
@@ -92,9 +103,9 @@ function fakeMapServer() {
         state.floors = state.floors.filter((f) => f.site_id !== id)
         throw new TypeError('Failed to fetch')
       }
-      if (state.refuseNext) {
-        const status = state.refuseNext
-        state.refuseNext = null
+      if (state.refuseDeleteNext) {
+        const status = state.refuseDeleteNext
+        state.refuseDeleteNext = null
         return respond({ detail: 'עדיין יש כאן חדרים' }, status)
       }
       state.sites = state.sites.filter((x) => x.id !== id)
@@ -514,10 +525,13 @@ describe('the sites of one library', () => {
     await user.click(siteMenu())
     await user.click(
       screen.getByRole('menuitem', { name: HE.remove_site(server.sites[1]!.name) }))
-    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument(),
-                  WAIT)
-    // It says it could not tell — and the picker still tells the truth.
-    expect(screen.getByRole('alert')).toHaveTextContent(HE.not_done_lead)
+    // ⚠ Waits for the TEXT, not for "an alert exists". The two-step version
+    // raced: `getByRole('alert')` resolves the moment the banner mounts, and
+    // the assertion about WHICH notice it is then ran against whatever had
+    // rendered first. A wait whose condition is weaker than the assertion
+    // after it is a flake with extra steps.
+    await waitFor(() => expect(screen.getByRole('alert'))
+      .toHaveTextContent(HE.not_done_lead), WAIT)
     await waitFor(() => expect(screen.queryByRole('button', { name: HE.site_menu }))
       .not.toBeInTheDocument(), WAIT)
   })
@@ -530,7 +544,7 @@ describe('the sites of one library', () => {
     await user.click(screen.getByRole('menuitem', { name: HE.add_site }))
     await waitFor(() => expect(siteMenu()).toBeInTheDocument(), WAIT)
 
-    server.refuseNext = 409
+    server.refuseDeleteNext = 409
     await user.click(siteMenu())
     await user.click(screen.getByRole('menuitem', { name: HE.remove_site(HE.site_n(2)) }))
     await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument(), WAIT)

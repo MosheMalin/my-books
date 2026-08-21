@@ -24,7 +24,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from app.adapters.disk_blobs import DiskBlobStore
-from app.adapters.memory_store import MemoryReadStore, MemoryShelfStore
+from app.adapters.memory_store import (
+    MemoryBookStore,
+    MemoryReadStore,
+    MemoryShelfStore,
+)
 from app.blob_lifecycle import collect_orphans, find_orphans, referenced_keys
 from app.domain import (
     Claim,
@@ -56,6 +60,12 @@ class _World:
         self.blobs = DiskBlobStore(root)
         self.shelves = MemoryShelfStore()
         self.reads = MemoryReadStore()
+        # ⚠ A shelf may not be deleted while a book stands on it, and an
+        # UNBOUND memory store refuses to answer rather than answering weakly.
+        # This world has no books, and says so — the alternative is a store
+        # whose guard defaults to "skip me".
+        self.books = MemoryBookStore()
+        self.shelves.bind_books(self.books)
         self._n = 0
 
     def _id(self, prefix: str) -> str:
