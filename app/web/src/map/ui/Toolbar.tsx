@@ -159,12 +159,16 @@ export function Toolbar(props: Props) {
             { label: T.zoom_out, shortcut: '−',
               onSelect: () => props.onZoom(1 / 1.25) },
             { label: T.show_all, onSelect: props.onFit },
-            {
-              label: T.ghost_floors,
-              checked: props.ghosts,
-              disabled: !props.manyFloors,
-              onSelect: () => props.onGhosts(!props.ghosts),
-            },
+            // Absent with one storey, like the floor menu's own two: there
+            // is nothing to ghost, and a grey row with no reason reads as a
+            // broken menu.
+            ...(props.manyFloors
+              ? [{
+                  label: T.ghost_floors,
+                  checked: props.ghosts,
+                  onSelect: () => props.onGhosts(!props.ghosts),
+                }]
+              : []),
             {
               label: props.theme === 'dark' ? T.white_bg : T.black_bg,
               onSelect: () => props.onTheme(props.theme === 'dark' ? 'light' : 'dark'),

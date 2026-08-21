@@ -18,6 +18,7 @@ import type { Plan } from './core/model'
 import { emptyPlan } from './core/model'
 import { Ids, push, type Api, type Refusal } from './push'
 import { planDiff, toPlan, type MapWire, type ShelfWire } from './sync'
+import type { MapText } from './text'
 
 export type Saved = 'saving' | 'saved' | 'failed'
 
@@ -37,15 +38,35 @@ export type MapSource = {
    ensureHome: () => Promise<{ siteId: string; floorId: string }>
 }
 
+/**
+ * Why a push failure is NOT the load's `error`.
+ *
+ * A UX review measured the asymmetry and it was backwards: a REFUSAL — the
+ * server saying no, the more serious event — kept the editor and showed a
+ * banner, while a dropped connection mid-save answered the load's error
+ * screen. That unmounts the editor: the drawing, the selection, the undo stack
+ * and every edit since the last successful push are replaced by one line and a
+ * *retry* button which re-derives from the server, so the un-pushed work is not
+ * recovered, it is discarded. One thrown fetch on a phone in a lift.
+ *
+ * So `error` stays what it always meant — the document never arrived, there is
+ * nothing to edit — and a push that could not be delivered says so beside a
+ * drawing that is still on screen.
+ */
+export type Trouble = { detail: string }
+
 export type MapSync = {
   ready: boolean
   /** Bumps on every reload, so the editor remounts with the new document
    *  instead of adopting it. */
   generation: number
+  /** The LOAD failed: there is no document, so there is nothing to edit. */
   error: string | null
   saved: Saved
   /** The refusal the server gave, in its own words, or null. */
   refusal: Refusal | null
+  /** A push that never reached the server. The editor stays. */
+  trouble: Trouble | null
   dismiss: () => void
   /** The plan as the server last confirmed it — the editor's starting doc. */
   initial: Plan | null
@@ -54,12 +75,13 @@ export type MapSync = {
   reload: () => void
 }
 
-export function useMapSync(source: MapSource): MapSync {
+export function useMapSync(source: MapSource, T: MapText): MapSync {
   const [initial, setInitial] = useState<Plan | null>(null)
   const [ready, setReady] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState<Saved>('saved')
   const [refusal, setRefusal] = useState<Refusal | null>(null)
+  const [trouble, setTrouble] = useState<Trouble | null>(null)
   const [generation, setGeneration] = useState(0)
 
   /** The last state the SERVER confirmed. Every diff is against this, never
@@ -122,7 +144,7 @@ export function useMapSync(source: MapSource): MapSync {
         setInitial(plan)
         setReady(true)
       } catch (err) {
-        if (alive) setError(messageOf(err))
+        if (alive) setError(messageOf(err, T))
       }
     })()
     return () => {
@@ -192,11 +214,16 @@ export function useMapSync(source: MapSource): MapSync {
         confirmed.current = plan
         setSaved('saved')
       } catch (err) {
-        setError(messageOf(err))
+        // ⚠ NOT `setError`. See `Trouble`: the drawing is still on screen and
+        // still the truth about what the owner drew; what failed is the
+        // delivery. `confirmed` is left where it was, so the next edit's diff
+        // carries this one with it — which is the whole point of diffing
+        // against the last CONFIRMED state rather than the last render.
+        setTrouble({ detail: messageOf(err, T) })
         setSaved('failed')
       }
     })
-  }, [source, startOver])
+  }, [source, startOver, T])
 
   return {
     generation,
@@ -204,14 +231,25 @@ export function useMapSync(source: MapSource): MapSync {
     error,
     saved,
     refusal,
-    dismiss: () => setRefusal(null),
+    trouble,
+    dismiss: () => {
+      setRefusal(null)
+      setTrouble(null)
+    },
     initial,
     record,
     reload: startOver,
   }
 }
 
-function messageOf(err: unknown): string {
+/**
+ * ⚠ The fallback comes from the TABLE, handed in, because a hook cannot call
+ * `useI18n`. It used to be a Hebrew string literal here — so an English reader
+ * met one Hebrew sentence when the network dropped, and the dead-key scan
+ * could not see it, since it was never a key. That is the exact second half of
+ * the failure the scan was written for: a string that never entered the table.
+ */
+function messageOf(err: unknown, T: MapText): string {
   const e = err as { detail?: string; message?: string }
-  return e?.detail || e?.message || 'לא הצלחנו לשמור את השינוי'
+  return e?.detail || e?.message || T.save_failed_hint
 }

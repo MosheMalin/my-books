@@ -12,12 +12,14 @@ import { useMemo } from 'react'
 import { useI18n } from '../lib/i18n'
 
 import MapScreen from './MapScreen'
+import { mapText } from './text'
 import type { MapSource } from './useMapSync'
 import { useMapSync } from './useMapSync'
 import { getMap, listShelves, mapDelete, mapPatch, mapPost } from '../api/client'
 
 export function PlanScreen() {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
+  const T = mapText(lang)
 
   const source: MapSource = useMemo(() => ({
     load: async () => {
@@ -55,31 +57,52 @@ export function PlanScreen() {
     },
   }), [t.plan_site_default])
 
-  const sync = useMapSync(source)
+  const sync = useMapSync(source, T)
 
   if (sync.error) {
     return (
-      <main className="screen">
-        <p role="alert">{sync.error}</p>
+      <main className="mapstate">
+        <p className="mapbanner" role="alert">{sync.error}</p>
         <button type="button" onClick={sync.reload}>{t.retry}</button>
       </main>
     )
   }
-  /* The server's own words. A refusal here is a rule the owner met — "a
-     bookcase holds at most 400 shelves", "3 rooms still on this floor" — and
-     paraphrasing it would lose the count that makes it actionable.
-
-     ⚠ Rendered ABOVE the loading branch, because a refusal is exactly when
-     the editor is re-deriving: hiding the reason while the screen it refers
-     to is rebuilt would make the one informative message the briefest thing
-     on screen. */
-  const banner = sync.refusal && (
-    <p className="mapbanner" role="alert" onClick={sync.dismiss}>
-      {sync.refusal.detail}
-    </p>
+  /**
+   * One banner, two things it can be saying.
+   *
+   * A REFUSAL is a rule the owner met — "a bookcase holds at most 400
+   * shelves", "3 rooms still on this floor". The server's numbers are kept
+   * verbatim because they are what makes it actionable; the LEAD is in the
+   * reader's language, because `no such bookcase` in English is not an audit
+   * artefact like an engine rejection reason, it is what a household member
+   * reads at the moment something went wrong. (Translating the whole thing
+   * needs a machine-readable code on the wire — recorded for P6.4 rather than
+   * guessed at with a regex over English prose.)
+   *
+   * TROUBLE is a push that never arrived, and it says what happens next,
+   * which is true by construction: `confirmed` did not advance, so the change
+   * rides along with the next diff.
+   *
+   * ⚠ Rendered ABOVE the loading branch, because a refusal is exactly when
+   * the editor is re-deriving: hiding the reason while the screen it refers
+   * to is rebuilt would make the one informative message the briefest thing
+   * on screen.
+   */
+  const said = sync.refusal
+    ? `${T.refused_lead} ${sync.refusal.detail}`
+    : sync.trouble
+      ? `${T.not_saved_yet} ${sync.trouble.detail}`
+      : null
+  const banner = said && (
+    <div className="mapbanner" role="alert">
+      <span className="rtl-safe">{said}</span>
+      <button type="button" aria-label={T.dismiss} onClick={sync.dismiss}>
+        ✕
+      </button>
+    </div>
   )
   if (!sync.ready || !sync.initial) {
-    return <main className="screen">{banner}<p>{t.loading}</p></main>
+    return <main className="mapstate">{banner}<p>{t.loading}</p></main>
   }
   return (
     <>

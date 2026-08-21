@@ -182,6 +182,10 @@ export interface MapText {
   saved: string
   save_failed: string
   saved_hint: string
+  save_failed_hint: string
+  not_saved_yet: string
+  refused_lead: string
+  dismiss: string
 }
 
 const HE: MapText = {
@@ -242,7 +246,7 @@ const HE: MapText = {
   floor_not_removed: (rooms, cases) =>
     `לא הוסרה — עדיין יש בקומה הזו ${[
       rooms > 0 ? (rooms === 1 ? 'חדר אחד' : `${rooms} חדרים`) : '',
-      cases > 0 ? (cases === 1 ? 'כוננית אחת' : `${cases} כוננויות`) : '',
+      cases > 0 ? (cases === 1 ? 'כוננית אחת' : `${cases} כונניות`) : '',
     ].filter(Boolean).join(' ו')}.`,
   read_only_bar: 'כל הקומות — צפייה בלבד, אי אפשר לערוך',
   back_to: (floor) => `חזרה ל${floor}`,
@@ -258,25 +262,27 @@ const HE: MapText = {
   turn_case: 'סיבוב הכוננית',
   turn_to: (side) => `${side} ⟳ סיבוב`,
   side: (s) => ({ N: 'למעלה', E: 'ימינה', S: 'למטה', W: 'שמאלה' })[s],
-  cases_attached: 'כוננויות מחוברות',
+  cases_attached: 'כונניות מחוברות',
   too_small: (squares) => `קטן מדי — יש לגרור לפחות ${squares} × ${squares} משבצות`,
   nothing_to_see: 'לא היה נשאר מה לראות',
   too_many_slots: (asked, max) =>
-    `לא בוצע — כוננית מחזיקה עד ${max} מדפים, וכאן היו ${asked}.`,
-  too_many_sections: (max) => `לא בוצע — כוננית מחזיקה עד ${max} יחידות.`,
+    `לא בוצע — כוננית מחזיקה עד ${max} מדפים, והשינוי הזה מגיע ל-${asked}. `
+    + 'כוננית גדולה כל כך היא בדרך כלל שתי כונניות, או יחידה נוספת מעליה.',
+  too_many_sections: (max) =>
+    `לא בוצע — כוננית מחזיקה עד ${max} יחידות. כוננית נוספת ליד היא הדרך.`,
   copied: (n) => (n === 1 ? 'פריט אחד הועתק.' : `${n} פריטים הועתקו.`),
   selected_n: (n) => (n === 1 ? 'פריט אחד נבחר' : `${n} נבחרו`),
   selected_mix: (rooms, cases) =>
     `${rooms === 1 ? 'חדר אחד' : `${rooms} חדרים`} · ${
-      cases === 1 ? 'כוננית אחת' : `${cases} כוננויות`
+      cases === 1 ? 'כוננית אחת' : `${cases} כונניות`
     }. גרירה של אחד מהם מזיזה את כולם.`,
   selected_carried: (n) =>
     n === 1
       ? 'עוד כוננית אחת תזוז יחד, כי היא מחוברת לחדר שנבחר.'
-      : `עוד ${n} כוננויות יזוזו יחד, כי הן מחוברות לחדרים שנבחרו.`,
+      : `עוד ${n} כונניות יזוזו יחד, כי הן מחוברות לחדרים שנבחרו.`,
   delete_all: (n) => (n === 1 ? 'מחיקת הפריט' : `מחיקת כל ${n} הפריטים`),
   delete_cases_confirm: (cases, shelves, photos) =>
-    `${cases === 1 ? 'למחוק את הכוננית' : `למחוק ${cases} כוננויות`} ו${
+    `${cases === 1 ? 'למחוק את הכוננית' : `למחוק ${cases} כונניות`} ו${
       shelves === 1 ? 'את המדף שבה' : `-${shelves} המדפים שבהן`}?` +
     (photos > 0
       ? ` ל${photos === 1 ? 'מדף אחד' : `-${photos} מדפים`} מצורפות תמונות.`
@@ -285,7 +291,7 @@ const HE: MapText = {
   delete_room: 'מחיקת החדר הזה',
   delete_case: 'מחיקת הכוננית הזו',
   rooms_keep_their_cases:
-    'מחיקת חדר לעולם אינה מוחקת את הכוננויות שבו — הן נשארות במקומן ואינן שייכות לאף חדר.',
+    'מחיקת חדר לעולם אינה מוחקת את הכונניות שבו — הן נשארות במקומן ואינן שייכות לאף חדר.',
   size_units: 'גודל (יחידות)',
   room_width: 'רוחב החדר',
   room_height: 'עומק החדר',
@@ -305,14 +311,15 @@ const HE: MapText = {
   case_summary: (name, w, h, side) => `${name} · ${w}×${h} · פונה ${side}`,
   case_facts: (units, deep, shelves) =>
     `${units} יחידות של קיר, ${deep} לעומק כפי שצוירה · ${shelves} מדפים`,
-  in_room: (name) => ` · ב${name}`,
+  in_room: (name) => ` · ב${name}`,   // caller passes a NAMED room
+
   in_no_room: ' · לא מחוברת לחדר',
   in_sections: (n) => ` ב-${n} יחידות`,
   free_measurement:
     'מדידה חופשית — יחסית לקירות החדר, לעולם לא בסנטימטרים, ושום דבר כאן אינו מסיק כמה ספרים נכנסים.',
   counts: (rooms, cases) =>
     `${rooms === 1 ? 'חדר אחד' : `${rooms} חדרים`} · ${
-      cases === 1 ? 'כוננית אחת' : `${cases} כוננויות`}.`,
+      cases === 1 ? 'כוננית אחת' : `${cases} כונניות`}.`,
   step_room: '— גררו מלבן. גררו את הבא לידו והם ייצמדו קיר אל קיר.',
   step_case:
     '— גררו מלבן בתוך חדר. הוא נצמד לקיר, מתחבר לחדר, וזז איתו.',
@@ -346,7 +353,7 @@ const HE: MapText = {
   own_depth: 'העומק שלו',
   photos_attached: 'תמונות מצורפות',
   photos_are_captures:
-    'התמונות מגיעות מצילום המדף, לא מכאן — הרבה תמונות לכל מדף, לכל אחת העומק שלה, כבר קיימות במוצר.',
+    'תמונות מגיעות מצילום המדף, לא מכאן. אפשר לצלם כמה תמונות לאותו מדף, ולכל אחת העומק שלה.',
   shelf_depth: 'עומק המדף הזה',
   black_bg: 'רקע שחור',
   white_bg: 'רקע לבן',
@@ -364,7 +371,13 @@ const HE: MapText = {
   saving: 'שומר…',
   saved: 'נשמר',
   save_failed: 'לא נשמר',
-  saved_hint: 'כל שינוי נשמר בספרייה מיד. אם כתוב "לא נשמר" — השרת סירב, וההודעה שלו למעלה.',
+  saved_hint: 'כל שינוי נשמר בספרייה מיד. אם כתוב "לא נשמר" — ההודעה למעלה אומרת למה.',
+  save_failed_hint: 'לא הצלחנו לשמור את השינוי',
+  // ⚠ True by construction: a push that failed to arrive leaves `confirmed`
+  // where it was, so the next diff carries this change with it.
+  not_saved_yet: 'לא נשמר — השינוי יישלח שוב יחד עם השינוי הבא.',
+  refused_lead: 'השרת סירב לשינוי:',
+  dismiss: 'סגירת ההודעה',
 }
 
 const EN: MapText = {
@@ -442,8 +455,12 @@ const EN: MapText = {
   too_small: (squares) => `too small — drag out at least ${squares} × ${squares} squares`,
   nothing_to_see: 'that would leave nothing to see',
   too_many_slots: (asked, max) =>
-    `Not done — a bookcase holds at most ${max} shelves; this would have ${asked}.`,
-  too_many_sections: (max) => `Not done — a bookcase holds at most ${max} sections.`,
+    `Not done — a bookcase holds at most ${max} shelves, and this change reaches `
+    + `${asked}. A bookcase that big is usually two bookcases, or one with `
+    + 'another section on top.',
+  too_many_sections: (max) =>
+    `Not done — a bookcase holds at most ${max} sections. A second bookcase `
+    + 'beside it is the way.',
   copied: (n) => `Copied ${n} item${n > 1 ? 's' : ''}.`,
   selected_n: (n) => `${n} selected`,
   selected_mix: (rooms, cases) =>
@@ -522,7 +539,7 @@ const EN: MapText = {
   own_depth: 'Its own depth',
   photos_attached: 'Photos attached',
   photos_are_captures:
-    'Photos arrive by photographing the shelf, not from here — many per shelf, each with its own depth, already exists in the product.',
+    'Photos arrive by photographing the shelf, not from here. A shelf can have several, each with its own depth.',
   shelf_depth: "this shelf's depth",
   black_bg: 'Black background',
   white_bg: 'White background',
@@ -541,7 +558,11 @@ const EN: MapText = {
   saved: 'Saved',
   save_failed: 'Not saved',
   saved_hint:
-    'Every change is written to the library immediately. "Not saved" means the server refused, and its own words are in the banner above.',
+    'Every change is written to the library immediately. "Not saved" means the banner above says why.',
+  save_failed_hint: 'We could not save that change',
+  not_saved_yet: 'Not saved — it will be sent again with your next change.',
+  refused_lead: 'The server refused:',
+  dismiss: 'dismiss this message',
 }
 
 export const mapText = (lang: Lang): MapText => (lang === 'he' ? HE : EN)

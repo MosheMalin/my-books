@@ -77,13 +77,29 @@ describe('map.css', () => {
       .toEqual(['.leaky'])
   })
 
+  it('counts a bare `.page` as loose, since every tab carries it', () => {
+    // The exception is the PLAN tab's own class, not the page shell. Probed,
+    // because a prefix test is exactly the shape that silently widens.
+    const loose = (css: string) => selectors(css).filter(
+      (s) => !s.startsWith('.mapscreen') && !s.startsWith('.page-plan') &&
+             !s.startsWith('.page.page-plan'))
+    expect(loose('.page { padding: 0; }')).toEqual(['.page'])
+    expect(loose('.page-plan .mapbanner { color: red; }')).toEqual([])
+    expect(loose('.page.page-plan { padding: 0; }')).toEqual([])
+  })
+
   it('scopes every rule to the editor', () => {
     // ⚠ `.page-plan` is the ONE exception and it is deliberate: it dresses the
-    // element the editor is mounted INTO, so it cannot be inside `.mapscreen`.
-    // It is scoped by a class nothing else uses — see the comment on it.
-    const loose = selectors(css).filter(
-      (s) => !s.startsWith('.mapscreen') && !s.startsWith('.page.page-plan'),
-    )
+    // element the editor is mounted INTO — and the two surfaces that REPLACE
+    // the editor, the refusal banner and the load screen — so none of them can
+    // live inside `.mapscreen`. `page-plan` is a class no other screen carries
+    // (`App.tsx` puts it on `<main>` for this tab only), which is what makes
+    // it a scope rather than a loophole.
+    const scoped = (s: string) =>
+      s.startsWith('.mapscreen') ||
+      s.startsWith('.page-plan') ||
+      s.startsWith('.page.page-plan')
+    const loose = selectors(css).filter((s) => !scoped(s))
     expect(loose, `these can match outside the editor: ${loose.join(' | ')}`)
       .toEqual([])
   })

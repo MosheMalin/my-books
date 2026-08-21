@@ -42,6 +42,8 @@ function fakeMapServer() {
     floors: [] as { id: string; site_id: string; name: string; order: number }[],
     /** Refuse the next write with this status, the way a 409 arrives. */
     refuseNext: null as number | null,
+    /** Drop the next write the way a lift does: no response at all. */
+    dropNext: false,
     /** Hold every POST until `release()`, so a test can make an edit arrive
      *  while an earlier one is still in flight. */
     holding: false,
@@ -75,6 +77,10 @@ function fakeMapServer() {
     if (method === 'GET' && path === '/shelves') return respond([])
     if (method === 'POST') {
       if (state.holding) await new Promise<void>((go) => state.held.push(go))
+      if (state.dropNext) {
+        state.dropNext = false
+        throw new TypeError('Failed to fetch')
+      }
       if (state.refuseNext) {
         const status = state.refuseNext
         state.refuseNext = null
@@ -200,6 +206,34 @@ describe('reloading the plan', () => {
     await waitFor(() => expect(
       screen.getByRole('menuitemcheckbox', { name: HE.floor_n(2) }))
       .toBeInTheDocument(), WAIT)
+  })
+
+  it('keeps the drawing when a push never reaches the server', async () => {
+    // ⚠ The asymmetry a UX review measured, and it was backwards: a REFUSAL
+    // (the server saying no) kept the editor, while a dropped connection —
+    // the recoverable one — answered the LOAD's error screen, which unmounts
+    // everything. On a phone in a lift that is the drawing, the selection, the
+    // undo stack and every edit since the last successful push, replaced by
+    // one line and a button that re-derives from the server rather than
+    // retrying: the work was not recovered, it was discarded.
+    const user = userEvent.setup()
+    open()
+    await screen.findByRole('radio', { name: HE.arrow }, WAIT)
+
+    server.dropNext = true
+    await addFloor(user)
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument(),
+                  WAIT)
+
+    // The editor is still there, and it still holds the storey just added.
+    expect(screen.getByRole('radio', { name: HE.arrow })).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent(HE.not_saved_yet)
+    expect(server.calls.filter((c) => c === 'GET /map')).toHaveLength(2)
+
+    // …and the next edit carries the dropped one with it, because `confirmed`
+    // never advanced. Two floors reach the server from three local ones.
+    await addFloor(user)
+    await waitFor(() => expect(server.floors).toHaveLength(3), WAIT)
   })
 
   it('re-derives from the server after a refusal instead of undoing it', async () => {

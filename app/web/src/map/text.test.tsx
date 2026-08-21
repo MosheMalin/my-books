@@ -127,8 +127,72 @@ describe('the editor in Hebrew', () => {
     // collide, and the pair left colliding last time included rename.
     expect(screen.getByRole('menuitem', { name: HE.rename_floor(FLOOR) }))
       .toBeInTheDocument()
-    expect(screen.getByRole('menuitem', { name: HE.remove_floor(FLOOR) }))
+  })
+
+  it('offers nothing a one-storey household cannot do', async () => {
+    // ⚠ ABSENT, not greyed. *Remove this floor*, *all floors side by side* and
+    // *ghost the other floors* are impossible with one storey — three dead
+    // rows with no reason given, which is what "absent, not disabled" is for.
+    // The sentence that would explain the disabled remove is only reachable by
+    // pressing it, so it was live in the table and dead on screen.
+    const user = userEvent.setup()
+    openEditor()
+    await user.click(screen.getByRole('button', { name: HE.floor_menu }))
+    expect(screen.queryByRole('menuitem', { name: HE.remove_floor(FLOOR) }))
+      .not.toBeInTheDocument()
+    expect(screen.queryByRole('menuitemcheckbox', { name: HE.all_floors_long }))
+      .not.toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    await user.click(screen.getByRole('button', { name: HE.menu_view }))
+    expect(screen.queryByRole('menuitemcheckbox', { name: HE.ghost_floors }))
+      .not.toBeInTheDocument()
+
+    // …and they are all there the moment a second storey is.
+    await user.keyboard('{Escape}')
+    await user.click(screen.getByRole('button', { name: HE.floor_menu }))
+    await user.click(screen.getByRole('menuitem', { name: HE.add_floor }))
+    await user.click(screen.getByRole('button', { name: HE.floor_menu }))
+    expect(screen.getByRole('menuitem', { name: HE.remove_floor(HE.floor_n(2)) }))
       .toBeInTheDocument()
+    expect(screen.getByRole('menuitemcheckbox', { name: HE.all_floors_long }))
+      .toBeInTheDocument()
+  })
+
+  it('takes the floor badge off the board in the read-only overview', async () => {
+    // ⚠ Both sit at `top: 10px` in the same wrapper — the read-only bar
+    // centred, the badge at the inline start — and on a 390px phone in Hebrew
+    // a review measured them overlapping by 87px with the badge painting last:
+    // 19 of the exit button's 96px were reachable, the rest opened the floor
+    // menu. That is the trap the overview's own comment describes ("I could
+    // not get rid of it no matter which button I clicked"), re-created by
+    // geometry. Nothing is lost: the bar names the mode, and three of the
+    // badge's five rows are meaningless while it is up.
+    const user = userEvent.setup()
+    openEditor()
+    await user.click(screen.getByRole('button', { name: HE.floor_menu }))
+    await user.click(screen.getByRole('menuitem', { name: HE.add_floor }))
+    await user.click(screen.getByRole('button', { name: HE.floor_menu }))
+    await user.click(
+      screen.getByRole('menuitemcheckbox', { name: HE.all_floors_long }))
+
+    expect(screen.getByText(HE.read_only_bar)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: HE.floor_menu }))
+      .not.toBeInTheDocument()
+  })
+
+  it('lets the badge take its direction from the UI, never from a floor name', () => {
+    // `inset-inline-start` resolves against the element's OWN direction, and
+    // `dir="auto"` took that from the first strong character of the NAME — so
+    // in an English UI a Hebrew storey name put the badge in the opposite
+    // corner of the board, and renaming it moved it back. jsdom lays nothing
+    // out; what is asserted is the rule: the container states no direction,
+    // and the isolation lives on the text.
+    openEditor()
+    const badge = screen.getByRole('button', { name: HE.floor_menu })
+      .closest('.floor-badge')
+    expect(badge).not.toBeNull()
+    expect(badge!.getAttribute('dir')).toBeNull()
+    expect(badge!.querySelector('.floor-name')).toHaveClass('rtl-safe')
   })
 
   it('names a new storey in the reader\'s language, because the name is DATA', async () => {

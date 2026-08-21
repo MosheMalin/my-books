@@ -277,7 +277,15 @@ function CasePanel({
           is the part you come back to, and on a phone the panel is 38% of the
           screen — four fields above it push the grid off the bottom. */}
       <Fold
-        storageKey="booksnap.map-lab.fold.caseDetails"
+        storageKey="booksnap.map.fold.caseDetails"
+        /* ⚠ Closed FIRST on a phone. The panel is 38% of the screen there, and
+           a review measured the elevation grid 351px below its top and the
+           per-column controls 580px below — two panel-heights of scrolling to
+           reach the thing the bookcase was selected for. The fold's summary
+           already says name · size · facing, so its closed state hides nothing
+           it does not state. Sticky, so this is the DEFAULT for someone who
+           has never touched it, not a rule about what they may open. */
+        startClosed={onPhone()}
         forceOpen={wanted}
         label={T.case_details}
         summary={T.case_summary(bc.name || T.unnamed, bc.rect.w, bc.rect.h,
@@ -344,7 +352,13 @@ function CasePanel({
         <p className="note">
           {T.case_facts(caseLength(bc), caseThickness(bc), allShelves(bc).length)}
           {bc.sections.length > 1 ? T.in_sections(bc.sections.length) : ''}
-          {room ? T.in_room(room.name || T.unnamed) : T.in_no_room}
+          {/* ⚠ The SAME name the room's own controls print. Falling back to
+              a bare "unnamed" glued the Hebrew preposition onto it — the
+              panel read בללא שם — and disagreed with the Select two rows
+              above, which has always called this room חדר 26×25. */}
+          {room
+            ? T.in_room(room.name || T.unnamed_room(room.rect.w, room.rect.h))
+            : T.in_no_room}
           {'.'}
           <br />
           {T.free_measurement}
@@ -387,20 +401,32 @@ function CasePanel({
  * "Details ▸" makes you open it to find out whether you needed it, which
  * costs more than it saved.
  */
+/** A phone, by the same breakpoint `map.css` uses. Guarded, because jsdom has
+ *  no `matchMedia` — and a missing one must mean "not a phone", not a crash. */
+const onPhone = (): boolean => {
+  try {
+    return window.matchMedia?.('(max-width: 640px)').matches ?? false
+  } catch {
+    return false
+  }
+}
+
 function Fold({
   storageKey,
   label,
   summary,
   forceOpen,
+  startClosed,
   children,
 }: {
   storageKey: string
   label: string
   summary: string
   forceOpen?: boolean
+  startClosed?: boolean
   children: React.ReactNode
 }) {
-  const [open, setOpen] = useSticky(storageKey, true)
+  const [open, setOpen] = useSticky(storageKey, !startClosed)
   // A rename that lands in a collapsed fold would put the caret somewhere
   // invisible, which reads as "double-click did nothing".
   useEffect(() => {

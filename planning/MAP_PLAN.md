@@ -731,6 +731,48 @@ The rule it earns: a commit message asserting a property must name where the
 property is enforced, and the enforcement must be opened while the sentence is
 written.
 
+**Then three reviews on the closing commits found nine more, and two of them
+lost work.** Kept because they are what a port costs after the port looks
+finished:
+
+- **reloading the plan pushed the REVERSE of the session.** `initial` is the
+  last plan the server was asked for, `confirmed` the last it was told; they
+  agree only until the first successful push, and re-keying `MapScreen` mounts
+  it on the stale one, which every mount hands to `record`. *Plan ▸ Reload* and
+  every refusal deleted the session's bookcases — `DELETE …/slots` detaches the
+  shelves books stand on. `startOver` unmounts before the bump, an `era`
+  counter drops writes queued before it, and `done` (which the same review
+  correctly called dead) decides whether what landed mid-reload needs a second
+  re-derive;
+- **a dropped push answered the LOAD's error screen**, which unmounts the
+  editor: the drawing, the selection, the undo stack and every un-pushed edit,
+  replaced by a *retry* that re-derives rather than retries. A refusal — the
+  more serious event — had always kept the editor. `Trouble` is its own state
+  now, and says the change rides along with the next diff, which is true
+  because `confirmed` did not advance;
+- **a section restored into the MIDDLE of a stack was sent as `top`.**
+  `ordinal` is what an address prints, so furniture silently changed storeys.
+  `POST /map/sections` takes `above_id` — the section it STANDS ON — which is
+  the general form and the only way to say it at all;
+- **the surface carrying the server's own words had no CSS in any sheet**, and
+  the refusal outlived the remount it triggered, leaving a `role="alert"` above
+  a toolbar reading *נשמר*;
+- **the floor badge chose its corner from the floor's NAME** (`dir="auto"` on a
+  container, with `inset-inline-start` resolving against it), and in the
+  read-only overview it covered 80% of the only exit — the trap that mode's own
+  comment exists to prevent, re-created by geometry;
+- three smaller ones with the same shape as rules already on record: greyed
+  rows a one-storey household can never use (absent now), a hard-coded Hebrew
+  sentence that never entered the table, and `1 פריטים`.
+
+⚠ **`--appbar-h` is an offset, not a subtrahend.** Filling the viewport by
+`calc(100dvh - var(--appbar-h))` was measured 2px too long on a desktop and 3px
+short on a phone; the shell is a flex column now and the editor fills what is
+left. Twice more in the same fix: a percentage height needs a parent with a
+DEFINITE one (the canvas snapped back to 150px), and an `auto` inline margin on
+a flex item absorbs free space instead of stretching (the editor came out 636px
+wide, centred, on a 1280px window). All three measured in a real browser.
+
 ## 6. What P6.1 must not repeat
 
 Rule 11 of CLAUDE.md, in its own words: three consecutive migration reviews

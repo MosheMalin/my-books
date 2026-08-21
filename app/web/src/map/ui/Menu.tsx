@@ -79,7 +79,12 @@ export function Menu({
                 it.onSelect()
               }}
             >
-              <span>
+              {/* ⚠ `rtl-safe`: a row's label can carry USER text — a floor's
+                  name is interpolated into *rename* and *remove* — and a
+                  mixed-script name in a menu resolves its own direction only
+                  if something says so. The panel's own lists have carried this
+                  class since the lab; the menu had not. */}
+              <span className="rtl-safe">
                 {it.checked !== undefined && (
                   <span className="tick" aria-hidden="true">
                     {it.checked ? '✓' : ' '}

@@ -83,22 +83,102 @@
  * comment on `<main>` in `App.tsx`. This is the ONE rule in this file that is
  * not scoped to `.mapscreen`, because it is about the element the editor is
  * mounted INTO; it is scoped by `.page-plan`, which nothing else uses. */
-.page.page-plan {
-  padding: 0;
-  max-width: none;
+/*
+ * The two surfaces the editor shows when it is NOT drawing: a refusal, and a
+ * load that has not arrived.
+ *
+ * ⚠ Both had no CSS at all. `.mapbanner` and `.screen` existed only in the
+ * TSX, so the server's own words — the one thing on screen that says why an
+ * edit did not happen — rendered as a bare paragraph above the toolbar, with
+ * less visual weight than the hint. Measured at review by grepping every sheet
+ * in both packages for the class names.
+ *
+ * Not scoped to `.mapscreen`, because they replace it rather than live inside
+ * it; `.page-plan` is the tab, and nothing else uses it.
+ */
+.page-plan .mapstate {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 40dvh;
+  padding: 24px 16px;
 }
 
-/* ⚠ A REAL height, not `100%`. As the lab's root this filled a full-viewport
- * mount and `height: 100%` was true; inside `main.page` it resolves against a
- * parent with no height of its own, so the flex children collapsed to their
- * content and the canvas — the only thing here with nothing to be tall about
- * — was measured at 150px on a phone, with the hint overlaying half of it.
- * The page's own padding is dropped for this tab (`.page.page-plan`), so the
- * arithmetic is the app bar and nothing else. */
+.page-plan .mapbanner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #6b4200;
+  background: #fff5e2;
+  border-bottom: 1px solid #b06a00;
+}
+.page-plan .mapstate .mapbanner {
+  border: 1px solid #b06a00;
+  border-radius: 8px;
+  max-width: 42rem;
+}
+.page-plan .mapbanner button {
+  flex: none;
+  min-height: 32px;
+  min-width: 32px;
+  padding: 0 8px;
+  color: inherit;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.page-plan .mapbanner button:hover { border-color: currentColor; }
+
+@media (prefers-color-scheme: dark) {
+  .page-plan .mapbanner { color: #ffe0b0; background: #3a2f1a; }
+}
+
+.page.page-plan {
+  /* ⚠ A flex COLUMN, not just a flex child. `.mapscreen` asked for
+     `height: 100%` and got 150px back: a percentage height resolves against
+     a parent with a DEFINITE height, and a flex item that is merely stretched
+     has an automatic one. Measured on the phone breakpoint — the canvas was
+     exactly as short as it had been before any of this. */
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+  max-width: none;
+  /* ⚠ And no `auto` margin. `.page` centres itself with `margin: 0 auto`,
+     and an auto inline margin on a flex ITEM absorbs the free space
+     INSTEAD of stretching: measured at 1280px, the editor came out 636px
+     wide — its own content width — centred in the window. */
+  margin: 0;
+}
+
+/* ⚠ A REAL height, and NO arithmetic. As the lab's root this filled a
+ * full-viewport mount and `height: 100%` was true; inside `main.page` it
+ * resolves against a parent with no height of its own, so the flex children
+ * collapsed to their content and the canvas — the only thing here with
+ * nothing to be tall about — was measured at 150px on a phone, with the hint
+ * overlaying half of it.
+ *
+ * The first fix subtracted `--appbar-h`, and a UX review measured the app bar
+ * at 57px on a desktop and 52px on a phone against that token's 55: the
+ * workspace scrolled 2px, and on a phone 2px of scrollable page is enough to
+ * make the address bar slide during a drag. `tokens.css` is honest about what
+ * that number is for — an offset for a sticky toolbar, where ±2px is
+ * invisible — so the fix is to stop asking it a question it cannot answer:
+ * the SHELL becomes the flex parent (that rule lives in `books.css`, since
+ * it dresses `#root`) and this fills whatever is left. */
 .mapscreen {
   display: flex;
   flex-direction: column;
-  height: calc(100dvh - var(--appbar-h));
+  flex: 1;
   min-height: 320px;
 }
 
@@ -248,6 +328,14 @@
     border-top: 1px solid var(--line);
   }
   .mapscreen .resizer { display: none; }
+  /* ⚠ Thumb-sized. A review measured the elevation's cells at 30px and its
+     per-column ± at 26px against a 44px target — and the grid's own
+     `minmax(44px, 1fr)` governs the column WIDTH, which was never the tight
+     axis. The panel is 38% of a phone, so this is where a fat finger meets
+     the one control that changes the shelf count. */
+  .mapscreen .elev-cell { min-height: 40px; }
+  .mapscreen .elev-col-foot button { min-height: 40px; }
+  .mapscreen .elevation-cols button { min-height: 40px; }
   .mapscreen .toolbar { gap: 5px; padding: 5px 6px; }
   .mapscreen .toolbar button { padding: 6px 9px; font-size: 12px; }
   .mapscreen .brand { display: none; }

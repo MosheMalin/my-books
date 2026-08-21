@@ -219,6 +219,27 @@
   opacity: 0.55;
 }
 
+/* The plan tab is a WORKSPACE, not a document: it sizes itself to the viewport
+ * and scrolls inside its own panes. `:has()` keeps that to the tab that asks
+ * for it — every other screen keeps the normal flow, where `main` is as tall
+ * as its content.
+ *
+ * ⚠ Measured at review: subtracting `--appbar-h` from `100dvh` instead left
+ * the workspace 2px scrollable on a desktop (bar 57px, token 55) and 3px
+ * short on a phone (bar 52px). The token is an offset for a sticky toolbar,
+ * where ±2px is invisible; as a subtrahend for a full-height pane it is a
+ * magic number that is wrong in both directions. */
+:root:has(.page-plan) #root {
+  display: flex;
+  flex-direction: column;
+  /* ⚠ `100%`, not `100dvh`. `base.css` already gives `html, body` a height, so
+     this resolves against the real client box; `100dvh` is the browser's idea
+     of the viewport, and where the two differ (measured: a 829px client area
+     against an 844px dvh) the shell overshoots and the workspace scrolls by
+     the difference. Percentages cannot disagree with the box they are in. */
+  min-height: 100%;
+}
+
 .page {
   padding: 18px 20px 60px;
   max-width: 1500px;

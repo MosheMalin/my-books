@@ -47,9 +47,17 @@ import {
 } from './limits'
 import { mapText, type MapText } from './text'
 
-const THEME_KEY = 'booksnap.map-lab.theme'
-const FLOOR_KEY = 'booksnap.map-lab.floor'
-const SIDE_KEY = 'booksnap.map-lab.side'
+/**
+ * The owner's own state: panel width, current storey, background.
+ *
+ * booksnap.map.*, not booksnap.map-lab.*. The lab is deleted, and renaming
+ * these later would silently reset all three for everyone who had used the
+ * editor. It is free exactly now, on a branch that has not merged, and never
+ * again.
+ */
+const THEME_KEY = 'booksnap.map.theme'
+const FLOOR_KEY = 'booksnap.map.floor'
+const SIDE_KEY = 'booksnap.map.side'
 const SIDE_MIN = 220
 const SIDE_MAX = 720
 const clampSide = (w: number) => Math.max(SIDE_MIN, Math.min(SIDE_MAX, Math.round(w)))
@@ -74,7 +82,7 @@ export default function MapScreen(props: MapScreenProps) {
   const [floorPick, setFloorPick] = useState<string>(loadFloor)
   const [clipboard, setClipboard] = useState<Clipboard>(null)
   const [view, setView] = useState<View>(initialView)
-  const [message, setMessage] = useState<string | null>(null)
+  const [message, setMessage] = useState<{ text: string; n: number } | null>(null)
   const [ghosts, setGhosts] = useState(false)
   const [allFloors, setAllFloors] = useState(false)
   /** Which object the canvas asked to have renamed. The panel opens its fold
@@ -148,10 +156,26 @@ export default function MapScreen(props: MapScreenProps) {
     }
   }, [theme])
 
+  /**
+   * ⚠ Keyed, so pressing a refused control TWICE says something twice.
+   *
+   * The previous shape set `message` to the identical string, React bailed out
+   * of the render, and the natural "did that work?" second tap produced
+   * literally nothing — no flash, no re-announcement — while the first press's
+   * timer went on owning the clear, so the toast could vanish under the second
+   * press. A counter makes each answer its own state, with its own 2600ms.
+   * `role="status"` is on the element: the read-only bar beside it has had one
+   * since the lab, and this is the surface that carries a refusal.
+   */
   const say = useCallback((text: string) => {
-    setMessage(text)
-    window.setTimeout(() => setMessage((m) => (m === text ? null : m)), 2600)
+    setMessage((m) => ({ text, n: (m?.n ?? 0) + 1 }))
   }, [])
+
+  useEffect(() => {
+    if (!message) return
+    const timer = window.setTimeout(() => setMessage(null), 2600)
+    return () => window.clearTimeout(timer)
+  }, [message])
 
   // --- document edits ------------------------------------------------------
 
@@ -689,13 +713,24 @@ export default function MapScreen(props: MapScreenProps) {
           {overview && (
             <div className="readonly-bar" role="status">
               <span>{T.read_only_bar}</span>
-              <button type="button" onClick={() => setAllFloors(false)}>
+              <button type="button" className="rtl-safe"
+                      onClick={() => setAllFloors(false)}>
                 {T.back_to(
                   doc.plan.floors.find((f) => f.id === floorId)?.name || T.the_plan)}
               </button>
             </div>
           )}
-          <FloorBadge
+          {/* ⚠ The badge is ABSENT in the overview, not merely behind the bar.
+              Both sit at `top: 10px` in the same wrapper — the bar centred, the
+              badge at the inline start — and on a 390px phone in Hebrew they
+              overlapped by 87px, with the badge painting last: a UX review
+              hit-tested the exit and found 19 of its 96px reachable, the rest
+              opening the floor menu. That is the trap the comment above
+              describes ("I could not get rid of it no matter which button I
+              clicked") re-created by geometry. Nothing is lost by hiding it:
+              the bar already names the mode, and three of the badge's five
+              menu items are disabled while it is up. */}
+          {!overview && <FloorBadge
             floors={doc.plan.floors}
             floorId={floorId}
             allFloors={overview}
@@ -707,8 +742,12 @@ export default function MapScreen(props: MapScreenProps) {
             onAdd={addFloor}
             onRename={renameFloor}
             onRemove={removeFloor}
-          />
-          {message && <div className="toast">{message}</div>}
+          />}
+          {message && (
+            <div className="toast rtl-safe" role="status" key={message.n}>
+              {message.text}
+            </div>
+          )}
         </div>
         {/* Drag to widen the settings. The elevation of a wide bookcase wants
             the room, and 330 px is a guess about someone else's screen. */}

@@ -44,7 +44,14 @@ export function FloorBadge(props: Props) {
   }, [editing])
 
   return (
-    <div className="floor-badge" dir="auto">
+    /* ⚠ No `dir="auto"` on the CONTAINER. `inset-inline-start` resolves
+       against the element's OWN direction, and `auto` takes that from the
+       first strong character of the floor's NAME — so in an English UI a
+       storey called "קומת קרקע" put the badge at x=814 (the right edge of a
+       929px canvas) and renaming it to "Ground" moved it to x=10, with no
+       other change. Direction per STRING, alignment per CONTAINER: the name
+       span carries `.rtl-safe`, which is the whole of what the text needs. */
+    <div className="floor-badge">
       {editing ? (
         <input
           ref={inputRef}
@@ -84,12 +91,19 @@ export function FloorBadge(props: Props) {
               props.onFloor(f.id)
             },
           })),
-          {
-            label: T.all_floors_long,
-            checked: props.allFloors,
-            disabled: props.floors.length <= 1,
-            onSelect: () => props.onAllFloors(!props.allFloors),
-          },
+          // ⚠ ABSENT with one storey, not greyed. A household that never
+          // adds a floor — most of them — met three permanently-dead rows
+          // with no reason given, which is what the "absent, not disabled"
+          // rule exists to prevent. Worse, the sentence that WOULD explain
+          // the disabled *remove* (`one_floor_at_least`) is only reachable by
+          // calling it, so it was live in the source and dead on screen.
+          ...(props.floors.length > 1
+            ? [{
+                label: T.all_floors_long,
+                checked: props.allFloors,
+                onSelect: () => props.onAllFloors(!props.allFloors),
+              }]
+            : []),
           { label: T.add_floor, onSelect: props.onAdd },
           {
             // Named for THIS floor: two controls announcing the same
@@ -99,12 +113,14 @@ export function FloorBadge(props: Props) {
             disabled: props.allFloors,
             onSelect: () => setEditing(true),
           },
-          {
-            label: T.remove_floor(current?.name || T.floor),
-            disabled: props.floors.length <= 1 || props.allFloors,
-            danger: true,
-            onSelect: props.onRemove,
-          },
+          ...(props.floors.length > 1
+            ? [{
+                label: T.remove_floor(current?.name || T.floor),
+                disabled: props.allFloors,
+                danger: true,
+                onSelect: props.onRemove,
+              }]
+            : []),
         ]}
       />
     </div>
