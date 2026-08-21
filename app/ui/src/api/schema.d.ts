@@ -768,6 +768,10 @@ export interface paths {
          *     §3.1: a drawn slot IS a Shelf. Ask for 2 columns of 5 and ten real, empty,
          *     addressed shelves come into existence, each carrying the section's depth
          *     as a COPY. That is the point of the route, not a side effect of it.
+         *
+         *     The answer names that first section, because the client addresses it in
+         *     the very next gesture and has no other way to learn its id — see
+         *     :class:`BookcaseDrawnDTO`.
          */
         post: operations["create_bookcase_api_v1_map_bookcases_post"];
         delete?: never;
@@ -926,6 +930,13 @@ export interface paths {
          *     usually has about as many columns as its base and re-entering what is
          *     already on screen is not a feature. Adding at the BOTTOM renumbers the
          *     ones above: ``ordinal`` is bottom-first, unique, and printed in addresses.
+         *
+         *     ⚠ ``above_id`` is the general form and exists because ``top``/``bottom``
+         *     cannot say *back where it was*: a review measured a section restored into
+         *     the MIDDLE of a stack by an undo being sent as ``top``, appended by this
+         *     route, and recorded by the client as landed — so the drawing and the
+         *     library disagreed about which unit stands on which, and ``ordinal`` is what
+         *     an address prints.
          */
         post: operations["create_section_api_v1_map_sections_post"];
         delete?: never;
@@ -1006,6 +1017,37 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/v1/map/sections/{section_id}/shelves/{col}/{level}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Set Shelf Depth
+         * @description The per-shelf depth override — *"default for the whole bookcase,
+         *     overridable per shelf"*, in the owner's own words (MAP_PLAN §1).
+         *
+         *     Addressed by SLOT rather than by shelf id, because that is what the
+         *     elevation has in its hand: the cell the owner tapped. Both indices are
+         *     1-based, like every address on the wire.
+         *
+         *     ⚠ It cannot take a shelf below its deepest occupied depth, for the reason
+         *     §3.3 gives about the section default one level up: a copy recorded at
+         *     depth 2 of a shelf declaring one row is a location `check_depth` then
+         *     refuses, and no foreign key can see it. Deepening is never refused —
+         *     there is nothing behind a shelf to protect.
+         */
+        patch: operations["set_shelf_depth_api_v1_map_sections__section_id__shelves__col___level__patch"];
         trace?: never;
     };
     "/api/v1/map/sections/{section_id}/slots": {
@@ -1878,6 +1920,50 @@ export interface components {
              */
             place_id?: string | null;
             rect: components["schemas"]["RectDTO"];
+        };
+        /**
+         * BookcaseDrawnDTO
+         * @description What drawing a bookcase answers: the case **and the section it minted
+         *     alongside it**.
+         *
+         *     ⚠ The section id is not a convenience. A create mints its ids on the
+         *     server while the document holds locally minted ones, and the client
+         *     translates rather than rewrites (`app/web/src/map/push.ts`) — so an id it
+         *     is never told stays local for the rest of the session. The elevation
+         *     addresses that first section in the very next gesture: draw a case, press
+         *     ``+ column``, and without this field the request goes to
+         *     ``/map/sections/c3:s1`` and answers *404 no such section*. A previous fix
+         *     claimed to close that by reading ``section`` off this response, which did
+         *     not carry one.
+         */
+        BookcaseDrawnDTO: {
+            /** Floor Id */
+            floor_id: string;
+            /**
+             * Front
+             * @description N/E/S/W — which face the books look out of, and therefore whose LEFT END is column 1. A fact about the furniture, so the UI's reading direction never moves it.
+             * @default S
+             */
+            front: string;
+            /** Id */
+            id: string;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /**
+             * Order
+             * @default 0
+             */
+            order: number;
+            /**
+             * Place Id
+             * @description The room it stands in. Null is legal — a case drawn before its room is somewhere rather than nowhere, and it carries its own floor for that reason (§3.7).
+             */
+            place_id?: string | null;
+            rect: components["schemas"]["RectDTO"];
+            section: components["schemas"]["SectionDTO"];
         };
         /** BookcasePatch */
         BookcasePatch: {
@@ -2895,13 +2981,18 @@ export interface components {
          *     against — a hutch usually has about as many columns as its base.
          */
         SectionCreate: {
+            /**
+             * Above Id
+             * @description Put it directly above THIS section, and shape it like that one. The general form of `where`, and the only way to express a section going back into the MIDDLE of a stack — which is what undoing a middle removal is. Without it the client had to say `top`, the server appended, and the drawing and the library silently disagreed about which unit stands on which.
+             */
+            above_id?: string | null;
             /** Bookcase Id */
             bookcase_id: string;
             /**
              * Where
-             * @default top
+             * @description At the top of the stack, or under it. Omit both fields for the top.
              */
-            where: string;
+            where?: string | null;
         };
         /**
          * SectionDTO
@@ -3139,6 +3230,17 @@ export interface components {
             name?: string | null;
             /** Order */
             order?: number | null;
+        };
+        /**
+         * SlotDepthPatch
+         * @description One shelf's OWN depth — the per-shelf override §3.3 promises.
+         *
+         *     Not clamped to the section's default in either direction: the whole point
+         *     is that a shelf may differ from the case it stands in.
+         */
+        SlotDepthPatch: {
+            /** Depth Count */
+            depth_count: number;
         };
         /**
          * SlotRemovalDTO
@@ -4308,7 +4410,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["BookcaseDTO"];
+                    "application/json": components["schemas"]["BookcaseDrawnDTO"];
                 };
             };
             /** @description Validation Error */
@@ -4757,6 +4859,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SectionEditDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_shelf_depth_api_v1_map_sections__section_id__shelves__col___level__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                section_id: string;
+                col: number;
+                level: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SlotDepthPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShelfDTO"];
                 };
             };
             /** @description Validation Error */

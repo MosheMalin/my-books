@@ -1194,6 +1194,31 @@ class SectionDTO(BaseModel):
                    default_depth=section.default_depth)
 
 
+class BookcaseDrawnDTO(BookcaseDTO):
+    """What drawing a bookcase answers: the case **and the section it minted
+    alongside it**.
+
+    ⚠ The section id is not a convenience. A create mints its ids on the
+    server while the document holds locally minted ones, and the client
+    translates rather than rewrites (`app/web/src/map/push.ts`) — so an id it
+    is never told stays local for the rest of the session. The elevation
+    addresses that first section in the very next gesture: draw a case, press
+    ``+ column``, and without this field the request goes to
+    ``/map/sections/c3:s1`` and answers *404 no such section*. A previous fix
+    claimed to close that by reading ``section`` off this response, which did
+    not carry one.
+    """
+
+    section: SectionDTO
+
+    @classmethod
+    def of_drawn(cls, case: Bookcase, section: Section) -> "BookcaseDrawnDTO":
+        return cls(id=case.id, floor_id=case.floor_id, place_id=case.place_id,
+                   name=case.name, front=case.front,
+                   rect=RectDTO.of(case.rect), order=case.order,
+                   section=SectionDTO.of(section))
+
+
 class MapDTO(BaseModel):
     """One library's whole drawing, in one response.
 
@@ -1312,7 +1337,21 @@ class SectionCreate(BaseModel):
     against — a hutch usually has about as many columns as its base."""
 
     bookcase_id: str = Field(min_length=1)
-    where: str = Field(default="top", pattern="^(top|bottom)$")
+    where: str | None = Field(
+        default=None, pattern="^(top|bottom)$",
+        description="At the top of the stack, or under it. Omit both fields "
+                    "for the top.",
+    )
+    above_id: str | None = Field(
+        default=None,
+        description="Put it directly above THIS section, and shape it like "
+                    "that one. The general form of `where`, and the only way "
+                    "to express a section going back into the MIDDLE of a "
+                    "stack — which is what undoing a middle removal is. "
+                    "Without it the client had to say `top`, the server "
+                    "appended, and the drawing and the library silently "
+                    "disagreed about which unit stands on which.",
+    )
 
 
 class SectionPatch(BaseModel):
@@ -1327,6 +1366,16 @@ class SectionPatch(BaseModel):
     levels: int | None = Field(default=None, ge=1, le=40)
     default_levels: int | None = Field(default=None, ge=1, le=40)
     default_depth: int | None = Field(default=None, ge=1, le=MAX_DEPTH)
+
+
+class SlotDepthPatch(BaseModel):
+    """One shelf's OWN depth — the per-shelf override §3.3 promises.
+
+    Not clamped to the section's default in either direction: the whole point
+    is that a shelf may differ from the case it stands in.
+    """
+
+    depth_count: int = Field(ge=1, le=MAX_DEPTH)
 
 
 class SlotRemovalDTO(BaseModel):

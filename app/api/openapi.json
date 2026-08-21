@@ -410,6 +410,63 @@
         "title": "BookcaseDTO",
         "type": "object"
       },
+      "BookcaseDrawnDTO": {
+        "description": "What drawing a bookcase answers: the case **and the section it minted\nalongside it**.\n\n⚠ The section id is not a convenience. A create mints its ids on the\nserver while the document holds locally minted ones, and the client\ntranslates rather than rewrites (`app/web/src/map/push.ts`) — so an id it\nis never told stays local for the rest of the session. The elevation\naddresses that first section in the very next gesture: draw a case, press\n``+ column``, and without this field the request goes to\n``/map/sections/c3:s1`` and answers *404 no such section*. A previous fix\nclaimed to close that by reading ``section`` off this response, which did\nnot carry one.",
+        "properties": {
+          "floor_id": {
+            "title": "Floor Id",
+            "type": "string"
+          },
+          "front": {
+            "default": "S",
+            "description": "N/E/S/W — which face the books look out of, and therefore whose LEFT END is column 1. A fact about the furniture, so the UI's reading direction never moves it.",
+            "title": "Front",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "default": "",
+            "title": "Name",
+            "type": "string"
+          },
+          "order": {
+            "default": 0,
+            "maximum": 100000.0,
+            "minimum": -100000.0,
+            "title": "Order",
+            "type": "integer"
+          },
+          "place_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The room it stands in. Null is legal — a case drawn before its room is somewhere rather than nowhere, and it carries its own floor for that reason (§3.7).",
+            "title": "Place Id"
+          },
+          "rect": {
+            "$ref": "#/components/schemas/RectDTO"
+          },
+          "section": {
+            "$ref": "#/components/schemas/SectionDTO"
+          }
+        },
+        "required": [
+          "id",
+          "floor_id",
+          "rect",
+          "section"
+        ],
+        "title": "BookcaseDrawnDTO",
+        "type": "object"
+      },
       "BookcasePatch": {
         "properties": {
           "detach": {
@@ -2287,16 +2344,35 @@
       "SectionCreate": {
         "description": "Add a section to a bookcase. It copies the shape of the one it stands\nagainst — a hutch usually has about as many columns as its base.",
         "properties": {
+          "above_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Put it directly above THIS section, and shape it like that one. The general form of `where`, and the only way to express a section going back into the MIDDLE of a stack — which is what undoing a middle removal is. Without it the client had to say `top`, the server appended, and the drawing and the library silently disagreed about which unit stands on which.",
+            "title": "Above Id"
+          },
           "bookcase_id": {
             "minLength": 1,
             "title": "Bookcase Id",
             "type": "string"
           },
           "where": {
-            "default": "top",
-            "pattern": "^(top|bottom)$",
-            "title": "Where",
-            "type": "string"
+            "anyOf": [
+              {
+                "pattern": "^(top|bottom)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "At the top of the stack, or under it. Omit both fields for the top.",
+            "title": "Where"
           }
         },
         "required": [
@@ -2752,6 +2828,22 @@
           }
         },
         "title": "SitePatch",
+        "type": "object"
+      },
+      "SlotDepthPatch": {
+        "description": "One shelf's OWN depth — the per-shelf override §3.3 promises.\n\nNot clamped to the section's default in either direction: the whole point\nis that a shelf may differ from the case it stands in.",
+        "properties": {
+          "depth_count": {
+            "maximum": 4.0,
+            "minimum": 1.0,
+            "title": "Depth Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "depth_count"
+        ],
+        "title": "SlotDepthPatch",
         "type": "object"
       },
       "SlotRemovalDTO": {
@@ -4449,7 +4541,7 @@
     },
     "/api/v1/map/bookcases": {
       "post": {
-        "description": "Draw a bookcase — **and every shelf its first section describes.**\n\n§3.1: a drawn slot IS a Shelf. Ask for 2 columns of 5 and ten real, empty,\naddressed shelves come into existence, each carrying the section's depth\nas a COPY. That is the point of the route, not a side effect of it.",
+        "description": "Draw a bookcase — **and every shelf its first section describes.**\n\n§3.1: a drawn slot IS a Shelf. Ask for 2 columns of 5 and ten real, empty,\naddressed shelves come into existence, each carrying the section's depth\nas a COPY. That is the point of the route, not a side effect of it.\n\nThe answer names that first section, because the client addresses it in\nthe very next gesture and has no other way to learn its id — see\n:class:`BookcaseDrawnDTO`.",
         "operationId": "create_bookcase_api_v1_map_bookcases_post",
         "requestBody": {
           "content": {
@@ -4466,7 +4558,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BookcaseDTO"
+                  "$ref": "#/components/schemas/BookcaseDrawnDTO"
                 }
               }
             },
@@ -4875,7 +4967,7 @@
     },
     "/api/v1/map/sections": {
       "post": {
-        "description": "Add a section — a hutch on the base, or a plinth under it.\n\nIt copies the shape of the section it stands against, because a hutch\nusually has about as many columns as its base and re-entering what is\nalready on screen is not a feature. Adding at the BOTTOM renumbers the\nones above: ``ordinal`` is bottom-first, unique, and printed in addresses.",
+        "description": "Add a section — a hutch on the base, or a plinth under it.\n\nIt copies the shape of the section it stands against, because a hutch\nusually has about as many columns as its base and re-entering what is\nalready on screen is not a feature. Adding at the BOTTOM renumbers the\nones above: ``ordinal`` is bottom-first, unique, and printed in addresses.\n\n⚠ ``above_id`` is the general form and exists because ``top``/``bottom``\ncannot say *back where it was*: a review measured a section restored into\nthe MIDDLE of a stack by an undo being sent as ``top``, appended by this\nroute, and recorded by the client as landed — so the drawing and the\nlibrary disagreed about which unit stands on which, and ``ordinal`` is what\nan address prints.",
         "operationId": "create_section_api_v1_map_sections_post",
         "requestBody": {
           "content": {
@@ -5083,6 +5175,77 @@
           }
         },
         "summary": "Apply Levels",
+        "tags": [
+          "map"
+        ]
+      }
+    },
+    "/api/v1/map/sections/{section_id}/shelves/{col}/{level}": {
+      "patch": {
+        "description": "The per-shelf depth override — *\"default for the whole bookcase,\noverridable per shelf\"*, in the owner's own words (MAP_PLAN §1).\n\nAddressed by SLOT rather than by shelf id, because that is what the\nelevation has in its hand: the cell the owner tapped. Both indices are\n1-based, like every address on the wire.\n\n⚠ It cannot take a shelf below its deepest occupied depth, for the reason\n§3.3 gives about the section default one level up: a copy recorded at\ndepth 2 of a shelf declaring one row is a location `check_depth` then\nrefuses, and no foreign key can see it. Deepening is never refused —\nthere is nothing behind a shelf to protect.",
+        "operationId": "set_shelf_depth_api_v1_map_sections__section_id__shelves__col___level__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "section_id",
+            "required": true,
+            "schema": {
+              "title": "Section Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "col",
+            "required": true,
+            "schema": {
+              "title": "Col",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "level",
+            "required": true,
+            "schema": {
+              "title": "Level",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SlotDepthPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShelfDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Shelf Depth",
         "tags": [
           "map"
         ]

@@ -1,3 +1,5 @@
+import { useI18n } from '../../lib/i18n'
+import { mapText } from '../text'
 /**
  * The properties panel — "edit their settings" (owner, 2026-08-16).
  *
@@ -12,6 +14,8 @@
  */
 
 import { useEffect, useRef } from 'react'
+
+import { Select } from '@booksnap/ui'
 
 import { Elevation } from './Elevation'
 import type { Doc, Selection } from './types'
@@ -28,8 +32,6 @@ import {
   shelfAt,
 } from '../core/model'
 
-const SIDE_NAME = { N: 'up', S: 'down', E: 'right', W: 'left' } as const
-
 export type Actions = {
   renameRoom: (id: string, name: string) => void
   resizeRoom: (id: string, w: number, h: number) => void
@@ -44,7 +46,6 @@ export type Actions = {
   setDefaultDepth: (id: string, sectionId: string, n: number) => void
   applyDefaultDepth: (id: string, sectionId: string) => void
   setShelfDepth: (id: string, sectionId: string, col: number, level: number, n: number) => void
-  setShelfPhotos: (id: string, sectionId: string, col: number, level: number, n: number) => void
   addSection: (id: string, where: 'top' | 'bottom') => void
   removeSection: (id: string, sectionId: string) => void
   deleteSelection: () => void
@@ -106,6 +107,7 @@ function Many({
   selection: Selection
   actions: Actions
 }) {
+  const T = mapText(useI18n().lang)
   const rooms = plan.rooms.filter((r) => selection.rooms.includes(r.id))
   const cases = plan.cases.filter((c) => selection.cases.includes(c.id))
   const carried = plan.cases.filter(
@@ -113,46 +115,35 @@ function Many({
   )
   return (
     <div className="inspector">
-      <h2>{count(selection)} selected</h2>
+      <h2>{T.selected_n(count(selection))}</h2>
       <p className="note">
-        {rooms.length} room{rooms.length === 1 ? '' : 's'} · {cases.length} bookcase
-        {cases.length === 1 ? '' : 's'}. Drag any of them and they all move.
-        {carried.length > 0 && (
-          <>
-            {' '}
-            <strong>{carried.length}</strong> more bookcase
-            {carried.length === 1 ? '' : 's'} will travel along, attached to the
-            selected rooms.
-          </>
-        )}
+        {T.selected_mix(rooms.length, cases.length)}
+        {carried.length > 0 && <> {T.selected_carried(carried.length)}</>}
       </p>
       <ul className="picked">
         {rooms.map((r) => (
           <li key={r.id} className="rtl-safe">
-            {r.name || `room ${r.rect.w}×${r.rect.h}`}
+            {r.name || T.unnamed_room(r.rect.w, r.rect.h)}
           </li>
         ))}
         {cases.map((c) => (
           <li key={c.id} className="rtl-safe">
-            {c.name || `bookcase ${c.rect.w}×${c.rect.h}`}
+            {c.name || T.unnamed_case(c.rect.w, c.rect.h)}
           </li>
         ))}
       </ul>
       <div className="row">
         <button type="button" onClick={actions.copySelection}>
-          Copy
+          {T.copy}
         </button>
         <button type="button" onClick={actions.paste}>
-          Paste
+          {T.paste}
         </button>
       </div>
       <button type="button" className="danger" onClick={actions.deleteSelection}>
-        Delete all {count(selection)}
+        {T.delete_all(count(selection))}
       </button>
-      <p className="note">
-        Deleting a room never deletes its bookcases — they stay where they stand
-        and belong to no room.
-      </p>
+      <p className="note">{T.rooms_keep_their_cases}</p>
     </div>
   )
 }
@@ -198,18 +189,19 @@ function RoomPanel({
   renaming: Renaming
   onRenamed: () => void
 }) {
+  const T = mapText(useI18n().lang)
   const nameRef = useRenameFocus(renaming?.kind === 'room' && renaming.id === room.id, onRenamed)
   const attached = plan.cases.filter((c) => c.roomId === room.id)
   return (
     <div className="inspector">
-      <h2>Room</h2>
+      <h2>{T.room}</h2>
       <label className="field">
-        <span>Name</span>
+        <span>{T.name}</span>
         <input
           ref={nameRef}
           className="rtl-safe"
           value={room.name}
-          placeholder="סלון · living room"
+          placeholder={T.room_name_example}
           onKeyDown={finishOnEnter}
           onChange={(e) => actions.renameRoom(room.id, e.target.value)}
         />
@@ -217,18 +209,15 @@ function RoomPanel({
       <Size
         w={room.rect.w}
         h={room.rect.h}
-        labelW="room width"
-        labelH="room height"
+        labelW={T.room_width}
+        labelH={T.room_height}
         onChange={(w, h) => actions.resizeRoom(room.id, w, h)}
       />
 
       <fieldset>
-        <legend>Bookcases attached</legend>
+        <legend>{T.cases_attached}</legend>
         {attached.length === 0 ? (
-          <p className="note">
-            None yet. A bookcase drawn inside this room attaches to it
-            automatically, and then moves with it.
-          </p>
+          <p className="note">{T.no_cases_yet}</p>
         ) : (
           <>
             <ul className="picked">
@@ -237,24 +226,21 @@ function RoomPanel({
                   <button
                     type="button"
                     className="link rtl-safe"
-                    aria-label={`select the bookcase ${c.name || c.id}`}
+                    aria-label={T.select_case(c.name || c.id)}
                     onClick={() => actions.select({ rooms: [], cases: [c.id], shelf: null })}
                   >
-                    {c.name || `bookcase ${c.rect.w}×${c.rect.h}`}
+                    {c.name || T.unnamed_case(c.rect.w, c.rect.h)}
                   </button>
                 </li>
               ))}
             </ul>
-            <p className="note">
-              These move when this room moves — including any that now stand
-              outside its outline.
-            </p>
+            <p className="note">{T.cases_move_with_room}</p>
           </>
         )}
       </fieldset>
 
       <button type="button" className="danger" onClick={actions.deleteSelection}>
-        Delete this room
+        {T.delete_room}
       </button>
     </div>
   )
@@ -279,29 +265,39 @@ function CasePanel({
   renaming: Renaming
   onRenamed: () => void
 }) {
+  const T = mapText(useI18n().lang)
   const room = plan.rooms.find((r) => r.id === bc.roomId) ?? null
   const wanted = renaming?.kind === 'case' && renaming.id === bc.id
   const nameRef = useRenameFocus(wanted, onRenamed)
   return (
     <div className="inspector">
-      <h2>Bookcase</h2>
+      <h2>{T.bookcase}</h2>
 
       {/* Where the case IS collapses; what is ON it does not. The shelf editor
           is the part you come back to, and on a phone the panel is 38% of the
           screen — four fields above it push the grid off the bottom. */}
       <Fold
-        storageKey="booksnap.map-lab.fold.caseDetails"
+        storageKey="booksnap.map.fold.caseDetails"
+        /* ⚠ Closed FIRST on a phone. The panel is 38% of the screen there, and
+           a review measured the elevation grid 351px below its top and the
+           per-column controls 580px below — two panel-heights of scrolling to
+           reach the thing the bookcase was selected for. The fold's summary
+           already says name · size · facing, so its closed state hides nothing
+           it does not state. Sticky, so this is the DEFAULT for someone who
+           has never touched it, not a rule about what they may open. */
+        startClosed={onPhone()}
         forceOpen={wanted}
-        label="Name, size, room, facing"
-        summary={`${bc.name || 'unnamed'} · ${bc.rect.w}×${bc.rect.h} · faces ${SIDE_NAME[bc.front]}`}
+        label={T.case_details}
+        summary={T.case_summary(bc.name || T.unnamed, bc.rect.w, bc.rect.h,
+                                T.side(bc.front))}
       >
         <label className="field">
-          <span>Name</span>
+          <span>{T.name}</span>
           <input
             ref={nameRef}
             className="rtl-safe"
             value={bc.name}
-            placeholder="ארון הסלון"
+            placeholder={T.case_name_example}
             onKeyDown={finishOnEnter}
             onChange={(e) => actions.renameCase(bc.id, e.target.value)}
           />
@@ -310,51 +306,62 @@ function CasePanel({
         <Size
           w={bc.rect.w}
           h={bc.rect.h}
-          labelW="bookcase width"
-          labelH="bookcase height"
+          labelW={T.case_width}
+          labelH={T.case_height}
           onChange={(w, h) => actions.resizeCase(bc.id, w, h)}
         />
 
         <label className="field inline">
-          <span>Moves with</span>
-          <select
+          <span>{T.moves_with}</span>
+          {/* The SHARED control, not a bare <select>: Chrome pins the UA
+              chevron a fixed distance from the border and ignores
+              padding-inline-end, so one dropdown on the page would look
+              designed and this one defaulted. `app/ui`'s own test refuses a
+              bare one in this app — it caught this line on the day the lab
+              came over. */}
+          <Select
             className="rtl-safe"
-            aria-label="the room this bookcase is attached to"
+            aria-label={T.moves_with}
             value={bc.roomId ?? ''}
             onChange={(e) => actions.setCaseRoom(bc.id, e.target.value || null)}
           >
-            <option value="">nothing — stands alone</option>
+            <option value="">{T.stands_alone}</option>
             {/* Only rooms on THIS storey: a bookcase cannot move with a room on
                 another floor, and offering it would be offering a broken link. */}
             {plan.rooms
               .filter((r) => r.floorId === floorId)
               .map((r) => (
                 <option key={r.id} value={r.id}>
-                  {r.name || `room ${r.rect.w}×${r.rect.h}`}
+                  {r.name || T.unnamed_room(r.rect.w, r.rect.h)}
                 </option>
               ))}
-          </select>
+          </Select>
         </label>
 
         <div className="field inline">
-          <span>Books face</span>
+          <span>{T.books_face}</span>
           <button
             type="button"
             onClick={() => actions.turnCase(bc.id)}
-            aria-label="turn the bookcase"
+            aria-label={T.turn_case}
           >
-            {SIDE_NAME[bc.front]} ⟳ turn
+            {T.turn_to(T.side(bc.front))}
           </button>
         </div>
 
         <p className="note">
-          <strong>{caseLength(bc)} units</strong> of wall, {caseThickness(bc)} deep as drawn
-          {room ? ` · in ${room.name || 'an unnamed room'}` : ' · attached to no room'} ·{' '}
-          {allShelves(bc).length} shelves
-          {bc.sections.length > 1 ? ` in ${bc.sections.length} sections` : ''}.
+          {T.case_facts(caseLength(bc), caseThickness(bc), allShelves(bc).length)}
+          {bc.sections.length > 1 ? T.in_sections(bc.sections.length) : ''}
+          {/* ⚠ The SAME name the room's own controls print. Falling back to
+              a bare "unnamed" glued the Hebrew preposition onto it — the
+              panel read בללא שם — and disagreed with the Select two rows
+              above, which has always called this room חדר 26×25. */}
+          {room
+            ? T.in_room(room.name || T.unnamed_room(room.rect.w, room.rect.h))
+            : T.in_no_room}
+          {'.'}
           <br />
-          Free measurement — relative to this room's walls, never centimetres,
-          and nothing here infers how many books fit.
+          {T.free_measurement}
         </p>
       </Fold>
 
@@ -381,7 +388,7 @@ function CasePanel({
       <ShelfPanel bc={bc} selection={selection} actions={actions} />
 
       <button type="button" className="danger" onClick={actions.deleteSelection}>
-        Delete this bookcase
+        {T.delete_case}
       </button>
     </div>
   )
@@ -394,20 +401,32 @@ function CasePanel({
  * "Details ▸" makes you open it to find out whether you needed it, which
  * costs more than it saved.
  */
+/** A phone, by the same breakpoint `map.css` uses. Guarded, because jsdom has
+ *  no `matchMedia` — and a missing one must mean "not a phone", not a crash. */
+const onPhone = (): boolean => {
+  try {
+    return window.matchMedia?.('(max-width: 640px)').matches ?? false
+  } catch {
+    return false
+  }
+}
+
 function Fold({
   storageKey,
   label,
   summary,
   forceOpen,
+  startClosed,
   children,
 }: {
   storageKey: string
   label: string
   summary: string
   forceOpen?: boolean
+  startClosed?: boolean
   children: React.ReactNode
 }) {
-  const [open, setOpen] = useSticky(storageKey, true)
+  const [open, setOpen] = useSticky(storageKey, !startClosed)
   // A rename that lands in a collapsed fold would put the caret somewhere
   // invisible, which reads as "double-click did nothing".
   useEffect(() => {
@@ -445,9 +464,10 @@ function Size({
   labelH: string
   onChange: (w: number, h: number) => void
 }) {
+  const T = mapText(useI18n().lang)
   return (
     <div className="field inline size">
-      <span>Size (units)</span>
+      <span>{T.size_units}</span>
       <span className="size-inputs">
         <input
           type="number"
@@ -480,9 +500,10 @@ function ShelfPanel({
   selection: Selection
   actions: Actions
 }) {
+  const T = mapText(useI18n().lang)
   const sel = selection.shelf
   if (!sel || sel.caseId !== bc.id) {
-    return <p className="note">Pick a cell above to set one shelf's own depth.</p>
+    return <p className="note">{T.pick_a_cell}</p>
   }
   const sec = sectionById(bc, sel.sectionId)
   const shelf = sec ? shelfAt(sec, sel.col, sel.level) : null
@@ -490,68 +511,57 @@ function ShelfPanel({
   // The address prints only what DISCRIMINATES: a one-section case never says
   // "section 1", because saying it would imply there is a section 2.
   const where =
-    bc.sections.length > 1 ? `section ${sectionIndex(bc, sec.id) + 1} · ` : ''
+    bc.sections.length > 1 ? `${T.section_n(sectionIndex(bc, sec.id) + 1)} · ` : ''
   return (
     <fieldset className="shelf-panel">
-      <legend>
-        Shelf · {where}col {shelf.col + 1} · level {shelf.level + 1}
-      </legend>
+      <legend>{T.shelf_legend(where, shelf.col + 1, shelf.level + 1)}</legend>
       <label className="field inline">
-        <span>Its own depth</span>
+        <span>{T.own_depth}</span>
         <input
           type="number"
           min={1}
           max={MAX_DEPTH}
           value={shelf.depth}
-          aria-label="this shelf's depth"
+          aria-label={T.shelf_depth}
           onChange={(e) =>
             actions.setShelfDepth(bc.id, sec.id, shelf.col, shelf.level, Number(e.target.value))
           }
         />
       </label>
-      <label className="field inline">
-        <span>Photos attached</span>
-        <input
-          type="number"
-          min={0}
-          max={20}
-          value={shelf.photos}
-          aria-label="photos attached to this shelf"
-          onChange={(e) =>
-            actions.setShelfPhotos(bc.id, sec.id, shelf.col, shelf.level, Number(e.target.value))
-          }
-        />
-      </label>
-      <p className="note">
-        Many photos per shelf, each with its own depth, already exists in the
-        product (<code>Capture&#123;shelf, depth, order&#125;</code>). The count
-        here is a stand-in, so a half-catalogued case looks half-catalogued.
-      </p>
+      {/* ⚠ A FACT, not a field. In the lab the photo count was a number you
+          typed, so a case could be made to look half-catalogued while you
+          drew. Here it is `capture_count` off the shelf, and there is no op
+          behind it: as an input it accepted an edit, the toolbar said
+          "saved", and the next load showed the old number. A control that
+          discards what it takes is worse than one that is absent. */}
+      <div className="field inline">
+        <span>{T.photos_attached}</span>
+        <strong>{shelf.photos}</strong>
+      </div>
+      <p className="note">{T.photos_are_captures}</p>
     </fieldset>
   )
 }
 
 
 function Empty({ plan }: { plan: Plan }) {
+  const T = mapText(useI18n().lang)
   return (
     <div className="inspector">
-      <h2>Nothing selected</h2>
-      <p className="note">
-        {plan.rooms.length} rooms · {plan.cases.length} bookcases.
-      </p>
+      <h2>{T.nothing_selected}</h2>
+      <p className="note">{T.counts(plan.rooms.length, plan.cases.length)}</p>
       <ol className="steps">
+        {/* The tool's own name in bold, from the same key the toolbar reads —
+            an instruction naming a button that is labelled differently is
+            worse than no instruction. */}
         <li>
-          <strong>Draw room</strong> — drag a rectangle. Drag the next one near
-          it and they attach edge to edge.
+          <strong>{T.draw_room}</strong> {T.step_room}
         </li>
         <li>
-          <strong>Draw bookcase</strong> — drag a rectangle inside a room. It
-          snaps flush to the wall, attaches to that room, and moves with it.
+          <strong>{T.draw_case}</strong> {T.step_case}
         </li>
         <li>
-          <strong>Move &amp; edit</strong> — drag to move, drag a handle to
-          resize, tap to edit here. Ctrl+click adds to the selection, and
-          dragging empty space selects everything the band touches.
+          <strong>{T.arrow}</strong> {T.step_edit}
         </li>
       </ol>
     </div>

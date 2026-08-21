@@ -1,3 +1,5 @@
+import { useI18n } from '../../lib/i18n'
+import { mapText } from '../text'
 /**
  * The storey, in the corner of the board.
  *
@@ -29,6 +31,7 @@ type Props = {
 }
 
 export function FloorBadge(props: Props) {
+  const T = mapText(useI18n().lang)
   const [editing, setEditing] = useState(false)
   const inputRef = useRef<HTMLInputElement | null>(null)
   const current = props.floors.find((f) => f.id === props.floorId)
@@ -41,12 +44,19 @@ export function FloorBadge(props: Props) {
   }, [editing])
 
   return (
-    <div className="floor-badge" dir="auto">
+    /* ⚠ No `dir="auto"` on the CONTAINER. `inset-inline-start` resolves
+       against the element's OWN direction, and `auto` takes that from the
+       first strong character of the floor's NAME — so in an English UI a
+       storey called "קומת קרקע" put the badge at x=814 (the right edge of a
+       929px canvas) and renaming it to "Ground" moved it to x=10, with no
+       other change. Direction per STRING, alignment per CONTAINER: the name
+       span carries `.rtl-safe`, which is the whole of what the text needs. */
+    <div className="floor-badge">
       {editing ? (
         <input
           ref={inputRef}
           className="rtl-safe"
-          aria-label="floor name"
+          aria-label={T.floor_name}
           value={current?.name ?? ''}
           onChange={(e) => props.onRename(props.floorId, e.target.value)}
           // Enter and Escape both put you back on the board — a name box that
@@ -60,41 +70,57 @@ export function FloorBadge(props: Props) {
         <span
           className="floor-name rtl-safe"
           onDoubleClick={() => !props.allFloors && setEditing(true)}
-          title={props.allFloors ? undefined : 'Double-click to rename this floor'}
+          title={props.allFloors ? undefined : T.rename_floor_hint}
         >
-          {props.allFloors ? 'All floors' : current?.name || 'Floor'}
+          {props.allFloors ? T.all_floors : current?.name || T.floor}
         </span>
       )}
 
+      {/* ⚠ The menu is a bare chevron, so it needs a name of its own: with an
+          empty label `Menu` falls back to `title`, and neither was set — the
+          only control on the board announced nothing at all. */}
       <Menu
         label=""
+        title={T.floor_menu}
         items={[
           ...props.floors.map((f) => ({
-            label: f.name || 'Floor',
+            label: f.name || T.floor,
             checked: !props.allFloors && f.id === props.floorId,
             onSelect: () => {
               props.onAllFloors(false)
               props.onFloor(f.id)
             },
           })),
+          // ⚠ ABSENT with one storey, not greyed. A household that never
+          // adds a floor — most of them — met three permanently-dead rows
+          // with no reason given, which is what the "absent, not disabled"
+          // rule exists to prevent. Worse, the sentence that WOULD explain
+          // the disabled *remove* (`one_floor_at_least`) is only reachable by
+          // calling it, so it was live in the source and dead on screen.
+          ...(props.floors.length > 1
+            ? [{
+                label: T.all_floors_long,
+                checked: props.allFloors,
+                onSelect: () => props.onAllFloors(!props.allFloors),
+              }]
+            : []),
+          { label: T.add_floor, onSelect: props.onAdd },
           {
-            label: 'All floors, side by side',
-            checked: props.allFloors,
-            disabled: props.floors.length <= 1,
-            onSelect: () => props.onAllFloors(!props.allFloors),
-          },
-          { label: 'Add a floor', onSelect: props.onAdd },
-          {
-            label: 'Rename this floor',
+            // Named for THIS floor: two controls announcing the same
+            // accessible name collide, and last time the colliding pair
+            // included rename — the one that writes (CLAUDE.md).
+            label: T.rename_floor(current?.name || T.floor),
             disabled: props.allFloors,
             onSelect: () => setEditing(true),
           },
-          {
-            label: 'Remove this floor',
-            disabled: props.floors.length <= 1 || props.allFloors,
-            danger: true,
-            onSelect: props.onRemove,
-          },
+          ...(props.floors.length > 1
+            ? [{
+                label: T.remove_floor(current?.name || T.floor),
+                disabled: props.allFloors,
+                danger: true,
+                onSelect: props.onRemove,
+              }]
+            : []),
         ]}
       />
     </div>

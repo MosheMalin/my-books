@@ -92,6 +92,9 @@ const HE = {
     not_found: 'הספר לא נמצא',
 
     // --- Capture tab (P2.7, UI_PLAN §4) ---
+    plan_tab: 'המפה',
+    plan_site_default: 'הבית',
+    plan_floor_default: 'קומת קרקע',
     capture_tab: 'צילום וקריאה',
     drop_here: 'גררו לכאן תמונות מדף',
     drop_or_click: 'או לחצו לבחירה',
@@ -360,6 +363,9 @@ const EN: Strings = {
     not_found: 'Book not found',
 
     // --- Capture tab (P2.7, UI_PLAN §4) ---
+    plan_tab: 'Map',
+    plan_site_default: 'Home',
+    plan_floor_default: 'Ground floor',
     capture_tab: 'Capture',
     drop_here: 'Drop shelf photos here',
     drop_or_click: 'or click to choose',

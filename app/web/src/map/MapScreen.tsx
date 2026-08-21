@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import type { Bookcase, Floor, Plan, Room, Underlay } from './core/model'
+import { useI18n } from '../lib/i18n'
+
+import type { Bookcase, Plan, Underlay } from './core/model'
 import {
   TURN,
   addSection,
@@ -8,7 +10,6 @@ import {
   floorContents,
   applyDefaultDepth,
   applyDefaultLevels,
-  emptyPlan,
   frontFor,
   mapSection,
   newBookcase,
@@ -24,12 +25,10 @@ import {
   withDefaultLevels,
   withRect,
   withShelfDepth,
-  withShelfPhotos,
 } from './core/model'
 import type { Rect } from './core/rect'
 import type { History } from './core/history'
 import { canRedo, canUndo, commit, initHistory, redo, undo } from './core/history'
-import { parsePlan, serializePlan } from './core/persist'
 import { FloorBadge } from './ui/FloorBadge'
 import { Inspector, type Actions } from './ui/Inspector'
 import { PlanCanvas } from './ui/PlanCanvas'
@@ -37,36 +36,60 @@ import { Toolbar } from './ui/Toolbar'
 import type { Clipboard, Doc, Selection, Theme, Tool } from './ui/types'
 import { EMPTY, count, hasCase, hasRoom, selectCase, selectRoom } from './ui/types'
 import { fitTo, initialView, zoomAbout, type View } from './ui/viewport'
+import { deletionCost } from './cost'
+import { pasteInto } from './paste'
+import {
+  MAX_SECTIONS_PER_BOOKCASE,
+  MAX_SLOTS_PER_BOOKCASE,
+  clampColumns,
+  clampLevels,
+  overCeiling,
+} from './limits'
+import { mapText, type MapText } from './text'
 
-const STORAGE_KEY = 'booksnap.map-lab.doc'
-const THEME_KEY = 'booksnap.map-lab.theme'
-const FLOOR_KEY = 'booksnap.map-lab.floor'
-const SIDE_KEY = 'booksnap.map-lab.side'
+/**
+ * The owner's own state: panel width, current storey, background.
+ *
+ * booksnap.map.*, not booksnap.map-lab.*. The lab is deleted, and renaming
+ * these later would silently reset all three for everyone who had used the
+ * editor. It is free exactly now, on a branch that has not merged, and never
+ * again.
+ */
+const THEME_KEY = 'booksnap.map.theme'
+const FLOOR_KEY = 'booksnap.map.floor'
+const SIDE_KEY = 'booksnap.map.side'
 const SIDE_MIN = 220
 const SIDE_MAX = 720
 const clampSide = (w: number) => Math.max(SIDE_MIN, Math.min(SIDE_MAX, Math.round(w)))
-/** How far a pasted copy lands from its original, in units. Far enough to see
- *  it, near enough to drag into place. */
-const PASTE_OFFSET = 2
 
-const emptyDoc = (): Doc => ({ plan: emptyPlan(), seq: 0 })
+export type MapScreenProps = {
+  /** The drawing as the server confirmed it. The editor is MOUNTED with it —
+   *  see the module note in `PlanScreen`. */
+  initialPlan: Plan
+  onChange: (plan: Plan) => void
+  saved: 'saving' | 'saved' | 'failed'
+  onReload: () => void
+}
 
-export default function App() {
-  const [hist, setHist] = useState<History<Doc>>(() => initHistory(loadDoc()))
+export default function MapScreen(props: MapScreenProps) {
+  const { onChange, saved } = props
+  const T = mapText(useI18n().lang)
+  const [hist, setHist] = useState<History<Doc>>(
+    () => initHistory({ plan: props.initialPlan, seq: 0 }))
   const [tool, setTool] = useState<Tool>('auto')
   const [theme, setTheme] = useState<Theme>(loadTheme)
   const [selection, setSelection] = useState<Selection>(EMPTY)
   const [floorPick, setFloorPick] = useState<string>(loadFloor)
   const [clipboard, setClipboard] = useState<Clipboard>(null)
   const [view, setView] = useState<View>(initialView)
-  const [message, setMessage] = useState<string | null>(null)
+  const [message, setMessage] = useState<{ text: string; n: number } | null>(null)
   const [ghosts, setGhosts] = useState(false)
   const [allFloors, setAllFloors] = useState(false)
   /** Which object the canvas asked to have renamed. The panel opens its fold
    *  and puts the caret in the name box — one editor, not two. */
   const [renaming, setRenaming] = useState<{ kind: 'room' | 'case'; id: string } | null>(null)
   const [sideWidth, setSideWidth] = useState<number>(loadSideWidth)
-  const [saved, setSaved] = useState<'saving' | 'saved' | 'failed'>('saved')
+
   const wrapRef = useRef<HTMLDivElement | null>(null)
 
   const doc = hist.present
@@ -94,23 +117,20 @@ export default function App() {
 
   /**
    * Every edit is written immediately (owner, 2026-08-16: *"allow to save, so
-   * work will not get lost"*). The toolbar SAYS so, because an autosave nobody
-   * can see is indistinguishable from no autosave — and the honest caveat is
-   * on the same line: this is browser storage, and *Save to file* is the copy
-   * that survives a cleared browser.
+   * work will not get lost"*), and the toolbar SAYS so — an autosave nobody
+   * can see is indistinguishable from no autosave.
+   *
+   * ⚠ The first run is the document this component was MOUNTED with, so it
+   * diffs to nothing. That is the whole reason the editor is mounted with its
+   * plan rather than handed one later: a guard here could not help, because
+   * on the render where the data arrives `doc.plan` is still the old one
+   * whatever order the effects run in — measured as a freshly created storey
+   * being deleted by the load that created it.
    */
   useEffect(() => {
-    setSaved('saving')
-    try {
-      window.localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({ plan: { ...doc.plan, underlay: null }, seq: doc.seq }),
-      )
-      setSaved('saved')
-    } catch {
-      setSaved('failed')
-    }
-  }, [doc])
+    onChange(doc.plan)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc.plan])
 
   useEffect(() => {
     try {
@@ -129,7 +149,6 @@ export default function App() {
   }, [floorId])
 
   useEffect(() => {
-    document.documentElement.dataset['theme'] = theme
     try {
       window.localStorage.setItem(THEME_KEY, theme)
     } catch {
@@ -137,10 +156,26 @@ export default function App() {
     }
   }, [theme])
 
+  /**
+   * ⚠ Keyed, so pressing a refused control TWICE says something twice.
+   *
+   * The previous shape set `message` to the identical string, React bailed out
+   * of the render, and the natural "did that work?" second tap produced
+   * literally nothing — no flash, no re-announcement — while the first press's
+   * timer went on owning the clear, so the toast could vanish under the second
+   * press. A counter makes each answer its own state, with its own 2600ms.
+   * `role="status"` is on the element: the read-only bar beside it has had one
+   * since the lab, and this is the surface that carries a refusal.
+   */
   const say = useCallback((text: string) => {
-    setMessage(text)
-    window.setTimeout(() => setMessage((m) => (m === text ? null : m)), 2600)
+    setMessage((m) => ({ text, n: (m?.n ?? 0) + 1 }))
   }, [])
+
+  useEffect(() => {
+    if (!message) return
+    const timer = window.setTimeout(() => setMessage(null), 2600)
+    return () => window.clearTimeout(timer)
+  }, [message])
 
   // --- document edits ------------------------------------------------------
 
@@ -165,6 +200,32 @@ export default function App() {
         tag,
       ),
     [update],
+  )
+
+  /**
+   * A structural edit, refused HERE when the server would refuse it there.
+   *
+   * MAP_PLAN's note on what P6.2 landed says it plainly: *the editor must not
+   * offer a gesture that asks for more than the ceiling, or the owner meets a
+   * 409*. Without this, `+ column` on a wide case reported "not saved" in a
+   * corner and the whole editor then RELOADED to re-derive from the server —
+   * a refusal for a rule the screen could have stated before the press.
+   *
+   * ⚠ Only a gesture that GROWS is refused. A case that is somehow already
+   * over a ceiling must still be shrinkable, or the guard becomes the trap.
+   */
+  const growCase = useCallback(
+    (id: string, fn: (bc: Bookcase) => Bookcase, tag: string | null = null) => {
+      const bc = doc.plan.cases.find((c) => c.id === id)
+      const over = bc ? overCeiling(bc, fn(bc)) : null
+      if (over) {
+        return say(over.what === 'slots'
+          ? T.too_many_slots(over.asked, MAX_SLOTS_PER_BOOKCASE)
+          : T.too_many_sections(MAX_SECTIONS_PER_BOOKCASE))
+      }
+      mapCase(id, fn, tag)
+    },
+    [doc.plan.cases, mapCase, say, T],
   )
 
   /**
@@ -282,8 +343,28 @@ export default function App() {
     [update],
   )
 
+  /**
+   * ⚠ **The door.** Deleting a bookcase empties its slots first, and emptying
+   * a slot detaches the shelf standing in it — the books keep their shelf, the
+   * shelf loses its address, and nothing on this screen says so afterwards.
+   * That is the identical argument that removed *Clear the plan*, and two
+   * reviews pointed out it had been applied to one control and not to this
+   * one, which does the same thing to less data. Removing a column and
+   * removing a section have asked since the lab.
+   *
+   * The counts are what this client can honestly state: how many shelves go,
+   * and how many of them carry photographs. It cannot say how many hold BOOKS
+   * — the server reports that split (`deleted` vs `detached`) only after the
+   * call — so the wording promises the mechanism rather than a number it does
+   * not have. A room alone asks nothing: deleting one destroys no shelf and
+   * never cascades into its furniture.
+   */
   const deleteSelection = useCallback(() => {
     if (count(selection) === 0) return
+    const cost = deletionCost(doc.plan.cases.filter((c) => hasCase(selection, c.id)))
+    if (cost.shelves > 0 &&
+        !confirm(T.delete_cases_confirm(cost.cases, cost.shelves, cost.photos)))
+      return
     update((d) => ({
       ...d,
       plan: {
@@ -298,7 +379,7 @@ export default function App() {
       },
     }))
     setSelection(EMPTY)
-  }, [selection, update])
+  }, [selection, update, doc.plan.cases, T])
 
   // --- copy / paste --------------------------------------------------------
 
@@ -309,46 +390,17 @@ export default function App() {
     // Deep-cloned at COPY time: a later edit to the original must not reach
     // into the clipboard, and a paste must not alias the shelves it came from.
     setClipboard(JSON.parse(JSON.stringify({ rooms, cases })) as Clipboard)
-    say(`Copied ${rooms.length + cases.length} item${rooms.length + cases.length > 1 ? 's' : ''}.`)
-  }, [doc.plan, selection, say])
+    say(T.copied(rooms.length + cases.length))
+  }, [doc.plan, selection, say, T])
 
+  /** ⚠ The copy gets section ids of its OWN — see `paste.ts`. Sharing them
+   *  made an edit on the copy write to the original's shelves. */
   const paste = useCallback(() => {
     if (!clipboard) return
-    let seq = doc.seq
-    const roomIdMap = new Map<string, string>()
-    const rooms: Room[] = clipboard.rooms.map((r) => {
-      seq += 1
-      const id = `r${seq}`
-      roomIdMap.set(r.id, id)
-      // Onto the storey you are LOOKING at — copying the ground floor's layout
-      // as a starting point for the first floor is the obvious use.
-      return { ...r, id, rect: offset(r.rect), floorId }
-    })
-    const cases: Bookcase[] = clipboard.cases.map((c) => {
-      seq += 1
-      return {
-        ...c,
-        id: `c${seq}`,
-        rect: offset(c.rect),
-        floorId,
-        // A case copied together with its room stays with THAT copy, not with
-        // the original room — otherwise pasting a room-and-its-cases produces
-        // furniture that moves when the wrong room moves.
-        roomId: c.roomId ? roomIdMap.get(c.roomId) ?? c.roomId : null,
-      }
-    })
-    update((d) => ({
-      seq,
-      plan: {
-        ...d.plan,
-        rooms: d.plan.rooms.concat(rooms),
-        cases: d.plan.cases
-          .concat(cases)
-          .map((c) => (cases.some((n) => n.id === c.id) && !c.roomId ? reattach(c, d.plan) : c)),
-      },
-    }))
-    setSelection({ rooms: rooms.map((r) => r.id), cases: cases.map((c) => c.id), shelf: null })
-  }, [clipboard, doc.seq, update, floorId])
+    const pasted = pasteInto(doc, clipboard, floorId)
+    update(() => pasted.doc)
+    setSelection(pasted.selection)
+  }, [clipboard, doc, update, floorId])
 
   const actions: Actions = {
     renameRoom: (id, name) =>
@@ -390,12 +442,15 @@ export default function App() {
       ),
     setCaseRoom: (id, roomId) => mapCase(id, (bc) => ({ ...bc, roomId })),
     turnCase: (id) => mapCase(id, (bc) => ({ ...bc, front: TURN[bc.front] })),
-    setColumnCount: (id, sid, n) => mapCase(id, (bc) => mapSection(bc, sid, (s) => withColumnCount(s, n))),
+    // ⚠ Clamped where the number ENTERS the document, not where it is shown:
+    // an `<input max=…>` is a hint, and a typed 41 reached the wire as a 422.
+    setColumnCount: (id, sid, n) =>
+      growCase(id, (bc) => mapSection(bc, sid, (s) => withColumnCount(s, clampColumns(n)))),
     setColumnLevels: (id, sid, col, n) =>
-      mapCase(id, (bc) => mapSection(bc, sid, (s) => withColumnLevels(s, col, n))),
+      growCase(id, (bc) => mapSection(bc, sid, (s) => withColumnLevels(s, col, clampLevels(n)))),
     setDefaultLevels: (id, sid, n) =>
-      mapCase(id, (bc) => mapSection(bc, sid, (s) => withDefaultLevels(s, n)), `deflevels:${sid}`),
-    applyDefaultLevels: (id, sid) => mapCase(id, (bc) => mapSection(bc, sid, applyDefaultLevels)),
+      mapCase(id, (bc) => mapSection(bc, sid, (s) => withDefaultLevels(s, clampLevels(n))), `deflevels:${sid}`),
+    applyDefaultLevels: (id, sid) => growCase(id, (bc) => mapSection(bc, sid, applyDefaultLevels)),
     setDefaultDepth: (id, sid, n) =>
       mapCase(id, (bc) => mapSection(bc, sid, (s) => withDefaultDepth(s, n)), `defdepth:${sid}`),
     applyDefaultDepth: (id, sid) => mapCase(id, (bc) => mapSection(bc, sid, applyDefaultDepth)),
@@ -405,13 +460,7 @@ export default function App() {
         (bc) => mapSection(bc, sid, (s) => withShelfDepth(s, col, level, n)),
         `shelfdepth:${sid}:${col}:${level}`,
       ),
-    setShelfPhotos: (id, sid, col, level, n) =>
-      mapCase(
-        id,
-        (bc) => mapSection(bc, sid, (s) => withShelfPhotos(s, col, level, n)),
-        `shelfphotos:${sid}:${col}:${level}`,
-      ),
-    addSection: (id, where) => mapCase(id, (bc) => addSection(bc, where)),
+    addSection: (id, where) => growCase(id, (bc) => addSection(bc, where)),
     removeSection: (id, sid) => {
       mapCase(id, (bc) => removeSection(bc, sid))
       // The selected cell may have been inside it. Dropping the shelf while
@@ -434,11 +483,26 @@ export default function App() {
 
   const addFloor = useCallback(() => {
     const n = doc.plan.floors.length + 1
-    const floor: Floor = { id: `f${n}`, name: `Floor ${n}` }
-    update((d) => ({ ...d, plan: { ...d.plan, floors: d.plan.floors.concat(floor) } }))
-    setFloorPick(floor.id)
+    // ⚠ The id comes from `seq`, never from the COUNT. Add two storeys, remove
+    // the first while it is empty, add again: the count mints an id that is
+    // already taken, `planDiff` indexes floors by id, and the duplicate
+    // collapses — no `floor.add` is issued, the storey never reaches the
+    // server, and it silently merges with the one it collided with. Rooms and
+    // bookcases have always numbered from `seq`; this is the same rule.
+    //
+    // The NAME is in the reader's language, and it is DATA: the lab wrote
+    // "Floor 2" and the port kept it, so a Hebrew library grew English
+    // storeys that went to the server and stayed there.
+    update((d) => ({
+      seq: d.seq + 1,
+      plan: {
+        ...d.plan,
+        floors: d.plan.floors.concat({ id: `fl${d.seq + 1}`, name: T.floor_n(n) }),
+      },
+    }))
+    setFloorPick(`fl${doc.seq + 1}`)
     setSelection(EMPTY)
-  }, [doc.plan.floors.length, update])
+  }, [doc.plan.floors.length, doc.seq, update, T])
 
   const renameFloor = useCallback(
     (id: string, name: string) =>
@@ -458,18 +522,12 @@ export default function App() {
   /** Refuses to take a storey down with the house still on it. Nothing here
    *  auto-removes: the count says what is in the way. */
   const removeFloor = useCallback(() => {
-    if (doc.plan.floors.length <= 1) return say('A plan has at least one floor.')
+    if (doc.plan.floors.length <= 1) return say(T.one_floor_at_least)
     const { rooms, cases } = floorContents(doc.plan, floorId)
-    if (rooms + cases > 0) {
-      const parts = [
-        rooms > 0 ? `${rooms} room${rooms > 1 ? 's' : ''}` : '',
-        cases > 0 ? `${cases} bookcase${cases > 1 ? 's' : ''}` : '',
-      ].filter(Boolean)
-      return say(`Not removed — ${parts.join(' and ')} still on this floor.`)
-    }
+    if (rooms + cases > 0) return say(T.floor_not_removed(rooms, cases))
     update((d) => ({ ...d, plan: { ...d.plan, floors: d.plan.floors.filter((f) => f.id !== floorId) } }))
     setFloorPick(doc.plan.floors.find((f) => f.id !== floorId)!.id)
-  }, [doc.plan, floorId, update, say])
+  }, [doc.plan, floorId, update, say, T])
 
   // --- underlay ------------------------------------------------------------
 
@@ -490,38 +548,13 @@ export default function App() {
           aspect: img.naturalWidth / Math.max(1, img.naturalHeight),
           opacity: 0.45,
         })
-        say('Traced sketch loaded — draw over it, then remove it.')
+        say(T.trace_loaded)
       }
-      img.onerror = () => say('That file did not decode as an image.')
+      img.onerror = () => say(T.trace_not_an_image)
       img.src = src
     }
-    reader.onerror = () => say('Could not read that file.')
+    reader.onerror = () => say(T.trace_unreadable)
     reader.readAsDataURL(file)
-  }
-
-  // --- files ---------------------------------------------------------------
-
-  const doExport = () => {
-    const blob = new Blob([serializePlan(doc.plan)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'house.map-lab.json'
-    a.click()
-    URL.revokeObjectURL(url)
-    say('Saved to your downloads folder.')
-  }
-
-  const doImport = async (file: File) => {
-    const result = parsePlan(await file.text())
-    if (!result.ok) return say(`Not opened: ${result.error}.`)
-    const maxSeq = [...result.plan.rooms, ...result.plan.cases].reduce((m, o) => {
-      const n = Number(o.id.replace(/\D/g, ''))
-      return Number.isFinite(n) ? Math.max(m, n) : m
-    }, 0)
-    setHist((h) => commit(h, { plan: result.plan, seq: maxSeq }))
-    setSelection(EMPTY)
-    say('Opened.')
   }
 
   const doZoom = useCallback(
@@ -607,7 +640,7 @@ export default function App() {
   })
 
   return (
-    <div className="app">
+    <div className="app mapscreen" data-map-theme={theme}>
       <Toolbar
         tool={tool}
         theme={theme}
@@ -632,19 +665,12 @@ export default function App() {
         onCopy={copySelection}
         onPaste={paste}
         onDelete={deleteSelection}
-        onExport={doExport}
-        onImport={doImport}
+        onReload={props.onReload}
         onUnderlay={loadUnderlay}
         onUnderlayChange={(patch) =>
           setUnderlay(doc.plan.underlay ? { ...doc.plan.underlay, ...patch } : null)
         }
         onUnderlayClear={() => setUnderlay(null)}
-        onClear={() => {
-          if (confirm('Throw away this drawing?')) {
-            setHist((h) => commit(h, emptyDoc()))
-            setSelection(EMPTY)
-          }
-        }}
       />
 
       <main className="body">
@@ -679,20 +705,32 @@ export default function App() {
                 : null
             }
           />
-          <Hint tool={tool} overview={overview} />
+          <Hint tool={tool} overview={overview} T={T} />
           {/* ⚠ The overview had no visible exit: the way out was a menu item
               in the corner, and "I could not get rid of it no matter which
               button I clicked" is what that costs. A mode with no door on
               screen is a trap, however few keystrokes it really takes. */}
           {overview && (
             <div className="readonly-bar" role="status">
-              <span>Every floor — viewing only, nothing can be edited</span>
-              <button type="button" onClick={() => setAllFloors(false)}>
-                Back to {doc.plan.floors.find((f) => f.id === floorId)?.name ?? 'the plan'}
+              <span>{T.read_only_bar}</span>
+              <button type="button" className="rtl-safe"
+                      onClick={() => setAllFloors(false)}>
+                {T.back_to(
+                  doc.plan.floors.find((f) => f.id === floorId)?.name || T.the_plan)}
               </button>
             </div>
           )}
-          <FloorBadge
+          {/* ⚠ The badge is ABSENT in the overview, not merely behind the bar.
+              Both sit at `top: 10px` in the same wrapper — the bar centred, the
+              badge at the inline start — and on a 390px phone in Hebrew they
+              overlapped by 87px, with the badge painting last: a UX review
+              hit-tested the exit and found 19 of its 96px reachable, the rest
+              opening the floor menu. That is the trap the comment above
+              describes ("I could not get rid of it no matter which button I
+              clicked") re-created by geometry. Nothing is lost by hiding it:
+              the bar already names the mode, and three of the badge's five
+              menu items are disabled while it is up. */}
+          {!overview && <FloorBadge
             floors={doc.plan.floors}
             floorId={floorId}
             allFloors={overview}
@@ -704,15 +742,19 @@ export default function App() {
             onAdd={addFloor}
             onRename={renameFloor}
             onRemove={removeFloor}
-          />
-          {message && <div className="toast">{message}</div>}
+          />}
+          {message && (
+            <div className="toast rtl-safe" role="status" key={message.n}>
+              {message.text}
+            </div>
+          )}
         </div>
         {/* Drag to widen the settings. The elevation of a wide bookcase wants
             the room, and 330 px is a guess about someone else's screen. */}
         <div
           className="resizer"
           role="separator"
-          aria-label="drag to resize the settings panel"
+          aria-label={T.panel_resize}
           aria-orientation="vertical"
           onPointerDown={(e) => {
             // Same guard as the canvas: capture throws InvalidPointerId for a
@@ -737,7 +779,13 @@ export default function App() {
             window.addEventListener('pointerup', up)
           }}
         />
-        <aside className="side" style={{ width: sideWidth, flexBasis: sideWidth }}>
+        {/* ⚠ `map-side`, not `side`. `base.css` carries this app's exception to
+            `.rtl-safe` for the book row's end-aligned location column, and it
+            is written `:root[dir=rtl] .side .rtl-safe { text-align: left }` —
+            four class-weight terms, which no rule in this sheet can outrank.
+            The panel's Hebrew was measured aligning LEFT, and its English
+            RIGHT: exactly inverted, in both directions. */}
+        <aside className="map-side" style={{ width: sideWidth, flexBasis: sideWidth }}>
           <Inspector
             doc={doc}
             floorId={floorId}
@@ -754,37 +802,17 @@ export default function App() {
 
 const size = (v: number): number => Math.max(1, Math.round(v))
 
-const offset = (r: Rect): Rect => ({ ...r, x: r.x + PASTE_OFFSET, y: r.y + PASTE_OFFSET })
-
-function Hint({ tool, overview }: { tool: Tool; overview: boolean }) {
-  if (overview) {
-    return <p className="hint">Every floor, side by side. Double-click one to work on it.</p>
-  }
+function Hint({ tool, overview, T }: { tool: Tool; overview: boolean; T: MapText }) {
+  if (overview) return <p className="hint">{T.hint_overview}</p>
   const text =
     tool === 'room'
-      ? 'Drag a rectangle to draw a room. Its edges snap to the grid — and to any room already there, so rooms attach.'
+      ? T.hint_room
       : tool === 'case'
-        ? 'Drag a rectangle inside a room. It snaps flush against the wall, and the books face into the room.'
+        ? T.hint_case
         : tool === 'pan'
-          ? 'Drag to slide the plan. Scroll or pinch to zoom.'
-          : 'A room’s border moves it · inside a room draws a bookcase · outside draws a room · double-click to name · Ctrl+drag selects several.'
+          ? T.hint_pan
+          : T.hint_arrow
   return <p className="hint">{text}</p>
-}
-
-function loadDoc(): Doc {
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
-    if (!raw) return emptyDoc()
-    const stored = JSON.parse(raw)
-    const parsed = parsePlan(
-      JSON.stringify({ format: 'booksnap.map-lab.plan', version: 2, plan: stored.plan }),
-    )
-    if (!parsed.ok) return emptyDoc()
-    const seq = Number(stored.seq)
-    return { plan: parsed.plan, seq: Number.isFinite(seq) ? seq : 0 }
-  } catch {
-    return emptyDoc()
-  }
 }
 
 function loadSideWidth(): number {

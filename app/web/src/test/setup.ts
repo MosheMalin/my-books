@@ -64,6 +64,25 @@ globalThis.IntersectionObserver =
   NoopIntersectionObserver as unknown as typeof IntersectionObserver
 
 /**
+ * jsdom has no ResizeObserver, and the plan canvas (P6.3) uses one to learn
+ * how big it is before it can draw a grid.
+ *
+ * A stub that never fires, for the same reason as the one above: the canvas
+ * already measures once on mount through `getBoundingClientRect`, which jsdom
+ * DOES implement (as zeroes), so the editor renders and its chrome can be
+ * asserted. Geometry itself is tested in `core/*`, without a DOM at all —
+ * which is the whole point of the framework-free core.
+ */
+class NoopResizeObserver implements ResizeObserver {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+}
+
+globalThis.ResizeObserver =
+  NoopResizeObserver as unknown as typeof ResizeObserver
+
+/**
  * jsdom has no object URL machinery, and the Capture tab (P2.7) previews each
  * dropped file with `URL.createObjectURL` before it has finished uploading.
  * A no-op stub is enough — no test inspects the resulting string, only that

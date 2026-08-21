@@ -43,6 +43,7 @@ nothing here has been shown to anybody yet.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import replace
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
@@ -55,6 +56,7 @@ from app.api.deps import (
 )
 from app.api.dto import (
     BookcaseCreate,
+    BookcaseDrawnDTO,
     BookcaseDTO,
     BookcasePatch,
     DepthApplyDTO,
@@ -69,9 +71,11 @@ from app.api.dto import (
     SectionDTO,
     SectionEditDTO,
     SectionPatch,
+    ShelfDTO,
     SiteCreate,
     SiteDTO,
     SitePatch,
+    SlotDepthPatch,
     SlotRemovalDTO,
 )
 from app.api.policy import require
@@ -84,6 +88,7 @@ from app.domain import (
     NotEmpty,
     Place,
     Section,
+    ShelfAddress,
     Site,
     TooManySlots,
     apply_default_levels,
@@ -103,6 +108,7 @@ from app.domain import (
 from app.domain.place import NotOnThisFloor
 from app.map_edit import (
     apply_depth_default,
+    deepest_occupied_depths,
     apply_slot_change,
     attach_case_to_room,
     clear_bookcase_slots,
@@ -354,7 +360,7 @@ def delete_place(
 
 # --- bookcases ------------------------------------------------------------
 
-@router.post("/bookcases", response_model=BookcaseDTO,
+@router.post("/bookcases", response_model=BookcaseDrawnDTO,
              status_code=status.HTTP_201_CREATED)
 def create_bookcase(
     body: BookcaseCreate,
@@ -363,12 +369,16 @@ def create_bookcase(
     shelves: ShelfStore = Depends(get_shelf_store),
     ids: IdGen = Depends(get_id_gen),
     clock: Clock = Depends(get_clock),
-) -> BookcaseDTO:
+) -> BookcaseDrawnDTO:
     """Draw a bookcase — **and every shelf its first section describes.**
 
     §3.1: a drawn slot IS a Shelf. Ask for 2 columns of 5 and ten real, empty,
     addressed shelves come into existence, each carrying the section's depth
     as a COPY. That is the point of the route, not a side effect of it.
+
+    The answer names that first section, because the client addresses it in
+    the very next gesture and has no other way to learn its id — see
+    :class:`BookcaseDrawnDTO`.
     """
     with _translated():
         case = new_bookcase(id=ids.new_id(), library_id=library.id,
@@ -385,7 +395,7 @@ def create_bookcase(
         drawn = draw_bookcase(store, shelves, library, case, ids=ids,
                               clock=clock, columns=body.columns,
                               levels=body.levels, depth=body.depth)
-    return BookcaseDTO.of(drawn.bookcase)
+    return BookcaseDrawnDTO.of_drawn(drawn.bookcase, drawn.sections[0])
 
 
 @router.patch("/bookcases/{case_id}", response_model=BookcaseDTO)
@@ -479,7 +489,20 @@ def create_section(
     usually has about as many columns as its base and re-entering what is
     already on screen is not a feature. Adding at the BOTTOM renumbers the
     ones above: ``ordinal`` is bottom-first, unique, and printed in addresses.
+
+    ⚠ ``above_id`` is the general form and exists because ``top``/``bottom``
+    cannot say *back where it was*: a review measured a section restored into
+    the MIDDLE of a stack by an undo being sent as ``top``, appended by this
+    route, and recorded by the client as landed — so the drawing and the
+    library disagreed about which unit stands on which, and ``ordinal`` is what
+    an address prints.
     """
+    if body.where is not None and body.above_id is not None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "`where` and `above_id` both say where the section goes; one "
+            "request carries one instruction",
+        )
     _bookcase(store, library, body.bookcase_id)
     with _translated():
         # Recomputed from the LIVE snapshot every time, and written as one
@@ -490,11 +513,27 @@ def create_section(
         # did the same with no failure at all.
         siblings = [s for s in store.load_map(library).sections
                     if s.bookcase_id == body.bookcase_id]
-        section = next_section(body.bookcase_id, siblings, id=ids.new_id(),
-                               where=body.where)
-        ordered = ([section] + sorted(siblings, key=lambda s: s.ordinal)
-                   if body.where == "bottom"
-                   else sorted(siblings, key=lambda s: s.ordinal) + [section])
+        standing = sorted(siblings, key=lambda s: s.ordinal)
+        below = None
+        if body.above_id is not None:
+            below = next((s for s in standing if s.id == body.above_id), None)
+            if below is None:
+                # 404 rather than 400: a section of another bookcase and a
+                # section that never existed are the same answer, the way a
+                # foreign library and a fictional one are.
+                raise _gone("section")
+        # `next_section` copies the shape of the section it stands against, so
+        # the sibling list handed to it IS the choice of neighbour.
+        section = next_section(
+            body.bookcase_id, [below] if below else siblings, id=ids.new_id(),
+            where="top" if below else (body.where or "top"))
+        if below is not None:
+            at = standing.index(below) + 1
+            ordered = standing[:at] + [section] + standing[at:]
+        elif body.where == "bottom":
+            ordered = [section] + standing
+        else:
+            ordered = standing + [section]
         settled = renumber_sections(ordered)
         check_bookcase_size(settled)
         store.save_sections(library, settled)
@@ -566,6 +605,51 @@ def patch_section(
             store.save_section(library, section)
         return SectionEditDTO(section=SectionDTO.of(section))
     return _edit(store, shelves, books, library, change, ids=ids, clock=clock)
+
+
+@router.patch("/sections/{section_id}/shelves/{col}/{level}",
+              response_model=ShelfDTO)
+def set_shelf_depth(
+    section_id: str,
+    col: int,
+    level: int,
+    body: SlotDepthPatch,
+    library: LibraryRef = Depends(require(EDIT)),
+    store: MapStore = Depends(get_map_store),
+    shelves: ShelfStore = Depends(get_shelf_store),
+    books: BookStore = Depends(get_book_store),
+) -> ShelfDTO:
+    """The per-shelf depth override — *"default for the whole bookcase,
+    overridable per shelf"*, in the owner's own words (MAP_PLAN §1).
+
+    Addressed by SLOT rather than by shelf id, because that is what the
+    elevation has in its hand: the cell the owner tapped. Both indices are
+    1-based, like every address on the wire.
+
+    ⚠ It cannot take a shelf below its deepest occupied depth, for the reason
+    §3.3 gives about the section default one level up: a copy recorded at
+    depth 2 of a shelf declaring one row is a location `check_depth` then
+    refuses, and no foreign key can see it. Deepening is never refused —
+    there is nothing behind a shelf to protect.
+    """
+    _section(store, library, section_id)
+    with _translated():
+        address = ShelfAddress(section_id, col, level)
+    shelf = shelves.get_shelf_at(library, address)
+    if shelf is None:
+        raise _gone("shelf at that slot")
+    floor = deepest_occupied_depths(shelves, books, library, [shelf]).get(
+        shelf.id, 1)
+    if body.depth_count < floor:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"something stands at depth {floor} on this shelf, so it cannot "
+            f"become {body.depth_count} row(s) deep (§5.7)",
+        )
+    with _translated():
+        shelves.save_shelf(library, replace(shelf, depth_count=body.depth_count))
+    return ShelfDTO.of(shelves.get_shelf(library, shelf.id),
+                       capture_count=len(shelves.list_captures(library, shelf.id)))
 
 
 @router.post("/sections/{section_id}/levels", response_model=SectionEditDTO)

@@ -1,3 +1,5 @@
+import { useI18n } from '../../lib/i18n'
+import { mapText } from '../text'
 /**
  * The plan — top-down, SVG, pointer-driven. Everything on it is an
  * axis-aligned rectangle on the grid.
@@ -86,6 +88,7 @@ type Drag =
   | { kind: 'band'; from: Pt; to: Pt; add: boolean }
 
 export function PlanCanvas(props: Props) {
+  const T = mapText(useI18n().lang)
   const { plan, tool, selection, view } = props
   const svgRef = useRef<SVGSVGElement | null>(null)
   const [rect, setRect] = useState<ScreenRect>({ left: 0, top: 0, width: 800, height: 600 })
@@ -348,9 +351,7 @@ export function PlanCanvas(props: Props) {
         return props.onSelect(bc ? selectCase(bc.id) : room ? selectRoom(room.id) : EMPTY)
       }
       return props.onRejected(
-        d.kind === 'draw'
-          ? `too small — drag out at least ${GRID} × ${GRID} squares`
-          : 'that would leave nothing to see',
+        d.kind === 'draw' ? T.too_small(GRID) : T.nothing_to_see,
       )
     }
     if (d.kind === 'draw') {
@@ -435,7 +436,7 @@ export function PlanCanvas(props: Props) {
       }}
       onContextMenu={(e) => e.preventDefault()}
       role="application"
-      aria-label="floor plan"
+      aria-label={T.plan_canvas}
     >
       <g transform={groupTransform(rect, view)}>
         <Grid min={bounds.min} max={bounds.max} scale={view.scale} />

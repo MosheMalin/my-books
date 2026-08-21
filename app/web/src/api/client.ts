@@ -327,8 +327,21 @@ async function send(
     // the meaning.
     let detail = `${method} ${path} failed: ${res.status}`
     try {
-      const body = (await res.json()) as { detail?: string }
-      if (body?.detail) detail = body.detail
+      const body = (await res.json()) as { detail?: unknown }
+      // ⚠ `detail` is a STRING for our own refusals and a LIST for FastAPI's
+      // own validation errors (422). Copying it blind put `[object Object]`
+      // in front of the owner — measured on `{"default_levels": 41}`, which
+      // the map editor's number boxes can still be typed past. A 422 is a
+      // client bug, so the generic sentence is the honest thing to show and
+      // the messages go to the console for whoever is debugging it.
+      if (typeof body?.detail === 'string' && body.detail) {
+        detail = body.detail
+      } else if (Array.isArray(body?.detail)) {
+        const said = body.detail
+          .map((e) => (e as { msg?: string })?.msg)
+          .filter((m): m is string => typeof m === 'string')
+        if (said.length > 0) detail = said.join('; ')
+      }
     } catch {
       /* a 204 or an HTML error page — the status is what matters */
     }
@@ -608,3 +621,25 @@ export const getShelfBooks = (
   shelfId: string, depth: number, opts: ApiOptions = {},
 ): Promise<Book[]> =>
   getJson(`/api/v1/shelves/${encodeURIComponent(shelfId)}/books?depth=${depth}`, opts)
+
+// --- the physical map (P6.2/P6.3) -------------------------------------------
+//
+// The editor speaks in whole objects, so these are the three verbs rather
+// than one function per route: `app/web/src/map/push.ts` turns a document
+// diff into calls, and giving it thirty named wrappers would put the route
+// table in two places. The paths it builds are all `/map/...`, prefixed here
+// so nothing outside this file writes `/api/v1` by hand.
+
+export type MapDrawing = components['schemas']['MapDTO']
+
+export const getMap = (opts: ApiOptions = {}): Promise<MapDrawing> =>
+  getJson('/api/v1/map', opts)
+
+export const mapPost = (path: string, body?: unknown, opts?: ApiOptions) =>
+  send('POST', `/api/v1${path}`, body, opts) as Promise<any>
+
+export const mapPatch = (path: string, body: unknown, opts?: ApiOptions) =>
+  send('PATCH', `/api/v1${path}`, body, opts) as Promise<any>
+
+export const mapDelete = (path: string, opts?: ApiOptions) =>
+  send('DELETE', `/api/v1${path}`, undefined, opts) as Promise<any>

@@ -13,6 +13,9 @@ import './styles/base.css'
 import './styles/books.css'
 import './styles/capture.css'
 import './styles/shelf.css'
+// P6.3: the map editor's own sheet, ported with it. Last, so its own
+// variables can lean on the tokens above.
+import './styles/map.css'
 
 const root = document.getElementById('root')
 if (!root) throw new Error('#root missing from index.html')

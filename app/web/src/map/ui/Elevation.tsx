@@ -1,3 +1,5 @@
+import { useI18n } from '../../lib/i18n'
+import { mapText } from '../text'
 /**
  * The bookcase, front-on — the SECOND geometry (MAP_PLAN §3.2).
  *
@@ -35,6 +37,7 @@ type Props = {
 }
 
 export function Elevation(props: Props) {
+  const T = mapText(useI18n().lang)
   const { bc } = props
   const many = bc.sections.length > 1
   return (
@@ -44,9 +47,9 @@ export function Elevation(props: Props) {
           type="button"
           className="section-add"
           onClick={() => props.onAddSection('top')}
-          aria-label="add a section on top"
+          aria-label={T.add_section_top}
         >
-          ＋ another section on top
+          {T.add_section_top_long}
         </button>
       )}
 
@@ -58,9 +61,9 @@ export function Elevation(props: Props) {
         type="button"
         className="section-add"
         onClick={() => props.onAddSection(many ? 'bottom' : 'top')}
-        aria-label={many ? 'add a section underneath' : 'split this bookcase into sections'}
+        aria-label={many ? T.add_section_under : T.split_sections}
       >
-        {many ? '＋ another section underneath' : '＋ a second section on top (a unit standing on this one)'}
+        {many ? T.add_section_under_long : T.split_sections_long}
       </button>
     </div>
   )
@@ -73,6 +76,7 @@ function SectionBlock({
   selection,
   ...props
 }: Props & { sec: Section; many: boolean }) {
+  const T = mapText(useI18n().lang)
   const cols = columnCount(sec)
   const selected = selection.shelf?.caseId === bc.id && selection.shelf.sectionId === sec.id
     ? selection.shelf
@@ -80,13 +84,13 @@ function SectionBlock({
   const index = bc.sections.findIndex((s) => s.id === sec.id)
   // Numbered BOTTOM-UP, because that is how the thing was built: section 1
   // stands on the floor.
-  const label = `Section ${index + 1}`
+  const label = T.section_n(index + 1)
   const where =
-    index === 0 ? ' · on the floor' : index === bc.sections.length - 1 ? ' · on top' : ''
+    index === 0 ? T.section_on_floor : index === bc.sections.length - 1 ? T.section_on_top : ''
   // Accessible names print the section only when there IS more than one — the
   // same "only what discriminates" rule the shelf address follows. Uniqueness
   // is not at risk: with one section there is nothing to collide with.
-  const addr = many ? `${label.toLowerCase()}, ` : ''
+  const addr = many ? `${label}, ` : ''
   const differing = shelvesDifferingFromDefaultDepth(sec)
 
   return (
@@ -100,10 +104,10 @@ function SectionBlock({
           <button
             type="button"
             className="danger"
-            aria-label={`remove ${label.toLowerCase()}`}
-            title={`Remove ${label.toLowerCase()} and its ${sec.shelves.length} shelves`}
+            aria-label={T.remove_section(label)}
+            title={T.remove_section_title(label, sec.shelves.length)}
             onClick={() => {
-              if (confirm(`Remove ${label.toLowerCase()} and its ${sec.shelves.length} shelves?`)) {
+              if (confirm(T.remove_section_confirm(label, sec.shelves.length))) {
                 props.onRemoveSection(sec.id)
               }
             }}
@@ -124,7 +128,7 @@ function SectionBlock({
         >
         {Array.from({ length: cols }, (_, col) => (
           <div className="elev-col" key={col}>
-            <div className="elev-col-head">col {col + 1}</div>
+            <div className="elev-col-head">{T.col_head(col + 1)}</div>
             {Array.from({ length: sec.columnLevels[col] ?? 0 }, (_, level) => {
               const shelf = shelfAt(sec, col, level)
               const isSel = selected?.col === col && selected.level === level
@@ -134,13 +138,13 @@ function SectionBlock({
                   key={level}
                   type="button"
                   className={`elev-cell${isSel ? ' selected' : ''}${override ? ' override' : ''}`}
-                  aria-label={`shelf, ${addr}column ${col + 1}, level ${level + 1}`}
+                  aria-label={T.shelf_at(addr, col + 1, level + 1)}
                   aria-pressed={isSel}
                   onClick={() => props.onSelectShelf(sec.id, col, level)}
                 >
                   <span className="elev-level">{level + 1}</span>
                   {shelf && shelf.depth > 1 && (
-                    <span className="elev-depth" title={`${shelf.depth} rows front-to-back`}>
+                    <span className="elev-depth" title={T.rows_deep(shelf.depth)}>
                       ×{shelf.depth}
                     </span>
                   )}
@@ -151,7 +155,7 @@ function SectionBlock({
             <div className="elev-col-foot">
               <button
                 type="button"
-                aria-label={`remove a level from ${addr}column ${col + 1}`}
+                aria-label={T.remove_level(addr, col + 1)}
                 disabled={(sec.columnLevels[col] ?? 1) <= 1}
                 onClick={() => props.onColumnLevels(sec.id, col, (sec.columnLevels[col] ?? 1) - 1)}
               >
@@ -159,7 +163,7 @@ function SectionBlock({
               </button>
               <button
                 type="button"
-                aria-label={`add a level to ${addr}column ${col + 1}`}
+                aria-label={T.add_level(addr, col + 1)}
                 onClick={() => props.onColumnLevels(sec.id, col, (sec.columnLevels[col] ?? 1) + 1)}
               >
                 +
@@ -173,52 +177,52 @@ function SectionBlock({
       <div className="elevation-cols">
         <button
           type="button"
-          aria-label={many ? `remove the last column of ${label.toLowerCase()}` : 'remove the last column'}
+          aria-label={many ? T.remove_column_of(label) : T.remove_column}
           disabled={cols <= 1}
           onClick={() => {
             const losing = shelvesInColumns(sec, cols - 1)
-            if (losing > 0 && !confirm(`Remove the last column and its ${losing} shelves?`)) return
+            if (losing > 0 && !confirm(T.remove_column_confirm(losing))) return
             props.onColumnCount(sec.id, cols - 1)
           }}
         >
-          − column
+          − {T.column}
         </button>
         <button
           type="button"
-          aria-label={many ? `add a column to ${label.toLowerCase()}` : 'add a column'}
+          aria-label={many ? T.add_column_of(label) : T.add_column}
           onClick={() => props.onColumnCount(sec.id, cols + 1)}
         >
-          + column
+          + {T.column}
         </button>
       </div>
 
       <div className="section-defaults">
         <label>
-          <span>new levels</span>
+          <span>{T.new_levels}</span>
           <input
             type="number"
             min={1}
             max={12}
             value={sec.defaultLevels}
-            aria-label={many ? `default levels per column, ${label.toLowerCase()}` : 'default levels per column'}
+            aria-label={many ? T.default_levels_of(label) : T.default_levels}
             onChange={(e) => props.onDefaultLevels(sec.id, Number(e.target.value))}
           />
         </label>
         <button
           type="button"
-          aria-label={many ? `apply the level default to every column of ${label.toLowerCase()}` : 'apply the level default to every column'}
+          aria-label={many ? T.apply_levels_of(label) : T.apply_levels}
           onClick={() => props.onApplyDefaultLevels(sec.id)}
         >
-          apply
+          {T.apply}
         </button>
         <label>
-          <span>new depth</span>
+          <span>{T.new_depth}</span>
           <input
             type="number"
             min={1}
             max={MAX_DEPTH}
             value={sec.defaultDepth}
-            aria-label={many ? `default depth, ${label.toLowerCase()}` : 'default depth'}
+            aria-label={many ? T.default_depth_of(label) : T.default_depth}
             onChange={(e) => props.onDefaultDepth(sec.id, Number(e.target.value))}
           />
         </label>
@@ -226,17 +230,13 @@ function SectionBlock({
 
       {differing > 0 && (
         <p className="rule">
-          <strong>{differing}</strong> existing{' '}
-          {differing === 1 ? 'shelf keeps its own depth' : 'shelves keep their own depth'} in{' '}
-          {label.toLowerCase()}. Changing the default never reaches back into
-          them — that would delete the location of every book standing in a back
-          row.
+          {T.depth_kept(differing, label)}
           <button
             type="button"
-            aria-label={many ? `apply the depth default to every shelf of ${label.toLowerCase()}` : 'apply the depth default to every shelf'}
+            aria-label={many ? T.apply_depth_of(label) : T.apply_depth}
             onClick={() => props.onApplyDefaultDepth(sec.id)}
           >
-            Apply to all {sec.shelves.length} shelves
+            {T.apply_to_all(sec.shelves.length)}
           </button>
         </p>
       )}
