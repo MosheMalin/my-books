@@ -44,6 +44,7 @@ type Props = {
   onPaste: () => void
   onDelete: () => void
   onReload: () => void
+  onAddSite: () => void
   onUnderlay: (file: File) => void
   onUnderlayChange: (patch: Partial<Underlay>) => void
   onUnderlayClear: () => void
@@ -133,6 +134,11 @@ export function Toolbar(props: Props) {
           items={[
             { label: T.reload, onSelect: props.onReload },
             { label: T.trace, onSelect: () => underlayRef.current?.click() },
+            // ⚠ The one site control a ONE-site household sees, and the only
+            // place it could go: the badge's site segment does not exist yet,
+            // and this is what brings it into being. A plan-level command, in
+            // the Plan menu.
+            { label: T.add_site, onSelect: props.onAddSite },
           ]}
         />
         <Menu

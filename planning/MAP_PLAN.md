@@ -513,7 +513,7 @@ this pillar.**
 | **P6.1** | **Address domain + migration** — `Site`, `Floor`, `Place`, `Bookcase`, `Section`, the shelf address, geometry in abstract units. Drawn slots create real empty `Shelf` rows. Naming lint. Schema **v20** with a real v19→v20 upgrade test. | L | ✅ |
 | **P6.2** | **API + policy** — the map through `current_library`, one capability each, contracts regenerated. | M | ✅ |
 | **P6.3** | **The port** — the lab's editor moves into `app/web/src/map/` **verbatim** where it is framework-free, wired to the API by an adapter. **The lab is deleted in the same commit.** Behaviour identical to the lab's ninth pass — that is the acceptance test, not a rewrite. | M | ✅ |
-| **P6.3.1** | **The site picker** — the one thing the lab never had (§3.9). Sites and their floors become manageable in the ported editor; a single site renders no chrome. Deliberately AFTER P6.3, so "behaves the same" is verifiable before anything new is added. ⚠ Renumbered: this item was "P6.3b", and P6.3's own wiring commit spent that identifier in the git log. | S | |
+| **P6.3.1** | **The site picker** — the one thing the lab never had (§3.9). Sites and their floors become manageable in the ported editor; a single site renders no chrome. Deliberately AFTER P6.3, so "behaves the same" is verifiable before anything new is added. ⚠ Renumbered: this item was "P6.3b", and P6.3's own wiring commit spent that identifier in the git log. | S | ✅ |
 | **P6.4** | **Binding and merge** — photo-born shelves bind into drawn slots; several identities merge into one physical shelf, with aliases. | L | |
 | **P6.5** | **The map as navigation** — three drill levels, "where is it" incl. depth, stale-depth surfacing, capture handoff. | L | |
 | **P6.6** | *Optional:* bookcase photo → proposed levels via `segment.py`, confirmed by hand. | S | |
@@ -772,6 +772,37 @@ left. Twice more in the same fix: a percentage height needs a parent with a
 DEFINITE one (the canvas snapped back to 150px), and an `auto` inline margin on
 a flex item absorbs free space instead of stretching (the editor came out 636px
 wide, centred, on a 1280px window). All three measured in a real browser.
+
+### P6.3.1 — the site picker
+
+§3.9's second level, made reachable. A `Site` is the property — home, the
+parents' place, the office — and a `Floor` belongs to exactly one of them, so
+choosing a site chooses which floors, rooms and bookcases the document is made
+of. It is **not** part of an address, so switching re-addresses nothing.
+
+Four decisions worth keeping:
+
+- **a site is not in the document, so it is not in the diff.** `planDiff`
+  describes one site's drawing; the four site gestures write directly and then
+  re-derive. Putting them in the op language would mean a create whose failure
+  leaves the editor drawing a plan that hangs off nothing;
+- **a new site gets a storey in the same breath.** `toPlan` would otherwise
+  synthesise one the server never heard of, and the first room drawn onto it is
+  refused with a 404 — the same failure `ensureHome` was written for;
+- **no chrome until the second site exists**, the rule the library switcher
+  already holds. The one control a one-site household sees is *add a site* in
+  the Plan menu, and pressing it is what brings the badge's site segment into
+  being. The badge then reads `site · storey`, which is the same question asked
+  twice and belongs in one corner;
+- **the choice is remembered per LIBRARY.** One key would make the parents'
+  place the answer for every customer, and the id would resolve to nothing in
+  all but one of them. A remembered site that is gone falls back to the first
+  rather than drawing an empty board — the stale-stored-id rule, again.
+
+It also answers the note `PlanScreen` has carried since the port: two tabs
+opening an undrawn library at the same instant can still mint two sites, and
+the picker is where the duplicate becomes visible and removable — which is why
+it does not need a lock nothing else in this app takes.
 
 ## 6. What P6.1 must not repeat
 

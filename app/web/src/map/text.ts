@@ -68,6 +68,14 @@ export interface MapText {
   shelf_at: (addr: string, col: number, level: number) => string
   remove_level: (addr: string, col: number) => string
   add_level: (addr: string, col: number) => string
+  // sites (§3.9) — a grouping above the floors, never part of an address
+  site: string
+  site_menu: string
+  site_n: (n: number) => string
+  add_site: string
+  rename_site: (name: string) => string
+  remove_site: (name: string) => string
+  site_name: string
   // floors
   floor: string
   floor_menu: string
@@ -231,6 +239,15 @@ const HE: MapText = {
   shelf_at: (a, c, l) => `מדף, ${a}עמודה ${c}, גובה ${l}`,
   remove_level: (a, c) => `הסרת מדף מ${a}עמודה ${c}`,
   add_level: (a, c) => `הוספת מדף ל${a}עמודה ${c}`,
+  // ⚠ אתר for a SITE — the property — and חדר for a Place, which is the room.
+  // MAP_PLAN §3.9 retires the gloss that let one word mean both.
+  site: 'אתר',
+  site_menu: 'תפריט האתרים',
+  site_n: (n) => `אתר ${n}`,
+  add_site: 'הוספת אתר',
+  rename_site: (name) => `שינוי שם האתר ${name}`,
+  remove_site: (name) => `הסרת האתר ${name}`,
+  site_name: 'שם האתר',
   floor: 'קומה',
   floor_menu: 'תפריט הקומות',
   floor_n: (n) => `קומה ${n}`,
@@ -420,6 +437,13 @@ const EN: MapText = {
   shelf_at: (a, c, l) => `shelf, ${a}column ${c}, level ${l}`,
   remove_level: (a, c) => `remove a level from ${a}column ${c}`,
   add_level: (a, c) => `add a level to ${a}column ${c}`,
+  site: 'Site',
+  site_menu: 'Site menu',
+  site_n: (n) => `Site ${n}`,
+  add_site: 'Add a site',
+  rename_site: (name) => `Rename the site ${name}`,
+  remove_site: (name) => `Remove the site ${name}`,
+  site_name: 'site name',
   floor: 'Floor',
   floor_menu: 'Floor menu',
   floor_n: (n) => `Floor ${n}`,

@@ -19,7 +19,28 @@ import { useEffect, useRef, useState } from 'react'
 import type { Floor } from '../core/model'
 import { Menu } from './Menu'
 
+/**
+ * The SITE segment, and why it is here rather than in the toolbar.
+ *
+ * A site is the property — "home", "the parents' place" — and the floors below
+ * it are its storeys (§3.9), so "which site" and "which storey" are one
+ * question asked twice. They belong to the same corner of the board.
+ *
+ * ⚠ It renders NOTHING until a second site exists, the way the library
+ * switcher stays a plain label until a second library does. A household with
+ * one home never learns the word: adding the second site is a row in the Plan
+ * menu, and the segment appears with it.
+ */
+type SiteProps = {
+  sites: { id: string; name: string }[]
+  siteId: string
+  onSite: (id: string) => void
+  onRenameSite: (id: string, name: string) => void
+  onRemoveSite: (id: string) => void
+}
+
 type Props = {
+  site: SiteProps
   floors: Floor[]
   floorId: string
   allFloors: boolean
@@ -33,8 +54,11 @@ type Props = {
 export function FloorBadge(props: Props) {
   const T = mapText(useI18n().lang)
   const [editing, setEditing] = useState(false)
+  const [renamingSite, setRenamingSite] = useState(false)
   const inputRef = useRef<HTMLInputElement | null>(null)
+  const siteRef = useRef<HTMLInputElement | null>(null)
   const current = props.floors.find((f) => f.id === props.floorId)
+  const here = props.site.sites.find((s) => s.id === props.site.siteId)
 
   useEffect(() => {
     if (editing) {
@@ -42,6 +66,13 @@ export function FloorBadge(props: Props) {
       inputRef.current?.select()
     }
   }, [editing])
+
+  useEffect(() => {
+    if (renamingSite) {
+      siteRef.current?.focus()
+      siteRef.current?.select()
+    }
+  }, [renamingSite])
 
   return (
     /* ⚠ No `dir="auto"` on the CONTAINER. `inset-inline-start` resolves
@@ -52,6 +83,47 @@ export function FloorBadge(props: Props) {
        other change. Direction per STRING, alignment per CONTAINER: the name
        span carries `.rtl-safe`, which is the whole of what the text needs. */
     <div className="floor-badge">
+      {props.site.sites.length > 1 && (
+        <>
+          <span className="site-name rtl-safe">
+            {here?.name || T.site}
+          </span>
+          <Menu
+            label=""
+            title={T.site_menu}
+            items={[
+              ...props.site.sites.map((s) => ({
+                label: s.name || T.site,
+                checked: s.id === props.site.siteId,
+                onSelect: () => props.site.onSite(s.id),
+              })),
+              {
+                label: T.rename_site(here?.name || T.site),
+                onSelect: () => setRenamingSite(true),
+              },
+              {
+                label: T.remove_site(here?.name || T.site),
+                danger: true,
+                onSelect: () => props.site.onRemoveSite(props.site.siteId),
+              },
+            ]}
+          />
+          <span className="badge-sep" aria-hidden="true">·</span>
+        </>
+      )}
+      {renamingSite && (
+        <input
+          ref={siteRef}
+          className="rtl-safe"
+          aria-label={T.site_name}
+          value={here?.name ?? ''}
+          onChange={(e) => props.site.onRenameSite(props.site.siteId, e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === 'Escape') setRenamingSite(false)
+          }}
+          onBlur={() => setRenamingSite(false)}
+        />
+      )}
       {editing ? (
         <input
           ref={inputRef}

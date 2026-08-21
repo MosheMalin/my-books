@@ -93,6 +93,17 @@ const drawn = (): Plan => ({
   cases: [newBookcase('c1', 'ארון', { x: 1, y: 0, w: 4, h: 1 }, 'S', 'r1', 'f1', 2)],
 })
 
+/** One site is the state every household starts in, and most stay in: the
+ *  segment renders nothing at all. */
+const ONE_SITE = {
+  sites: [{ id: 'st1', name: 'הבית' }],
+  siteId: 'st1',
+  onSite: () => {},
+  onAddSite: () => {},
+  onRenameSite: () => {},
+  onRemoveSite: () => {},
+}
+
 const openEditor = () =>
   render(
     <I18nProvider>
@@ -101,6 +112,7 @@ const openEditor = () =>
         onChange={() => {}}
         saved="saved"
         onReload={() => {}}
+        site={ONE_SITE}
       />
     </I18nProvider>,
   )
@@ -215,7 +227,8 @@ describe('the editor in Hebrew', () => {
     openEditor()
     await user.click(screen.getByRole('button', { name: HE.menu_plan }))
     const items = screen.getAllByRole('menuitem').map((el) => el.textContent)
-    expect(items).toEqual([HE.reload, HE.trace])
+    // Reload, trace, and the one site control a one-site household ever sees.
+    expect(items).toEqual([HE.reload, HE.trace, HE.add_site])
   })
 
   it('offers each drawing tool ONCE, as the button it already is', async () => {

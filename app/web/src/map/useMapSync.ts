@@ -16,7 +16,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { Plan } from './core/model'
 import { emptyPlan } from './core/model'
-import { Ids, push, type Api, type Refusal } from './push'
+import { Ids, push, type Api } from './push'
 import { planDiff, toPlan, type MapWire, type ShelfWire } from './sync'
 import type { MapText } from './text'
 
@@ -27,8 +27,8 @@ export type MapSource = {
   load: () => Promise<{ map: MapWire; shelves: ShelfWire[] }>
   api: Api
   /**
-    * The site and storey the drawing hangs off, created if this library has
-    * none. Sites arrive as a picker in P6.3.1; until then there is one.
+    * The FIRST site and storey, created if this library has none. Which site
+    * is then being drawn is `siteId`, and the picker moves it.
     *
     * ⚠ It must return a real FLOOR id too. The first version returned only
     * the site, `toPlan` synthesised a floor the server had never heard of,
@@ -36,6 +36,11 @@ export type MapSource = {
     * that existed nowhere but the document. Found by opening the editor.
     */
    ensureHome: () => Promise<{ siteId: string; floorId: string }>
+  /** Which site this library was last drawing, if anything remembers. Kept
+   *  outside the hook because "where" is the app's business (one library's
+   *  choice must not become another's) and the hook has no library id. */
+  rememberedSite?: () => string
+  rememberSite?: (id: string) => void
 }
 
 /**
@@ -53,7 +58,11 @@ export type MapSource = {
  * nothing to edit — and a push that could not be delivered says so beside a
  * drawing that is still on screen.
  */
-export type Trouble = { detail: string }
+export type Notice =
+  /** The server answered, and the answer was no — a rule the owner met. */
+  | { kind: 'refused'; detail: string }
+  /** The request never arrived. Nothing was decided; the edit still stands. */
+  | { kind: 'undelivered'; detail: string }
 
 export type MapSync = {
   ready: boolean
@@ -63,11 +72,25 @@ export type MapSync = {
   /** The LOAD failed: there is no document, so there is nothing to edit. */
   error: string | null
   saved: Saved
-  /** The refusal the server gave, in its own words, or null. */
-  refusal: Refusal | null
-  /** A push that never reached the server. The editor stays. */
-  trouble: Trouble | null
+  /** What the last write ran into, in the server's own words, or null. */
+  notice: Notice | null
   dismiss: () => void
+  /**
+   * Every SITE of this library, and the one being drawn (§3.9).
+   *
+   * A site is a grouping — "home", "the parents' place" — never part of an
+   * address, so switching does not re-address one shelf: it changes which
+   * floors, rooms and bookcases the document is made of. One site renders no
+   * chrome at all, the way one library renders as a label.
+   */
+  sites: { id: string; name: string }[]
+  siteId: string
+  chooseSite: (id: string) => void
+  /** A site AND the storey it needs, because a document with no floor is the
+   *  404 `ensureHome` exists to prevent. Switches to it. */
+  addSite: (name: string) => void
+  renameSite: (id: string, name: string) => void
+  removeSite: (id: string) => void
   /** The plan as the server last confirmed it — the editor's starting doc. */
   initial: Plan | null
   /** Hand the current document over; the hook works out what to send. */
@@ -80,8 +103,9 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
   const [ready, setReady] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState<Saved>('saved')
-  const [refusal, setRefusal] = useState<Refusal | null>(null)
-  const [trouble, setTrouble] = useState<Trouble | null>(null)
+  const [notice, setNotice] = useState<Notice | null>(null)
+  const [sites, setSites] = useState<{ id: string; name: string }[]>([])
+  const [siteId, setSiteId] = useState<string>('')
   const [generation, setGeneration] = useState(0)
 
   /** The last state the SERVER confirmed. Every diff is against this, never
@@ -95,6 +119,9 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
    *  the first run. Holding the promise makes the second call join the
    *  first instead of racing it. */
   const homing = useRef<Promise<{ siteId: string; floorId: string }> | null>(null)
+  /** The site the OWNER picked, which outlives a re-derive. Empty means "the
+   *  one `ensureHome` found", which is what every one-site library gets. */
+  const chosen = useRef<string>(source.rememberedSite?.() ?? '')
   const inflight = useRef<Promise<void>>(Promise.resolve())
   /**
    * ⚠ **Nothing is written while the document is being re-derived**, and this
@@ -135,9 +162,18 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
     void (async () => {
       try {
         if (!homing.current) homing.current = source.ensureHome()
-        site.current = (await homing.current).siteId
+        const home = await homing.current
         const { map, shelves } = await source.load()
         if (!alive) return
+        // ⚠ A remembered site that is no longer there falls back rather than
+        // showing an empty plan — the same rule the library switcher holds for
+        // a stale stored id. A site can go while another tab is looking at it.
+        const wanted = chosen.current || home.siteId
+        site.current = map.sites.some((s) => s.id === wanted)
+          ? wanted
+          : map.sites[0]?.id ?? home.siteId
+        setSites(map.sites.map((s) => ({ id: s.id, name: s.name })))
+        setSiteId(site.current)
         const plan = toPlan(map, shelves, site.current)
         confirmed.current = plan
         ids.current = new Ids()
@@ -152,6 +188,63 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [generation])
+
+  /**
+   * The four site gestures.
+   *
+   * ⚠ None of them go through `planDiff`. A site is not IN the document — it
+   * decides which document there is — so there is nothing to diff, and putting
+   * it in the op language would mean a create whose failure leaves the editor
+   * drawing a plan that hangs off nothing. Each writes, then re-derives, which
+   * is also how the picker cleans up the duplicate site two tabs can mint.
+   */
+  const afterSite = useCallback(async (work: Promise<unknown>) => {
+    try {
+      await work
+      startOver()
+    } catch (err) {
+      // A refusal here is a rule — "a site keeps its last storey", "3 rooms
+      // still on this floor" — in the server's own words.
+      const e = err as { status?: number; detail?: string; message?: string }
+      setNotice({
+        kind: typeof e?.status === 'number' ? 'refused' : 'undelivered',
+        detail: e?.detail || e?.message || T.save_failed_hint,
+      })
+    }
+  }, [startOver, T])
+
+  const chooseSite = useCallback((id: string) => {
+    if (id === site.current) return
+    chosen.current = id
+    source.rememberSite?.(id)
+    startOver()
+  }, [source, startOver])
+
+  const addSite = useCallback((name: string) => {
+    void afterSite((async () => {
+      const made = await source.api.post('/map/sites', { name })
+      // The storey is not optional: `toPlan` would otherwise synthesise one the
+      // server never heard of, and the first room drawn onto it is a 404.
+      await source.api.post('/map/floors',
+                            { site_id: made.id, name: T.floor_n(1) })
+      chosen.current = made.id
+      source.rememberSite?.(made.id)
+    })())
+  }, [afterSite, source, T])
+
+  const renameSite = useCallback((id: string, name: string) => {
+    void afterSite(source.api.patch(`/map/sites/${id}`, { name }))
+  }, [afterSite, source])
+
+  const removeSite = useCallback((id: string) => {
+    void afterSite((async () => {
+      await source.api.del(`/map/sites/${id}`)
+      if (id === chosen.current || id === site.current) {
+        chosen.current = ''
+        source.rememberSite?.('')
+      }
+    })())
+  }, [afterSite, source])
 
   const record = useCallback((plan: Plan) => {
     setSaved('saving')
@@ -206,7 +299,7 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
           // thing to lose when the drawing on screen and the drawing in the
           // library have diverged. `startOver` — not a bare bump — because
           // the bump ALONE was the second half of the same defect.
-          setRefusal(stopped)
+          setNotice({ kind: 'refused', detail: stopped.detail })
           setSaved('failed')
           startOver()
           return
@@ -219,7 +312,7 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
         // delivery. `confirmed` is left where it was, so the next edit's diff
         // carries this one with it — which is the whole point of diffing
         // against the last CONFIRMED state rather than the last render.
-        setTrouble({ detail: messageOf(err, T) })
+        setNotice({ kind: 'undelivered', detail: messageOf(err, T) })
         setSaved('failed')
       }
     })
@@ -230,12 +323,14 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
     ready,
     error,
     saved,
-    refusal,
-    trouble,
-    dismiss: () => {
-      setRefusal(null)
-      setTrouble(null)
-    },
+    notice,
+    dismiss: () => setNotice(null),
+    sites,
+    siteId,
+    chooseSite,
+    addSite,
+    renameSite,
+    removeSite,
     initial,
     record,
     reload: startOver,

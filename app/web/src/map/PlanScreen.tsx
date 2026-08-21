@@ -17,7 +17,17 @@ import type { MapSource } from './useMapSync'
 import { useMapSync } from './useMapSync'
 import { getMap, listShelves, mapDelete, mapPatch, mapPost } from '../api/client'
 
-export function PlanScreen() {
+/**
+ * Which site this library was last drawing.
+ *
+ * ⚠ Keyed by LIBRARY. One key would make the parents' place the answer for
+ * every customer's map, and the id would resolve to nothing in all but one of
+ * them — the loader falls back, so it would read as "the picker forgets",
+ * which is worse than not remembering at all.
+ */
+const SITE_KEY = (library: string) => `booksnap.map.site.${library}`
+
+export function PlanScreen({ library }: { library: string }) {
   const { t, lang } = useI18n()
   const T = mapText(lang)
 
@@ -32,20 +42,36 @@ export function PlanScreen() {
       del: (path) => mapDelete(path),
     },
     /**
-     * A drawing needs a site AND a storey to hang off, and until P6.3.1 there
-     * is exactly one of each. Created on first use rather than at sign-up: a
-     * household that never draws anything should not carry a "Home" nobody
-     * typed.
+     * A drawing needs a site AND a storey to hang off. This makes the FIRST
+     * of each, on first use rather than at sign-up: a household that never
+     * draws anything should not carry a "Home" nobody typed. Every one after
+     * that comes from the picker (P6.3.1).
      *
      * ⚠ **The floor is not optional.** Without it `toPlan` synthesises one,
      * and the first room drawn is refused with a 404 for a floor id that
      * exists only in the document — measured by opening the editor.
      *
      * Reads before it writes. Two tabs opening an undrawn library at the same
-     * instant could still mint two sites; the picker in P6.3.1 is where an
-     * extra one gets deleted, and the loader picks the first deterministically
-     * meanwhile.
+     * instant could still mint two sites — the loader then picks the first
+     * deterministically, and the picker is where the duplicate becomes
+     * visible and removable, which is why it does not need to be prevented
+     * here at the cost of a lock nothing else in this app takes.
      */
+    rememberedSite: () => {
+      try {
+        return window.localStorage.getItem(SITE_KEY(library)) ?? ''
+      } catch {
+        return ''
+      }
+    },
+    rememberSite: (id: string) => {
+      try {
+        if (id) window.localStorage.setItem(SITE_KEY(library), id)
+        else window.localStorage.removeItem(SITE_KEY(library))
+      } catch {
+        /* a full or blocked localStorage must not stop the switch */
+      }
+    },
     ensureHome: async () => {
       const map = await getMap()
       const site = map.sites[0]
@@ -55,7 +81,7 @@ export function PlanScreen() {
                          { site_id: site.id, name: t.plan_floor_default })
       return { siteId: site.id as string, floorId: floor.id as string }
     },
-  }), [t.plan_site_default])
+  }), [t.plan_site_default, t.plan_floor_default, library])
 
   const sync = useMapSync(source, T)
 
@@ -88,11 +114,9 @@ export function PlanScreen() {
    * to is rebuilt would make the one informative message the briefest thing
    * on screen.
    */
-  const said = sync.refusal
-    ? `${T.refused_lead} ${sync.refusal.detail}`
-    : sync.trouble
-      ? `${T.not_saved_yet} ${sync.trouble.detail}`
-      : null
+  const said = sync.notice && (sync.notice.kind === 'refused'
+    ? `${T.refused_lead} ${sync.notice.detail}`
+    : `${T.not_saved_yet} ${sync.notice.detail}`)
   const banner = said && (
     <div className="mapbanner" role="alert">
       <span className="rtl-safe">{said}</span>
@@ -116,6 +140,17 @@ export function PlanScreen() {
         onChange={sync.record}
         saved={sync.saved}
         onReload={sync.reload}
+        site={{
+          sites: sync.sites,
+          siteId: sync.siteId,
+          onSite: sync.chooseSite,
+          // A default name, then rename it in place — the same gesture as a
+          // new storey, and for the same reason: a prompt for a name is a
+          // dialog in front of a thing you can see and edit.
+          onAddSite: () => sync.addSite(T.site_n(sync.sites.length + 1)),
+          onRenameSite: sync.renameSite,
+          onRemoveSite: sync.removeSite,
+        }}
       />
     </>
   )

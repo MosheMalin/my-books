@@ -69,6 +69,17 @@ export type MapScreenProps = {
   onChange: (plan: Plan) => void
   saved: 'saving' | 'saved' | 'failed'
   onReload: () => void
+  /** The sites this library has, and the one being drawn (§3.9). Passed
+   *  through rather than held here: a site decides WHICH document this is, so
+   *  it cannot live in the document. */
+  site: {
+    sites: { id: string; name: string }[]
+    siteId: string
+    onSite: (id: string) => void
+    onAddSite: () => void
+    onRenameSite: (id: string, name: string) => void
+    onRemoveSite: (id: string) => void
+  }
 }
 
 export default function MapScreen(props: MapScreenProps) {
@@ -666,6 +677,7 @@ export default function MapScreen(props: MapScreenProps) {
         onPaste={paste}
         onDelete={deleteSelection}
         onReload={props.onReload}
+        onAddSite={props.site.onAddSite}
         onUnderlay={loadUnderlay}
         onUnderlayChange={(patch) =>
           setUnderlay(doc.plan.underlay ? { ...doc.plan.underlay, ...patch } : null)
@@ -731,6 +743,7 @@ export default function MapScreen(props: MapScreenProps) {
               the bar already names the mode, and three of the badge's five
               menu items are disabled while it is up. */}
           {!overview && <FloorBadge
+            site={props.site}
             floors={doc.plan.floors}
             floorId={floorId}
             allFloors={overview}

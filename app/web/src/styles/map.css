@@ -358,6 +358,16 @@
   border: 1px solid var(--line);
   border-radius: 8px;
 }
+/* The site segment (§3.9). Present only when a second site is — one home
+ * renders no chrome at all — and dimmer than the storey, because the storey
+ * is what the board is showing and the site is what it belongs to. */
+.mapscreen .floor-badge .site-name {
+  font-size: 13px;
+  color: var(--dim);
+  white-space: nowrap;
+}
+.mapscreen .floor-badge .badge-sep { color: var(--dim); }
+
 .mapscreen .floor-badge .floor-name {
   font-size: 13px;
   font-weight: 600;

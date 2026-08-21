@@ -74,6 +74,17 @@ function fakeMapServer() {
         places: [], bookcases: [], sections: [],
       })
     }
+    if (method === 'DELETE' && path.startsWith('/map/sites/')) {
+      const id = path.split('/').pop()!
+      if (state.refuseNext) {
+        const status = state.refuseNext
+        state.refuseNext = null
+        return respond({ detail: 'עדיין יש כאן חדרים' }, status)
+      }
+      state.sites = state.sites.filter((x) => x.id !== id)
+      state.floors = state.floors.filter((f) => f.site_id !== id)
+      return respond(null, 204)
+    }
     if (method === 'GET' && path === '/shelves') return respond([])
     if (method === 'POST') {
       if (state.holding) await new Promise<void>((go) => state.held.push(go))
@@ -95,6 +106,11 @@ function fakeMapServer() {
                             name: String(body.name ?? ''), order: 0 })
       }
       return respond({ id, ...body }, 201)
+    }
+    if (method === 'PATCH' && path.startsWith('/map/sites/')) {
+      const site = state.sites.find((x) => path.endsWith(x.id))
+      if (site && typeof body.name === 'string') site.name = body.name
+      return respond(site ?? {})
     }
     if (method === 'PATCH') {
       const floor = state.floors.find((f) => path.endsWith(f.id))
@@ -132,7 +148,8 @@ afterEach(() => {
  */
 const WAIT = { timeout: 4000 } as const
 
-const open = () => render(<I18nProvider><PlanScreen /></I18nProvider>)
+const open = () =>
+  render(<I18nProvider><PlanScreen library="lib-test" /></I18nProvider>)
 
 const posted = (path: string) =>
   server.calls.filter((c) => c === `POST ${path}`)
@@ -254,5 +271,96 @@ describe('reloading the plan', () => {
 
     expect(server.calls.filter((c) => c.startsWith('DELETE'))).toEqual([])
     expect(server.floors).toHaveLength(2)
+  })
+})
+
+// --- the site picker (P6.3.1, MAP_PLAN §3.9) -------------------------------
+
+/** Open the site menu — the segment that only exists once a second site does. */
+const siteMenu = () => screen.getByRole('button', { name: HE.site_menu })
+
+describe('the sites of one library', () => {
+  it('shows nothing at all while there is one, and a picker the moment there are two', async () => {
+    // ⚠ The rule §3.9 shares with the library switcher: a household with one
+    // home never learns the word. The one control it has is a row in the Plan
+    // menu, and pressing it is what brings the segment into being.
+    const user = userEvent.setup()
+    open()
+    await screen.findByRole('radio', { name: HE.arrow }, WAIT)
+    expect(screen.queryByRole('button', { name: HE.site_menu }))
+      .not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: HE.menu_plan }))
+    await user.click(screen.getByRole('menuitem', { name: HE.add_site }))
+    await waitFor(() => expect(siteMenu()).toBeInTheDocument(), WAIT)
+
+    // A site is nothing without a storey to hang the drawing off — the 404
+    // `ensureHome` exists to prevent.
+    expect(server.sites).toHaveLength(2)
+    expect(server.floors.filter((f) => f.site_id === server.sites[1]!.id))
+      .toHaveLength(1)
+    // …and the editor is now drawing the new one.
+    await user.click(siteMenu())
+    expect(screen.getByRole('menuitemcheckbox', { name: HE.site_n(2) }))
+      .toHaveAttribute('aria-checked', 'true')
+  })
+
+  it('draws the storeys of the site it is on, and remembers which', async () => {
+    const user = userEvent.setup()
+    open()
+    await screen.findByRole('radio', { name: HE.arrow }, WAIT)
+    await user.click(screen.getByRole('button', { name: HE.menu_plan }))
+    await user.click(screen.getByRole('menuitem', { name: HE.add_site }))
+    await waitFor(() => expect(siteMenu()).toBeInTheDocument(), WAIT)
+    // Give the SECOND site a storey of its own, so the two differ.
+    await addFloor(user)
+    await waitFor(() => expect(server.floors).toHaveLength(3), WAIT)
+
+    // Back to the first: its own single storey, and not the other's.
+    await user.click(siteMenu())
+    await user.click(screen.getByRole('menuitemcheckbox', { name: /הבית/ }))
+    await waitFor(() => expect(siteMenu()).toBeInTheDocument(), WAIT)
+    await user.click(screen.getByRole('button', { name: HE.floor_menu }))
+    const storeys = screen.getAllByRole('menuitemcheckbox')
+      .map((el) => el.textContent?.replace('✓', '').trim())
+    expect(storeys).toContain('קומת קרקע')
+    expect(storeys).not.toContain(HE.floor_n(2))
+
+    // ⚠ Remembered per LIBRARY, so reopening the tab lands where you left off
+    // and another customer's map is unaffected.
+    expect(globalThis.localStorage.getItem('booksnap.map.site.lib-test'))
+      .toBe(server.sites[0]!.id)
+  })
+
+  it('recovers on its own when the remembered site is gone', async () => {
+    // ⚠ Another tab can delete the site this one remembers — and the id then
+    // resolves to nothing, which `toPlan` answers with a plan of one
+    // synthesised storey: an EMPTY board, and the first room drawn onto it
+    // refused with a 404 for a floor that exists nowhere. The same rule the
+    // library switcher holds for a stale stored id: fall back, quietly.
+    globalThis.localStorage.setItem('booksnap.map.site.lib-test', 'st-gone')
+    const user = userEvent.setup()
+    open()
+    await screen.findByRole('radio', { name: HE.arrow }, WAIT)
+    await user.click(screen.getByRole('button', { name: HE.floor_menu }))
+    expect(screen.getByRole('menuitemcheckbox', { name: 'קומת קרקע' }))
+      .toBeInTheDocument()
+  })
+
+  it('says why the server refused to remove one, and keeps drawing it', async () => {
+    const user = userEvent.setup()
+    open()
+    await screen.findByRole('radio', { name: HE.arrow }, WAIT)
+    await user.click(screen.getByRole('button', { name: HE.menu_plan }))
+    await user.click(screen.getByRole('menuitem', { name: HE.add_site }))
+    await waitFor(() => expect(siteMenu()).toBeInTheDocument(), WAIT)
+
+    server.refuseNext = 409
+    await user.click(siteMenu())
+    await user.click(screen.getByRole('menuitem', { name: HE.remove_site(HE.site_n(2)) }))
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument(), WAIT)
+    expect(screen.getByRole('alert')).toHaveTextContent(HE.refused_lead)
+    expect(screen.getByRole('alert')).toHaveTextContent('עדיין יש כאן חדרים')
+    expect(server.sites).toHaveLength(2)
   })
 })
