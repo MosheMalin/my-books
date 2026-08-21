@@ -319,6 +319,132 @@ recognisable and carry no book data; nine lab passes never wanted one. They can
 be added later without touching the address, which is what makes deferring them
 cheap.
 
+### 3.11 A merged shelf becomes an **alias**; its row is deleted
+
+**[PROPOSED — awaiting the owner.]** When photo-born shelf A merges into
+drawn slot B, A's `shelves` row goes and a `shelf_aliases` row takes its
+place: `alias_id -> shelf_id`, with A's former label and the date. A is no
+longer a shelf. It is still an answer.
+
+**Why not rewrite every reference and delete A outright** — the obvious
+alternative, and the one §3.1's *"no mapping table beside it"* appears to
+demand. Six tables name a shelf and only two have a foreign key, so
+`PRAGMA foreign_key_check` reports a clean file after a merge that lost half
+the library's locations. Rewriting them all:
+
+- **edits two archives this project has declared immutable.** VISION §5.5
+  keeps runs exactly; `book.py` says provenance is append-only, never
+  edited. A rewrite makes run R say it saw a book at a slot nobody had drawn
+  when R ran;
+- **collides on two primary keys.** `decisions` and `duplicate_questions`
+  are keyed by `(library, shelf, depth, book_key)`, so a merge can hold a
+  row on both sides and one human answer is discarded in silence.
+  `merge_library.py` met this exact wall and REFUSED rather than choose;
+- **404s every id held outside the database** — a bookmarked
+  `#/map/<shelf>`, a phone mid-upload, a queued read;
+- **is unmeasurable afterwards.** Once every reference is rewritten nothing
+  remembers what should have moved, so *did the merge lose a row?* has no
+  answer. The census in P6.4c depends on the alias existing.
+
+**Why A's row is DELETED rather than flagged `merged_into`:** `shelves`
+keeps meaning "a shelf", so every existing query stays correct with no new
+`WHERE` — and with `shelf_aliases.shelf_id REFERENCES shelves(id)`, an alias
+of an alias is unrepresentable, so the resolver is one hop by construction
+and needs no cycle guard.
+
+**What a past read's provenance means afterwards:** exactly what it always
+meant — *run R sighted this copy at identity A*. The precedent is already
+here, one level down (`ports/store.py:list_reads_for_capture`): a re-bound
+capture's earlier reads stay filed under the shelf as it was THEN, because
+deriving them from its current shelf would lose exactly the history a
+workspace exists to show. Two rules come with it: a merge is **refused while
+a read of either identity is running**, and `apply_diff` resolves through
+the alias so a read that started at A finishes at B rather than raising
+*"shelf no longer exists; nothing to apply"* and discarding a whole diff.
+
+### 3.12 Depth is preserved, never renumbered
+
+The merged shelf is `max(A.depth, B.depth, deepest_occupied(A),
+deepest_occupied(B))`. B's depth is a creation-time default copied from its
+section (§3.3) that nobody looked at; A's is a human declaration through
+*"add a row behind this one"*, the one thing §5.7 says cannot be detected.
+§5.1's ladder settles it. Deepening is never refused; shallowing never
+happens here — the two paths that could already answer 409 rather than
+clamp. **Depth NUMBERS are never remapped**: depth 2 of A is depth 2 of B,
+because renumbering would move books without moving books.
+
+⚠ And the order of a merged capture strip is DECLARED, not inferred:
+appending A's photos after B's encodes a claim (*A's half is to the right*)
+that nothing measured. One radio button — *which strip comes first* — is
+§5.7's "declared, never detected" applied to order.
+
+### 3.13 What moves with the wood, and what stays with the identity
+
+One sentence decides all six tables: **a row that governs a future write
+moves; a row that records a past event stays.**
+
+| | | |
+|---|---|---|
+| `copies` | **moves** | it is where the book IS |
+| `captures` | **moves**, renumbered per depth | future reads dedup against these |
+| `decisions` | **moves** | see below |
+| `duplicate_questions` | **moves** | a to-do list, not a record |
+| `provenance` | **stays** | append-only evidence (§5.2) |
+| `reads` + `claims` | **stay** | the immutable run archive (§5.5) |
+
+**`decisions` moving is the load-bearing one.** §5.6's rule is *"a book the
+user previously rejected here is not re-added"*, and "here" is
+`(library, shelf, depth, book_key)`. Leave A's rejections behind and the
+next read of the merged shelf **re-adds every phantom the owner ever
+rejected on that wood** — no row deleted, no key violated, nothing looking
+wrong. A collision is won by the newer `decided_at`, which is the rule the
+table's own upsert already applies to a human changing their mind, and the
+preview names every collision rather than choosing silently.
+
+### 3.14 The map may propose; only a ✓ binds
+
+**[PROPOSED — awaiting the owner.]** CLAUDE.md's *"nothing enters the
+library unapproved"* is about BOOKS. It should extend to shelf identity, and
+not by analogy: there is no evidence to be right from. §5.7 established that
+nothing in a photo says which ROW it is; nothing says which SLOT it is
+either, so any automatic binding is built from timing or label text, neither
+of which is evidence about wood. And the cost asymmetry is worse than for
+books — a wrong binding moves a POPULATION of copies, merges two capture
+strips, and looks like success, because the map gets fuller.
+
+So: every bind and every merge is an explicit ✓; the map may propose only
+from things the owner TYPED (a label matching a room or bookcase name),
+never from image content or timing, and a proposal shows its evidence in the
+same breath; and a multi-select bind itemises what moves, the way P6.2 says
+a structural edit must report what it cost the shelves.
+
+### 3.15 A merge cannot be undone, so the door is a preview
+
+**[PROPOSED — awaiting the owner.]** The inverse is not derivable from what
+we keep: a book the owner typed onto A by hand has no provenance, and after
+the merge nothing distinguishes it from one that was always on B. A guessed
+inverse **moves books that never moved**. So the door, matching the three
+precedents this pillar already has: a **preview** call that writes nothing
+and returns what will move (books, copies per depth, photos per depth, the
+resulting depth, the colliding decisions and which side wins); a **refusal
+list**, each 409 with its reason (a running read, a virtual shelf, B is
+itself an alias, different libraries) and one 200 — *A already resolves to B*
+is a no-op, so a retry cannot half-merge; a confirm that repeats the counts
+and says it cannot be undone; and the alias, which is what makes
+irreversible survivable — nothing 404s, and the shelf says *formerly …*.
+
+### 3.16 A merge may not manufacture evidence of absence
+
+§5.6's not-seen streak is scoped to the exact `(shelf, depth)`. After a
+merge both scopes are wrong in opposite directions: do nothing and every
+badge on the absorbed copies silently reads 0 on the day the owner is
+reorganising; union the reads naively and the streak INFLATES, because two
+photo-born identities merged into one slot are usually two halves of one
+shelf and a read of the left half never covered the right. The walk goes
+over the alias closure and **stops at the first read whose coverage cannot
+be vouched for**. It reduces exactly to today's behaviour when the closure is
+one shelf — which is P6.4d's own mutation check.
+
 ## 4. The fork, and how it was settled
 
 **[SETTLED 2026-08-16 — owner, after drawing on the first build.] Freehand
@@ -832,6 +958,56 @@ it does not need a lock nothing else in this app takes.
   intrinsic size. I had measured the WRAPPER and reported it fixed; a review
   measured the thing the owner draws on. It is `position: absolute; inset: 0`
   now, and gated by a test that reads the declaration.
+
+### P6.4 — binding and merge  *(planned, not started)*
+
+The decomposition, each landing on `main` before the next:
+
+| # | Item | Size | Reviewers |
+|---|---|---|---|
+| **P6.4a** | **The alias, and nothing using it** — schema **v21**, `shelf_aliases`, the resolver, `BookStore.books_on_shelf`, and "a shelf other identities resolve to is OCCUPIED". No merge, no route. | M | `review-migration` **before**, data-integrity, quality |
+| **P6.4b** | **Bind** — an unaddressed shelf gains an address, and loses one. No identities join; a taken slot is a 409 naming the occupant and offering the merge. | S | data-integrity, security, quality, ux |
+| **P6.4c** | **Merge** — two identities become one. ⚠ **carries the data-loss risk.** | L | data-integrity, security, quality, ux |
+| **P6.4d** | **History across the seam** — reads, streaks, staleness and the *formerly* line resolve through the alias. | M | data-integrity, quality, ux |
+| **P6.4e** | *Optional:* **the proposal** — candidates from typed labels only, each an explicit ✓. | S | quality, ux, security |
+
+**P6.4a is separate because it is the only item with a schema-version
+change** — so it is the only one needing `review-migration` and a worktree,
+and the migration gets reviewed against a diff containing nothing else. The
+v20→v21 test copies the v19→v20 frame, including the four lines that assert
+the table is ABSENT on the v20 file: without them the test follows
+`MIGRATIONS` wherever the DDL is written, so folding it into `_V20` — the
+edit rule 11 forbids — stays green while the one database that matters never
+gains the table. And it must use the table afterwards: the v19→v20 test's own
+⚠ records that its `foreign_key_check` ran while every new table was empty.
+
+**P6.4b is separate so that *bind* and *merge* are never one button.** The
+safe half is a shelf gaining an address; the dangerous half is two identities
+becoming one, and a UI that cannot tell them apart is how the dangerous one
+gets pressed by accident.
+
+**What proves P6.4c did not lose anything** is a census, not a constraint —
+four of the six tables have no foreign key to police. One pure function
+digests a library before and after: books, copies, and copies WITH a
+location, all unchanged; the multiset of `(book_key, depth)` at the survivor
+equal to the union; `provenance` byte-identical; every capture present with
+`(shelf, depth, order)` still unique; every `(depth, book_key)` decided at
+either side still decided at the survivor; and **zero rows naming a shelf id
+that is neither a live shelf nor an alias** — the check no
+`foreign_key_check` can perform, and the one that catches the real bug. Then
+a REPLAY, which is this project's own idiom: re-run the last real read of A
+against the post-merge state and assert the suppressed set is identical.
+
+⚠ Two things the code read turned up, both filed:
+
+- **`DELETE /shelves/{id}` orphaned copies** — measured, fixed and merged
+  before P6.4a starts, because the census would otherwise report a
+  discrepancy P6.4 did not cause;
+- **half a merge already exists**: `PATCH /captures/{id}` moves one photo to
+  another shelf and appends its order, so an owner can already move every
+  photo off A onto B today — the books stay. P6.4c must not contradict that
+  route's ordering, and the shelf screen should stop showing the resulting
+  empty A as if it were furniture.
 
 ## 6. What P6.1 must not repeat
 
