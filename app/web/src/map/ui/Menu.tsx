@@ -9,6 +9,8 @@
 
 import { useEffect, useRef, useState } from 'react'
 
+import { useI18n } from '../../lib/i18n'
+
 export type MenuItem = {
   label: string
   shortcut?: string
@@ -30,6 +32,7 @@ export function Menu({
   title?: string
 }) {
   const [open, setOpen] = useState(false)
+  const dir = useI18n().lang === 'he' ? 'rtl' : 'ltr'
   const ref = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
@@ -65,10 +68,21 @@ export function Menu({
         {label} ▾
       </button>
       {open && (
-        <div className="menu-pop" role="menu">
-          {items.map((it) => (
+        // ⚠ `dir` stated, because this menu is mounted in two places with two
+        // directions: the toolbar inherits the UI's, and the floor badge sits
+        // inside the plan, which is pinned LTR (MAP_PLAN §3.5). A review
+        // measured the badge's rows left-aligned in Hebrew while the toolbar's
+        // were right-aligned — one component, two answers, on one screen. The
+        // rows carry the owner's own site and floor names.
+        <div className="menu-pop" role="menu" dir={dir}>
+          {items.map((it, at) => (
             <button
-              key={it.label}
+              // ⚠ By POSITION, not by label. Two sites can be called the same
+              // thing — a two-tab race mints two `הבית`, and the picker is
+              // where that duplicate is supposed to become removable — and
+              // React answered a duplicate key by dropping one of the rows,
+              // which is the one state in which the picker cannot fix it.
+              key={at}
               type="button"
               disabled={it.disabled}
               className={it.danger ? 'danger' : ''}

@@ -12,7 +12,7 @@ import { useMemo } from 'react'
 import { useI18n } from '../lib/i18n'
 
 import MapScreen from './MapScreen'
-import { mapText } from './text'
+import { mapText, type MapText } from './text'
 import type { MapSource } from './useMapSync'
 import { useMapSync } from './useMapSync'
 import { getMap, listShelves, mapDelete, mapPatch, mapPost } from '../api/client'
@@ -42,10 +42,14 @@ export function PlanScreen({ library }: { library: string }) {
       del: (path) => mapDelete(path),
     },
     /**
-     * A drawing needs a site AND a storey to hang off. This makes the FIRST
-     * of each, on first use rather than at sign-up: a household that never
-     * draws anything should not carry a "Home" nobody typed. Every one after
-     * that comes from the picker (P6.3.1).
+     * The FIRST site, made on first use rather than at sign-up: a household
+     * that never draws anything should not carry a "Home" nobody typed. Every
+     * site after it comes from the picker (P6.3.1).
+     *
+     * ⚠ It does NOT mint the storey any more. "Every site has a floor" is one
+     * rule with one implementation, in the loader, because that is the only
+     * place that also catches a site which never got one (a create that failed
+     * half-way) or which lost its last one to another tab.
      *
      * ⚠ **The floor is not optional.** Without it `toPlan` synthesises one,
      * and the first room drawn is refused with a 404 for a floor id that
@@ -75,13 +79,10 @@ export function PlanScreen({ library }: { library: string }) {
     ensureHome: async () => {
       const map = await getMap()
       const site = map.sites[0]
-        ?? await mapPost('/map/sites', { name: t.plan_site_default })
-      const floor = map.floors.find((f) => f.site_id === site.id)
-        ?? await mapPost('/map/floors',
-                         { site_id: site.id, name: t.plan_floor_default })
-      return { siteId: site.id as string, floorId: floor.id as string }
+        ?? await mapPost('/map/sites', { name: t.plan_site_default, order: 0 })
+      return { siteId: site.id as string }
     },
-  }), [t.plan_site_default, t.plan_floor_default, library])
+  }), [t.plan_site_default, library])
 
   const sync = useMapSync(source, T)
 
@@ -114,9 +115,11 @@ export function PlanScreen({ library }: { library: string }) {
    * to is rebuilt would make the one informative message the briefest thing
    * on screen.
    */
-  const said = sync.notice && (sync.notice.kind === 'refused'
-    ? `${T.refused_lead} ${sync.notice.detail}`
-    : `${T.not_saved_yet} ${sync.notice.detail}`)
+  const said = sync.notice && `${
+    sync.notice.kind === 'refused' ? T.refused_lead
+      : sync.notice.kind === 'undelivered' ? T.not_saved_yet
+        : T.not_done_lead
+  } ${sync.notice.detail}`
   const banner = said && (
     <div className="mapbanner" role="alert">
       <span className="rtl-safe">{said}</span>
@@ -125,12 +128,18 @@ export function PlanScreen({ library }: { library: string }) {
       </button>
     </div>
   )
+  // An acknowledgment, in the neutral tone: it is not a problem, and it must
+  // outlive the re-derive it is about (see `MapSync.flash`).
+  const flash = sync.flash && (
+    <p className="mapflash rtl-safe" role="status">{sync.flash}</p>
+  )
   if (!sync.ready || !sync.initial) {
-    return <main className="mapstate">{banner}<p>{t.loading}</p></main>
+    return <main className="mapstate">{banner}{flash}<p>{t.loading}</p></main>
   }
   return (
     <>
       {banner}
+      {flash}
       {/* ⚠ MOUNTED with its document. The editor must never exist before its
           data does — see `useMapSync`'s note and the storey this cost. `key`
           makes a reload a fresh mount rather than an adoption. */}
@@ -147,13 +156,28 @@ export function PlanScreen({ library }: { library: string }) {
           // A default name, then rename it in place — the same gesture as a
           // new storey, and for the same reason: a prompt for a name is a
           // dialog in front of a thing you can see and edit.
-          onAddSite: () => sync.addSite(T.site_n(sync.sites.length + 1)),
+          //
+          // ⚠ The number steps past a name already taken. `sites.length + 1`
+          // repeats one as soon as anything is removed — [Home, אתר 2], remove
+          // Home, add — and two rows announcing one accessible name is the
+          // collision CLAUDE.md records. The ORDER is the count, which makes
+          // "the first site" mean the oldest rather than the alphabetically
+          // first.
+          onAddSite: () => sync.addSite(freeSiteName(T, sync.sites),
+                                        sync.sites.length),
           onRenameSite: sync.renameSite,
           onRemoveSite: sync.removeSite,
         }}
       />
     </>
   )
+}
+
+/** `אתר 2`, or the first number after it that nothing is called. */
+function freeSiteName(T: MapText, sites: { name: string }[]): string {
+  const taken = new Set(sites.map((s) => s.name))
+  for (let n = sites.length + 1; ; n += 1)
+    if (!taken.has(T.site_n(n))) return T.site_n(n)
 }
 
 export default PlanScreen

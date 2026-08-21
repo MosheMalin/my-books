@@ -76,6 +76,11 @@ export interface MapText {
   rename_site: (name: string) => string
   remove_site: (name: string) => string
   site_name: string
+  site_not_removed: (rooms: number, cases: number) => string
+  remove_site_confirm: (name: string, floors: number) => string
+  site_removed: (name: string) => string
+  site_added: (name: string) => string
+  overview_of: (site: string) => string
   // floors
   floor: string
   floor_menu: string
@@ -192,6 +197,8 @@ export interface MapText {
   saved_hint: string
   save_failed_hint: string
   not_saved_yet: string
+  not_done_lead: string
+  ground_floor: string
   refused_lead: string
   dismiss: string
 }
@@ -248,6 +255,18 @@ const HE: MapText = {
   rename_site: (name) => `שינוי שם האתר ${name}`,
   remove_site: (name) => `הסרת האתר ${name}`,
   site_name: 'שם האתר',
+  // ⚠ The client says this, not the server. The server's own refusal names a
+  // 32-character id and cites a planning document — true, and unreadable.
+  site_not_removed: (rooms, cases) =>
+    `לא הוסר — עדיין יש באתר הזה ${[
+      rooms > 0 ? (rooms === 1 ? 'חדר אחד' : `${rooms} חדרים`) : '',
+      cases > 0 ? (cases === 1 ? 'כוננית אחת' : `${cases} כונניות`) : '',
+    ].filter(Boolean).join(' ו')}. אפשר למחוק אותם קודם.`,
+  remove_site_confirm: (name, floors) =>
+    `להסיר את ${name} ו${floors === 1 ? 'את הקומה שבו' : `-${floors} הקומות שבו`}?`,
+  site_removed: (name) => `${name} הוסר.`,
+  site_added: (name) => `${name} נוסף — הלוח ריק, אפשר להתחיל לצייר.`,
+  overview_of: (site) => `כל הקומות של ${site} — צפייה בלבד, אי אפשר לערוך`,
   floor: 'קומה',
   floor_menu: 'תפריט הקומות',
   floor_n: (n) => `קומה ${n}`,
@@ -393,6 +412,10 @@ const HE: MapText = {
   // ⚠ True by construction: a push that failed to arrive leaves `confirmed`
   // where it was, so the next diff carries this change with it.
   not_saved_yet: 'לא נשמר — השינוי יישלח שוב יחד עם השינוי הבא.',
+  // ⚠ No promise of a retry: a site is not in the document, so nothing
+  // carries it along later.
+  not_done_lead: 'לא בוצע — לא הצלחנו לפנות לשרת.',
+  ground_floor: 'קומת קרקע',
   refused_lead: 'השרת סירב לשינוי:',
   dismiss: 'סגירת ההודעה',
 }
@@ -444,6 +467,16 @@ const EN: MapText = {
   rename_site: (name) => `Rename the site ${name}`,
   remove_site: (name) => `Remove the site ${name}`,
   site_name: 'site name',
+  site_not_removed: (rooms, cases) =>
+    `Not removed — this site still has ${[
+      rooms > 0 ? `${rooms} room${rooms > 1 ? 's' : ''}` : '',
+      cases > 0 ? `${cases} bookcase${cases > 1 ? 's' : ''}` : '',
+    ].filter(Boolean).join(' and ')}. Delete them first.`,
+  remove_site_confirm: (name, floors) =>
+    `Remove ${name} and ${floors === 1 ? 'its floor' : `its ${floors} floors`}?`,
+  site_removed: (name) => `${name} removed.`,
+  site_added: (name) => `${name} added — an empty board, ready to draw.`,
+  overview_of: (site) => `Every floor of ${site} — viewing only, nothing can be edited`,
   floor: 'Floor',
   floor_menu: 'Floor menu',
   floor_n: (n) => `Floor ${n}`,
@@ -585,6 +618,8 @@ const EN: MapText = {
     'Every change is written to the library immediately. "Not saved" means the banner above says why.',
   save_failed_hint: 'We could not save that change',
   not_saved_yet: 'Not saved — it will be sent again with your next change.',
+  not_done_lead: 'Not done — we could not reach the server.',
+  ground_floor: 'Ground floor',
   refused_lead: 'The server refused:',
   dismiss: 'dismiss this message',
 }

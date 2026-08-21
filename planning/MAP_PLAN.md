@@ -804,6 +804,35 @@ opening an undrawn library at the same instant can still mint two sites, and
 the picker is where the duplicate becomes visible and removable — which is why
 it does not need a lock nothing else in this app takes.
 
+**What three reviews then measured on it**, kept because the shapes repeat:
+
+- **the guarantee belongs at the point of USE.** "A site gets a storey when it
+  is created" is two calls with no transaction, so a failure between them left
+  a floorless site standing — invisible in the picker, unremovable, and a 404
+  waiting for whoever selected it. The loader mints the storey for whichever
+  site is being drawn, which also heals the two-tab duplicate and a site whose
+  last floor another tab deleted;
+- **a re-derive discards, so it must not be casual.** Every site gesture ends
+  in one, and with a storey queued behind a held push it took the drawing from
+  two storeys to one — no banner, indicator reading *saved*. They drain the
+  queue first now. *Plan ▸ Reload* still discards, because that is what the
+  owner asked for;
+- **a control that re-derives cannot be a controlled input.** The site's rename
+  box sent one PATCH per keystroke and unmounted itself on the first, leaving
+  the rest of the word to the board's key handler — where Backspace deletes
+  what is selected. It holds a draft and commits on Enter or blur; the floor's
+  box beside it needs none of that, because a floor is IN the document;
+- **`sites[0]` is not "the home".** `load_map` sorts by `("order", name, id)`
+  and nothing sent an order, so with the real household shape — `הבית` and
+  `אתר 2` — a fresh tab opened on the parents' place. The picker sends the
+  count as the order, and the loader pins the choice;
+- **a percentage height needs a definite parent.** The drawing surface was
+  still 150px on a phone inside a 470px board, because `height: 100%` on a
+  replaced element inside a stretched flex item falls back to the SVG's
+  intrinsic size. I had measured the WRAPPER and reported it fixed; a review
+  measured the thing the owner draws on. It is `position: absolute; inset: 0`
+  now, and gated by a test that reads the declaration.
+
 ## 6. What P6.1 must not repeat
 
 Rule 11 of CLAUDE.md, in its own words: three consecutive migration reviews

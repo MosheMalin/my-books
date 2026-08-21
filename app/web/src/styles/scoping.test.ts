@@ -104,6 +104,22 @@ describe('map.css', () => {
       .toEqual([])
   })
 
+  it('gives the drawing surface a size that fills its board rather than assuming a height', () => {
+    // ⚠ jsdom lays nothing out, so this is a check on the DECLARATION — and
+    // that is the right shape, because the defect was a declaration that looks
+    // correct and silently does not apply: a percentage height on a REPLACED
+    // element resolves against a parent with a DEFINITE height, and a flex
+    // item that is merely stretched has an automatic one. `height: 100%` on
+    // the `<svg>` therefore fell back to its intrinsic 150px, and the owner
+    // drew on 150 of the 470px the board had given it. Measured on a phone,
+    // twice — the second time because I had measured the WRAPPER and reported
+    // the canvas fixed.
+    const rule = css.slice(css.indexOf('.mapscreen svg.plan {'))
+      .slice(0, css.slice(css.indexOf('.mapscreen svg.plan {')).indexOf('}'))
+    expect(rule).toContain('position: absolute')
+    expect(rule).toContain('inset: 0')
+  })
+
   it('opens no rule on a bare element name, at any indentation', () => {
     // A second, cruder net for the same hazard, kept because it is the one
     // that catches an element selector wherever it hides: `--btn` and

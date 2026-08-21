@@ -27,15 +27,17 @@ export type MapSource = {
   load: () => Promise<{ map: MapWire; shelves: ShelfWire[] }>
   api: Api
   /**
-    * The FIRST site and storey, created if this library has none. Which site
-    * is then being drawn is `siteId`, and the picker moves it.
+    * The FIRST site, created if this library has none. Which site is then
+    * being drawn is `siteId`, and the picker moves it.
     *
-    * ⚠ It must return a real FLOOR id too. The first version returned only
-    * the site, `toPlan` synthesised a floor the server had never heard of,
-    * and the first room drawn onto it was refused with a 404 for a floor id
-    * that existed nowhere but the document. Found by opening the editor.
+    * ⚠ The STOREY is not its business. An early version returned only a site,
+    * `toPlan` synthesised a floor the server had never heard of, and the first
+    * room drawn onto it was refused with a 404 — so this used to mint one too.
+    * That fixed the first site and no other: the loader guarantees it now, for
+    * whichever site is being drawn, which is the same rule in the one place
+    * that can also heal a site that never got a floor or lost its last.
     */
-   ensureHome: () => Promise<{ siteId: string; floorId: string }>
+   ensureHome: () => Promise<{ siteId: string }>
   /** Which site this library was last drawing, if anything remembers. Kept
    *  outside the hook because "where" is the app's business (one library's
    *  choice must not become another's) and the hook has no library id. */
@@ -61,8 +63,18 @@ export type MapSource = {
 export type Notice =
   /** The server answered, and the answer was no — a rule the owner met. */
   | { kind: 'refused'; detail: string }
-  /** The request never arrived. Nothing was decided; the edit still stands. */
+  /** The request never arrived, and the edit is still in the document — the
+   *  next diff carries it, because `confirmed` did not advance. */
   | { kind: 'undelivered'; detail: string }
+  /**
+   * The request never arrived and NOTHING will retry it.
+   *
+   * ⚠ A site gesture is not in the document (§3.9), so there is no later diff
+   * to carry it — telling the owner "it will be sent again with your next
+   * change" would be a promise this code cannot keep, which is worse than
+   * saying nothing. A review found that exact sentence on this path.
+   */
+  | { kind: 'dropped'; detail: string }
 
 export type MapSync = {
   ready: boolean
@@ -74,6 +86,16 @@ export type MapSync = {
   saved: Saved
   /** What the last write ran into, in the server's own words, or null. */
   notice: Notice | null
+  /**
+   * A site gesture that WORKED, said out loud.
+   *
+   * ⚠ It lives here rather than in the editor's own toast because every site
+   * gesture re-derives, which remounts the editor and takes any message it was
+   * holding with it — measured: removing a site said nothing at all, the board
+   * simply changed. This hook survives the remount, which is exactly the
+   * property the acknowledgment needs.
+   */
+  flash: string | null
   dismiss: () => void
   /**
    * Every SITE of this library, and the one being drawn (§3.9).
@@ -86,9 +108,9 @@ export type MapSync = {
   sites: { id: string; name: string }[]
   siteId: string
   chooseSite: (id: string) => void
-  /** A site AND the storey it needs, because a document with no floor is the
-   *  404 `ensureHome` exists to prevent. Switches to it. */
-  addSite: (name: string) => void
+  /** A new site, and a switch to it. Its storey is minted by the LOADER —
+   *  the one place that also heals a site which has lost its last one. */
+  addSite: (name: string, order: number) => void
   renameSite: (id: string, name: string) => void
   removeSite: (id: string) => void
   /** The plan as the server last confirmed it — the editor's starting doc. */
@@ -104,6 +126,7 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState<Saved>('saved')
   const [notice, setNotice] = useState<Notice | null>(null)
+  const [flash, setFlash] = useState<string | null>(null)
   const [sites, setSites] = useState<{ id: string; name: string }[]>([])
   const [siteId, setSiteId] = useState<string>('')
   const [generation, setGeneration] = useState(0)
@@ -118,7 +141,7 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
    *  yet", and the editor opened on a library with TWO homes — measured on
    *  the first run. Holding the promise makes the second call join the
    *  first instead of racing it. */
-  const homing = useRef<Promise<{ siteId: string; floorId: string }> | null>(null)
+  const homing = useRef<Promise<{ siteId: string }> | null>(null)
   /** The site the OWNER picked, which outlives a re-derive. Empty means "the
    *  one `ensureHome` found", which is what every one-site library gets. */
   const chosen = useRef<string>(source.rememberedSite?.() ?? '')
@@ -148,6 +171,12 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
    */
   const era = useRef(0)
 
+  /** Say something happened, and stop saying it after a while. */
+  const announce = useCallback((text: string) => {
+    setFlash(text)
+    window.setTimeout(() => setFlash((m) => (m === text ? null : m)), 3200)
+  }, [])
+
   /** Throw the session's document away and re-derive it from the server. */
   const startOver = useCallback(() => {
     era.current += 1
@@ -163,7 +192,7 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
       try {
         if (!homing.current) homing.current = source.ensureHome()
         const home = await homing.current
-        const { map, shelves } = await source.load()
+        let { map, shelves } = await source.load()
         if (!alive) return
         // ⚠ A remembered site that is no longer there falls back rather than
         // showing an empty plan — the same rule the library switcher holds for
@@ -172,6 +201,33 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
         site.current = map.sites.some((s) => s.id === wanted)
           ? wanted
           : map.sites[0]?.id ?? home.siteId
+        /**
+         * ⚠ **The storey is guaranteed HERE, for whichever site is being
+         * drawn** — not where a site is created.
+         *
+         * `toPlan` synthesises `f1` for a site with no floors, and the first
+         * room drawn onto that is refused with a 404 for a floor that exists
+         * nowhere but the document. A review measured every way in: creating a
+         * site is two calls with no transaction, so a failure between them left
+         * the site standing and floorless FOREVER — invisible in the picker,
+         * unremovable, and a 404 waiting for whoever selected it. Two tabs can
+         * do it, and so can another tab deleting a site's last storey. One rule
+         * at the point of USE closes all three; a rule at each point of
+         * creation closes none of them.
+         */
+        if (!map.floors.some((f) => f.site_id === site.current)) {
+          await source.api.post('/map/floors',
+                                { site_id: site.current, name: T.ground_floor })
+          if (!alive) return
+          const again = await source.load()
+          if (!alive) return
+          map = again.map
+          shelves = again.shelves
+        }
+        // Pinned, so which site opens stops depending on the order the server
+        // returns them in — see `addSite` for why that order is not "oldest".
+        chosen.current = site.current
+        source.rememberSite?.(site.current)
         setSites(map.sites.map((s) => ({ id: s.id, name: s.name })))
         setSiteId(site.current)
         const plan = toPlan(map, shelves, site.current)
@@ -199,17 +255,38 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
    * is also how the picker cleans up the duplicate site two tabs can mint.
    */
   const afterSite = useCallback(async (work: Promise<unknown>) => {
+    // ⚠ **Drain first.** Every site gesture ends in a re-derive, and
+    // re-deriving over an edit that has not reached the server is how it
+    // disappears — measured: with one storey queued behind a held push,
+    // pressing *add a site* took the drawing from two storeys to one, with no
+    // banner and the indicator still reading "saved". *Plan ▸ Reload* is
+    // allowed to discard, because the owner asked for exactly that; adding a
+    // site is not that.
+    setNotice(null)
+    // ⚠ And the toolbar says something while two round trips go out. A review
+    // measured 147ms of nothing at all after pressing *add a site*, with the
+    // indicator reading "saved" the whole time, and the row one reopen away
+    // from a second tap that mints a second site.
+    setSaved('saving')
+    await inflight.current
     try {
       await work
       startOver()
     } catch (err) {
       // A refusal here is a rule — "a site keeps its last storey", "3 rooms
-      // still on this floor" — in the server's own words.
+      // still on this floor" — in the server's own words. Anything else never
+      // arrived, and NOTHING will carry it later: a site is not in the
+      // document, so there is no next diff to ride (see `Notice`).
       const e = err as { status?: number; detail?: string; message?: string }
       setNotice({
-        kind: typeof e?.status === 'number' ? 'refused' : 'undelivered',
+        kind: typeof e?.status === 'number' ? 'refused' : 'dropped',
         detail: e?.detail || e?.message || T.save_failed_hint,
       })
+      setSaved('failed')
+      // ⚠ RE-DERIVE ANYWAY. A gesture that failed part-way can still have
+      // changed the library, and an editor showing the `sites` list from
+      // before that is how an orphan becomes invisible AND unremovable.
+      startOver()
     }
   }, [startOver, T])
 
@@ -220,33 +297,75 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
     startOver()
   }, [source, startOver])
 
-  const addSite = useCallback((name: string) => {
+  const addSite = useCallback((name: string, order: number) => {
     void afterSite((async () => {
-      const made = await source.api.post('/map/sites', { name })
-      // The storey is not optional: `toPlan` would otherwise synthesise one the
-      // server never heard of, and the first room drawn onto it is a 404.
-      await source.api.post('/map/floors',
-                            { site_id: made.id, name: T.floor_n(1) })
+      // ⚠ An explicit `order`. `load_map` sorts by `("order", name, id)` and
+      // every site created without one is 0 — so "the first site" was really
+      // "whichever name sorts first". Measured with the real household shape:
+      // `א` precedes `ה`, so a fresh tab opened on *the parents' place* rather
+      // than on *home*. The storey the new site needs is minted by the loader,
+      // which is the one place that can also heal a site that lost its last.
+      const made = await source.api.post('/map/sites', { name, order })
       chosen.current = made.id
       source.rememberSite?.(made.id)
+      // The board is about to be replaced by an empty one — correct, since it
+      // is a different property, and silent without this.
+      announce(T.site_added(name))
     })())
-  }, [afterSite, source, T])
+  }, [afterSite, announce, source, T])
 
+  /**
+   * ⚠ NO re-derive. A name changes no floor, room or bookcase, so there is
+   * nothing to re-read — and re-deriving unmounts the editor, which took the
+   * rename box with it: a review measured the box vanishing after ONE
+   * keystroke, six PATCHes each built from the stale name plus one character,
+   * and the rest of the word landing on the board's own key handler, where
+   * Backspace deletes whatever is selected. The list is patched in place and
+   * the server is told once, on Enter or blur.
+   */
   const renameSite = useCallback((id: string, name: string) => {
-    void afterSite(source.api.patch(`/map/sites/${id}`, { name }))
-  }, [afterSite, source])
+    setSites((was) => was.map((s) => (s.id === id ? { ...s, name } : s)))
+    void (async () => {
+      await inflight.current
+      try {
+        await source.api.patch(`/map/sites/${id}`, { name })
+      } catch (err) {
+        const e = err as { status?: number; detail?: string; message?: string }
+        setNotice({
+          kind: typeof e?.status === 'number' ? 'refused' : 'dropped',
+          detail: e?.detail || e?.message || T.save_failed_hint,
+        })
+        // The name on screen is now a claim the server never accepted.
+        startOver()
+      }
+    })()
+  }, [source, startOver, T])
 
   const removeSite = useCallback((id: string) => {
+    // ⚠ The editor stops writing into this site BEFORE the call goes out, not
+    // after it comes back. Measured with the DELETE held open: a storey added
+    // in that window was created inside the doomed site and then swept away
+    // with it — the drawing accepted the edit and the server destroyed it,
+    // with nothing said. Bumping `era` is what stops the queue.
+    if (id === site.current) era.current += 1
+    const name = sites.find((s) => s.id === id)?.name
     void afterSite((async () => {
       await source.api.del(`/map/sites/${id}`)
       if (id === chosen.current || id === site.current) {
         chosen.current = ''
         source.rememberSite?.('')
       }
+      if (name) announce(T.site_removed(name))
     })())
-  }, [afterSite, source])
+  }, [afterSite, announce, sites, source, T])
 
   const record = useCallback((plan: Plan) => {
+    // ⚠ The banner is about the LAST write, so the next one clears it. A
+    // review measured a refusal about a site surviving a successful floor
+    // add, a trip through the overview, a floor removal, and the successful
+    // removal of the very site it named — still on screen, above a board that
+    // had done everything it said could not be done.
+    setNotice(null)
     setSaved('saving')
     // ⚠ SERIALISED, and the diff is computed INSIDE the task.
     //
@@ -307,7 +426,7 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
         confirmed.current = plan
         setSaved('saved')
       } catch (err) {
-        // ⚠ NOT `setError`. See `Trouble`: the drawing is still on screen and
+        // ⚠ NOT `setError`. See `Notice`: the drawing is still on screen and
         // still the truth about what the owner drew; what failed is the
         // delivery. `confirmed` is left where it was, so the next edit's diff
         // carries this one with it — which is the whole point of diffing
@@ -324,6 +443,7 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
     error,
     saved,
     notice,
+    flash,
     dismiss: () => setNotice(null),
     sites,
     siteId,

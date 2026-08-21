@@ -54,7 +54,20 @@ type Props = {
 export function FloorBadge(props: Props) {
   const T = mapText(useI18n().lang)
   const [editing, setEditing] = useState(false)
-  const [renamingSite, setRenamingSite] = useState(false)
+  /**
+   * ⚠ The site's name is a DRAFT while it is being typed, and the floor's is
+   * not — and that asymmetry is the point.
+   *
+   * A floor lives in the document, so each keystroke rides the diff and
+   * nothing remounts. A site is not in the document: telling the server
+   * per keystroke re-derived the whole editor, which unmounted this component
+   * and took the box with it. A review measured the box gone after ONE
+   * character, six PATCHes each built from the stale name plus one letter, and
+   * the rest of the word going to the board's key handler — where Backspace
+   * deletes what is selected. `null` means "not renaming"; a string is what
+   * the owner has typed so far.
+   */
+  const [siteDraft, setSiteDraft] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
   const siteRef = useRef<HTMLInputElement | null>(null)
   const current = props.floors.find((f) => f.id === props.floorId)
@@ -68,11 +81,21 @@ export function FloorBadge(props: Props) {
   }, [editing])
 
   useEffect(() => {
-    if (renamingSite) {
+    if (siteDraft !== null) {
       siteRef.current?.focus()
       siteRef.current?.select()
     }
-  }, [renamingSite])
+    // Only when the box APPEARS: re-selecting on every keystroke would put the
+    // caret back at the start of what is being typed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [siteDraft !== null])
+
+  /** One PATCH, at the end, and only if it says something new. */
+  const commitSite = () => {
+    const name = (siteDraft ?? '').trim()
+    if (name && name !== here?.name) props.site.onRenameSite(props.site.siteId, name)
+    setSiteDraft(null)
+  }
 
   return (
     /* ⚠ No `dir="auto"` on the CONTAINER. `inset-inline-start` resolves
@@ -85,9 +108,29 @@ export function FloorBadge(props: Props) {
     <div className="floor-badge">
       {props.site.sites.length > 1 && (
         <>
-          <span className="site-name rtl-safe">
-            {here?.name || T.site}
-          </span>
+          {/* ⚠ The box REPLACES the name, the way the floor's does. Rendered
+              beside it, the site's box appeared immediately before the FLOOR's
+              name and read as the floor's — measured at review. */}
+          {siteDraft !== null ? (
+            <input
+              ref={siteRef}
+              className="rtl-safe"
+              aria-label={T.site_name}
+              value={siteDraft}
+              onChange={(e) => setSiteDraft(e.target.value)}
+              onKeyDown={(e) => {
+                // Escape ABANDONS, Enter commits — the box holds a draft now,
+                // so for the first time there is a difference between them.
+                if (e.key === 'Escape') setSiteDraft(null)
+                else if (e.key === 'Enter') commitSite()
+              }}
+              onBlur={commitSite}
+            />
+          ) : (
+            <span className="site-name rtl-safe">
+              {here?.name || T.site}
+            </span>
+          )}
           <Menu
             label=""
             title={T.site_menu}
@@ -99,7 +142,7 @@ export function FloorBadge(props: Props) {
               })),
               {
                 label: T.rename_site(here?.name || T.site),
-                onSelect: () => setRenamingSite(true),
+                onSelect: () => setSiteDraft(here?.name ?? ''),
               },
               {
                 label: T.remove_site(here?.name || T.site),
@@ -110,19 +153,6 @@ export function FloorBadge(props: Props) {
           />
           <span className="badge-sep" aria-hidden="true">·</span>
         </>
-      )}
-      {renamingSite && (
-        <input
-          ref={siteRef}
-          className="rtl-safe"
-          aria-label={T.site_name}
-          value={here?.name ?? ''}
-          onChange={(e) => props.site.onRenameSite(props.site.siteId, e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === 'Escape') setRenamingSite(false)
-          }}
-          onBlur={() => setRenamingSite(false)}
-        />
       )}
       {editing ? (
         <input

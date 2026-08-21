@@ -56,7 +56,12 @@ import { mapText, type MapText } from './text'
  * again.
  */
 const THEME_KEY = 'booksnap.map.theme'
-const FLOOR_KEY = 'booksnap.map.floor'
+/** ⚠ Per SITE, per library. One global key made the storey a household was
+ *  looking at the answer for every customer and every property — bounded,
+ *  because `floorId` is validated against the document every render, but it
+ *  degrades to "the badge forgets", which is the failure the site key is
+ *  keyed to avoid. */
+const FLOOR_KEY = (scope: string) => `booksnap.map.floor.${scope}`
 const SIDE_KEY = 'booksnap.map.side'
 const SIDE_MIN = 220
 const SIDE_MAX = 720
@@ -90,7 +95,8 @@ export default function MapScreen(props: MapScreenProps) {
   const [tool, setTool] = useState<Tool>('auto')
   const [theme, setTheme] = useState<Theme>(loadTheme)
   const [selection, setSelection] = useState<Selection>(EMPTY)
-  const [floorPick, setFloorPick] = useState<string>(loadFloor)
+  const [floorPick, setFloorPick] = useState<string>(
+    () => loadFloor(props.site.siteId))
   const [clipboard, setClipboard] = useState<Clipboard>(null)
   const [view, setView] = useState<View>(initialView)
   const [message, setMessage] = useState<{ text: string; n: number } | null>(null)
@@ -153,11 +159,27 @@ export default function MapScreen(props: MapScreenProps) {
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(FLOOR_KEY, floorId)
+      window.localStorage.setItem(FLOOR_KEY(props.site.siteId), floorId)
     } catch {
       /* ignore */
     }
-  }, [floorId])
+  }, [floorId, props.site.siteId])
+
+  /**
+   * The keys the lab left behind. `planning/map-lab` is deleted and these were
+   * renamed to `booksnap.map.*` before anyone had the editor, so nothing reads
+   * them — but they are the owner's browser storage, and a name that means
+   * nothing is litter that outlives whoever could explain it.
+   */
+  useEffect(() => {
+    for (const dead of ['theme', 'floor', 'side', 'fold.caseDetails']) {
+      try {
+        window.localStorage.removeItem(`booksnap.map-lab.${dead}`)
+      } catch {
+        /* a blocked localStorage is not a reason to fail a render */
+      }
+    }
+  }, [])
 
   useEffect(() => {
     try {
@@ -540,6 +562,30 @@ export default function MapScreen(props: MapScreenProps) {
     setFloorPick(doc.plan.floors.find((f) => f.id !== floorId)!.id)
   }, [doc.plan, floorId, update, say, T])
 
+  /**
+   * ⚠ The door in front of removing a site, and the refusal in the owner's
+   * words.
+   *
+   * The server's own 409 names the site by a 32-character id and cites
+   * `MAP_PLAN §3.7` — true, and not a sentence for a household. This screen
+   * holds the document, so it can say what is in the way and in how many
+   * words: exactly the shape `removeFloor` has had since the lab. The server's
+   * refusal stays as the backstop for anything drawn in another tab.
+   *
+   * And a confirmation, because a site takes every empty storey with it and
+   * none of it is on the undo stack — the same argument that put a door in
+   * front of deleting a bookcase, one level up.
+   */
+  const removeSite = useCallback((id: string) => {
+    if (id !== props.site.siteId) return props.site.onRemoveSite(id)
+    const rooms = doc.plan.rooms.length
+    const cases = doc.plan.cases.length
+    if (rooms + cases > 0) return say(T.site_not_removed(rooms, cases))
+    const name = props.site.sites.find((s) => s.id === id)?.name || T.site
+    if (!confirm(T.remove_site_confirm(name, doc.plan.floors.length))) return
+    props.site.onRemoveSite(id)
+  }, [doc.plan, props.site, say, T])
+
   // --- underlay ------------------------------------------------------------
 
   const setUnderlay = (u: Underlay | null) =>
@@ -677,6 +723,9 @@ export default function MapScreen(props: MapScreenProps) {
         onPaste={paste}
         onDelete={deleteSelection}
         onReload={props.onReload}
+        // ⚠ The acknowledgment is NOT said here. Adding a site re-derives,
+        // which remounts this component and would take the toast with it —
+        // `MapSync.flash` is the surface that survives.
         onAddSite={props.site.onAddSite}
         onUnderlay={loadUnderlay}
         onUnderlayChange={(patch) =>
@@ -724,7 +773,14 @@ export default function MapScreen(props: MapScreenProps) {
               screen is a trap, however few keystrokes it really takes. */}
           {overview && (
             <div className="readonly-bar" role="status">
-              <span>{T.read_only_bar}</span>
+              {/* With one site the name would say nothing; with two, "every
+                  floor" is ambiguous without it. */}
+              <span>
+                {props.site.sites.length > 1
+                  ? T.overview_of(props.site.sites.find(
+                      (s) => s.id === props.site.siteId)?.name || T.site)
+                  : T.read_only_bar}
+              </span>
               <button type="button" className="rtl-safe"
                       onClick={() => setAllFloors(false)}>
                 {T.back_to(
@@ -743,7 +799,7 @@ export default function MapScreen(props: MapScreenProps) {
               the bar already names the mode, and three of the badge's five
               menu items are disabled while it is up. */}
           {!overview && <FloorBadge
-            site={props.site}
+            site={{ ...props.site, onRemoveSite: removeSite }}
             floors={doc.plan.floors}
             floorId={floorId}
             allFloors={overview}
@@ -837,9 +893,9 @@ function loadSideWidth(): number {
   }
 }
 
-function loadFloor(): string {
+function loadFloor(scope: string): string {
   try {
-    return window.localStorage.getItem(FLOOR_KEY) ?? 'f1'
+    return window.localStorage.getItem(FLOOR_KEY(scope)) ?? 'f1'
   } catch {
     return 'f1'
   }

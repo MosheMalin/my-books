@@ -40,6 +40,9 @@ function fakeMapServer() {
     calls: [] as string[],
     sites: [] as { id: string; name: string; order: number }[],
     floors: [] as { id: string; site_id: string; name: string; order: number }[],
+    places: [] as { id: string; floor_id: string; name: string;
+                    rect: { x: number; y: number; w: number; h: number };
+                    order: number }[],
     /** Refuse the next write with this status, the way a 409 arrives. */
     refuseNext: null as number | null,
     /** Drop the next write the way a lift does: no response at all. */
@@ -47,9 +50,15 @@ function fakeMapServer() {
     /** Hold every POST until `release()`, so a test can make an edit arrive
      *  while an earlier one is still in flight. */
     holding: false,
+    /** Hold only the DOCUMENT's writes, so a site gesture can overtake one. */
+    holdFloors: false,
+    /** Do the next write and then lose the ANSWER — the case where a failure
+     *  does not mean nothing happened. */
+    dropAnswerNext: false,
     held: [] as (() => void)[],
     release() {
       state.holding = false
+      state.holdFloors = false
       for (const go of state.held.splice(0)) go()
     },
     n: 0,
@@ -71,11 +80,18 @@ function fakeMapServer() {
       return respond({
         sites: state.sites.map((s) => ({ ...s })),
         floors: state.floors.map((f) => ({ ...f })),
-        places: [], bookcases: [], sections: [],
+        places: state.places.map((p) => ({ ...p })),
+        bookcases: [], sections: [],
       })
     }
     if (method === 'DELETE' && path.startsWith('/map/sites/')) {
       const id = path.split('/').pop()!
+      if (state.dropAnswerNext) {
+        state.dropAnswerNext = false
+        state.sites = state.sites.filter((x) => x.id !== id)
+        state.floors = state.floors.filter((f) => f.site_id !== id)
+        throw new TypeError('Failed to fetch')
+      }
       if (state.refuseNext) {
         const status = state.refuseNext
         state.refuseNext = null
@@ -87,7 +103,8 @@ function fakeMapServer() {
     }
     if (method === 'GET' && path === '/shelves') return respond([])
     if (method === 'POST') {
-      if (state.holding) await new Promise<void>((go) => state.held.push(go))
+      if (state.holding || (state.holdFloors && path === '/map/floors'))
+        await new Promise<void>((go) => state.held.push(go))
       if (state.dropNext) {
         state.dropNext = false
         throw new TypeError('Failed to fetch')
@@ -154,6 +171,11 @@ const open = () =>
 const posted = (path: string) =>
   server.calls.filter((c) => c === `POST ${path}`)
 
+/** How many times the document has been read. Counted RELATIVE to a settled
+ *  editor: the first load may legitimately read twice, because a site with no
+ *  storey gets one and is then re-read. */
+const derives = () => server.calls.filter((c) => c === 'GET /map').length
+
 /** Add a storey through the floor menu — the one edit reachable with a click
  *  in jsdom, since drawing needs real pointer coordinates. */
 async function addFloor(user: ReturnType<typeof userEvent.setup>) {
@@ -198,6 +220,7 @@ describe('reloading the plan', () => {
     // A second storey, queued behind the held one.
     await addFloor(user)
 
+    const settled = derives()
     await user.click(screen.getByRole('button', { name: HE.menu_plan }))
     await user.click(screen.getByRole('menuitem', { name: HE.reload }))
     server.release()
@@ -205,8 +228,7 @@ describe('reloading the plan', () => {
     // during the reload triggers a second one, and querying between them
     // finds the loading screen.
     await waitFor(() => {
-      expect(server.calls.filter((c) => c === 'GET /map').length)
-        .toBeGreaterThanOrEqual(4)
+      expect(derives()).toBeGreaterThanOrEqual(settled + 2)
       expect(screen.getByRole('radio', { name: HE.arrow })).toBeInTheDocument()
     }, WAIT)
 
@@ -236,6 +258,7 @@ describe('reloading the plan', () => {
     const user = userEvent.setup()
     open()
     await screen.findByRole('radio', { name: HE.arrow }, WAIT)
+    const settled = derives()
 
     server.dropNext = true
     await addFloor(user)
@@ -245,7 +268,9 @@ describe('reloading the plan', () => {
     // The editor is still there, and it still holds the storey just added.
     expect(screen.getByRole('radio', { name: HE.arrow })).toBeInTheDocument()
     expect(screen.getByRole('alert')).toHaveTextContent(HE.not_saved_yet)
-    expect(server.calls.filter((c) => c === 'GET /map')).toHaveLength(2)
+    // ⚠ NOT re-derived: re-deriving is what would discard the un-pushed edit,
+    // and this is the state where the editor must keep it.
+    expect(derives()).toBe(settled)
 
     // …and the next edit carries the dropped one with it, because `confirmed`
     // never advanced. Two floors reach the server from three local ones.
@@ -280,6 +305,10 @@ describe('reloading the plan', () => {
 const siteMenu = () => screen.getByRole('button', { name: HE.site_menu })
 
 describe('the sites of one library', () => {
+  /** Removing a site asks first — jsdom has no dialog, so the answer is
+   *  stated. The refusal test below overrides it to `false`. */
+  beforeEach(() => vi.stubGlobal('confirm', () => true))
+
   it('shows nothing at all while there is one, and a picker the moment there are two', async () => {
     // ⚠ The rule §3.9 shares with the library switcher: a household with one
     // home never learns the word. The one control it has is a row in the Plan
@@ -345,6 +374,152 @@ describe('the sites of one library', () => {
     await user.click(screen.getByRole('button', { name: HE.floor_menu }))
     expect(screen.getByRole('menuitemcheckbox', { name: 'קומת קרקע' }))
       .toBeInTheDocument()
+  })
+
+  it('waits for the drawing to reach the server before it re-derives', async () => {
+    // ⚠ Every site gesture ends in a re-derive, and re-deriving over an edit
+    // that has not landed is how it disappears. Measured before this: with one
+    // storey queued behind a held push, *add a site* took the drawing from two
+    // storeys to one, with no banner and the indicator reading "saved".
+    // *Plan ▸ Reload* may discard — the owner asked for that. This is not.
+    const user = userEvent.setup()
+    open()
+    await screen.findByRole('radio', { name: HE.arrow }, WAIT)
+
+    // ⚠ Only the DOCUMENT's writes are held, so the site's own POST is free
+    // to overtake them — which is the whole question. Holding everything would
+    // let the queue drain in order by accident and gate nothing.
+    server.holdFloors = true
+    await addFloor(user)
+    await waitFor(() => expect(posted('/map/floors')).toHaveLength(2), WAIT)
+    await addFloor(user)                       // queued behind the held one
+    await user.click(screen.getByRole('button', { name: HE.menu_plan }))
+    await user.click(screen.getByRole('menuitem', { name: HE.add_site }))
+    server.release()
+
+    await waitFor(() => expect(siteMenu()).toBeInTheDocument(), WAIT)
+    // Both storeys reached the server; the site was added after them.
+    expect(server.floors.filter((f) => f.site_id === server.sites[0]!.id))
+      .toHaveLength(3)
+  })
+
+  it('clears the last write\'s complaint when the next one works', async () => {
+    // ⚠ A banner is about the LAST write. A review measured a refusal about a
+    // site surviving a floor add, a trip through the overview, a floor removal
+    // and the successful removal of the very site it named.
+    const user = userEvent.setup()
+    open()
+    await screen.findByRole('radio', { name: HE.arrow }, WAIT)
+    server.dropNext = true
+    await addFloor(user)
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument(),
+                  WAIT)
+
+    await addFloor(user)
+    await waitFor(() => expect(screen.queryByRole('alert'))
+      .not.toBeInTheDocument(), WAIT)
+  })
+
+  it('never repeats a name already in use', async () => {
+    // ⚠ `sites.length + 1` repeats one as soon as anything is removed, and two
+    // menu rows announcing one accessible name is the collision CLAUDE.md
+    // records — with React dropping one of the duplicate-keyed rows, which is
+    // the one state in which the picker cannot fix it.
+    const user = userEvent.setup()
+    open()
+    await screen.findByRole('radio', { name: HE.arrow }, WAIT)
+    await user.click(screen.getByRole('button', { name: HE.menu_plan }))
+    await user.click(screen.getByRole('menuitem', { name: HE.add_site }))
+    await waitFor(() => expect(siteMenu()).toBeInTheDocument(), WAIT)
+    // Remove the FIRST site, leaving [אתר 2] — where the count says "2".
+    // The menu removes the site being DRAWN, so switch to it first.
+    await user.click(siteMenu())
+    await user.click(screen.getByRole('menuitemcheckbox', { name: /הבית/ }))
+    await waitFor(() => expect(siteMenu()).toBeInTheDocument(), WAIT)
+    await user.click(siteMenu())
+    await user.click(screen.getByRole('menuitem', { name: HE.remove_site('הבית') }))
+    await waitFor(() => expect(server.sites).toHaveLength(1), WAIT)
+    // The removal re-derives; the Plan menu is not there until it lands.
+    await screen.findByRole('radio', { name: HE.arrow }, WAIT)
+
+    await user.click(screen.getByRole('button', { name: HE.menu_plan }))
+    await user.click(screen.getByRole('menuitem', { name: HE.add_site }))
+    await waitFor(() => expect(server.sites).toHaveLength(2), WAIT)
+    expect(new Set(server.sites.map((s) => s.name)).size).toBe(2)
+  })
+
+  it('asks before removing a site, and says what it took with it', async () => {
+    // ⚠ A site takes every empty storey with it, and none of that is on the
+    // undo stack — the same argument that put a door in front of deleting a
+    // bookcase, one level up. `confirm` answering no means nothing happens.
+    const user = userEvent.setup()
+    open()
+    await screen.findByRole('radio', { name: HE.arrow }, WAIT)
+    await user.click(screen.getByRole('button', { name: HE.menu_plan }))
+    await user.click(screen.getByRole('menuitem', { name: HE.add_site }))
+    await waitFor(() => expect(siteMenu()).toBeInTheDocument(), WAIT)
+    const added = server.sites[1]!.name
+
+    vi.stubGlobal('confirm', () => false)
+    await user.click(siteMenu())
+    await user.click(screen.getByRole('menuitem', { name: HE.remove_site(added) }))
+    await new Promise((r) => setTimeout(r, 0))
+    expect(server.sites).toHaveLength(2)
+
+    vi.stubGlobal('confirm', () => true)
+    await user.click(siteMenu())
+    await user.click(screen.getByRole('menuitem', { name: HE.remove_site(added) }))
+    await waitFor(() => expect(server.sites).toHaveLength(1), WAIT)
+    // …and it says so, rather than the board simply changing.
+    expect(screen.getByText(HE.site_removed(added))).toBeInTheDocument()
+  })
+
+  it('refuses to remove a site that still has rooms, in its own words', async () => {
+    // ⚠ The server refuses this too — with a 32-character id and a citation of
+    // `MAP_PLAN §3.7`. This screen holds the document, so it can say what is in
+    // the way and in how many words, exactly as removing a FLOOR has since the
+    // lab. The server's 409 stays as the backstop for another tab's drawing.
+    const user = userEvent.setup()
+    server.places = [{ id: 'pl1', floor_id: 'srv2', name: 'סלון',
+                       rect: { x: 0, y: 0, w: 4, h: 4 }, order: 0 }]
+    open()
+    await screen.findByRole('radio', { name: HE.arrow }, WAIT)
+    await user.click(screen.getByRole('button', { name: HE.menu_plan }))
+    await user.click(screen.getByRole('menuitem', { name: HE.add_site }))
+    await waitFor(() => expect(siteMenu()).toBeInTheDocument(), WAIT)
+    // Back to the site that HAS the room.
+    await user.click(siteMenu())
+    await user.click(screen.getByRole('menuitemcheckbox', { name: /הבית/ }))
+    await waitFor(() => expect(siteMenu()).toBeInTheDocument(), WAIT)
+
+    await user.click(siteMenu())
+    await user.click(screen.getByRole('menuitem', { name: HE.remove_site('הבית') }))
+    expect(screen.getByText(HE.site_not_removed(1, 0))).toBeInTheDocument()
+    expect(server.calls.filter((c) => c.startsWith('DELETE'))).toEqual([])
+  })
+
+  it('re-reads the library after a gesture fails, because it may have landed', async () => {
+    // ⚠ A failure is not proof that nothing happened: the request can be
+    // processed and the ANSWER lost. Without a re-derive the picker goes on
+    // offering a site that is gone — and a review measured the mirror image of
+    // this, where a half-landed create left a site nobody could see or remove.
+    const user = userEvent.setup()
+    open()
+    await screen.findByRole('radio', { name: HE.arrow }, WAIT)
+    await user.click(screen.getByRole('button', { name: HE.menu_plan }))
+    await user.click(screen.getByRole('menuitem', { name: HE.add_site }))
+    await waitFor(() => expect(siteMenu()).toBeInTheDocument(), WAIT)
+
+    server.dropAnswerNext = true
+    await user.click(siteMenu())
+    await user.click(
+      screen.getByRole('menuitem', { name: HE.remove_site(server.sites[1]!.name) }))
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument(),
+                  WAIT)
+    // It says it could not tell — and the picker still tells the truth.
+    expect(screen.getByRole('alert')).toHaveTextContent(HE.not_done_lead)
+    await waitFor(() => expect(screen.queryByRole('button', { name: HE.site_menu }))
+      .not.toBeInTheDocument(), WAIT)
   })
 
   it('says why the server refused to remove one, and keeps drawing it', async () => {

@@ -141,6 +141,18 @@
   .page-plan .mapbanner { color: #ffe0b0; background: #3a2f1a; }
 }
 
+/* The acknowledgment beside the banner: same place, neutral tone, because it
+ * is not a problem — it is the answer to a gesture whose whole effect is that
+ * the board changed. */
+.page-plan .mapflash {
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--muted);
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
 .page.page-plan {
   /* ⚠ A flex COLUMN, not just a flex child. `.mapscreen` asked for
      `height: 100%` and got 150px back: a percentage height resolves against
@@ -328,6 +340,11 @@
     border-top: 1px solid var(--line);
   }
   .mapscreen .resizer { display: none; }
+  /* ⚠ Below the badge, not over it. Measured at 390px: the toast overlapped
+     the badge by 59px — `pointer-events: none`, so it hid the storey chevron
+     rather than blocking it, which is worse. The site segment made the badge
+     wider and the overlap certain. */
+  .mapscreen .toast { top: 56px; }
   /* ⚠ Thumb-sized. A review measured the elevation's cells at 30px and its
      per-column ± at 26px against a 44px target — and the grid's own
      `minmax(44px, 1fr)` governs the column WIDTH, which was never the tight
@@ -377,6 +394,15 @@
 .mapscreen .floor-badge input { min-height: 28px; padding: 3px 6px; width: 140px; font-size: 13px; }
 .mapscreen .floor-badge .menu > button { min-height: 28px; padding: 2px 6px; }
 
+/* ⚠ AFTER the 28px rule, not inside the earlier breakpoint block: equal
+ * specificity, later wins, and the phone override was being overruled by the
+ * desktop line further down the file. Measured — the chevron stayed 28px high
+ * with the rule present. Two bare chevrons 47px apart, one of which changes
+ * the whole board, on the device this product is for. */
+@media (max-width: 640px) {
+  .mapscreen .floor-badge .menu > button { min-height: 40px; min-width: 40px; }
+}
+
 .mapscreen .hint {
   position: absolute;
   inset-inline: 10px;
@@ -425,8 +451,25 @@
 
 /* --- the plan ------------------------------------------------------------ */
 
+/*
+ * ⚠ **Positioned, not sized in percentages.** A percentage height on a
+ * REPLACED element resolves against a parent with a DEFINITE height, and a
+ * flex item that is merely stretched has an automatic one — so `height: 100%`
+ * silently fell back to the 150px an `<svg>` is intrinsically, and the owner
+ * drew on 150 of the 470px the board had given it. Above 640px `.body` is a
+ * row and the same declaration happens to resolve, which is why only the phone
+ * ever showed it.
+ *
+ * A review measured it after I had reported the fix: I had measured
+ * `.canvas-wrap`, which was the right size, rather than the surface inside it.
+ * `inset: 0` cannot be wrong about its parent — `.canvas-wrap` is already
+ * `position: relative`, and the badge, the hint and the toast are already
+ * absolute over it, so nothing changes but the drawing.
+ */
 .mapscreen svg.plan {
   display: block;
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   background: var(--bg);
