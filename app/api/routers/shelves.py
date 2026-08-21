@@ -65,6 +65,7 @@ from app.domain import (
 )
 from app.domain.shelf import UnknownDepth
 from app.ports import Clock, IdGen
+from app.map_edit import deepest_occupied_depths
 from app.ports.store import (
     BookStore,
     DuplicateCaptureSlot,
@@ -235,12 +236,35 @@ def delete_shelf(
     shelf_id: str,
     library: LibraryRef = Depends(require(Capability.CAPTURE)),
     store: ShelfStore = Depends(get_shelf_store),
+    books: BookStore = Depends(get_book_store),
 ) -> None:
-    """Remove a shelf that holds no photos. **409** if it does.
+    """Remove a shelf that holds nothing. **409** if it holds photos OR books.
 
     Not a cascade: its captures are the record a re-read diffs against (§5.6).
     This is for the shelf created by mistake, not for clearing one out.
+
+    ⚠⚠ **Books, and not only photographs.** `copies.shelf_id` has no foreign
+    key — the table predates `shelves` — so deleting a shelf that holds books
+    left every copy pointing at a row that is gone, and `PRAGMA
+    foreign_key_check` reported a clean file. Measured on a real migrated
+    database: one shelf, one book, no photograph, `delete_shelf` → `True`, the
+    copy still naming `sh-1`, the shelf gone, `foreign_key_check` empty. The
+    book keeps a location nobody can open, and no screen ever says so.
+
+    P6.1 learned exactly this on the map's own path — *"an occupied shelf is
+    DETACHED, never deleted, and 'occupied' includes a shelf with books and no
+    photograph, which is the half a reasonable person leaves out"* — and fixed
+    it there. This is the same rule at the other door, through the same
+    function, computed immediately before the write for the reason that
+    function's docstring gives.
     """
+    shelf = _load(store, library, shelf_id)
+    if deepest_occupied_depths(store, books, library, [shelf]):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"shelf {shelf_id} still holds books; move them off it first "
+            "(§5.6 — nothing here auto-removes)",
+        )
     try:
         removed = store.delete_shelf(library, shelf_id)
     except ShelfNotEmpty as exc:

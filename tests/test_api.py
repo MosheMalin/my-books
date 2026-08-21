@@ -1645,6 +1645,46 @@ def test_a_shelf_with_photos_cannot_be_deleted():
     assert c.delete(f"{API_PREFIX}/shelves/{shelf_id}").status_code == 204
 
 
+def test_a_shelf_holding_books_cannot_be_deleted_either():
+    """⚠⚠ The half a reasonable person leaves out, at the second door.
+
+    `copies.shelf_id` has NO foreign key — the table predates `shelves` — so
+    deleting a shelf that holds books left every copy naming a row that is
+    gone, and `PRAGMA foreign_key_check` reported a clean file. Measured on a
+    real migrated database before this test existed: shelf deleted, copy still
+    naming it, no complaint from anywhere. The book keeps a location nobody can
+    open, and no screen says so.
+
+    P6.1 learned this on the MAP's path and fixed it there ("an occupied shelf
+    is DETACHED, never deleted, and occupied includes a shelf with books and no
+    photograph"). This is the same rule at the door the phone uses.
+    """
+    # ⚠ Located through the STORE, because no route puts a copy on a shelf:
+    # a copy is located by a read being applied (P2.9). The hole is in the
+    # delete, not in how the book got there.
+    books = MemoryBookStore()
+    c = TestClient(_app(store=books))
+    shelf = c.post(f"{API_PREFIX}/shelves", json={"label": "סלון"}).json()
+    books.save(TEST_LIBRARY, new_book(
+        id="bk-1", library_id=TEST_LIBRARY.id, title="היער השיכור",
+        author="ג'ראלד דארל", copy_id="cp-1", shelf_id=shelf["id"], depth=1))
+
+    refused = c.delete(f"{API_PREFIX}/shelves/{shelf['id']}")
+    assert refused.status_code == 409, refused.text
+    assert "books" in refused.json()["detail"]
+    assert c.get(f"{API_PREFIX}/shelves/{shelf['id']}").status_code == 200
+
+    # …and the copy still stands where it stood, rather than on nothing.
+    still = books.get(TEST_LIBRARY, "bk-1")
+    assert still.copies[0].shelf_id == shelf["id"]
+
+    # Off the shelf, and the shelf goes.
+    books.save(TEST_LIBRARY, new_book(
+        id="bk-1", library_id=TEST_LIBRARY.id, title="היער השיכור",
+        author="ג'ראלד דארל", copy_id="cp-1"))
+    assert c.delete(f"{API_PREFIX}/shelves/{shelf['id']}").status_code == 204
+
+
 def test_the_wishlist_is_absent_from_the_shelf_list_unless_asked_for():
     c = TestClient(_app())
     c.post(f"{API_PREFIX}/shelves", json={"label": "סלון"})

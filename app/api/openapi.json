@@ -5798,7 +5798,7 @@
     },
     "/api/v1/shelves/{shelf_id}": {
       "delete": {
-        "description": "Remove a shelf that holds no photos. **409** if it does.\n\nNot a cascade: its captures are the record a re-read diffs against (§5.6).\nThis is for the shelf created by mistake, not for clearing one out.",
+        "description": "Remove a shelf that holds nothing. **409** if it holds photos OR books.\n\nNot a cascade: its captures are the record a re-read diffs against (§5.6).\nThis is for the shelf created by mistake, not for clearing one out.\n\n⚠⚠ **Books, and not only photographs.** `copies.shelf_id` has no foreign\nkey — the table predates `shelves` — so deleting a shelf that holds books\nleft every copy pointing at a row that is gone, and `PRAGMA\nforeign_key_check` reported a clean file. Measured on a real migrated\ndatabase: one shelf, one book, no photograph, `delete_shelf` → `True`, the\ncopy still naming `sh-1`, the shelf gone, `foreign_key_check` empty. The\nbook keeps a location nobody can open, and no screen ever says so.\n\nP6.1 learned exactly this on the map's own path — *\"an occupied shelf is\nDETACHED, never deleted, and 'occupied' includes a shelf with books and no\nphotograph, which is the half a reasonable person leaves out\"* — and fixed\nit there. This is the same rule at the other door, through the same\nfunction, computed immediately before the write for the reason that\nfunction's docstring gives.",
         "operationId": "delete_shelf_api_v1_shelves__shelf_id__delete",
         "parameters": [
           {
