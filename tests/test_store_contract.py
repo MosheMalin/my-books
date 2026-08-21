@@ -1778,6 +1778,43 @@ def the_last_storey_of_a_site_and_the_last_site_are_kept(stores):
 
 
 @map_contract
+def a_shelf_holding_books_is_not_deleted_by_either_implementation(stores):
+    """⚠⚠ The refusal no foreign key can make.
+
+    `copies.shelf_id` names a shelf in a plain column — the table predates
+    `shelves` by four schema versions — so SQLite cannot police this and
+    `PRAGMA foreign_key_check` reports a clean file over a library whose
+    locations have been silently emptied. Measured on a real migrated database
+    before this spec existed: shelf deleted, copy still naming it, nothing
+    anywhere complaining.
+
+    It lives in THIS group because the map fixture is the one that holds all
+    three stores, and its own docstring already says why: *"whether that shelf
+    may be erased depends on a BookStore one"*. It was the only sentence in
+    that docstring nothing asserted.
+
+    The captures refusal beside it (`deleting_a_shelf_with_captures_is_refused
+    _not_cascaded`) is the same rule about the other aggregate; this is the
+    half that was documented as the caller's job and that no caller did.
+    """
+    _maps, shelves, books = stores
+    shelves.save_shelf(LIB, _sh(1))
+    books.save(LIB, _book(1, shelf_id="sh1"))
+
+    _raises(ShelfNotEmpty, shelves.delete_shelf, LIB, "sh1")
+    assert shelves.get_shelf(LIB, "sh1") is not None, "refused and deleted"
+    # …and the book is untouched by the refusal — no half-cascade.
+    kept = books.get(LIB, "b1")
+    assert kept is not None and kept.copies[0].shelf_id == "sh1"
+
+    # Off the shelf, and it goes. `remove_from_shelf` is the domain operation
+    # the port's docstring names; the store simply stops refusing.
+    books.save(LIB, _book(1))
+    assert shelves.delete_shelf(LIB, "sh1") is True
+    assert shelves.get_shelf(LIB, "sh1") is None
+
+
+@map_contract
 def a_site_drawn_by_mistake_can_be_removed_with_its_empty_storeys(stores):
     """⚠ Measured at review: these two refusals used to DEADLOCK. Removing a
     site was refused while it held any floor, and removing its only floor was
@@ -2201,7 +2238,14 @@ def _sqlite_store():
 
 @contextmanager
 def _memory_shelf_store():
-    yield MemoryShelfStore()
+    # ⚠ Bound to books it will never be given any, which is the point: an
+    # unbound store REFUSES to delete (it cannot answer "does a book stand
+    # here"), and the shelf specs below delete shelves. SQLite needs no
+    # binding — same file — but it needs the same rule, and that is what the
+    # spec in the map group pins across both.
+    shelves = MemoryShelfStore()
+    shelves.bind_books(MemoryBookStore())
+    yield shelves
 
 
 @contextmanager
@@ -2259,9 +2303,11 @@ def _memory_map_stores():
     """
     shelves = MemoryShelfStore()
     maps = MemoryMapStore()
+    books = MemoryBookStore()
     maps.bind_shelves(shelves)
     shelves.bind_map(maps)
-    yield maps, shelves, MemoryBookStore()
+    shelves.bind_books(books)
+    yield maps, shelves, books
 
 
 @contextmanager
@@ -3101,12 +3147,63 @@ def test_a_v13_database_groups_libraries_into_accounts_by_their_members():
             conn.close()
 
 
+def test_an_unbound_memory_shelf_store_refuses_rather_than_answering_weakly():
+    """⚠ The memory store's two bindings, and what an UNBOUND one must do.
+
+    SQLite gets the first free — one file, one foreign key, so "is that section
+    real" is a join — and gets the second free NOT AT ALL, because
+    `copies.shelf_id` has no foreign key. Either way the memory store has to be
+    told, and `memory_store.py`'s own comment says what happens if it treats
+    being untold as permission: *"a guard whose default is 'skip me' is the
+    same shape as the `occupied_ids` default a review already measured"*.
+
+    Both guards fail closed, and until this test neither said so out loud: a
+    mutation removing the second one left every ring green, and asking "what
+    else enforces this?" turned up nothing for the first one either. So this
+    gates the pattern rather than one instance of it — the next binding added
+    to this store belongs in the list below.
+    """
+    bare = MemoryShelfStore()
+    addressed = _sh(1)
+    addressed = replace(addressed, address=ShelfAddress("sec", 1, 1))
+    _raises(RuntimeError, bare.save_shelf, LIB, addressed)
+
+    # Bound to a map, it can answer the address question — and still refuses
+    # the delete, because nobody has told it where the books are.
+    maps = MemoryMapStore()
+    maps.bind_shelves(bare)
+    bare.bind_map(maps)
+    bare.save_shelf(LIB, _sh(2))
+    _raises(RuntimeError, bare.delete_shelf, LIB, "sh2")
+
+    # Told both, it answers both.
+    bare.bind_books(MemoryBookStore())
+    assert bare.delete_shelf(LIB, "sh2") is True
+
+
 def test_deleting_a_shelf_never_touches_the_books_that_stood_on_it():
     """Two aggregates, one file — so the cascade has to be checked, not
     assumed. §5.6's direction is that a book is never removed automatically;
     if `shelves` cascaded into `copies`, deleting a mistyped shelf would delete
     every book on it, and the destructive direction is exactly the one the
     whole reconciliation design refuses to take.
+
+    ⚠⚠ **This test used to assert the opposite of its second half**, and said
+    so on purpose: the shelf was deleted, the copy went on naming it, and the
+    comment read *"clearing it is `remove_from_shelf`, a domain operation, and
+    P2.2 owns the sequence in the API where both stores are in hand. Asserted
+    so the gap is a recorded decision rather than a surprise."*
+
+    The decision was recorded. The sequence was not written. No caller
+    anywhere cleared the copies first, `copies.shelf_id` has no foreign key to
+    catch it, and the result was measured on a real migrated database: a shelf
+    holding a book and no photograph deleted cleanly, `PRAGMA
+    foreign_key_check` clean, the book left with a location nothing can open.
+
+    So the assertion flips and the test keeps its name: nothing here touches
+    the books — because nothing here deletes the shelf while they stand on it.
+    A recorded decision that depends on a caller doing something is worth
+    exactly as much as that caller.
     """
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "books.db"
@@ -3114,14 +3211,20 @@ def test_deleting_a_shelf_never_touches_the_books_that_stood_on_it():
         shelves.save_shelf(LIB, _sh(1))
         books.save(LIB, _book(1, shelf_id="sh1"))
 
-        assert shelves.delete_shelf(LIB, "sh1") is True
+        _raises(ShelfNotEmpty, shelves.delete_shelf, LIB, "sh1")
         kept = books.get(LIB, "b1")
-        assert kept is not None, "deleting a shelf deleted its books"
-        # The copy still names the shelf it stood on: clearing it is
-        # `remove_from_shelf`, a domain operation, and P2.2 owns the sequence
-        # in the API where both stores are in hand. Asserted so the gap is a
-        # recorded decision rather than a surprise.
+        assert kept is not None, "the refusal touched the books"
         assert kept.copies[0].shelf_id == "sh1"
+        assert shelves.get_shelf(LIB, "sh1") is not None
+
+        # Cleared through the domain operation the port names, the shelf goes
+        # — and the book is still there, unlocated, which is the no-cascade
+        # rule this test is named for.
+        books.save(LIB, _book(1))
+        assert shelves.delete_shelf(LIB, "sh1") is True
+        after = books.get(LIB, "b1")
+        assert after is not None, "deleting a shelf deleted its books"
+        assert after.copies[0].shelf_id is None
 
 
 def test_deleting_a_book_leaves_no_orphan_rows():

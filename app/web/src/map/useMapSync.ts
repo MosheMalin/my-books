@@ -360,12 +360,6 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
   }, [afterSite, announce, sites, source, T])
 
   const record = useCallback((plan: Plan) => {
-    // ⚠ The banner is about the LAST write, so the next one clears it. A
-    // review measured a refusal about a site surviving a successful floor
-    // add, a trip through the overview, a floor removal, and the successful
-    // removal of the very site it named — still on screen, above a board that
-    // had done everything it said could not be done.
-    setNotice(null)
     setSaved('saving')
     // ⚠ SERIALISED, and the diff is computed INSIDE the task.
     //
@@ -389,6 +383,14 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
         setSaved('saved')
         return
       }
+      // ⚠ The banner is about the LAST write, so the next REAL one clears it
+      // — a review measured a refusal surviving a successful floor add, a trip
+      // through the overview and the removal of the very site it named. But
+      // clearing it in `record` itself wiped it instantly: every re-derive
+      // remounts the editor, and every mount hands its document straight to
+      // `record`, so the refusal that CAUSED the re-derive was erased by the
+      // no-op diff that followed it. A write with nothing to say says nothing.
+      setNotice(null)
       try {
         const { done, refusal: stopped } = await push(
           source.api, ops, ids.current, site.current)

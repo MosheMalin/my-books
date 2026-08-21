@@ -362,16 +362,36 @@ class ShelfStore(Protocol):
         """
 
     def delete_shelf(self, library: LibraryRef, shelf_id: str) -> bool:
-        """Remove a shelf that holds no captures. Returns False if absent.
+        """Remove a shelf that holds **nothing**. Returns False if absent.
 
-        Raises :class:`ShelfNotEmpty` when captures exist. Deliberately *not* a
-        cascade: cascading would delete the photographic record a re-read diffs
-        against, and §5.6 says a shelf's book list is durable state.
+        Raises :class:`ShelfNotEmpty` when captures exist **or when copies are
+        still located here**. Deliberately *not* a cascade in either direction:
+        cascading captures would delete the photographic record a re-read diffs
+        against (§5.6), and cascading copies would take away a book's only
+        recorded location because someone tidied a shelf away.
 
-        ⚠ Copies still pointing at this shelf are NOT cleared here — they live
-        in the other aggregate, and a store may not reach across. The caller
-        clears them with ``remove_from_shelf`` first; P2.2 owns that sequence
-        in the API, where both stores are in hand.
+        ⚠⚠ **This method used to look at captures only, and its own docstring
+        argued for it** — *"copies live in the other aggregate, and a store may
+        not reach across; the caller clears them with `remove_from_shelf`
+        first"*. No caller ever did, and `copies.shelf_id` has no foreign key
+        (the table predates `shelves` by four schema versions), so the result
+        was measured on a real migrated database: a shelf holding a book and no
+        photograph deleted cleanly, the copy left naming a row that was gone,
+        and `PRAGMA foreign_key_check` reporting a clean file.
+
+        The half of that sentence which survives is that a store may not
+        *clear* another aggregate's rows — that is destructive and belongs to
+        whoever asked for it. The half that does not is the idea that it may
+        therefore decline to LOOK: an operation whose safety depends on what is
+        over there, offered by a method that refuses to check, is a method
+        whose ``True`` is not true. `MemoryShelfStore.bind_map` already settled
+        this shape once in the other direction — it exists so the memory store
+        can refuse an address the real database refuses — and here neither
+        implementation refused, because SQLite has no constraint to inherit.
+
+        Clearing the copies first (``remove_from_shelf``) still works and is
+        still the way to make a shelf deletable. It is now a thing the caller
+        decides to do, rather than a thing this method assumes was done.
         """
 
     # --- captures --------------------------------------------------------

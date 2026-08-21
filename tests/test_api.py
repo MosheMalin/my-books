@@ -207,15 +207,19 @@ def _app(principal: StubPrincipal | None = None, store=None, shelves=None,
     # same; this is the API ring's copy of the one composition step.
     shelf_store = shelves if shelves is not None else MemoryShelfStore()
     map_store = maps if maps is not None else MemoryMapStore()
+    book_store = store if store is not None else MemoryBookStore()
     map_store.bind_shelves(shelf_store)
     shelf_store.bind_map(map_store)
+    # …and the books, so deleting a shelf can refuse one that holds them.
+    # SQLite does not get this free — `copies.shelf_id` has no foreign key.
+    shelf_store.bind_books(book_store)
     ports = dict(
         # A raw provider wins: the session tests bind the REAL
         # session_principal dependency; everything else gets the stub.
         principal_provider=(principal_provider if principal_provider
                             is not None else (lambda: p)),
         tenancy_store=tenancy if tenancy is not None else _tenancy(p),
-        book_store=store if store is not None else MemoryBookStore(),
+        book_store=book_store,
         shelf_store=shelf_store,
         map_store=map_store,
         blob_store=blobs,
