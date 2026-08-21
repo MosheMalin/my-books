@@ -319,12 +319,31 @@ recognisable and carry no book data; nine lab passes never wanted one. They can
 be added later without touching the address, which is what makes deferring them
 cheap.
 
-### 3.11 A merged shelf becomes an **alias**; its row is deleted
+### 3.11 A merged shelf becomes an **alias** — of its id AND of its address
 
-**[PROPOSED — awaiting the owner.]** When photo-born shelf A merges into
-drawn slot B, A's `shelves` row goes and a `shelf_aliases` row takes its
-place: `alias_id -> shelf_id`, with A's former label and the date. A is no
-longer a shelf. It is still an answer.
+**[DECIDED 2026-08-21 — owner]** *"Image keeps its own identity. Shelf and
+slot can be aliases (in addition to the image)"*, and the alias **carries
+the old address too**.
+
+So there are three identities in this item and they are not the same kind
+of thing:
+
+- **the image** is durable and is NEVER aliased. A capture already moves
+  between shelves (`PATCH /captures/{id}`) keeping its own id, and its
+  earlier reads stay filed under the shelf as it was THEN. A merge changes
+  which shelf a photo hangs off; it does not re-identify the photograph;
+- **the shelf** may become an alias: `alias_id -> shelf_id`;
+- **the slot** may become an alias in the same row: the absorbed shelf's
+  former `(section, col, level)` resolves to the survivor as well. *"The
+  shelf that was at section 1, column 2, level 3"* is a question the
+  library can still answer after the wood has been re-identified — which
+  matters because the address is what a person reads off a drawing, and it
+  is the half that survives in someone's memory when the id does not.
+
+When photo-born shelf A merges into drawn slot B, A's `shelves` row goes
+and one alias row takes its place, carrying A's id, A's former address, its
+label and the date. A is no longer a shelf. It is still an answer, and so
+is where it used to be.
 
 **Why not rewrite every reference and delete A outright** — the obvious
 alternative, and the one §3.1's *"no mapping table beside it"* appears to
@@ -403,7 +422,7 @@ preview names every collision rather than choosing silently.
 
 ### 3.14 The map may propose; only a ✓ binds
 
-**[PROPOSED — awaiting the owner.]** CLAUDE.md's *"nothing enters the
+**[DECIDED 2026-08-21 — owner]** *always an explicit ✓*. CLAUDE.md's *"nothing enters the
 library unapproved"* is about BOOKS. It should extend to shelf identity, and
 not by analogy: there is no evidence to be right from. §5.7 established that
 nothing in a photo says which ROW it is; nothing says which SLOT it is
@@ -418,20 +437,39 @@ never from image content or timing, and a proposal shows its evidence in the
 same breath; and a multi-select bind itemises what moves, the way P6.2 says
 a structural edit must report what it cost the shelves.
 
-### 3.15 A merge cannot be undone, so the door is a preview
+### 3.15 Every destructive map edit is UNDOABLE, and that lands before the merge
 
-**[PROPOSED — awaiting the owner.]** The inverse is not derivable from what
-we keep: a book the owner typed onto A by hand has no provenance, and after
-the merge nothing distinguishes it from one that was always on B. A guessed
-inverse **moves books that never moved**. So the door, matching the three
-precedents this pillar already has: a **preview** call that writes nothing
-and returns what will move (books, copies per depth, photos per depth, the
-resulting depth, the colliding decisions and which side wins); a **refusal
-list**, each 409 with its reason (a running read, a virtual shelf, B is
-itself an alias, different libraries) and one 200 — *A already resolves to B*
-is a no-op, so a retry cannot half-merge; a confirm that repeats the counts
-and says it cannot be undone; and the alias, which is what makes
-irreversible survivable — nothing 404s, and the shelf says *formerly …*.
+**[DECIDED 2026-08-21 — owner]**, overruling the recommendation. The
+recommendation was a preview and a confirm in front of an irreversible
+merge, on the grounds that a true inverse is not derivable — a book the
+owner typed onto A by hand has no provenance, so after the merge nothing
+distinguishes it from one that was always on B, and a GUESSED inverse moves
+books that never moved. The owner's answer: *build a real undo first*, and
+not only for merges — for **every destructive map edit**.
+
+That is the stronger reading of this project's own rules, and the
+recommendation was arguing from cost rather than from principle. Removing a
+column, removing a section, deleting a bookcase and removing a site all
+detach or destroy shelves TODAY behind nothing but a `confirm()`, and each
+of them is one mis-tap. "Nothing here auto-removes" (§3.7) and "never
+auto-remove a not-seen book" (§5.6) are the same instinct one level up: the
+library keeps what it cannot certainly discard. An undo is that instinct
+given a mechanism.
+
+**What makes it honest rather than a guess:** the inverse is RECORDED at
+the moment of the edit — which rows moved, which slots were detached, which
+answers were overwritten — and it is **invalidated the moment anything else
+touches those rows**. An undo that cannot prove the world is still as it
+left it refuses, and says why. That is what the guessed inverse could never
+do, and it is why recording beats deriving.
+
+The preview stays, because it is not a substitute for undo but the other
+half of the same courtesy: a call that writes nothing and returns what will
+move (books, copies per depth, photos per depth, the resulting depth, the
+colliding decisions and which side wins), a refusal list each with its
+reason, and *A already resolves to B* answering 200 as a no-op so a retry
+cannot half-merge. And the alias is what makes even an expired undo
+survivable: nothing 404s, and the shelf says *formerly …*.
 
 ### 3.16 A merge may not manufacture evidence of absence
 
@@ -965,11 +1003,12 @@ The decomposition, each landing on `main` before the next:
 
 | # | Item | Size | Reviewers |
 |---|---|---|---|
-| **P6.4a** | **The alias, and nothing using it** — schema **v21**, `shelf_aliases`, the resolver, `BookStore.books_on_shelf`, and "a shelf other identities resolve to is OCCUPIED". No merge, no route. | M | `review-migration` **before**, data-integrity, quality |
-| **P6.4b** | **Bind** — an unaddressed shelf gains an address, and loses one. No identities join; a taken slot is a 409 naming the occupant and offering the merge. | S | data-integrity, security, quality, ux |
-| **P6.4c** | **Merge** — two identities become one. ⚠ **carries the data-loss risk.** | L | data-integrity, security, quality, ux |
-| **P6.4d** | **History across the seam** — reads, streaks, staleness and the *formerly* line resolve through the alias. | M | data-integrity, quality, ux |
-| **P6.4e** | *Optional:* **the proposal** — candidates from typed labels only, each an explicit ✓. | S | quality, ux, security |
+| **P6.4a** | **The alias, and nothing using it** — schema **v21**, one alias row carrying the absorbed shelf's id AND its former address, the resolver, `BookStore.books_on_shelf`, and "a shelf other identities resolve to is OCCUPIED". No merge, no route. | M | `review-migration` **before**, data-integrity, quality |
+| **P6.4b** | **Undo for destructive map edits** (§3.15) — the journal, the inverse, and the invalidation rule. Covers remove column, remove section, delete bookcase, remove site; the merge joins it in P6.4d. ⚠ Schema step. | L | `review-migration` **before**, data-integrity, quality, ux |
+| **P6.4c** | **Bind** — an unaddressed shelf gains an address, and loses one. No identities join; a taken slot is a 409 naming the occupant and offering the merge. | S | data-integrity, security, quality, ux |
+| **P6.4d** | **Merge** — two identities become one, undoable. ⚠ **carries the data-loss risk.** | L | data-integrity, security, quality, ux |
+| **P6.4e** | **History across the seam** — reads, streaks, staleness and the *formerly* line resolve through the alias. | M | data-integrity, quality, ux |
+| **P6.4f** | *Optional:* **the proposal** — candidates from typed labels only, each an explicit ✓. | S | quality, ux, security |
 
 **P6.4a is separate because it is the only item with a schema-version
 change** — so it is the only one needing `review-migration` and a worktree,
