@@ -24,6 +24,7 @@ piece of furniture, so nothing here may treat a shelf id as permanent.
 from __future__ import annotations
 
 import re
+from typing import Mapping
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
@@ -108,9 +109,14 @@ def _load_capture(store: ShelfStore, library: LibraryRef, cap_id: str) -> Captur
     return capture
 
 
-def _dto(store: ShelfStore, library: LibraryRef, shelf: Shelf) -> ShelfDTO:
+def _dto(store: ShelfStore, library: LibraryRef, shelf: Shelf,
+         books: Mapping[str, int] | None = None) -> ShelfDTO:
+    """⚠ `books` is the WHOLE library's counts, passed in by a caller that
+    asked once. Per-shelf it would be a query per row — the shelf list is the
+    screen this feeds, and it renders every shelf a household has."""
     return ShelfDTO.of(shelf,
-                       capture_count=len(store.list_captures(library, shelf.id)))
+                       capture_count=len(store.list_captures(library, shelf.id)),
+                       book_count=(books or {}).get(shelf.id, 0))
 
 
 def _next_order(store: ShelfStore, library: LibraryRef, shelf_id: str,
@@ -149,10 +155,12 @@ def list_shelves(
     ),
     library: LibraryRef = Depends(require(Capability.BROWSE)),
     store: ShelfStore = Depends(get_shelf_store),
+    books: BookStore = Depends(get_book_store),
 ) -> list[ShelfDTO]:
     """Every shelf, named ones first and alphabetically, then unnamed ones
     oldest-first. Not paged — a personal library has tens of shelves."""
-    return [_dto(store, library, s)
+    counts = books.copies_per_shelf(library)
+    return [_dto(store, library, s, counts)
             for s in store.list_shelves(library, include_virtual=include_virtual)]
 
 

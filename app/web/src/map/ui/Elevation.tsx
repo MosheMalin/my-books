@@ -20,6 +20,7 @@ import { mapText } from '../text'
 
 import type { Bookcase, Section } from '../core/model'
 import { MAX_DEPTH, columnCount, sectionsTopDown, shelfAt, shelvesDifferingFromDefaultDepth, shelvesInColumns } from '../core/model'
+import { nothingBound } from '../cost'
 import type { Selection } from './types'
 
 type Props = {
@@ -107,7 +108,12 @@ function SectionBlock({
             aria-label={T.remove_section(label)}
             title={T.remove_section_title(label, sec.shelves.length)}
             onClick={() => {
-              if (confirm(T.remove_section_confirm(label, sec.shelves.length))) {
+              // ⚠ Asked only when something stands here. Every slot of an
+              // untouched section holds nothing, and a dialog in front of a
+              // gesture that destroys nothing is what teaches people to click
+              // through the ones that do (owner, drawing with it).
+              if (nothingBound(sec.shelves)
+                  || confirm(T.remove_section_confirm(label, sec.shelves.length))) {
                 props.onRemoveSection(sec.id)
               }
             }}
@@ -180,8 +186,12 @@ function SectionBlock({
           aria-label={many ? T.remove_column_of(label) : T.remove_column}
           disabled={cols <= 1}
           onClick={() => {
+            // The slots in the column about to go — how many, and whether
+            // any of them holds a photograph or a book.
+            const going = sec.shelves.filter((s) => s.col >= cols - 1)
             const losing = shelvesInColumns(sec, cols - 1)
-            if (losing > 0 && !confirm(T.remove_column_confirm(losing))) return
+            if (!nothingBound(going) && !confirm(T.remove_column_confirm(losing)))
+              return
             props.onColumnCount(sec.id, cols - 1)
           }}
         >

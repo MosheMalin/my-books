@@ -88,7 +88,7 @@ export function fakeShelfServer(init: Partial<FakeShelfServer> = {}): FakeShelfS
 export function fakeShelf(over: Partial<Shelf> = {}): Shelf {
   return {
     id: 'sh1', label: 'סלון, כוננית 2', depth_count: 1, virtual: false,
-    created_at: null, capture_count: 1, ...over,
+    created_at: null, capture_count: 1, book_count: 0, ...over,
   }
 }
 

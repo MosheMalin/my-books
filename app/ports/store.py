@@ -242,7 +242,20 @@ class BookStore(Protocol):
         whole library: an empty search box is the caller's business.
         """
 
-    def deepest_copy_depth(self, library: LibraryRef) -> Mapping[str, int]:
+    def copies_per_shelf(self, library: LibraryRef) -> Mapping[str, int]:
+        """How many copies stand on each shelf. Absent means none.
+
+        The companion to :meth:`deepest_copy_depth`, which answers *how far
+        back* rather than *how many* — two questions a destructive gesture
+        needs separately: the depth decides whether a shelf may be shallowed,
+        the count is what a confirmation says out loud.
+
+        Whole-library and un-paged for the same reason as its sibling: the
+        callers want every shelf at once (the shelf list, the map's slots, a
+        merge preview), and asking per shelf turns one query into tens.
+        """
+
+    def deepest_copy_depth(self, library: LibraryRef) -> dict[str, int]:
         """Per shelf, the deepest depth a copy of a book stands at (P6.1).
 
         ONE method rather than two, because the map asks two questions that

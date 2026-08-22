@@ -649,7 +649,8 @@ def set_shelf_depth(
     with _translated():
         shelves.save_shelf(library, replace(shelf, depth_count=body.depth_count))
     return ShelfDTO.of(shelves.get_shelf(library, shelf.id),
-                       capture_count=len(shelves.list_captures(library, shelf.id)))
+                       capture_count=len(shelves.list_captures(library, shelf.id)),
+                       book_count=books.copies_per_shelf(library).get(shelf.id, 0))
 
 
 @router.post("/sections/{section_id}/levels", response_model=SectionEditDTO)

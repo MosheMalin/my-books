@@ -34,7 +34,16 @@ export type Shelf = {
   /** ITS OWN depth. Copied from the section default at creation — never read
    *  through to the parent afterwards (MAP_PLAN §3.3). */
   depth: number
+  /** Photographs filed against this slot. A server fact; see the note where
+   *  `withShelfPhotos` used to be. */
   photos: number
+  /**
+   * Books standing here. Also a server fact, and the one the editor was
+   * missing: without it every destructive gesture had to assume the worst,
+   * so it asked before emptying a slot that held nothing at all (owner:
+   * *"if it's not connected to any image — no need to raise a dialog"*).
+   */
+  books: number
 }
 
 /**
@@ -265,7 +274,7 @@ export function withColumnCount(sec: Section, count: number): Section {
   for (let col = sec.columnLevels.length; col < n; col++) {
     columnLevels.push(sec.defaultLevels)
     for (let level = 0; level < sec.defaultLevels; level++) {
-      shelves.push({ col, level, depth: sec.defaultDepth, photos: 0 })
+      shelves.push({ col, level, depth: sec.defaultDepth, photos: 0, books: 0 })
     }
   }
   return { ...sec, columnLevels, shelves }
@@ -283,7 +292,7 @@ export function withColumnLevels(sec: Section, col: number, levels: number): Sec
   let shelves = sec.shelves.filter((s) => s.col !== col || s.level < n)
   if (n > current) {
     for (let level = current; level < n; level++) {
-      shelves = shelves.concat({ col, level, depth: sec.defaultDepth, photos: 0 })
+      shelves = shelves.concat({ col, level, depth: sec.defaultDepth, photos: 0, books: 0 })
     }
   }
   return { ...sec, columnLevels, shelves }
@@ -447,9 +456,24 @@ export function reattach(bc: Bookcase, plan: Plan): Bookcase {
  * it is right often enough that *Turn* is a correction rather than a step.
  */
 export function frontFor(rect: Rect, room: Room | null): Side {
+  // The long side, which is where the columns divide (§3.8).
+  const long: Side = rect.w >= rect.h ? 'S' : 'E'
   const flush = room ? flushSide(rect, room.rect) : null
-  if (flush) return OPPOSITE[flush]
-  return rect.w >= rect.h ? 'S' : 'E'
+  if (!flush) return long
+  /**
+   * ⚠ The wall wins only when it AGREES with the geometry.
+   *
+   * "Columns follow the long side" (§3.8) held on resize and not on the
+   * draw: a case drawn thin-and-tall flush against the north wall faced
+   * south, so its front edge was the one-unit side and the columns divided
+   * across the thickness of the wood. The wall is a guess about which way
+   * the books look; which side is longer is a fact about the furniture, and
+   * the fact outranks the guess.
+   */
+  const facing = OPPOSITE[flush]
+  const acrossFront = facing === 'N' || facing === 'S' ? rect.w : rect.h
+  const throughIt = facing === 'N' || facing === 'S' ? rect.h : rect.w
+  return acrossFront >= throughIt ? facing : long
 }
 
 /** Rooms are only ever found on ONE storey: the kitchen is not under your feet

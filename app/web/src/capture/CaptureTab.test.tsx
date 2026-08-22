@@ -459,7 +459,7 @@ describe('Capture tab — hydration on mount (P2.9)', () => {
   function shelf(over: Partial<import('../api/client').Shelf> = {}) {
     return {
       id: 'sh1', label: '', depth_count: 1, virtual: false,
-      created_at: null, capture_count: 1, ...over,
+      created_at: null, capture_count: 1, book_count: 0, ...over,
     }
   }
 
@@ -544,7 +544,7 @@ describe('Capture tab — the image workspace (P2.10, §12.2 #10)', () => {
   function shelf(over: Partial<import('../api/client').Shelf> = {}) {
     return {
       id: 'sh1', label: '', depth_count: 1, virtual: false,
-      created_at: null, capture_count: 1, ...over,
+      created_at: null, capture_count: 1, book_count: 0, ...over,
     }
   }
 

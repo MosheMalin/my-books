@@ -3130,6 +3130,12 @@ export interface components {
             /** @description Null for every shelf born from a photograph — which is most of them, and stays legal forever: the drawn and the photographed are ONE population, and binding them is P6.4's job rather than a precondition. */
             address?: components["schemas"]["ShelfAddressDTO"] | null;
             /**
+             * Book Count
+             * @description Copies standing on this shelf, across every depth. What a destructive gesture has to be able to say out loud before it happens — and, when it is zero along with `capture_count`, the reason not to ask at all.
+             * @default 0
+             */
+            book_count: number;
+            /**
              * Capture Count
              * @description Photos filed against this shelf, across every depth.
              */

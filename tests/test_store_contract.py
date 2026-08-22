@@ -1777,6 +1777,29 @@ def the_last_storey_of_a_site_and_the_last_site_are_kept(stores):
     _raises(NotEmpty, maps.delete_site, LIB, "lib-a-st")
 
 
+@contract
+def counting_the_copies_on_each_shelf_is_one_question_per_library(store):
+    """What a destructive gesture has to be able to SAY, and what lets it stay
+    quiet: a slot holding nothing needs no dialog at all.
+
+    The companion to `deepest_copy_depth` — how many, not how far back — and
+    whole-library for the same reason: the shelf list renders every shelf a
+    household has, and a query per row is tens of queries for one screen.
+    """
+    assert store.copies_per_shelf(LIB) == {}, "an empty library counted something"
+
+    store.save(LIB, _book(1, shelf_id="sh1"))
+    store.save(LIB, _book(2, shelf_id="sh1"))
+    store.save(LIB, _book(3, shelf_id="sh2"))
+    store.save(LIB, _book(4))                       # located nowhere
+    assert store.copies_per_shelf(LIB) == {"sh1": 2, "sh2": 1}
+
+    # …and it is library-scoped, like every method on this port (H2).
+    store.save(OTHER, _book(9, library=OTHER, shelf_id="sh1"))
+    assert store.copies_per_shelf(LIB) == {"sh1": 2, "sh2": 1}
+    assert store.copies_per_shelf(OTHER) == {"sh1": 1}
+
+
 @map_contract
 def a_shelf_holding_books_is_not_deleted_by_either_implementation(stores):
     """⚠⚠ The refusal no foreign key can make.

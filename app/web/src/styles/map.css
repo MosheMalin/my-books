@@ -314,6 +314,13 @@
 .mapscreen .map-side {
   width: 330px;
   flex: 0 0 330px;
+  /* ⚠ `min-width: 0`, or the panel is at least as wide as its widest content:
+     a flex item defaults to `min-width: auto`, which is min-CONTENT, so
+     `flex-basis` becomes a floor rather than the width. Opening the elevation
+     — a grid declared `min-width: max-content` — pushed the panel wider and
+     took the canvas with it, and closing a fold pulled it back. The width is
+     the owner's, set by the divider; the content scrolls inside it. */
+  min-width: 0;
   border-inline-start: 1px solid var(--line);
   background: var(--panel);
   overflow-y: auto;

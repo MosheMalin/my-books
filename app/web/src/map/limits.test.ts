@@ -99,8 +99,23 @@ describe('what deleting a bookcase would cost', () => {
       return { ...bc, id }
     }
     expect(deletionCost([withPhotos('a'), withPhotos('b')]))
-      .toEqual({ cases: 2, shelves: 12, photos: 4 })
+      .toEqual({ cases: 2, shelves: 12, photos: 4, books: 0, empty: false })
     // A selection of rooms alone destroys no shelf, and asks nothing.
-    expect(deletionCost([])).toEqual({ cases: 0, shelves: 0, photos: 0 })
+    expect(deletionCost([]))
+      .toEqual({ cases: 0, shelves: 0, photos: 0, books: 0, empty: true })
+  })
+
+  it('says NOTHING is bound when no slot holds a photo or a book', () => {
+    // ⚠ The owner, drawing with it: *"if it's not connected to any image — no
+    // need to raise a dialog. It's annoying, and nothing is bound to it."* A
+    // confirmation in front of a gesture that destroys nothing is what teaches
+    // people to click through the ones that do.
+    const bare = caseOf(wide('s1', 2, 3))
+    expect(deletionCost([bare]).empty).toBe(true)
+
+    const held = caseOf(wide('s1', 2, 3))
+    held.sections[0]!.shelves[0]!.books = 1
+    expect(deletionCost([held]).empty).toBe(false)
+    expect(deletionCost([held]).books).toBe(1)
   })
 })
