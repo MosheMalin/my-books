@@ -89,7 +89,10 @@ export type MapScreenProps = {
 
 export default function MapScreen(props: MapScreenProps) {
   const { onChange, saved } = props
-  const T = mapText(useI18n().lang)
+  const { lang } = useI18n()
+  const T = mapText(lang)
+  /** The plan is pinned LTR (§3.5); the CHROME around it mirrors. */
+  const rtl = lang === 'he'
   const [hist, setHist] = useState<History<Doc>>(
     () => initHistory({ plan: props.initialPlan, seq: 0 }))
   const [tool, setTool] = useState<Tool>('auto')
@@ -838,7 +841,13 @@ export default function MapScreen(props: MapScreenProps) {
             const startX = e.clientX
             const startW = sideWidth
             const move = (ev: PointerEvent) => {
-              setSideWidth(clampSide(startW + (startX - ev.clientX)))
+              // ⚠ Away from the PANEL widens it, and which way that is depends
+              // on the reading direction: the settings sit at the inline end,
+              // so in English they are on the right (drag left to widen) and
+              // in Hebrew on the left (drag right). Hard-coded to the English
+              // side, the divider fought the owner on his own language.
+              const wider = rtl ? ev.clientX - startX : startX - ev.clientX
+              setSideWidth(clampSide(startW + wider))
             }
             const up = () => {
               window.removeEventListener('pointermove', move)

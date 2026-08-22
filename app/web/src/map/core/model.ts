@@ -447,9 +447,24 @@ export function reattach(bc: Bookcase, plan: Plan): Bookcase {
  * it is right often enough that *Turn* is a correction rather than a step.
  */
 export function frontFor(rect: Rect, room: Room | null): Side {
+  // The long side, which is where the columns divide (§3.8).
+  const long: Side = rect.w >= rect.h ? 'S' : 'E'
   const flush = room ? flushSide(rect, room.rect) : null
-  if (flush) return OPPOSITE[flush]
-  return rect.w >= rect.h ? 'S' : 'E'
+  if (!flush) return long
+  /**
+   * ⚠ The wall wins only when it AGREES with the geometry.
+   *
+   * "Columns follow the long side" (§3.8) held on resize and not on the
+   * draw: a case drawn thin-and-tall flush against the north wall faced
+   * south, so its front edge was the one-unit side and the columns divided
+   * across the thickness of the wood. The wall is a guess about which way
+   * the books look; which side is longer is a fact about the furniture, and
+   * the fact outranks the guess.
+   */
+  const facing = OPPOSITE[flush]
+  const acrossFront = facing === 'N' || facing === 'S' ? rect.w : rect.h
+  const throughIt = facing === 'N' || facing === 'S' ? rect.h : rect.w
+  return acrossFront >= throughIt ? facing : long
 }
 
 /** Rooms are only ever found on ONE storey: the kitchen is not under your feet

@@ -250,6 +250,20 @@ describe('the bookcase on the plan', () => {
     expect(frontFor(rect(5, 5, 1, 6), livingRoom)).toBe('E')
   })
 
+  it('takes its long side over the WALL when the two disagree', () => {
+    // ⚠ Reported by the owner drawing one. "Columns follow the long side"
+    // (§3.8) held on resize and not on the draw: a case drawn thin and tall
+    // flush against the north wall faced south, so its front edge was the
+    // one-unit side and the columns divided across the thickness of the wood.
+    // The wall is a GUESS about which way the books look; which side is longer
+    // is a FACT about the furniture.
+    expect(frontFor(rect(2, 0, 1, 8), livingRoom)).toBe('E')   // north wall
+    expect(frontFor(rect(0, 2, 8, 1), livingRoom)).toBe('S')   // west wall
+    // …and where they agree, the wall still decides which way it faces.
+    expect(frontFor(rect(2, 0, 8, 1), livingRoom)).toBe('S')
+    expect(frontFor(rect(0, 2, 1, 8), livingRoom)).toBe('E')
+  })
+
   it('re-attaches to the room it is moved INTO', () => {
     const plan = planWith(livingRoom, room('r2', rect(20, 0, 14, 10)))
     const bc = newBookcase('c1', '', rect(2, 0, 8, 1), 'S', 'r1', F)
