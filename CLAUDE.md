@@ -118,6 +118,12 @@ next, pausing for the owner only on unsettled decisions.
     after client changes. Vite's dev server can serve a stale module graph
     after out-of-band writes. Diagnose all three the same way: grep the
     served artefact for a string only the new code has.
+    ⚠ Stale can mean HALF-new within one file: a scripted edit that writes a
+    file twice can have HMR apply one write and not the other, so the served
+    module carried `dir={dir}` with no `const dir` — a crash the typecheck and
+    the whole ring could not see, because they read the DISK. Restart
+    `product-web` after any batch of scripted writes, before believing a
+    browser.
 13. **Commit/push only per the owner's ask.** The pre-commit hook routes
     checks by staged files (`tools/check.py` subsets); accuracy regressions
     block, and an intended trade-off is accepted explicitly with
