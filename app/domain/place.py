@@ -113,6 +113,31 @@ class TooManySlots(DomainError):
     """
 
 
+class SlotsOccupied(DomainError):
+    """Cells were asked to become gaps while something still stands on them.
+
+    **Refusing is the owner's decision** (2026-08-22): a column shrink
+    DETACHES an occupied shelf (:func:`plan_slot_removal`), which costs a book
+    its location, while a gap refuses and says so. *"The TV goes where the
+    books are not"* is a sentence the owner can act on.
+
+    ⚠ The first draft of this docstring claimed the gesture was therefore
+    **loss-proof** — *"there was nothing there to lose"* — and a review
+    measured that to be false: an empty shelf can still carry a label, a depth
+    override and an id that standing decisions name. What the refusal actually
+    covers, and what it deliberately does not, is written once, in
+    :func:`app.map_edit.apply_gaps`, beside the code that enforces it.
+
+    ``shelves`` are the ones in the way, so the message can name them rather
+    than say "cannot" (CLAUDE.md, working style: a wrong stated reason is
+    worse than none, and no reason is what gets a guard deleted).
+    """
+
+    def __init__(self, message: str, shelves: tuple[Shelf, ...] = ()) -> None:
+        super().__init__(message)
+        self.shelves = shelves
+
+
 class NotOnThisFloor(DomainError):
     """A room and the bookcase attaching to it are on different storeys.
 
@@ -323,6 +348,29 @@ class Section:
     count. The **column count is that tuple's length**; there is no second
     field that could disagree with it.
 
+    ``gaps`` holds the cells that are switched OFF — a television standing in
+    the middle of the wall unit, a desk niche, the notch an L leaves. It is
+    the cheap half of the free-form elevation §3.6 deliberately deferred, and
+    it is a MASK over the extent rather than a change to it: the wood is still
+    that tall, so the shelves BELOW a gap keep the level numbers printed on
+    the addresses of books somebody has already been told to go and find.
+    That is the whole reason it is not "shrink the column" — the owner's
+    words, 2026-08-22: *"the lower shelves should not get up now"*.
+
+    Consequences, each pinned by a test:
+
+      - a gapped cell is **not** a slot, so ``addresses`` skips it and no
+        ``Shelf`` stands there. §3.1 says a drawn slot IS a shelf; a shelf row
+        marked *unavailable* would be a shelf that is not a shelf, and every
+        query about "the books on this shelf" would have to learn about it;
+      - a gap outside the extent is **refused**, not ignored. The geometry
+        functions prune first (see :func:`_pruned`), so shrinking a column
+        past a gap takes the gap with it and growing back yields a real shelf
+        rather than a resurrected hole;
+      - a section that is **entirely** gaps is legal. That is what makes
+        *"deleting cells never deletes the bookcase"* structural: the extent,
+        which is what the case IS, is untouched by any number of gaps.
+
     ``default_levels`` and ``default_depth`` are **creation-time defaults**
     (§3.3), copied into a shelf when the shelf is created and never read
     through to afterwards. That is the whole rule, and the reason it is one:
@@ -335,6 +383,10 @@ class Section:
     bookcase_id: str
     ordinal: int = 1
     column_levels: tuple[int, ...] = ()
+    #: ``(column, level)`` pairs, 1-based, that are switched off. Sorted and
+    #: deduplicated in ``__post_init__``, so two sections describing the same
+    #: face compare equal however the cells were named.
+    gaps: tuple[tuple[int, int], ...] = ()
     default_levels: int = DEFAULT_LEVELS
     default_depth: int = DEFAULT_DEPTH
 
@@ -346,6 +398,27 @@ class Section:
             raise DomainError("sections are numbered from 1, bottom first")
         if any(n < 1 for n in self.column_levels):
             raise DomainError("a column has at least one level")
+        # Normalised at construction, with the idiom and for the reason
+        # `app.domain.book._settle_location` states: freezing means operations
+        # return new objects, so ordering the mask here is not a mutation any
+        # caller can observe. Two sections describing the same face must
+        # compare equal — `_change` diffs address SETS, but the editor sends
+        # whatever order the owner tapped in, and a section that differs from
+        # itself only by that order is a write nobody asked for.
+        object.__setattr__(
+            self, "gaps",
+            tuple(sorted({(int(c), int(v)) for c, v in self.gaps})),
+        )
+        for col, level in self.gaps:
+            if not 1 <= col <= len(self.column_levels) or not (
+                1 <= level <= self.levels_in(col)
+            ):
+                raise DomainError(
+                    f"a gap stands in the case, and column {col} level "
+                    f"{level} is outside a section of "
+                    f"{len(self.column_levels)} column(s) with levels "
+                    f"{list(self.column_levels)}"
+                )
         if self.default_levels < 1:
             raise DomainError("a column has at least one level")
         if not 1 <= self.default_depth <= MAX_DEPTH:
@@ -368,12 +441,31 @@ class Section:
 
     @property
     def addresses(self) -> tuple[ShelfAddress, ...]:
-        """Every slot this section describes, column-major and 1-based."""
+        """Every slot this section describes, column-major and 1-based.
+
+        **Gapped cells are not slots.** Everything destructive and everything
+        creative already goes through this property — ``_change`` diffs it,
+        ``check_bookcase_size`` counts it, ``map_edit._fill`` fills it — so
+        switching a cell off here is what makes the rest of the pipeline
+        correct without knowing the word.
+        """
+        gapped = set(self.gaps)
         return tuple(
             ShelfAddress(self.id, col, level)
             for col in range(1, self.column_count + 1)
             for level in range(1, self.levels_in(col) + 1)
+            if (col, level) not in gapped
         )
+
+    def is_gap(self, col: int, level: int) -> bool:
+        """Is this cell switched off? Asked by the screen, not by the writes.
+
+        A scan of the tuple rather than a set built per call: the mask is a
+        handful of cells, and the day the elevation renders through this it
+        becomes per-cell work. Building a set here would allocate one for
+        every cell of every section drawn.
+        """
+        return (int(col), int(level)) in self.gaps
 
 
 # --- constructors ---------------------------------------------------------
@@ -530,6 +622,28 @@ def _change(before: Section, after: Section) -> SlotChange:
     )
 
 
+def _pruned(gaps: Iterable[tuple[int, int]],
+            column_levels: tuple[int, ...]) -> tuple[tuple[int, int], ...]:
+    """Drop the gaps a resized extent no longer contains.
+
+    Called by every function that changes ``column_levels``, and it has to be:
+    :meth:`Section.__post_init__` REFUSES a gap outside the case, so a shrink
+    that carried its mask along unchanged would raise instead of resizing.
+
+    The behaviour it chooses — and the alternative is real — is that the hole
+    goes with the wood. Shrinking a column past a gap and growing it back
+    yields a **shelf**, not a resurrected hole: a level count is what the
+    owner is editing at that moment, and the case coming back taller with an
+    invisible cell missing from the middle of it is the kind of surprise that
+    gets explained as a bug.
+    """
+    return tuple(
+        (col, level)
+        for col, level in gaps
+        if 1 <= col <= len(column_levels) and 1 <= level <= column_levels[col - 1]
+    )
+
+
 def with_column_count(section: Section, count: int) -> SlotChange:
     """Add or remove **trailing** columns.
 
@@ -550,13 +664,12 @@ def with_column_count(section: Section, count: int) -> SlotChange:
     """
     n = _positive(count, "a section has at least one column")
     if n <= section.column_count:
-        after = replace(section, column_levels=section.column_levels[:n])
+        levels = section.column_levels[:n]
     else:
-        after = replace(
-            section,
-            column_levels=section.column_levels
-            + tuple([section.default_levels] * (n - section.column_count)),
-        )
+        levels = section.column_levels + tuple(
+            [section.default_levels] * (n - section.column_count))
+    after = replace(section, column_levels=levels,
+                    gaps=_pruned(section.gaps, levels))
     return _change(section, after)
 
 
@@ -576,7 +689,50 @@ def with_column_levels(section: Section, col: int, levels: int) -> SlotChange:
     n = _positive(levels, "a column has at least one level")
     levels_now = list(section.column_levels)
     levels_now[col - 1] = n
-    return _change(section, replace(section, column_levels=tuple(levels_now)))
+    settled = tuple(levels_now)
+    return _change(section, replace(section, column_levels=settled,
+                                    gaps=_pruned(section.gaps, settled)))
+
+
+def with_gaps(
+    section: Section, cells: Iterable[tuple[int, int]], *, gap: bool
+) -> SlotChange:
+    """Switch cells off (``gap=True``) or back on — a TV niche, and its undo.
+
+    One function with a boolean rather than two, because they are one
+    instruction with opposite signs and the pair would drift: the pruning, the
+    range check and the address diff are identical, and only the set operation
+    differs. The route carries the sign explicitly for the same reason
+    ``patch_section`` refuses two grid instructions in one request.
+
+    ⚠ **The extent is not touched, and that is the feature** (owner,
+    2026-08-22). Switching off the cell at level 3 leaves levels 4 and 5 where
+    they are, addressed as they were; shrinking the column to 2 is a different
+    request with a different meaning, and both remain available.
+
+    An out-of-range cell RAISES, for the reason :func:`with_column_count`
+    gives about clamping on a destructive path: the lenient answer would
+    silently gap *some other* cell, or none, and answer 200 either way.
+    Restoring a cell that is not gapped, and gapping one already gapped, are
+    both no-ops — the request and the world already agree.
+    """
+    asked = tuple((int(col), int(level)) for col, level in cells)
+    if not asked:
+        raise DomainError("no cells were named")
+    for col, level in asked:
+        if not 1 <= col <= section.column_count:
+            raise DomainError(
+                f"section {section.id} has {section.column_count} column(s); "
+                f"there is no column {col}"
+            )
+        if not 1 <= level <= section.levels_in(col):
+            raise DomainError(
+                f"column {col} of section {section.id} has "
+                f"{section.levels_in(col)} level(s); there is no level {level}"
+            )
+    standing = set(section.gaps)
+    settled = standing | set(asked) if gap else standing - set(asked)
+    return _change(section, replace(section, gaps=tuple(sorted(settled))))
 
 
 def with_default_levels(section: Section, levels: int) -> Section:
@@ -619,6 +775,11 @@ def next_section(bookcase_id: str, siblings: Iterable[Section],
     set's renumbering rather than one object — every section above the new one
     moves up an ordinal, and ``ordinal`` is unique per bookcase. Use
     :func:`renumber_sections` on the result.
+
+    **The neighbour's gaps are not copied.** What is copied is the SHAPE — how
+    wide, how tall — because that is what saves re-entering. A hole is where
+    something else stands (§3.6's television), and the hutch above the base
+    does not inherit the television.
     """
     ordered = sorted(siblings, key=lambda s: s.ordinal)
     neighbour = (ordered[-1] if where == "top" else ordered[0]) if ordered else None
@@ -637,7 +798,12 @@ def next_section(bookcase_id: str, siblings: Iterable[Section],
 
 
 def renumber_sections(sections: Iterable[Section]) -> tuple[Section, ...]:
-    """Close the gaps: 1, 2, 3 bottom-first, in the order given.
+    """Renumber 1, 2, 3 bottom-first, in the order given, leaving no hole.
+
+    ⚠ Nothing to do with :func:`with_gaps`. This closes holes in the ORDINALS
+    of a stack of sections; a gap is a cell of one section's face that is not
+    a shelf. The word was reused here in prose before the feature existed, and
+    is spelled out rather than left to collide.
 
     Needed after adding at the bottom or removing from the middle, because
     ``ordinal`` is unique per bookcase AND is what the address prints. Ids are
@@ -686,11 +852,14 @@ def shelves_differing_from_default_depth(
 
 
 def apply_default_levels(section: Section) -> SlotChange:
-    """The explicit, opt-in application of the level default to every column."""
-    after = replace(
-        section,
-        column_levels=tuple([section.default_levels] * section.column_count),
-    )
+    """The explicit, opt-in application of the level default to every column.
+
+    It levels the extent and takes the gaps below the new height with it
+    (:func:`_pruned`) — a gap that survives is one still standing in the case.
+    """
+    levels = tuple([section.default_levels] * section.column_count)
+    after = replace(section, column_levels=levels,
+                    gaps=_pruned(section.gaps, levels))
     return _change(section, after)
 
 

@@ -70,6 +70,7 @@ from app.api.dto import (
     SectionCreate,
     SectionDTO,
     SectionEditDTO,
+    SectionGapPatch,
     SectionPatch,
     ShelfDTO,
     SiteCreate,
@@ -90,6 +91,7 @@ from app.domain import (
     Section,
     ShelfAddress,
     Site,
+    SlotsOccupied,
     TooManySlots,
     apply_default_levels,
     check_bookcase_size,
@@ -104,11 +106,13 @@ from app.domain import (
     with_column_levels,
     with_default_depth,
     with_default_levels,
+    with_gaps,
 )
 from app.domain.place import NotOnThisFloor
 from app.map_edit import (
     apply_depth_default,
     deepest_occupied_depths,
+    apply_gaps,
     apply_slot_change,
     attach_case_to_room,
     clear_bookcase_slots,
@@ -183,12 +187,18 @@ def _translated():
     ``UnknownParent`` is 404 rather than 400: a client naming a floor that is
     not there is naming something that, as far as this library is concerned,
     does not exist — the same answer §4.2 gives for a foreign one.
+
+    ⚠ ``SlotsOccupied`` is listed with the 409s and not left to the
+    ``DomainError`` fall-through, which would answer **400**. It is a
+    subclass, so the generic clause below would happily have caught it and
+    told the client its request was malformed — and a client that believes
+    that does not offer to empty the shelf, it edits the request.
     """
     try:
         yield
     except UnknownParent as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
-    except (NotOnThisFloor, NotEmpty, TooManySlots,
+    except (NotOnThisFloor, NotEmpty, TooManySlots, SlotsOccupied,
             DuplicateSectionOrdinal) as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     except DomainError as exc:
@@ -543,7 +553,12 @@ def create_section(
     # computed against nothing — asking `with_column_count` for the width it
     # already claims reports no new slots at all, and the hutch arrives with
     # a grid on screen and not one shelf behind it.
-    blank = _replace(section, column_levels=())
+    # ⚠ `gaps=()` explicitly. A blank has NO extent, and `Section` refuses a
+    # gap outside its extent — so if `next_section` ever copied its
+    # neighbour's mask, this line would answer 400 on every section created.
+    # It is safe today only because that function chooses not to, which is a
+    # decision recorded 200 lines away rather than a property of this caller.
+    blank = _replace(section, column_levels=(), gaps=())
     change = with_column_count(blank, section.column_count)
     return _edit(store, shelves, books, library, change, ids=ids, clock=clock)
 
@@ -651,6 +666,67 @@ def set_shelf_depth(
     return ShelfDTO.of(shelves.get_shelf(library, shelf.id),
                        capture_count=len(shelves.list_captures(library, shelf.id)),
                        book_count=books.copies_per_shelf(library).get(shelf.id, 0))
+
+
+@router.patch("/sections/{section_id}/gaps", response_model=SectionEditDTO)
+def set_gaps(
+    section_id: str,
+    body: SectionGapPatch,
+    library: LibraryRef = Depends(require(EDIT)),
+    store: MapStore = Depends(get_map_store),
+    shelves: ShelfStore = Depends(get_shelf_store),
+    books: BookStore = Depends(get_book_store),
+    ids: IdGen = Depends(get_id_gen),
+    clock: Clock = Depends(get_clock),
+) -> SectionEditDTO:
+    """Switch cells off — the space a television stands in — or back on.
+
+    The owner's request, 2026-08-22: *"to allow a place to TV in the middle…
+    the lower shelves should not get up now. They should remain in place."*
+    So this is **not** a resize: the section's extent is untouched, the
+    shelves below a hole keep the level numbers their addresses print, and
+    switching the cells back on restores real shelves at the same addresses.
+
+    Two refusals, both deliberate:
+
+      - **409 while anything stands on one of the cells**, naming how many.
+        Everywhere else a slot that loses its address DETACHES its shelf
+        (the books survive, the location does not); a gap refuses instead,
+        which is what makes *delete these cells* a gesture that cannot cost
+        anything — only empty shelves are ever removed;
+      - **400 for a cell outside the section**, rather than gapping whatever
+        is nearest. `with_gaps` raises for the reason `with_column_count`
+        records: the lenient answer would be the destructive one.
+
+    ⚠ It never deletes the bookcase, the section, or a column, however many
+    cells are named — a section that is entirely gaps is a legal section with
+    its full extent, which is exactly what the owner asked for.
+    """
+    section = _section(store, library, section_id)
+    with _translated():
+        change = with_gaps(section,
+                           [(cell.column, cell.level) for cell in body.cells],
+                           gap=body.gap)
+        # ⚠ On the RESTORE direction only, and the asymmetry is the point.
+        # `check_bookcase_size` counts ADDRESSES, and a gapped cell is not
+        # one — which is right, because the cap exists to bound rows and a
+        # gap is no row. But it means a case can sit under the ceiling while
+        # masked and cross it when the mask comes off, so the check belongs
+        # where slots are CREATED. Running it on the gapping direction too
+        # would refuse the one action that reduces the count, which is how a
+        # case already over the ceiling would become impossible to fix.
+        if not body.gap:
+            siblings = [s for s in store.load_map(library).sections
+                        if s.bookcase_id == section.bookcase_id
+                        and s.id != section.id]
+            check_bookcase_size(siblings + [change.section])
+        removal = apply_gaps(store, shelves, books, library, change,
+                             ids=ids, clock=clock)
+    return SectionEditDTO(
+        section=SectionDTO.of(change.section),
+        created=len(change.added),
+        removal=SlotRemovalDTO.of(removal),
+    )
 
 
 @router.post("/sections/{section_id}/levels", response_model=SectionEditDTO)

@@ -998,6 +998,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/map/sections/{section_id}/gaps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Set Gaps
+         * @description Switch cells off — the space a television stands in — or back on.
+         *
+         *     The owner's request, 2026-08-22: *"to allow a place to TV in the middle…
+         *     the lower shelves should not get up now. They should remain in place."*
+         *     So this is **not** a resize: the section's extent is untouched, the
+         *     shelves below a hole keep the level numbers their addresses print, and
+         *     switching the cells back on restores real shelves at the same addresses.
+         *
+         *     Two refusals, both deliberate:
+         *
+         *       - **409 while anything stands on one of the cells**, naming how many.
+         *         Everywhere else a slot that loses its address DETACHES its shelf
+         *         (the books survive, the location does not); a gap refuses instead,
+         *         which is what makes *delete these cells* a gesture that cannot cost
+         *         anything — only empty shelves are ever removed;
+         *       - **400 for a cell outside the section**, rather than gapping whatever
+         *         is nearest. `with_gaps` raises for the reason `with_column_count`
+         *         records: the lenient answer would be the destructive one.
+         *
+         *     ⚠ It never deletes the bookcase, the section, or a column, however many
+         *     cells are named — a section that is entirely gaps is a legal section with
+         *     its full extent, which is exactly what the owner asked for.
+         */
+        patch: operations["set_gaps_api_v1_map_sections__section_id__gaps_patch"];
+        trace?: never;
+    };
     "/api/v1/map/sections/{section_id}/levels": {
         parameters: {
             query?: never;
@@ -2086,6 +2127,21 @@ export interface components {
             shelf_id?: string | null;
         };
         /**
+         * CellRef
+         * @description One cell of a section's face, 1-based — named, not a bare pair.
+         *
+         *     `[2, 3]` is two numbers whose order the reader has to remember, and this
+         *     project has been bitten by exactly that class of confusion before
+         *     (depth ≠ row ≠ band). One shape in both directions: it is what a request
+         *     names and what a section reports back.
+         */
+        CellRef: {
+            /** Column */
+            column: number;
+            /** Level */
+            level: number;
+        };
+        /**
          * ClaimDTO
          * @description What one read asserts about one spine (`app.domain.read.Claim`).
          */
@@ -3027,6 +3083,12 @@ export interface components {
              * @description Applied when a COLUMN is created. Editing it does not reach back into existing columns (§3.3).
              */
             default_levels: number;
+            /**
+             * Gaps
+             * @description Cells that are switched OFF — the space a television stands in, a desk niche. A MASK over the extent and never a change to it: the shelves below a gap keep the level numbers their addresses print. No shelf stands in one, so a gapped cell is simply absent from the slots this section describes.
+             * @default []
+             */
+            gaps: components["schemas"]["CellRef"][];
             /** Id */
             id: string;
             /**
@@ -3054,6 +3116,27 @@ export interface components {
              */
             removal: components["schemas"]["SlotRemovalDTO"];
             section: components["schemas"]["SectionDTO"];
+        };
+        /**
+         * SectionGapPatch
+         * @description Switch cells off, or back on. One instruction, with its sign.
+         *
+         *     ``gap`` is required and has no default: *make this a hole* and *make this
+         *     a shelf again* are opposite instructions, and a defaulted boolean means
+         *     the destructive one is what a malformed request performs.
+         *
+         *     The list is capped at a bookcase's whole slot budget — a request may
+         *     reasonably name every cell of a section, and nothing beyond that is a
+         *     request anybody makes.
+         */
+        SectionGapPatch: {
+            /** Cells */
+            cells: components["schemas"]["CellRef"][];
+            /**
+             * Gap
+             * @description True switches the cells off (no shelf stands there); false switches them back on, minting an empty shelf at the section's CURRENT default depth.
+             */
+            gap: boolean;
         };
         /**
          * SectionPatch
@@ -4844,6 +4927,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DepthApplyDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_gaps_api_v1_map_sections__section_id__gaps_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                section_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SectionGapPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SectionEditDTO"];
                 };
             };
             /** @description Validation Error */

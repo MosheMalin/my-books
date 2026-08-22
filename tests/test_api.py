@@ -5944,6 +5944,10 @@ def test_every_map_path_answers_404_for_another_library_with_its_own_methods():
             # the meta-test did not.
             ("patch", f"/api/v1/map/sections/{section['id']}/shelves/1/1",
              {"depth_count": 2}),
+            # The gap patch, with a body valid enough to get past 422 — the
+            # ⚠ below says why an empty `{}` here would prove nothing.
+            ("patch", f"/api/v1/map/sections/{section['id']}/gaps",
+             {"gap": True, "cells": [{"column": 1, "level": 1}]}),
         ]
         for method, path, *rest in probes:
             call = getattr(theirs, method)
@@ -6377,3 +6381,188 @@ def test_one_shelf_may_be_deeper_than_the_case_it_stands_in():
                             json={"depth_count": 2}).status_code == 404
         assert client.patch(f"{path}/0/1",
                             json={"depth_count": 2}).status_code in (400, 404, 422)
+
+
+def test_gapping_cells_makes_a_hole_and_leaves_the_levels_below_it_alone():
+    """The owner's TV niche, end to end (P6.3.2). What the response has to
+    prove is the whole point of the feature: the section still says four
+    levels, and the shelf at level 4 is the SAME shelf it was."""
+    with TestClient(_app()) as client:
+        _drawn_map(client, columns=2, levels=4)
+        section = client.get("/api/v1/map").json()["sections"][0]
+        before = {(s["address"]["col"], s["address"]["level"]): s["id"]
+                  for s in client.get("/api/v1/shelves").json()}
+
+        edit = client.patch(f"/api/v1/map/sections/{section['id']}/gaps",
+                            json={"gap": True, "cells": [
+                                {"column": 1, "level": 2},
+                                {"column": 1, "level": 3}]})
+        assert edit.status_code == 200, edit.text
+        body = edit.json()
+        assert body["section"]["gaps"] == [{"column": 1, "level": 2},
+                                           {"column": 1, "level": 3}]
+        assert body["section"]["column_levels"] == [4, 4], (
+            "the case shrank, which is the one thing a gap must never do"
+        )
+        assert len(body["removal"]["deleted"]) == 2
+        assert body["removal"]["detached"] == []
+
+        after = {(s["address"]["col"], s["address"]["level"]): s["id"]
+                 for s in client.get("/api/v1/shelves").json()}
+        assert (1, 2) not in after and (1, 3) not in after
+        assert after[(1, 4)] == before[(1, 4)], (
+            "the shelf below the hole moved up, so every address already "
+            "printed for a book in that column now names a different shelf"
+        )
+        assert len(after) == 6
+
+
+def test_a_gap_over_a_shelf_that_holds_something_is_refused_with_409():
+    """Everywhere else a slot losing its address DETACHES its shelf; a gap
+    refuses. The owner chose it (2026-08-22) and it is what makes "mark cells,
+    press delete" a gesture that cannot cost a book its location."""
+    with TestClient(_app()) as client:
+        _drawn_map(client, columns=1, levels=3)
+        section = client.get("/api/v1/map").json()["sections"][0]
+        shelves = client.get("/api/v1/shelves").json()
+        occupied = [s for s in shelves if s["address"]["level"] == 2][0]
+        client.post("/api/v1/captures", json={"shelf_id": occupied["id"]})
+
+        refused = client.patch(f"/api/v1/map/sections/{section['id']}/gaps",
+                               json={"gap": True, "cells": [
+                                   {"column": 1, "level": 1},
+                                   {"column": 1, "level": 2}]})
+        assert refused.status_code == 409, refused.text
+        detail = refused.json()["detail"]
+        assert "1 of the cells" in detail and "empty or clear them" in detail, (
+            "the refusal did not say how many, or what to DO about it"
+        )
+
+        # Nothing at all happened — including to the cell that WAS free.
+        assert client.get("/api/v1/map").json()["sections"][0]["gaps"] == []
+        assert len(client.get("/api/v1/shelves").json()) == 3
+        assert client.get(f"/api/v1/shelves/{occupied['id']}"
+                          ).json()["address"] is not None
+
+
+def test_a_gap_outside_the_section_is_a_400_and_changes_nothing():
+    """`with_gaps` raises rather than resolving the cell to whatever is
+    nearest — the rule `with_column_count` records about clamping on a
+    destructive path. 400 and not 409: the request is wrong, not the world."""
+    with TestClient(_app()) as client:
+        _drawn_map(client, columns=2, levels=2)
+        section = client.get("/api/v1/map").json()["sections"][0]
+        for cells in ([{"column": 9, "level": 1}],
+                      [{"column": 1, "level": 9}],
+                      [{"column": 1, "level": 1}, {"column": 3, "level": 1}]):
+            got = client.patch(f"/api/v1/map/sections/{section['id']}/gaps",
+                               json={"gap": True, "cells": cells})
+            assert got.status_code == 400, (cells, got.status_code, got.text)
+        # 422 before the route, for the shapes pydantic can refuse itself.
+        for body in ({"gap": True, "cells": []},
+                     {"cells": [{"column": 1, "level": 1}]},
+                     {"gap": True, "cells": [{"column": 0, "level": 1}]}):
+            got = client.patch(f"/api/v1/map/sections/{section['id']}/gaps",
+                               json=body)
+            assert got.status_code == 422, (body, got.status_code)
+        assert client.get("/api/v1/map").json()["sections"][0]["gaps"] == []
+        assert len(client.get("/api/v1/shelves").json()) == 4
+
+
+def test_a_restored_cell_comes_back_as_a_real_shelf_at_the_same_address():
+    """*"User should be able to click on a 'missing' cell and make it a real
+    shelf again"* (owner). It is a new, empty shelf — nothing was preserved
+    behind the hole, because a gap is only ever made over an empty cell."""
+    with TestClient(_app()) as client:
+        _drawn_map(client, columns=1, levels=3, depth=2)
+        section = client.get("/api/v1/map").json()["sections"][0]
+        cell = [{"column": 1, "level": 2}]
+        client.patch(f"/api/v1/map/sections/{section['id']}/gaps",
+                     json={"gap": True, "cells": cell})
+
+        back = client.patch(f"/api/v1/map/sections/{section['id']}/gaps",
+                            json={"gap": False, "cells": cell})
+        assert back.status_code == 200, back.text
+        assert back.json()["created"] == 1
+        assert back.json()["section"]["gaps"] == []
+
+        shelves = client.get("/api/v1/shelves").json()
+        restored = [s for s in shelves
+                    if s["address"] and s["address"]["level"] == 2][0]
+        assert restored["depth_count"] == 2, (
+            "the restored shelf did not take the section's default depth"
+        )
+        assert len(shelves) == 3
+
+
+def test_gapping_every_cell_leaves_the_bookcase_and_the_section_standing():
+    """*"It should not delete the bookcase itself. Only to effect the
+    cell(s)"* (owner). The case survives with its full extent, so every cell
+    is still there to be switched back on."""
+    with TestClient(_app()) as client:
+        world = _drawn_map(client, columns=2, levels=2)
+        section = client.get("/api/v1/map").json()["sections"][0]
+        every = [{"column": col, "level": level}
+                 for col in (1, 2) for level in (1, 2)]
+
+        edit = client.patch(f"/api/v1/map/sections/{section['id']}/gaps",
+                            json={"gap": True, "cells": every})
+        assert edit.status_code == 200, edit.text
+
+        drawing = client.get("/api/v1/map").json()
+        assert [c["id"] for c in drawing["bookcases"]] == [world["case"]["id"]]
+        assert len(drawing["sections"]) == 1
+        assert drawing["sections"][0]["column_levels"] == [2, 2]
+        assert len(drawing["sections"][0]["gaps"]) == 4
+        assert client.get("/api/v1/shelves").json() == []
+
+
+def test_restoring_gapped_cells_cannot_slip_past_the_bookcase_ceiling():
+    """Found by re-reading the diff, before any reviewer saw it.
+
+    `check_bookcase_size` counts ADDRESSES, and a gapped cell is not one —
+    correctly, because the cap bounds rows and a gap is no row. The
+    consequence is that a case can sit under the ceiling while masked and
+    cross it when the mask comes off, so the check has to run where slots are
+    CREATED, not only where columns are.
+
+    ⚠ And only on that direction. Refusing the gapping direction as well would
+    refuse the one action that REDUCES the count — the way out of an
+    over-large case would then be blocked by the size of the case.
+    """
+    with TestClient(_app()) as client:
+        world = _drawn_map(client, columns=20, levels=10)   # 200 of the 400
+        section = client.get("/api/v1/map").json()["sections"][0]
+
+        # Mask half the case: 100 cells off, 100 addressed slots left.
+        masked = [{"column": col, "level": level}
+                  for col in range(11, 21) for level in range(1, 11)]
+        cut = client.patch(f"/api/v1/map/sections/{section['id']}/gaps",
+                           json={"gap": True, "cells": masked})
+        assert cut.status_code == 200, cut.text
+
+        # A second section fits while the mask is on: it copies its
+        # neighbour's shape (200 cells), and 100 + 200 is under the ceiling.
+        added = client.post("/api/v1/map/sections",
+                            json={"bookcase_id": world["case"]["id"]})
+        assert added.status_code == 201, added.text
+        second = added.json()["section"]
+        sized = client.patch(f"/api/v1/map/sections/{second['id']}",
+                             json={"columns": 25})     # 250; 100 + 250 = 350
+        assert sized.status_code == 200, sized.text
+
+        # …and now switching the mask off would make 200 + 250 = 450. It is
+        # refused, and the cells stay gapped rather than half-restored.
+        back = client.patch(f"/api/v1/map/sections/{section['id']}/gaps",
+                            json={"gap": False, "cells": masked})
+        assert back.status_code == 409, (back.status_code, back.text)
+        assert "400" in back.json()["detail"]
+        first = client.get("/api/v1/map").json()["sections"][0]
+        assert len(first["gaps"]) == 100, "a refused restore restored some"
+
+        # The gapping direction is never refused by the same rule: it is the
+        # way OUT of a case that is too large.
+        more = client.patch(f"/api/v1/map/sections/{section['id']}/gaps",
+                            json={"gap": True, "cells": [
+                                {"column": 1, "level": 1}]})
+        assert more.status_code == 200, more.text

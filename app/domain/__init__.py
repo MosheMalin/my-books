@@ -140,6 +140,7 @@ from app.domain.place import (
     Site,
     SlotChange,
     SlotRemoval,
+    SlotsOccupied,
     address_parts,
     apply_default_depth,
     apply_default_levels,
@@ -161,6 +162,7 @@ from app.domain.place import (
     with_column_levels,
     with_default_depth,
     with_default_levels,
+    with_gaps,
 )
 from app.domain.tenancy import (
     Account,
@@ -245,6 +247,7 @@ __all__ = [
     "Site",
     "SlotChange",
     "SlotRemoval",
+    "SlotsOccupied",
     "Status",
     "TooManySlots",
     "UnknownCopy",
@@ -318,4 +321,5 @@ __all__ = [
     "with_default_depth",
     "with_default_levels",
     "with_diff_summary",
+    "with_gaps",
 ]

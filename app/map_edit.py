@@ -39,6 +39,7 @@ from app.domain import (
     ShelfAddress,
     SlotChange,
     SlotRemoval,
+    SlotsOccupied,
     apply_default_depth,
     attach_bookcase,
     detach_bookcase,
@@ -188,6 +189,87 @@ def apply_slot_change(
     _fill(shelves, library, change.section, change.section.addresses,
           ids=ids, clock=clock)
     return removal
+
+
+def apply_gaps(
+    map_store: MapStore,
+    shelves: ShelfStore,
+    books: BookStore,
+    library: LibraryRef,
+    change: SlotChange,
+    *,
+    ids: IdGen,
+    clock: Clock,
+) -> SlotRemoval:
+    """Switch cells off (or back on) — :func:`apply_slot_change` that REFUSES.
+
+    The one difference from every other slot edit, and it is the owner's
+    decision (2026-08-22): a column shrink DETACHES an occupied shelf, so a
+    book keeps its copy and loses its location; a gap **refuses** while
+    anything the owner declared is standing there, and names what.
+
+    ⚠⚠ **What a gap costs, stated exactly, because the first draft of this
+    docstring got it wrong and a review measured it.** It said *"nothing was
+    there to lose"*. An EMPTY shelf is not an empty thing: gapping and
+    restoring a cell was measured losing a shelf's label
+    (``מדף הטלוויזיה`` → ``""``), its per-shelf depth override (3 → the
+    section default), and its id. So:
+
+      - **books and photographs** refuse the gap — nothing that stands on a
+        shelf can be lost to this gesture;
+      - **a label and a depth override** refuse it too. They are §3.3's and
+        `rename_shelf`'s whole point — things the owner TYPED — and each has
+        an obvious remedy (clear the name, reset the depth), which is what
+        separates them from the next line;
+      - **standing decisions do NOT refuse it, and do not survive it.** They
+        are keyed ``(library, shelf, depth, book_key)`` with no foreign key,
+        so deleting the shelf orphans them and §5.6 stops suppressing a
+        phantom the owner already rejected at that cell. It is not refused
+        because the owner cannot ACT on such a refusal — there is no screen
+        for clearing a decision — and a refusal nobody can satisfy is one
+        they retry. §3.11's alias is the machinery that fixes this properly;
+        P6.4e ("history across the seam") is where it lands.
+
+    A column shrink has always had the same three costs; what is new is that
+    a gap makes it a routine, reversible-LOOKING gesture, which is exactly
+    why the cost is written here rather than assumed away.
+
+    ⚠ The occupancy is asked HERE, immediately before the write, and for the
+    reason :func:`deepest_occupied_depths` states — a required argument stops
+    a caller forgetting, not the answer going stale. The window it cannot
+    close (a photograph landing between this check and the delete) falls
+    through to ``_release``, which detaches rather than propagating; that is
+    the existing, argued behaviour for a slot that loses its address, and the
+    alternative is a half-applied edit.
+
+    ⚠ **P6.4a must extend this.** ``deepest_occupied_depths`` asks both stores
+    about a LIVE ``shelf.id``. Once an alias exists, *"a shelf other
+    identities resolve to is OCCUPIED"* has to reach it, or a cell whose live
+    shelf is empty while its alias holds books passes this check and is
+    gapped — and it does so without a single test going red.
+    """
+    losing = [
+        shelf
+        for address in change.dropped
+        if (shelf := shelves.get_shelf_at(library, address)) is not None
+    ]
+    occupied = deepest_occupied_depths(shelves, books, library, losing)
+    default_depth = change.section.default_depth
+    standing = tuple(
+        shelf for shelf in losing
+        if shelf.id in occupied
+        or shelf.label
+        or shelf.depth_count != default_depth
+    )
+    if standing:
+        raise SlotsOccupied(
+            f"{len(standing)} of the cells still hold books, photographs, a "
+            "name or a depth of their own; empty or clear them before making "
+            "the space",
+            standing,
+        )
+    return apply_slot_change(map_store, shelves, books, library, change,
+                             ids=ids, clock=clock)
 
 
 def clear_bookcase_slots(

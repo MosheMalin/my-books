@@ -1106,6 +1106,37 @@ CREATE UNIQUE INDEX shelves_by_slot
 """
 
 
+# P6.3.2 — the cells of a section that are switched OFF: the space a
+# television stands in, a desk niche, the notch an L leaves.
+#
+# ⚠ **A mask, not a resize**, and the schema decision follows from that
+# (owner, 2026-08-22: *"the lower shelves should not get up now"*). The extent
+# stays in `column_levels`, so the shelves below a hole keep the level numbers
+# printed on addresses people have already been told to go and find; this
+# column says only which of those cells hold no shelf. Storing it the other
+# way round — a row per LIVE cell — would rewrite every section that exists
+# and make a level number a thing that moves.
+#
+# JSON in a TEXT column, exactly like `column_levels` beside it: it is read
+# and written whole with its section, never queried by cell, and a
+# `section_gaps` table would be a join serving something with no independent
+# life. The `'[]'` DEFAULT is what makes this safe on a live file — every
+# section that exists today has no gaps, so the answer is already right and
+# there is nothing to backfill.
+#
+# ⚠ The mask and the extent must agree, and **only Python enforces it**:
+# `Section.__post_init__` refuses a gap outside `column_levels`, and
+# `_load_section` runs it on every read. So an inconsistent row does not
+# degrade quietly — it RAISES, and `load_map` takes the whole library's map
+# with it, not just that section. Nothing in the product can create one (both
+# columns are written by one UPSERT, and every resize prunes), and a separate
+# table would not have helped, since no foreign key can express *inside the
+# extent*. It is written here for whoever adds the NEXT column-geometry step.
+_V21 = """
+ALTER TABLE sections ADD COLUMN gaps TEXT NOT NULL DEFAULT '[]';
+"""
+
+
 # A step is either SQL to execute or a callable to run — both inside the same
 # once-only transaction. Callables exist because a derived column whose rule
 # lives in the domain must be backfilled BY that rule, not by a re-statement
@@ -1131,6 +1162,7 @@ MIGRATIONS: tuple[tuple[int, str | Step], ...] = (
     (18, _V18),
     (19, _V19),
     (20, _V20),
+    (21, _V21),
 )
 
 

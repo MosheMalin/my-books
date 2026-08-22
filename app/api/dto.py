@@ -25,6 +25,7 @@ from app.domain import (
     DEFAULT_DEPTH,
     DEFAULT_LEVELS,
     MAX_DEPTH,
+    MAX_SLOTS_PER_BOOKCASE,
     Alternative,
     Book,
     Bookcase,
@@ -1167,6 +1168,19 @@ class BookcaseDTO(BaseModel):
                    rect=RectDTO.of(case.rect), order=case.order)
 
 
+class CellRef(BaseModel):
+    """One cell of a section's face, 1-based — named, not a bare pair.
+
+    `[2, 3]` is two numbers whose order the reader has to remember, and this
+    project has been bitten by exactly that class of confusion before
+    (depth ≠ row ≠ band). One shape in both directions: it is what a request
+    names and what a section reports back.
+    """
+
+    column: int = Field(ge=1, le=40)
+    level: int = Field(ge=1, le=40)
+
+
 class SectionDTO(BaseModel):
     """One built unit of a bookcase — a low base, or the case standing on it.
 
@@ -1183,6 +1197,15 @@ class SectionDTO(BaseModel):
                     "prints.",
     )
     column_levels: list[int]
+    gaps: list[CellRef] = Field(
+        default=[],
+        description="Cells that are switched OFF — the space a television "
+                    "stands in, a desk niche. A MASK over the extent and "
+                    "never a change to it: the shelves below a gap keep the "
+                    "level numbers their addresses print. No shelf stands in "
+                    "one, so a gapped cell is simply absent from the slots "
+                    "this section describes.",
+    )
     default_levels: int = Field(
         description="Applied when a COLUMN is created. Editing it does not "
                     "reach back into existing columns (§3.3).",
@@ -1199,6 +1222,8 @@ class SectionDTO(BaseModel):
         return cls(id=section.id, bookcase_id=section.bookcase_id,
                    ordinal=section.ordinal,
                    column_levels=list(section.column_levels),
+                   gaps=[CellRef(column=col, level=level)
+                         for col, level in section.gaps],
                    default_levels=section.default_levels,
                    default_depth=section.default_depth)
 
@@ -1375,6 +1400,26 @@ class SectionPatch(BaseModel):
     levels: int | None = Field(default=None, ge=1, le=40)
     default_levels: int | None = Field(default=None, ge=1, le=40)
     default_depth: int | None = Field(default=None, ge=1, le=MAX_DEPTH)
+
+
+class SectionGapPatch(BaseModel):
+    """Switch cells off, or back on. One instruction, with its sign.
+
+    ``gap`` is required and has no default: *make this a hole* and *make this
+    a shelf again* are opposite instructions, and a defaulted boolean means
+    the destructive one is what a malformed request performs.
+
+    The list is capped at a bookcase's whole slot budget — a request may
+    reasonably name every cell of a section, and nothing beyond that is a
+    request anybody makes.
+    """
+
+    cells: list[CellRef] = Field(min_length=1, max_length=MAX_SLOTS_PER_BOOKCASE)
+    gap: bool = Field(
+        description="True switches the cells off (no shelf stands there); "
+                    "false switches them back on, minting an empty shelf at "
+                    "the section's CURRENT default depth.",
+    )
 
 
 class SlotDepthPatch(BaseModel):

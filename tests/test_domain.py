@@ -2795,3 +2795,158 @@ def test_a_real_lab_drawing_fits_the_domain_and_names_the_two_shifts():
     odd = [s for s in big["sections"][0]["shelves"] if s["depth"] == 1]
     assert odd, "the fixture is meant to carry a per-shelf depth override"
     assert sections[0].default_depth == 2
+
+
+def test_a_gapped_cell_leaves_the_levels_below_it_exactly_where_they_were():
+    """The owner's sentence, 2026-08-22: *"the lower shelves should not get up
+    now. They should remain in place."*
+
+    This is the whole reason a gap is a MASK and not a resize, and it is the
+    one behaviour that distinguishes them: shrinking column 2 from 5 levels to
+    2 would also remove the cell at level 3 — and would take levels 4 and 5
+    with it, renumbering nothing but destroying the shelves whose addresses
+    the owner has already been told to walk to.
+    """
+    from app.domain import new_section, with_gaps
+
+    section = new_section(id="se", library_id="lib", bookcase_id="bc",
+                          columns=3, default_levels=5)
+    change = with_gaps(section, [(2, 3)], gap=True)
+
+    assert [(a.col, a.level) for a in change.dropped] == [(2, 3)], (
+        "gapping one cell released something other than that cell"
+    )
+    assert change.section.column_levels == (5, 5, 5), (
+        "the extent moved: a gap is a mask over the case, not a resize of it"
+    )
+    below = {(a.col, a.level) for a in change.section.addresses if a.col == 2}
+    assert below == {(2, 1), (2, 2), (2, 4), (2, 5)}, (
+        "the shelves under the hole were renumbered, so every address printed "
+        "for a book in column 2 now names a different shelf"
+    )
+
+
+def test_a_section_that_is_entirely_gaps_is_still_a_section():
+    """*"When marking a cell and clicking on delete — it should not delete the
+    bookcase itself"* (owner). Structural, not a UI courtesy: the extent is
+    what the furniture IS, and no number of gaps touches it."""
+    from app.domain import new_section, with_gaps
+
+    section = new_section(id="se", library_id="lib", bookcase_id="bc",
+                          columns=2, default_levels=3)
+    every = [(col, level) for col in (1, 2) for level in (1, 2, 3)]
+    change = with_gaps(section, every, gap=True)
+
+    assert change.section.addresses == (), "a cell survived being gapped"
+    assert change.section.column_count == 2
+    assert change.section.column_levels == (3, 3), (
+        "gapping every cell shrank the case, so the owner's next tap has "
+        "nothing to switch back on"
+    )
+
+
+def test_switching_a_gap_back_on_mints_a_slot_at_the_same_address():
+    """The other half of the owner's ask: *"user should be able to click on a
+    'missing' cell and make it a real shelf again"*. The address is the same
+    one it had, which is what makes it a restore rather than a new cell."""
+    from app.domain import new_section, with_gaps
+
+    section = new_section(id="se", library_id="lib", bookcase_id="bc",
+                          columns=2, default_levels=4)
+    holed = with_gaps(section, [(1, 2), (1, 3)], gap=True).section
+    back = with_gaps(holed, [(1, 2)], gap=False)
+
+    assert [(a.col, a.level) for a in back.added] == [(1, 2)]
+    assert back.section.gaps == ((1, 3),), "the other hole was filled in too"
+    assert back.dropped == (), "restoring a cell released a shelf"
+
+
+def test_an_out_of_range_gap_raises_instead_of_gapping_something_near_it():
+    """Same rule `with_column_count` records, on the same grounds: the lenient
+    answer sits on the destructive path. A cell that is not in the section
+    cannot be resolved to one that is — least of all silently."""
+    from app.domain import DomainError, Section, new_section, with_gaps
+
+    section = new_section(id="se", library_id="lib", bookcase_id="bc",
+                          columns=2, default_levels=3)
+    for cells in ([(9, 1)], [(0, 1)], [(1, 4)], [(1, 0)], [(1, 1), (2, 9)], []):
+        try:
+            with_gaps(section, cells, gap=True)
+        except DomainError:
+            continue
+        raise AssertionError(f"{cells} was accepted against a 2x3 section")
+    assert section.gaps == ()
+
+    # And the record itself cannot hold one, so no path — a store load, an
+    # import, a future route — can put a hole outside the wood.
+    try:
+        Section(id="se", library_id="lib", bookcase_id="bc",
+                column_levels=(3,), gaps=((1, 9),))
+    except DomainError:
+        return
+    raise AssertionError("a section was built with a gap outside its extent")
+
+
+def test_a_gap_goes_with_the_wood_when_the_column_it_stands_in_shrinks():
+    """A gap at level 5 of a column that becomes 3 levels tall is a hole in
+    something that is no longer there. It is pruned, so growing the column
+    back yields a SHELF — the alternative is a case that returns taller with
+    an invisible cell missing from the middle of it.
+
+    The cell that is still inside the shorter column stays a gap: it is a hole
+    in wood that never went away.
+    """
+    from app.domain import new_section, with_column_count, with_column_levels, with_gaps
+
+    section = new_section(id="se", library_id="lib", bookcase_id="bc",
+                          columns=2, default_levels=5)
+    holed = with_gaps(section, [(1, 2), (1, 5), (2, 1)], gap=True).section
+
+    shorter = with_column_levels(holed, 1, 3).section
+    assert shorter.gaps == ((1, 2), (2, 1)), (
+        "a gap survived the level it stood at being removed"
+    )
+    taller = with_column_levels(shorter, 1, 5)
+    assert (1, 5) in [(a.col, a.level) for a in taller.added], (
+        "the column grew back with a hole nobody asked for"
+    )
+
+    # The same rule when a whole column goes.
+    narrower = with_column_count(holed, 1).section
+    assert narrower.gaps == ((1, 2), (1, 5)), (
+        "column 2's gap outlived column 2"
+    )
+
+
+def test_a_new_section_copies_the_shape_of_its_neighbour_but_not_its_holes():
+    """What saves re-entering is how wide and how tall. A hole is where
+    something ELSE stands (a television), and the hutch above the base does
+    not inherit the television."""
+    from app.domain import new_section, next_section, with_gaps
+
+    base = with_gaps(
+        new_section(id="s1", library_id="lib", bookcase_id="bc",
+                    columns=3, default_levels=4),
+        [(2, 2)], gap=True,
+    ).section
+    hutch = next_section("bc", [base], id="s2")
+
+    assert hutch.column_count == 3 and hutch.column_levels == (4, 4, 4)
+    assert hutch.gaps == (), "the hutch inherited the base's television"
+
+
+def test_two_sections_holding_the_same_cells_compare_equal_whatever_the_order():
+    """The editor sends cells in the order the owner tapped them. A section
+    that differs from itself only by that order is a write nobody asked for —
+    and, once P6.4b journals map edits, an undo entry for a change that never
+    happened."""
+    from app.domain import Section
+
+    one = Section(id="se", library_id="lib", bookcase_id="bc",
+                  column_levels=(4, 4), gaps=((2, 3), (1, 1), (2, 3)))
+    other = Section(id="se", library_id="lib", bookcase_id="bc",
+                    column_levels=(4, 4), gaps=((1, 1), (2, 3)))
+
+    assert one.gaps == ((1, 1), (2, 3)), "the mask was not normalised"
+    assert one == other
+    assert one.is_gap(2, 3) and not one.is_gap(2, 4)

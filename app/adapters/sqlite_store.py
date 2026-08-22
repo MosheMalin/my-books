@@ -1707,18 +1707,20 @@ class SqliteMapStore(_SqliteStore):
         try:
             conn.execute(
                 'INSERT INTO sections (id, library_id, bookcase_id,'
-                ' ordinal, column_levels, default_levels,'
-                ' default_depth) VALUES (?,?,?,?,?,?,?)'
+                ' ordinal, column_levels, gaps, default_levels,'
+                ' default_depth) VALUES (?,?,?,?,?,?,?,?)'
                 ' ON CONFLICT(id) DO UPDATE SET'
                 ' bookcase_id=excluded.bookcase_id,'
                 ' ordinal=excluded.ordinal,'
                 ' column_levels=excluded.column_levels,'
+                ' gaps=excluded.gaps,'
                 ' default_levels=excluded.default_levels,'
                 ' default_depth=excluded.default_depth'
                 ' WHERE sections.library_id = excluded.library_id',
                 (section.id, library.id, section.bookcase_id,
                  section.ordinal,
                  json.dumps(list(section.column_levels)),
+                 json.dumps([list(cell) for cell in section.gaps]),
                  section.default_levels, section.default_depth))
         except sqlite3.IntegrityError as exc:
             # By columns, like every other unique index in this file.
@@ -1841,6 +1843,10 @@ def _load_section(row: sqlite3.Row) -> Section:
     return Section(id=row["id"], library_id=row["library_id"],
                    bookcase_id=row["bookcase_id"], ordinal=row["ordinal"],
                    column_levels=tuple(json.loads(row["column_levels"])),
+                   # Tuples, because `Section` is frozen and its gaps are
+                   # compared as a set of cells; JSON has only lists.
+                   gaps=tuple(tuple(cell)
+                              for cell in json.loads(row["gaps"])),
                    default_levels=row["default_levels"],
                    default_depth=row["default_depth"])
 
