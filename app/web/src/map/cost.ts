@@ -21,23 +21,36 @@ export type Cost = {
   cases: number
   /** How many slots stop being addressed. */
   shelves: number
-  /**
-   * How many of those carry photographs.
-   *
-   * ⚠ Photographs, not BOOKS. The client knows `capture_count` because the
-   * shelf list carries it; it does not know what stands on a shelf, and the
-   * split that matters (`deleted` vs `detached`) is what the server reports
-   * AFTER the call. So this is the number that can be stated honestly, and the
-   * wording promises the mechanism rather than a count nobody has.
-   */
+  /** How many of those carry photographs. */
   photos: number
+  /** How many books stand on them. */
+  books: number
+  /**
+   * Nothing would be lost — no photograph, no book, on any slot.
+   *
+   * ⚠ This is what makes a dialog optional rather than polite. The owner,
+   * drawing with it: *"when deleting a shelf or column or bookcase — if it's
+   * not connected to any image — no need to raise a dialog. It's annoying,
+   * and nothing is bound to it."* A confirmation in front of a gesture that
+   * destroys nothing teaches people to click through the ones that do.
+   */
+  empty: boolean
 }
 
 export const deletionCost = (cases: Bookcase[]): Cost => {
   const shelves = cases.flatMap((c) => allShelves(c))
+  const photos = shelves.filter((s) => s.photos > 0).length
+  const books = shelves.reduce((n, s) => n + s.books, 0)
   return {
     cases: cases.length,
     shelves: shelves.length,
-    photos: shelves.filter((s) => s.photos > 0).length,
+    photos,
+    books,
+    empty: photos === 0 && books === 0,
   }
 }
+
+/** The same question about any set of cells — one column, one section, one
+ *  slot. Deleting them costs nothing when nothing stands on them. */
+export const nothingBound = (shelves: { photos: number; books: number }[]): boolean =>
+  shelves.every((s) => s.photos === 0 && s.books === 0)

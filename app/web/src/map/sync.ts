@@ -62,6 +62,7 @@ export type ShelfWire = {
   id: string
   depth_count: number
   capture_count: number
+  book_count: number
   address: { section_id: string; col: number; level: number } | null
 }
 
@@ -101,6 +102,7 @@ export function toPlan(map: MapWire, shelves: ShelfWire[], siteId: string): Plan
               level,
               depth: shelf?.depth_count ?? s.default_depth,
               photos: shelf?.capture_count ?? 0,
+              books: shelf?.book_count ?? 0,
             }
           }),
         ),

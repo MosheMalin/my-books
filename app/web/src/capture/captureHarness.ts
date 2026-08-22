@@ -179,7 +179,7 @@ export function fakeCaptureServer(
       } else {
         shelf = {
           id: `sh${++shelfSeq}`, label: '', depth_count: 1, virtual: false,
-          created_at: null, capture_count: 0,
+          created_at: null, capture_count: 0, book_count: 0,
         }
         server.shelves.push(shelf)
         shelfCreated = true

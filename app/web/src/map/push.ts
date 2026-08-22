@@ -189,7 +189,7 @@ async function run(api: Api, op: Op, ids: Ids, siteId: string): Promise<void> {
 
     case 'shelf.depth': {
       const at = wireAddress(op.section, {
-        col: op.col, level: op.level, depth: op.depth, photos: 0,
+        col: op.col, level: op.level, depth: op.depth, photos: 0, books: 0,
       })
       await api.patch(
         `/map/sections/${ids.of(at.section_id)}/shelves/${at.col}/${at.level}`,

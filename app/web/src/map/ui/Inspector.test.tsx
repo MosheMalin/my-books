@@ -33,8 +33,8 @@ const section = (id: string): Section => ({
   defaultLevels: 2,
   defaultDepth: 1,
   shelves: [
-    { col: 0, level: 0, depth: 1, photos: 3 },
-    { col: 0, level: 1, depth: 2, photos: 0 },
+    { col: 0, level: 0, depth: 1, photos: 3, books: 0 },
+    { col: 0, level: 1, depth: 2, photos: 0, books: 0 },
   ],
 })
 

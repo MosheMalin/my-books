@@ -2598,6 +2598,12 @@
             ],
             "description": "Null for every shelf born from a photograph — which is most of them, and stays legal forever: the drawn and the photographed are ONE population, and binding them is P6.4's job rather than a precondition."
           },
+          "book_count": {
+            "default": 0,
+            "description": "Copies standing on this shelf, across every depth. What a destructive gesture has to be able to say out loud before it happens — and, when it is zero along with `capture_count`, the reason not to ask at all.",
+            "title": "Book Count",
+            "type": "integer"
+          },
           "capture_count": {
             "description": "Photos filed against this shelf, across every depth.",
             "title": "Capture Count",

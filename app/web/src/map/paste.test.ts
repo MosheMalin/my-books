@@ -21,7 +21,7 @@ const section = (id: string, cols: number, levels: number, depth: number): Secti
   defaultLevels: levels,
   defaultDepth: depth,
   shelves: Array.from({ length: cols }, (_, col) =>
-    Array.from({ length: levels }, (_, level) => ({ col, level, depth, photos: 0 })),
+    Array.from({ length: levels }, (_, level) => ({ col, level, depth, photos: 0, books: 0 })),
   ).flat(),
 })
 

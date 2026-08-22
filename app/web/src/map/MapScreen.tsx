@@ -398,7 +398,11 @@ export default function MapScreen(props: MapScreenProps) {
   const deleteSelection = useCallback(() => {
     if (count(selection) === 0) return
     const cost = deletionCost(doc.plan.cases.filter((c) => hasCase(selection, c.id)))
-    if (cost.shelves > 0 &&
+    // ⚠ `empty`, not `shelves > 0`. A freshly drawn case is fifteen slots
+    // that hold nothing whatever, and asking about them was noise in front of
+    // the commonest gesture there is — drawing something and changing your
+    // mind (owner, drawing with it).
+    if (!cost.empty &&
         !confirm(T.delete_cases_confirm(cost.cases, cost.shelves, cost.photos)))
       return
     update((d) => ({

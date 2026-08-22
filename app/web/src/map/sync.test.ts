@@ -43,11 +43,11 @@ const WIRE: MapWire = {
 }
 
 const SHELVES: ShelfWire[] = [
-  { id: 'sh-a', depth_count: 2, capture_count: 1,
+  { id: 'sh-a', depth_count: 2, capture_count: 1, book_count: 0,
     address: { section_id: 'base', col: 1, level: 1 } },
-  { id: 'sh-b', depth_count: 4, capture_count: 0,
+  { id: 'sh-b', depth_count: 4, capture_count: 0, book_count: 0,
     address: { section_id: 'base', col: 2, level: 3 } },
-  { id: 'sh-photo', depth_count: 1, capture_count: 3, address: null },
+  { id: 'sh-photo', depth_count: 1, capture_count: 3, book_count: 0, address: null },
 ]
 
 describe('the document the server hands back', () => {
@@ -216,7 +216,7 @@ const section = (
   defaultDepth,
   shelves: columnLevels.flatMap((levels, col) =>
     Array.from({ length: levels }, (_, level) =>
-      ({ col, level, depth: defaultDepth, photos: 0 }))),
+      ({ col, level, depth: defaultDepth, photos: 0, books: 0 }))),
 })
 
 describe('creating a bookcase the create call cannot describe', () => {

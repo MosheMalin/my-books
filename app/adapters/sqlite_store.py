@@ -319,6 +319,16 @@ class SqliteBookStore(_SqliteStore):
         return BookPage(items=tuple(hits[offset: offset + limit]),
                         total=len(hits), offset=offset, limit=limit)
 
+    def copies_per_shelf(self, library: LibraryRef) -> dict[str, int]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT shelf_id, count(*) FROM copies"
+                " WHERE library_id = ? AND shelf_id IS NOT NULL"
+                " GROUP BY shelf_id",
+                (library.id,),
+            ).fetchall()
+        return {r[0]: int(r[1]) for r in rows}
+
     def deepest_copy_depth(self, library: LibraryRef) -> dict[str, int]:
         with self._connect() as conn:
             rows = conn.execute(

@@ -460,6 +460,13 @@ class ShelfDTO(BaseModel):
     capture_count: int = Field(
         description="Photos filed against this shelf, across every depth.",
     )
+    book_count: int = Field(
+        default=0,
+        description="Copies standing on this shelf, across every depth. What "
+                    "a destructive gesture has to be able to say out loud "
+                    "before it happens — and, when it is zero along with "
+                    "`capture_count`, the reason not to ask at all.",
+    )
     address: ShelfAddressDTO | None = Field(
         default=None,
         description="Null for every shelf born from a photograph — which is "
@@ -469,11 +476,13 @@ class ShelfDTO(BaseModel):
     )
 
     @classmethod
-    def of(cls, shelf: Shelf, *, capture_count: int) -> "ShelfDTO":
+    def of(cls, shelf: Shelf, *, capture_count: int,
+           book_count: int = 0) -> "ShelfDTO":
         return cls(
             id=shelf.id, label=shelf.label, depth_count=shelf.depth_count,
             virtual=shelf.virtual, created_at=shelf.created_at,
             capture_count=capture_count,
+            book_count=book_count,
             address=(ShelfAddressDTO.of(shelf.address)
                      if shelf.address else None),
         )

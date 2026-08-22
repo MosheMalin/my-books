@@ -172,6 +172,11 @@ function readShelf(v: unknown): Shelf | null {
     level: Math.max(0, Math.round(num(v['level'], 0))),
     depth: Math.max(1, Math.round(num(v['depth'], 1))),
     photos: Math.max(0, Math.round(num(v['photos'], 0))),
+    // ⚠ NOT read from the file. What stands on a slot is the library's fact,
+    // not the drawing's — an import that carried its own count would claim a
+    // shelf holds books it has never seen. A loaded plan learns it from the
+    // server on the next read.
+    books: 0,
   }
 }
 

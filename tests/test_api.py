@@ -1649,6 +1649,32 @@ def test_a_shelf_with_photos_cannot_be_deleted():
     assert c.delete(f"{API_PREFIX}/shelves/{shelf_id}").status_code == 204
 
 
+def test_the_shelf_list_says_what_stands_on_each_shelf():
+    """The fact the editor was missing, and the reason it asked too much.
+
+    The map document knew a slot's photographs and nothing about its books, so
+    every destructive dialog had to assume the worst — the owner, drawing with
+    it: *"if it's not connected to any image, no need to raise a dialog; it's
+    annoying, and nothing is bound to it."* Counting is also what a merge
+    preview will need (P6.4), which is why it is on the shelf rather than
+    computed per screen.
+    """
+    books = MemoryBookStore()
+    c = TestClient(_app(store=books))
+    full = c.post(f"{API_PREFIX}/shelves", json={"label": "מלא"}).json()
+    empty = c.post(f"{API_PREFIX}/shelves", json={"label": "ריק"}).json()
+    for n in (1, 2):
+        books.save(TEST_LIBRARY, new_book(
+            id=f"bk-{n}", library_id=TEST_LIBRARY.id, title=f"ספר {n}",
+            author="מחבר", copy_id=f"cp-{n}", shelf_id=full["id"], depth=1))
+
+    listed = {s["id"]: s for s in c.get(f"{API_PREFIX}/shelves").json()}
+    assert listed[full["id"]]["book_count"] == 2
+    assert listed[empty["id"]]["book_count"] == 0, (
+        "an empty shelf claimed books, so every dialog would ask"
+    )
+
+
 def test_a_shelf_holding_books_cannot_be_deleted_either():
     """⚠⚠ The half a reasonable person leaves out, at the second door.
 
