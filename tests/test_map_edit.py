@@ -516,10 +516,12 @@ def test_gapping_a_cell_that_holds_books_is_refused_and_names_what_is_there():
 
     Erasing a column DETACHES an occupied shelf: the books keep their shelf,
     the shelf loses its address, and the location is gone. A gap refuses
-    instead — *the television goes where the books are not* — which is what
-    makes "mark cells and delete" a gesture that cannot cost anything, and
-    what makes switching the cell back on a true restore rather than a new
-    empty cell wearing the old address.
+    instead — *the television goes where the books are not* — so no book
+    loses its location to this gesture.
+
+    ⚠ Not the same as costing NOTHING, which is what this docstring used to
+    say: what a gapped cell does not keep is its shelf's id, and standing
+    decisions are keyed by it. `apply_gaps` states the whole cost.
     """
     from app.domain import SlotsOccupied, with_gaps
     from app.map_edit import apply_gaps
@@ -607,8 +609,9 @@ def test_gapping_empty_cells_removes_their_shelves_and_leaves_the_rest_standing(
 
 def test_switching_a_gap_back_on_mints_an_empty_shelf_at_that_address():
     """*"User should be able to click on a 'missing' cell and make it a real
-    shelf again"* (owner). It is a NEW shelf and says so — nothing was kept
-    alive behind the hole, because nothing was there to keep."""
+    shelf again"* (owner). It is a NEW shelf, with a new id, and says so:
+    nothing is kept alive behind a hole. What that costs — the id, and the
+    decisions keyed by it — is stated once, in `apply_gaps`."""
     from app.domain import with_gaps
     from app.map_edit import apply_gaps
 
@@ -725,3 +728,106 @@ def test_a_cell_at_the_sections_own_default_depth_is_not_a_declaration():
                          clock=clock)
     assert len(removal.deleted) == 1
     assert maps.get_section(LIB, section.id).gaps == ((1, 1),)
+
+
+def test_a_name_typed_while_the_gap_is_in_flight_survives_it():
+    """Measured by a data-integrity review, in the window the docstring had
+    already admitted existed and only half covered.
+
+    `apply_gaps` checks what the owner declared, then `_release` deletes — one
+    query apart. `_release` re-read OCCUPANCY and nothing else, so a label
+    written in between was destroyed outright, the route answered 200, and
+    `removal.detached` was empty, so no screen could even say something was
+    lost. Two HTTP requests: the window is milliseconds of wall clock, not
+    microseconds — laptop presses *make a space here* while the phone is
+    naming that very shelf.
+
+    The protected shelf is DETACHED rather than deleted: the same smaller loss
+    an occupied shelf takes, and for the same reason — half-applying the edit
+    is worse than either.
+    """
+    from app.domain import rename_shelf, with_gaps
+    from app.map_edit import apply_gaps
+
+    maps, shelves, books = _world()
+    ids, clock = SeqIdGen(), StubClock()
+    drawn = draw_bookcase(maps, shelves, LIB, _case(), ids=ids, clock=clock,
+                          columns=1, levels=2, depth=1)
+    section = drawn.sections[0]
+    target = shelves.get_shelf_at(LIB, ShelfAddress(section.id, 1, 1))
+
+    # The phone lands its rename between the check and the delete — hooked
+    # onto the LAST read `_release` makes before it destroys anything.
+    real = books.deepest_copy_depth
+    fired = []
+
+    def racing(library):
+        if not fired:
+            fired.append(True)
+            shelves.save_shelf(library, rename_shelf(
+                shelves.get_shelf(library, target.id), "מדף הטלוויזיה"))
+        return real(library)
+
+    books.deepest_copy_depth = racing
+    try:
+        removal = apply_gaps(maps, shelves, books, LIB,
+                             with_gaps(section, [(1, 1)], gap=True),
+                             ids=ids, clock=clock)
+    finally:
+        books.deepest_copy_depth = real
+
+    assert fired, "the race never fired, so this test proves nothing"
+    survivor = shelves.get_shelf(LIB, target.id)
+    assert survivor is not None, (
+        "a shelf named while the gap was in flight was deleted outright"
+    )
+    assert survivor.label == "מדף הטלוויזיה"
+    assert removal.detached == (target.id,) and removal.deleted == (), (
+        "the response did not report what happened to it"
+    )
+    assert survivor.address is None
+
+
+def test_a_slot_stranded_by_a_concurrent_edit_is_released_by_the_next_one():
+    """Measured by a data-integrity review, and pre-existing: `_change` diffs
+    the section the HANDLER read, so an address only the other request created
+    is missing from `dropped`, nothing releases it, and a `Shelf` is left
+    addressed to a cell the section no longer describes.
+
+    It never healed on its own, either — every later `dropped` is computed
+    from `addresses`, which no longer contains that cell — so `delete_section`
+    and `delete_bookcase` counted the stray forever and the case became
+    undeletable. Releasing against the section the change LEAVES BEHIND is the
+    destructive mirror of what `_fill` already does creatively.
+
+    P6.3.2 did not cause this; it adds an innocuous-looking way in, because
+    restoring a TV cell does not read like a resize.
+    """
+    from app.domain import with_column_levels, with_gaps
+    from app.map_edit import apply_gaps, apply_slot_change
+
+    maps, shelves, books = _world()
+    ids, clock = SeqIdGen(), StubClock()
+    drawn = draw_bookcase(maps, shelves, LIB, _case(), ids=ids, clock=clock,
+                          columns=2, levels=4, depth=1)
+    section = drawn.sections[0]
+    apply_gaps(maps, shelves, books, LIB,
+               with_gaps(section, [(1, 4)], gap=True), ids=ids, clock=clock)
+
+    # Two tabs, both computed from the section as it is NOW: one puts the
+    # gapped cell back, the other shortens that column past it.
+    stale = maps.get_section(LIB, section.id)
+    restore = with_gaps(stale, [(1, 4)], gap=False)
+    shrink = with_column_levels(stale, 1, 2)
+
+    apply_gaps(maps, shelves, books, LIB, restore, ids=ids, clock=clock)
+    apply_slot_change(maps, shelves, books, LIB, shrink, ids=ids, clock=clock)
+
+    settled = maps.get_section(LIB, section.id)
+    standing = {(s.address.col, s.address.level)
+                for s in shelves.list_shelves_in_section(LIB, section.id)}
+    slots = {(a.col, a.level) for a in settled.addresses}
+    assert standing == slots, (
+        f"the drawing and the shelves disagree: {standing ^ slots} — a shelf "
+        f"addressed to a cell no screen can render, which nothing heals"
+    )

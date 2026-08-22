@@ -2680,6 +2680,21 @@ def test_applying_the_level_default_levels_every_column():
     assert len(evened.added) == 6, [(a.col, a.level) for a in evened.added]
     assert evened.dropped == (), "levelling every column dropped a slot"
 
+    # ⚠ It prunes its gaps like every other extent change (P6.3.2). A quality
+    # review found this the ONE `_pruned` call site nothing covered: remove it
+    # and the whole suite stays green, while `POST /sections/{id}/levels`
+    # answers 400 — "a gap stands in the case, and column 1 level 4 is
+    # outside…" — for a request that is entirely legitimate.
+    from app.domain import with_gaps
+
+    holed = with_gaps(evened.section, [(1, 4)], gap=True).section
+    lowered = apply_default_levels(with_default_levels(holed, 2))
+    assert lowered.section.column_levels == (2, 2, 2)
+    assert lowered.section.gaps == (), (
+        "levelling every column kept a gap below the new height, so the next "
+        "read of this section raises instead of rendering it"
+    )
+
 
 def test_a_photo_born_shelf_can_be_bound_into_a_drawn_slot_and_let_go_again():
     """P6.4's entry point, and the round trip that makes it safe: binding
@@ -2860,6 +2875,17 @@ def test_switching_a_gap_back_on_mints_a_slot_at_the_same_address():
     assert back.section.gaps == ((1, 3),), "the other hole was filled in too"
     assert back.dropped == (), "restoring a cell released a shelf"
 
+    # ⚠ Both no-op directions, because `with_gaps` CLAIMS them and a quality
+    # review found nothing holding the claim: making either raise left the
+    # suite green. They are what makes a retried request safe — the client
+    # whose response was dropped sends the same instruction again.
+    again = with_gaps(holed, [(1, 3)], gap=True)          # already a gap
+    assert again.section.gaps == holed.gaps
+    assert again.added == () and again.dropped == ()
+    never = with_gaps(holed, [(2, 1)], gap=False)         # never was one
+    assert never.section.gaps == holed.gaps
+    assert never.added == () and never.dropped == ()
+
 
 def test_an_out_of_range_gap_raises_instead_of_gapping_something_near_it():
     """Same rule `with_column_count` records, on the same grounds: the lenient
@@ -2949,4 +2975,4 @@ def test_two_sections_holding_the_same_cells_compare_equal_whatever_the_order():
 
     assert one.gaps == ((1, 1), (2, 3)), "the mask was not normalised"
     assert one == other
-    assert one.is_gap(2, 3) and not one.is_gap(2, 4)
+    assert (2, 3) in one.gaps and (2, 4) not in one.gaps

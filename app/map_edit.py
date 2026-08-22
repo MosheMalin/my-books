@@ -176,12 +176,8 @@ def apply_slot_change(
     and the write, and the measured case was a book added from the phone
     while the map was open on a laptop.
     """
-    losing = [
-        shelf
-        for address in change.dropped
-        if (shelf := shelves.get_shelf_at(library, address)) is not None
-    ]
-    removal = _release(shelves, books, library, losing)
+    removal = _release(shelves, books, library,
+                       _losing(shelves, library, change))
     map_store.save_section(library, change.section)
     # The WHOLE address set, not just `change.added` — `_fill` is idempotent
     # by address, so this costs nothing extra and heals a section whose slots
@@ -217,10 +213,17 @@ def apply_gaps(
 
       - **books and photographs** refuse the gap — nothing that stands on a
         shelf can be lost to this gesture;
-      - **a label and a depth override** refuse it too. They are §3.3's and
-        `rename_shelf`'s whole point — things the owner TYPED — and each has
-        an obvious remedy (clear the name, reset the depth), which is what
-        separates them from the next line;
+      - **a label, and a row declared BEHIND this shelf**, refuse it too:
+        both are things the owner said about this cell (`rename_shelf`, and
+        §5.7's *"add a row behind this one"*, which no photograph can
+        detect), and each has a remedy the owner can act on — clear the name,
+        take the row back;
+      - **a shelf SHALLOWER than the section's default does not refuse**, and
+        the asymmetry is measured rather than tidy. §3.3 makes a default
+        drift away from its shelves by design, so `!=` refused every cell of
+        any section whose default had been raised without applying — the
+        feature's own scenario, and a refusal whose only remedy was to
+        rewrite the depth of the entire section;
       - **standing decisions do NOT refuse it, and do not survive it.** They
         are keyed ``(library, shelf, depth, book_key)`` with no foreign key,
         so deleting the shelf orphans them and §5.6 stops suppressing a
@@ -248,28 +251,45 @@ def apply_gaps(
     shelf is empty while its alias holds books passes this check and is
     gapped — and it does so without a single test going red.
     """
-    losing = [
-        shelf
-        for address in change.dropped
-        if (shelf := shelves.get_shelf_at(library, address)) is not None
-    ]
+    # DEEPER than a fresh shelf here would be, not merely DIFFERENT. `!=` was
+    # measured refusing every cell of an ordinary section: §3.3 says editing a
+    # section's default touches no existing shelf, so "make the wall unit two
+    # rows deep, then put the TV in the middle" — the feature's own scenario —
+    # left six shelves at 1 beside a default of 2 and refused all of them,
+    # naming a depth nobody had typed. Shallower than the default loses
+    # nothing on a restore, because a restored shelf comes back AT the
+    # default; deeper does, one row per cell.
+    def declared(shelf: Shelf) -> bool:
+        return bool(shelf.label) or shelf.depth_count > change.section.default_depth
+
+    losing = _losing(shelves, library, change)
+    # ⚠ The REFUSAL looks only at the cells this request named. `_losing` also
+    # returns strays a concurrent edit left outside the extent (see its ⚠),
+    # and refusing a television because some other cell of the case is
+    # mis-addressed would be a refusal about something the owner cannot see.
+    # Those strays are still RELEASED below — healing them is the point.
+    named = {(a.col, a.level) for a in change.dropped}
     occupied = deepest_occupied_depths(shelves, books, library, losing)
-    default_depth = change.section.default_depth
     standing = tuple(
         shelf for shelf in losing
-        if shelf.id in occupied
-        or shelf.label
-        or shelf.depth_count != default_depth
+        if (shelf.address.col, shelf.address.level) in named
+        and (shelf.id in occupied or declared(shelf))
     )
     if standing:
         raise SlotsOccupied(
             f"{len(standing)} of the cells still hold books, photographs, a "
-            "name or a depth of their own; empty or clear them before making "
+            "name or a row behind them; empty or clear them before making "
             "the space",
             standing,
         )
-    return apply_slot_change(map_store, shelves, books, library, change,
-                             ids=ids, clock=clock)
+    # `declared` again, INSIDE the destructive loop, because this check and
+    # the delete are one query apart — see `_release`, where a review measured
+    # a label typed in that window being destroyed outright.
+    removal = _release(shelves, books, library, losing, protect=declared)
+    map_store.save_section(library, change.section)
+    _fill(shelves, library, change.section, change.section.addresses,
+          ids=ids, clock=clock)
+    return removal
 
 
 def clear_bookcase_slots(
@@ -329,11 +349,27 @@ def _release(
     books: BookStore,
     library: LibraryRef,
     losing: Iterable[Shelf],
+    *,
+    protect=None,
 ) -> SlotRemoval:
     """Let go of a set of slots: detach what is occupied, delete what is not.
 
     The one place either half happens, so the rule cannot be half-applied by
     one caller and not another.
+
+    ``protect`` is an extra *"do not destroy this one"* test, applied to the
+    shelf as it stands **at the moment of the delete**. :func:`apply_gaps`
+    passes one, and a data-integrity review measured why it has to be here
+    rather than only upstream: the caller's check runs one query earlier, and
+    this loop re-read only OCCUPANCY, so a label typed on the phone in that
+    window was deleted outright with the route answering 200 and reporting
+    nothing detached. Measured, with the window held open:
+
+        label typed in the window : deleted=('id-5',) detached=()  -> gone
+        book shelved in the window: deleted=()        detached=('id-5',)
+
+    A protected shelf is DETACHED, exactly like an occupied one — the same
+    smaller loss, and the same reason: half-applying the edit is worse.
     """
     losing = list(losing)
     occupied = deepest_occupied_depths(shelves, books, library, losing)
@@ -346,7 +382,22 @@ def _release(
         shelves.save_shelf(library, unbind_shelf(by_id[shelf_id]))
     deleted: list[str] = []
     detached = list(removal.detached)
+    # Re-read ONCE, not per shelf: `by_id` is the snapshot the caller planned
+    # against and what matters is what each row says NOW — but a `get_shelf`
+    # per shelf is a connection per shelf in the SQLite adapter, the cost
+    # `_losing` and `_fill` both exist to avoid. Measured over 400 cells: 807
+    # connections asking one at a time, 408 listing the sections once.
+    fresh: dict[str, Shelf] = {}
+    if protect is not None:
+        for section_id in {s.address.section_id for s in losing if s.address}:
+            fresh.update({sh.id: sh for sh in
+                          shelves.list_shelves_in_section(library, section_id)})
     for shelf_id in removal.deleted:
+        current = fresh.get(shelf_id) or by_id[shelf_id]
+        if protect is not None and protect(current):
+            shelves.save_shelf(library, unbind_shelf(current))
+            detached.append(shelf_id)
+            continue
         try:
             shelves.delete_shelf(library, shelf_id)
             deleted.append(shelf_id)
@@ -355,7 +406,7 @@ def _release(
             # delete. The store is right to refuse, and the planner's own rule
             # says an occupied shelf is DETACHED — so do that instead of
             # propagating, which is what left a half-applied edit behind.
-            shelves.save_shelf(library, unbind_shelf(by_id[shelf_id]))
+            shelves.save_shelf(library, unbind_shelf(current))
             detached.append(shelf_id)
     return SlotRemoval(deleted=tuple(deleted), detached=tuple(detached))
 
@@ -410,6 +461,57 @@ def attach_case_to_room(
     moved = attach_bookcase(bookcase, place) if place else detach_bookcase(bookcase)
     map_store.save_bookcase(library, moved)
     return moved
+
+
+def _losing(
+    shelves: ShelfStore,
+    library: LibraryRef,
+    change: SlotChange,
+) -> list[Shelf]:
+    """The shelves standing in the slots this change takes away.
+
+    **One query, whatever the size of the change** — the same lesson `_fill`
+    below records, arriving at the destructive end of the same pipeline. The
+    per-address version asked ``get_shelf_at`` once per dropped slot, and the
+    SQLite adapter opens a connection per operation: a security review
+    measured one 400-cell gap request costing 800 of them, because
+    :func:`apply_gaps` resolved the list and then :func:`apply_slot_change`
+    resolved the identical list again.
+
+    Shared by both for that reason, rather than passed down from one to the
+    other: an argument would be a second way to answer *"which shelves are
+    losing their slot?"*, and this file already carries the scar of an
+    argument that could be stale (``occupied_ids``).
+
+    ⚠ **Against the section the change LEAVES BEHIND, not against
+    ``change.dropped``**, and a data-integrity review measured the difference.
+    ``_change`` diffs the section the handler read; if another request commits
+    in between, ``dropped`` omits addresses only that other request created,
+    nothing ever releases them, and a ``Shelf`` is left addressed to a cell
+    the section no longer describes. Measured, two tabs, one restoring a
+    gapped cell while the other shrank that column:
+
+        extent=(2, 4)  slots=[(1,1),(1,2),(2,1)…]
+        shelves=[(1,1),(1,2),(1,4),(2,1)…]      consistent=False
+
+    That stray is the *"shelf nothing can render"* :func:`apply_slot_change`
+    says its write order exists to prevent, and it does not heal: every later
+    ``dropped`` is computed from ``addresses``, which no longer contains that
+    cell, so ``delete_bookcase`` counts it forever. Asking *"which shelves are
+    NOT in the section's address set?"* heals it on the next edit — the
+    destructive mirror of what ``_fill`` already does creatively.
+
+    Pre-existing (two tabs resizing one column reach it with no gap anywhere),
+    but P6.3.2 adds an innocuous-looking second way in: restoring a TV cell
+    does not read like a resize.
+    """
+    keep = set(change.section.addresses)
+    return [
+        shelf
+        for shelf in shelves.list_shelves_in_section(library,
+                                                     change.section.id)
+        if shelf.address is not None and shelf.address not in keep
+    ]
 
 
 def _fill(

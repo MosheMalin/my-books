@@ -128,9 +128,13 @@ class SlotsOccupied(DomainError):
     covers, and what it deliberately does not, is written once, in
     :func:`app.map_edit.apply_gaps`, beside the code that enforces it.
 
-    ``shelves`` are the ones in the way, so the message can name them rather
-    than say "cannot" (CLAUDE.md, working style: a wrong stated reason is
-    worse than none, and no reason is what gets a guard deleted).
+    ``shelves`` are the ones in the way. Today only their COUNT reaches the
+    owner — the route renders ``str(exc)`` — so this is the affordance
+    P6.3.2b needs to mark the offending cells in the elevation, and it is
+    carried rather than recomputed because by then the world may have moved.
+    A count with a remedy already beats "cannot" (CLAUDE.md, working style: a
+    wrong stated reason is worse than none, and no reason is what gets a
+    guard deleted).
     """
 
     def __init__(self, message: str, shelves: tuple[Shelf, ...] = ()) -> None:
@@ -457,15 +461,12 @@ class Section:
             if (col, level) not in gapped
         )
 
-    def is_gap(self, col: int, level: int) -> bool:
-        """Is this cell switched off? Asked by the screen, not by the writes.
-
-        A scan of the tuple rather than a set built per call: the mask is a
-        handful of cells, and the day the elevation renders through this it
-        becomes per-cell work. Building a set here would allocate one for
-        every cell of every section drawn.
-        """
-        return (int(col), int(level)) in self.gaps
+    # ⚠ There is deliberately no `is_gap(col, level)` helper yet. The first
+    # cut had one, described as "asked by the screen" — and the screen is
+    # P6.3.2b, which does not exist, so its stated performance argument
+    # reasoned about a caller nobody could read. `gaps` is a small sorted
+    # tuple; the editor will want a set hoisted out of its render loop, not a
+    # per-cell method, and it can add exactly what it needs.
 
 
 # --- constructors ---------------------------------------------------------

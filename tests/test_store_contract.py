@@ -4367,6 +4367,89 @@ def test_a_v19_database_gains_the_map_and_keeps_its_shelves_unaddressed():
             after.close()
 
 
+def test_a_section_whose_mask_is_unreadable_names_itself_and_not_the_library():
+    """Measured by a security review, against the first cut of the loader.
+
+    `gaps` is JSON, and the loader turned it into cells inside a comprehension.
+    Seven stored shapes — `[[1,1,1]]`, `[1,1]`, `"abc"`, `null`, unparseable
+    text — raised `ValueError`/`TypeError`, which is **not** a `DomainError`,
+    so the API's `_translated()` never saw it: `GET /map` answered 500 for the
+    WHOLE library, every bookcase and every floor, with no screen left that
+    could repair the row.
+
+    Nothing reachable through `/api/v1` can write such a value (the writer
+    dumps normalised pairs, and both geometry columns move in one UPSERT), so
+    this is about a restore, a hand-edit or a tool. It still REFUSES — a mask
+    silently dropped is a hole the owner drew disappearing, and the shelves
+    are gone whether or not the cells can be read — but it refuses by name.
+
+    ⚠ Sqlite-only, and not a `@map_contract` case: the memory store holds
+    `Section` objects, so it has no way to be handed a malformed one.
+    """
+    import sqlite3
+
+    from app.adapters.sqlite_store import SqliteMapStore
+    from app.ports.store import UnreadableSection
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "bad.db"
+        maps = SqliteMapStore(path)
+        seed = sqlite3.connect(str(path))
+        try:
+            seed.execute("INSERT INTO accounts (id, label) VALUES ('acc','')")
+            seed.execute("INSERT INTO libraries (id, account_id, label)"
+                         " VALUES ('lib','acc','הבית')")
+            seed.commit()
+        finally:
+            seed.close()
+        lib = LibraryRef("lib")
+        maps.save_site(lib, new_site(id="st", library_id="lib", name="הבית"))
+        maps.save_floor(lib, new_floor(id="fl", library_id="lib",
+                                       site_id="st", name="קרקע"))
+        maps.save_place(lib, new_place(id="pl", library_id="lib",
+                                       floor_id="fl", rect=Rect(0, 0, 9, 7)))
+        maps.save_bookcase(lib, new_bookcase(id="bc", library_id="lib",
+                                             floor_id="fl",
+                                             rect=Rect(0, 0, 4, 1),
+                                             place_id="pl"))
+        maps.save_section(lib, new_section(id="se", library_id="lib",
+                                           bookcase_id="bc", columns=2,
+                                           default_levels=3))
+
+        # Every shape the review measured, plus the two that used to load
+        # SILENTLY as a different cell than the one stored.
+        for bad in ('[[1,1,1]]', '[1,1]', '"abc"', 'null', 'not json',
+                    '{"a":1}', '[[1.9,1.9]]', '[["1","1"]]'):
+            broken = sqlite3.connect(str(path))
+            try:
+                broken.execute("UPDATE sections SET gaps = ?", (bad,))
+                broken.commit()
+            finally:
+                broken.close()
+            try:
+                maps.load_map(lib)
+            except UnreadableSection as exc:
+                assert "se" in str(exc), (
+                    f"{bad} refused without naming the section, so the owner "
+                    f"is told the map is broken and not which row"
+                )
+            else:
+                raise AssertionError(
+                    f"{bad} loaded as a section — a mask that is not a list "
+                    f"of [column, level] pairs was read as one"
+                )
+
+        # …and a well-formed mask still loads, so the guard did not simply
+        # refuse everything.
+        good = sqlite3.connect(str(path))
+        try:
+            good.execute("UPDATE sections SET gaps = '[[2, 3]]'")
+            good.commit()
+        finally:
+            good.close()
+        assert maps.get_section(lib, "se").gaps == ((2, 3),)
+
+
 def test_a_v20_database_gains_the_gaps_column_and_keeps_its_drawing():
     """v21 on an UPGRADED file — CLAUDE.md rule 11, and the frame is the
     v19→v20 case above, deliberately.
@@ -4467,7 +4550,7 @@ def test_a_v20_database_gains_the_gaps_column_and_keeps_its_drawing():
         # …and the column is USED, through the real store, on the real file.
         maps.save_section(lib, with_gaps(section, [(2, 2)], gap=True).section)
         assert maps.get_section(lib, "se").gaps == ((2, 2),)
-        assert maps.load_map(lib).sections[0].is_gap(2, 2)
+        assert maps.load_map(lib).sections[0].gaps == ((2, 2),)
         assert shelves.get_shelf_at(lib, ShelfAddress("se", 1, 3)).id == "sh-old", (
             "gapping a cell moved the shelf below it"
         )

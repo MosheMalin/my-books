@@ -5666,6 +5666,20 @@ def test_the_editor_knows_the_ceilings_this_service_enforces():
             f"SectionPatch bounds this at {value}; limits.ts disagrees"
         )
 
+    # ⚠ `CellRef` is a THIRD statement of the same two ceilings (P6.3.2), and
+    # a quality review pointed out this pin covered only `SectionPatch`: raise
+    # the section ceiling and every gap naming column 41 would 422 with
+    # nothing red. One address is one pair of bounds, wherever it is spelled.
+    from app.api.dto import CellRef
+
+    cell = CellRef.model_json_schema()["properties"]
+    assert cell["column"]["maximum"] == _ceiling("columns"), (
+        "CellRef.column and SectionPatch.columns bound the same axis"
+    )
+    assert cell["level"]["maximum"] == _ceiling("levels"), (
+        "CellRef.level and SectionPatch.levels bound the same axis"
+    )
+
 
 def test_a_photographed_shelf_has_no_address_and_that_is_normal():
     """Every shelf that exists before the map does. The field is null, not
@@ -6471,8 +6485,8 @@ def test_a_gap_outside_the_section_is_a_400_and_changes_nothing():
 
 def test_a_restored_cell_comes_back_as_a_real_shelf_at_the_same_address():
     """*"User should be able to click on a 'missing' cell and make it a real
-    shelf again"* (owner). It is a new, empty shelf — nothing was preserved
-    behind the hole, because a gap is only ever made over an empty cell."""
+    shelf again"* (owner). It is a new, empty shelf with a NEW id — nothing
+    is preserved behind a hole, and `apply_gaps` states what that costs."""
     with TestClient(_app()) as client:
         _drawn_map(client, columns=1, levels=3, depth=2)
         section = client.get("/api/v1/map").json()["sections"][0]
@@ -6566,3 +6580,195 @@ def test_restoring_gapped_cells_cannot_slip_past_the_bookcase_ceiling():
                             json={"gap": True, "cells": [
                                 {"column": 1, "level": 1}]})
         assert more.status_code == 200, more.text
+
+
+def test_every_write_in_the_map_router_needs_edit_map_and_says_so():
+    """The companion to the 404 meta-test, and it exists because a security
+    review measured what the ring did NOT hold.
+
+    `test_every_api_route_declares_exactly_one_policy_capability` proves that
+    *a* capability is declared — never WHICH. The reviewer changed the gap
+    route's `require(EDIT)` to `require(READ)`, ran 451 tests green, then drove
+    the mutated build with a real Viewer of another account: one PATCH took a
+    bookcase from ten shelves to zero, answering 200.
+
+    The viewer test above probed exactly one route (`POST /map/sites`), so
+    every other write in the router was one careless edit away from being
+    readable-and-writable. This walks them all, with its own method and a body
+    valid enough to reach the resolver — 422 before the policy runs would make
+    a probe that passes for the wrong reason.
+
+    ⚠ 403 and not 404 HERE, deliberately, and it is not a contradiction of
+    §4.2. This viewer BELONGS to the account that owns lib-2: the library is
+    theirs to see, the write is not theirs to make. 404 is the answer for a
+    library that is foreign or fictional — a different question, gated by
+    `test_every_map_path_answers_404_for_another_library_with_its_own_methods`.
+    """
+    p, tenancy = _viewer_of_second_library()
+    lib2 = {deps.LIBRARY_HEADER: "lib-2"}
+    with TestClient(_app(principal=p, tenancy=tenancy)) as client:
+        assert client.get("/api/v1/map", headers=lib2).status_code == 200
+
+        # Ids that do not exist: the policy check runs BEFORE the resolver, so
+        # a viewer must never learn whether the record is there.
+        writes = [
+            ("post", "/api/v1/map/sites", {"name": "הבית"}),
+            ("patch", "/api/v1/map/sites/st", {"name": "אחר"}),
+            ("delete", "/api/v1/map/sites/st", None),
+            ("post", "/api/v1/map/floors", {"site_id": "st", "name": "קרקע"}),
+            ("patch", "/api/v1/map/floors/fl", {"name": "אחר"}),
+            ("delete", "/api/v1/map/floors/fl", None),
+            ("post", "/api/v1/map/places",
+             {"floor_id": "fl", "rect": {"x": 0, "y": 0, "w": 4, "h": 3}}),
+            ("patch", "/api/v1/map/places/pl", {"name": "אחר"}),
+            ("delete", "/api/v1/map/places/pl", None),
+            ("post", "/api/v1/map/bookcases",
+             {"floor_id": "fl", "rect": {"x": 0, "y": 0, "w": 4, "h": 1}}),
+            ("patch", "/api/v1/map/bookcases/bc", {"name": "אחר"}),
+            ("delete", "/api/v1/map/bookcases/bc", None),
+            ("delete", "/api/v1/map/bookcases/bc/slots", None),
+            ("post", "/api/v1/map/sections", {"bookcase_id": "bc"}),
+            ("patch", "/api/v1/map/sections/se", {"columns": 2}),
+            ("delete", "/api/v1/map/sections/se", None),
+            ("delete", "/api/v1/map/sections/se/slots", None),
+            ("post", "/api/v1/map/sections/se/levels", None),
+            ("post", "/api/v1/map/sections/se/depth", None),
+            ("patch", "/api/v1/map/sections/se/shelves/1/1", {"depth_count": 2}),
+            ("patch", "/api/v1/map/sections/se/gaps",
+             {"gap": True, "cells": [{"column": 1, "level": 1}]}),
+        ]
+        for method, path, body in writes:
+            call = getattr(client, method)
+            got = call(path, headers=lib2) if body is None \
+                else call(path, json=body, headers=lib2)
+            assert got.status_code == 403, (method, path, got.status_code,
+                                            got.text)
+            assert "edit_map" in got.json()["detail"], (
+                f"{method} {path} refused without naming the capability"
+            )
+
+    # The list is the whole router, not a sample — a write added without a
+    # line here is the case the review found.
+    from app.api.routers import map as map_router
+
+    on_the_wire = {
+        (method.lower(), "/api/v1" + route.path)
+        for route in map_router.router.routes
+        for method in getattr(route, "methods", set())
+        if method.lower() != "get"
+    }
+    # ⚠ Match the TEMPLATE against the probes, rather than munging a probe
+    # back into a template. The obvious `path.replace("st", "{site_id}")`
+    # version rewrote the "st" inside "/sites" and reported every route
+    # uncovered — a meta-test that fails for its own reasons teaches people
+    # to delete it.
+    import re
+
+    def matches(template: str, concrete: str) -> bool:
+        pattern = re.sub(r"\{[^}]+\}", "[^/]+", re.escape(template)
+                         .replace(r"\{", "{").replace(r"\}", "}"))
+        return re.fullmatch(pattern, concrete) is not None
+
+    missing = {
+        (method, template) for method, template in on_the_wire
+        if not any(m == method and matches(template, p) for m, p, _ in writes)
+    }
+    assert not missing, f"a map write is not probed by this test: {missing}"
+
+
+def test_raising_a_sections_default_depth_does_not_lock_it_out_of_gapping():
+    """Two reviews measured the same bug, through the real routes.
+
+    The first cut refused a cell whose `depth_count` DIFFERED from the
+    section's default. §3.3 makes them differ by design — editing a default
+    touches no existing shelf — so the feature's own scenario ("make the wall
+    unit two rows deep, then put the TV in the middle") refused every cell of
+    the case, naming a depth the owner had never typed on any of them, with
+    the only remedy being `POST /sections/{id}/depth`, which rewrites the
+    depth of every shelf in the section.
+
+    Deeper than the default is what refuses now, because that is the case
+    where a restore would LOSE a row: a restored cell comes back AT the
+    default.
+    """
+    with TestClient(_app()) as client:
+        _drawn_map(client, columns=2, levels=2, depth=1)
+        section = client.get("/api/v1/map").json()["sections"][0]
+
+        raised = client.patch(f"/api/v1/map/sections/{section['id']}",
+                              json={"default_depth": 2})
+        assert raised.status_code == 200, raised.text
+        shelves = client.get("/api/v1/shelves").json()
+        assert all(s["depth_count"] == 1 for s in shelves), (
+            "§3.3 broke: the default reached back into existing shelves"
+        )
+
+        cut = client.patch(f"/api/v1/map/sections/{section['id']}/gaps",
+                           json={"gap": True,
+                                 "cells": [{"column": 1, "level": 1}]})
+        assert cut.status_code == 200, (
+            f"a shelf at the depth it was BORN with refused the gap: {cut.text}"
+        )
+
+        # …and a cell the owner actually declared a row behind still refuses,
+        # because restoring it would come back one row shallower.
+        deep = [s for s in client.get("/api/v1/shelves").json()
+                if s["address"] and s["address"]["level"] == 2][0]
+        assert client.patch(
+            f"/api/v1/map/sections/{section['id']}/shelves"
+            f"/{deep['address']['col']}/2",
+            json={"depth_count": 3}).status_code == 200
+        refused = client.patch(f"/api/v1/map/sections/{section['id']}/gaps",
+                               json={"gap": True, "cells": [
+                                   {"column": deep["address"]["col"],
+                                    "level": 2}]})
+        assert refused.status_code == 409, refused.text
+        assert "a row behind them" in refused.json()["detail"]
+
+
+def test_a_case_already_over_the_ceiling_can_still_be_gapped_smaller():
+    """The half of the ceiling rule that no API path can set up, and which a
+    quality review measured going unguarded: `if not body.gap` mutated to
+    `if True` left 757 tests green, because the sibling test's "gapping is
+    never refused" step gaps a case that is under the ceiling anyway.
+
+    `app/web/src/map/limits.ts` states the rule in the other language: *"Only
+    a gesture that GROWS is refused, and that clause is load-bearing: a case
+    that is somehow already over a ceiling must still be shrinkable, or the
+    guard becomes the trap."* This is the server's copy, and the server asks
+    `change.added` — what the edit DOES — rather than trusting the direction
+    the client declared.
+
+    Seeded through the `MapStore`, because every route that could build this
+    state refuses to. A state the API will not create is still one a restore,
+    an import or an older version can leave behind.
+    """
+    from dataclasses import replace as _replace
+
+    maps = MemoryMapStore()
+    with TestClient(_app(maps=maps)) as client:
+        _drawn_map(client, columns=2, levels=2)
+        section = client.get("/api/v1/map").json()["sections"][0]
+
+        over = _replace(maps.get_section(TEST_LIBRARY, section["id"]),
+                        column_levels=tuple([30] * 20))
+        maps.save_section(TEST_LIBRARY, over)
+        assert len(over.addresses) > MAX_SLOTS_PER_BOOKCASE
+
+        # Growing is still refused — the guard was not simply dropped.
+        grown = client.patch(f"/api/v1/map/sections/{section['id']}",
+                             json={"columns": 21})
+        assert grown.status_code == 409, grown.text
+
+        # …and gapping, which makes it smaller, is allowed. Without the
+        # `change.added` clause this answers 409 and the case is a trap.
+        cells = [{"column": 1, "level": level} for level in range(1, 31)]
+        cut = client.patch(f"/api/v1/map/sections/{section['id']}/gaps",
+                           json={"gap": True, "cells": cells})
+        assert cut.status_code == 200, cut.text
+        assert len(cut.json()["section"]["gaps"]) == 30
+
+        # Restoring even one of them grows it again, and is refused.
+        back = client.patch(f"/api/v1/map/sections/{section['id']}/gaps",
+                            json={"gap": False, "cells": cells[:1]})
+        assert back.status_code == 409, back.text

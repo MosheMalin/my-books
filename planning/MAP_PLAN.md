@@ -173,6 +173,11 @@ The general form — free-form blocks placed anywhere in the elevation grid,
 which would also express a desk niche or an L — is a layout editor, and is
 deliberately **not** built until something asks for it.
 
+⚠ Something asked, on 2026-08-22: a television in the middle of a wall unit.
+What landed is **not** the layout editor — the grid is still columns × levels
+— but its cheap half: cells that hold no shelf, with the extent untouched.
+**§3.10a** is that decision, and this paragraph still stands for the rest.
+
 ### 3.7 Floors group rooms — they are **not** part of an address
 
 **[DECIDED 2026-08-16 — owner]** *"We should also support multiple floors, each
@@ -380,9 +385,19 @@ choice:
   gets explained as a bug.
 
 ⚠ **The word is *gap*** (owner's pick over *opening*, *not available* and
-*blank*). One prose collision existed and was resolved in the same commit:
-`renumber_sections` used to say *"close the gaps"* about section ORDINALS.
-Nothing else in the repo used the word.
+*blank*), and it was **already in use three times** — the first draft of this
+paragraph said it was not, and a quality review counted:
+
+- `renumber_sections` said *"close the gaps"* about section ORDINALS.
+  Reworded, because that is the sense a reader would confuse;
+- `app/api/routers/map.py` and `app/ports/map.py` say the same thing about a
+  hole in a stack of section ordinals. Left as they are: both sentences are
+  about `ordinal`, and neither is anywhere near a cell;
+- ⚠ **`app/web/src/map/core/model.ts` has `gap = 6`, the pixel gutter of the
+  overview layout** — and that is the module **P6.3.2b lives in**. Renaming it
+  to `gutter` is that item's first step: a gutter and a missing shelf sharing
+  one name inside one file is the collision that will actually bite, and it
+  costs nothing while nothing reads the mask yet.
 
 ### 3.11 A merged shelf becomes an **alias** — of its id AND of its address
 
@@ -1094,6 +1109,46 @@ next item. The price is one renumbering: P6.4a's step becomes v22.
 bind and merge apart: the server half is the half that can lose something, and
 it gets its own diff, its own migration review and its own mutation checks. The
 editor half cannot destroy anything the route would not have refused.
+
+**What P6.3.2a's four reviews measured, and what is still open.** Migration,
+data-integrity, security and quality between them found no critical, one bug
+in the new code, two pre-existing concurrency defects the item made reachable
+by a friendlier route, and three claims that were false. Fixed in the
+follow-up commit: the depth clause (`!=` locked every cell of a section whose
+default had been edited — §3.3 guarantees that drift); the destructive loop
+re-reading only occupancy (a name typed on the phone mid-request was deleted
+outright, 200, nothing reported); the slot diff computed against a stale
+section (two tabs could strand a shelf outside the extent, permanently, and
+nothing healed it); the ceiling guard trusting the client's direction flag
+instead of asking what the change does; and half the cost of a 400-cell
+request (12.1s/1206 connections → 6.0s/408, measured).
+
+Filed, **not** fixed here, each with a named owner:
+
+- ⚠ **an open §5.4 duplicate question at a gapped cell becomes
+  un-answerable** — it stays in `GET /duplicates` and in the Books tab count,
+  while *answer* and *skip* both 404 forever, because both resolve through
+  the shelf. Worse than the orphaned decision, which is merely silent: this
+  one is visible and cannot be dismissed. Pre-existing — `DELETE /shelves/
+  {id}` produces the identical state — so it is not P6.3.2's to fix, but
+  §3.10a's cost list now names **three** orphaned kinds (decisions, duplicate
+  questions, reads), not one. Belongs with **P6.4e**, which already owes
+  history a resolver; if it lands sooner, the cheap form is for the release
+  path to clear the queue rows it orphans, since a question nobody can answer
+  is worse than no question;
+- **the other half of the 400-cell cost** is 400 per-shelf `delete_shelf`
+  calls, one connection each, ~3.4s. It wants a batched delete on
+  `ShelfStore` beside `save_shelves` — a port change with a contract case of
+  its own, and it makes the pre-existing column-shrink path faster too;
+- **`SectionEditDTO.created` reports the PLANNED additions**, while `_fill`
+  returns what it actually made — larger whenever it heals slots a concurrent
+  edit emptied. Cosmetic until a screen shows it, which is P6.3.2b;
+- **the client counts slots differently from the server**: `sync.ts` builds
+  one document shelf per cell of `column_levels`, so `limits.ts:overCeiling`
+  counts the extent while `check_bookcase_size` counts addresses. Safe
+  direction (the editor refuses what the server would allow) and unreachable
+  until the client knows about masks — but `limits.ts` claims it *mirrors*
+  the server, and that claim is now false. **P6.3.2b** fixes both together.
 
 ### P6.4 — binding and merge  *(planned, not started)*
 

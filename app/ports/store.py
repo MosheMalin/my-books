@@ -103,6 +103,23 @@ class DuplicateSectionOrdinal(StoreError):
     """
 
 
+class UnreadableSection(StoreError):
+    """A stored section cannot be turned back into one, and says WHICH.
+
+    Today the only field that can do this is the P6.3.2 mask: ``gaps`` is
+    JSON, and a value that is not a list of ``[column, level]`` pairs raises
+    out of the loader. Nothing reachable through ``/api/v1`` can write one —
+    the writer always dumps normalised pairs, and both geometry columns move
+    in a single UPSERT — so the causes are a restore, a hand-edit, or a tool.
+
+    It exists because of what a security review measured WITHOUT it: the raw
+    ``ValueError``/``TypeError`` is not a ``DomainError``, so the API's
+    translation never saw it and ``GET /map`` answered **500 for the entire
+    library** — no bookcase, no floor, and no screen left that could repair
+    it. Named, the same bad row is one section the owner can be told about.
+    """
+
+
 class DuplicateShelfSlot(StoreError):
     """Two shelves claiming one ``(section, column, level)`` (MAP_PLAN §3.1).
 

@@ -1406,8 +1406,17 @@ class SectionGapPatch(BaseModel):
     """Switch cells off, or back on. One instruction, with its sign.
 
     ``gap`` is required and has no default: *make this a hole* and *make this
-    a shelf again* are opposite instructions, and a defaulted boolean means
-    the destructive one is what a malformed request performs.
+    a shelf again* are opposite instructions, and a defaulted boolean would
+    mean an ABSENT one silently performs the destructive half.
+
+    ⚠ That covers absence, and only absence — an earlier draft of this
+    docstring said "malformed request", which a security review measured to be
+    wider than the truth: pydantic's lax mode coerces ``"yes"``, ``"on"``,
+    ``1`` and ``1.0`` to True, so a wrong-TYPED value still lands on the
+    destructive side (``"maybe"``, ``2``, ``[]`` are 422). Left lax on
+    purpose, because ``BookcasePatch.detach`` and every other boolean on this
+    API behave the same way and one rule everywhere beats a stricter rule
+    here — but the claim now says what it does.
 
     The list is capped at a bookcase's whole slot budget — a request may
     reasonably name every cell of a section, and nothing beyond that is a

@@ -687,16 +687,27 @@ def set_gaps(
     shelves below a hole keep the level numbers their addresses print, and
     switching the cells back on restores real shelves at the same addresses.
 
-    Two refusals, both deliberate:
+    Three answers a caller has to handle:
 
-      - **409 while anything stands on one of the cells**, naming how many.
-        Everywhere else a slot that loses its address DETACHES its shelf
-        (the books survive, the location does not); a gap refuses instead,
-        which is what makes *delete these cells* a gesture that cannot cost
-        anything — only empty shelves are ever removed;
+      - **409 while one of the cells carries something the owner declared** —
+        books, photographs, a name, or a row behind it — naming how many.
+        Everywhere else a slot that loses its address DETACHES its shelf (the
+        books survive, the location does not); a gap refuses instead, so no
+        book loses its location to this gesture. ⚠ It is **not** loss-proof,
+        and an earlier draft of this docstring said it was: what a gapped
+        cell does not keep is its shelf's **id**, and standing decisions are
+        keyed by that id with no foreign key — so a phantom the owner
+        rejected at that cell stops being suppressed. `app.map_edit.
+        apply_gaps` states the whole cost; §3.11's alias is the fix, in
+        P6.4e;
       - **400 for a cell outside the section**, rather than gapping whatever
         is nearest. `with_gaps` raises for the reason `with_column_count`
-        records: the lenient answer would be the destructive one.
+        records: the lenient answer would be the destructive one;
+      - **200 with `removal.detached` non-empty**, which is the race, not the
+        rule: a photograph landing between the check and the delete makes the
+        store refuse, and `_release` then unaddresses that shelf rather than
+        half-applying the edit. A client that assumes `detached` is always
+        empty here will be wrong eventually.
 
     ⚠ It never deletes the bookcase, the section, or a column, however many
     cells are named — a section that is entirely gaps is a legal section with
@@ -707,15 +718,22 @@ def set_gaps(
         change = with_gaps(section,
                            [(cell.column, cell.level) for cell in body.cells],
                            gap=body.gap)
-        # ⚠ On the RESTORE direction only, and the asymmetry is the point.
+        # ⚠ Only a gesture that CREATES slots is checked, and the clause is
+        # load-bearing — `app/web/src/map/limits.ts` states the same rule in
+        # the other language: *"a case that is somehow already over a ceiling
+        # must still be shrinkable, or the guard becomes the trap"*.
+        #
         # `check_bookcase_size` counts ADDRESSES, and a gapped cell is not
-        # one — which is right, because the cap exists to bound rows and a
-        # gap is no row. But it means a case can sit under the ceiling while
-        # masked and cross it when the mask comes off, so the check belongs
-        # where slots are CREATED. Running it on the gapping direction too
-        # would refuse the one action that reduces the count, which is how a
-        # case already over the ceiling would become impossible to fix.
-        if not body.gap:
+        # one — right, because the cap bounds rows and a gap is no row. But a
+        # masked case can therefore sit under the ceiling and cross it when
+        # the mask comes off, so the check belongs where slots appear.
+        #
+        # `change.added` rather than `not body.gap`: a review measured the
+        # direction flag surviving its own mutation (`if True` left 757 tests
+        # green), because "restoring" is only over-ceiling-able when it
+        # actually adds something. Asking the change what it DOES is true in
+        # both directions and cannot drift from the flag the client sent.
+        if change.added:
             siblings = [s for s in store.load_map(library).sections
                         if s.bookcase_id == section.bookcase_id
                         and s.id != section.id]

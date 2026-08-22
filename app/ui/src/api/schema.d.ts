@@ -1021,16 +1021,27 @@ export interface paths {
          *     shelves below a hole keep the level numbers their addresses print, and
          *     switching the cells back on restores real shelves at the same addresses.
          *
-         *     Two refusals, both deliberate:
+         *     Three answers a caller has to handle:
          *
-         *       - **409 while anything stands on one of the cells**, naming how many.
-         *         Everywhere else a slot that loses its address DETACHES its shelf
-         *         (the books survive, the location does not); a gap refuses instead,
-         *         which is what makes *delete these cells* a gesture that cannot cost
-         *         anything — only empty shelves are ever removed;
+         *       - **409 while one of the cells carries something the owner declared** —
+         *         books, photographs, a name, or a row behind it — naming how many.
+         *         Everywhere else a slot that loses its address DETACHES its shelf (the
+         *         books survive, the location does not); a gap refuses instead, so no
+         *         book loses its location to this gesture. ⚠ It is **not** loss-proof,
+         *         and an earlier draft of this docstring said it was: what a gapped
+         *         cell does not keep is its shelf's **id**, and standing decisions are
+         *         keyed by that id with no foreign key — so a phantom the owner
+         *         rejected at that cell stops being suppressed. `app.map_edit.
+         *         apply_gaps` states the whole cost; §3.11's alias is the fix, in
+         *         P6.4e;
          *       - **400 for a cell outside the section**, rather than gapping whatever
          *         is nearest. `with_gaps` raises for the reason `with_column_count`
-         *         records: the lenient answer would be the destructive one.
+         *         records: the lenient answer would be the destructive one;
+         *       - **200 with `removal.detached` non-empty**, which is the race, not the
+         *         rule: a photograph landing between the check and the delete makes the
+         *         store refuse, and `_release` then unaddresses that shelf rather than
+         *         half-applying the edit. A client that assumes `detached` is always
+         *         empty here will be wrong eventually.
          *
          *     ⚠ It never deletes the bookcase, the section, or a column, however many
          *     cells are named — a section that is entirely gaps is a legal section with
@@ -3122,8 +3133,17 @@ export interface components {
          * @description Switch cells off, or back on. One instruction, with its sign.
          *
          *     ``gap`` is required and has no default: *make this a hole* and *make this
-         *     a shelf again* are opposite instructions, and a defaulted boolean means
-         *     the destructive one is what a malformed request performs.
+         *     a shelf again* are opposite instructions, and a defaulted boolean would
+         *     mean an ABSENT one silently performs the destructive half.
+         *
+         *     ⚠ That covers absence, and only absence — an earlier draft of this
+         *     docstring said "malformed request", which a security review measured to be
+         *     wider than the truth: pydantic's lax mode coerces ``"yes"``, ``"on"``,
+         *     ``1`` and ``1.0`` to True, so a wrong-TYPED value still lands on the
+         *     destructive side (``"maybe"``, ``2``, ``[]`` are 422). Left lax on
+         *     purpose, because ``BookcasePatch.detach`` and every other boolean on this
+         *     API behave the same way and one rule everywhere beats a stricter rule
+         *     here — but the claim now says what it does.
          *
          *     The list is capped at a bookcase's whole slot budget — a request may
          *     reasonably name every cell of a section, and nothing beyond that is a
