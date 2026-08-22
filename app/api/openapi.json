@@ -716,6 +716,29 @@
         "title": "CapturePatch",
         "type": "object"
       },
+      "CellRef": {
+        "description": "One cell of a section's face, 1-based — named, not a bare pair.\n\n`[2, 3]` is two numbers whose order the reader has to remember, and this\nproject has been bitten by exactly that class of confusion before\n(depth ≠ row ≠ band). One shape in both directions: it is what a request\nnames and what a section reports back.",
+        "properties": {
+          "column": {
+            "maximum": 40.0,
+            "minimum": 1.0,
+            "title": "Column",
+            "type": "integer"
+          },
+          "level": {
+            "maximum": 40.0,
+            "minimum": 1.0,
+            "title": "Level",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "column",
+          "level"
+        ],
+        "title": "CellRef",
+        "type": "object"
+      },
       "ClaimDTO": {
         "description": "What one read asserts about one spine (`app.domain.read.Claim`).",
         "properties": {
@@ -2405,6 +2428,15 @@
             "title": "Default Levels",
             "type": "integer"
           },
+          "gaps": {
+            "default": [],
+            "description": "Cells that are switched OFF — the space a television stands in, a desk niche. A MASK over the extent and never a change to it: the shelves below a gap keep the level numbers their addresses print. No shelf stands in one, so a gapped cell is simply absent from the slots this section describes.",
+            "items": {
+              "$ref": "#/components/schemas/CellRef"
+            },
+            "title": "Gaps",
+            "type": "array"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -2450,6 +2482,31 @@
           "section"
         ],
         "title": "SectionEditDTO",
+        "type": "object"
+      },
+      "SectionGapPatch": {
+        "description": "Switch cells off, or back on. One instruction, with its sign.\n\n``gap`` is required and has no default: *make this a hole* and *make this\na shelf again* are opposite instructions, and a defaulted boolean would\nmean an ABSENT one silently performs the destructive half.\n\n⚠ That covers absence, and only absence — an earlier draft of this\ndocstring said \"malformed request\", which a security review measured to be\nwider than the truth: pydantic's lax mode coerces ``\"yes\"``, ``\"on\"``,\n``1`` and ``1.0`` to True, so a wrong-TYPED value still lands on the\ndestructive side (``\"maybe\"``, ``2``, ``[]`` are 422). Left lax on\npurpose, because ``BookcasePatch.detach`` and every other boolean on this\nAPI behave the same way and one rule everywhere beats a stricter rule\nhere — but the claim now says what it does.\n\nThe list is capped at a bookcase's whole slot budget — a request may\nreasonably name every cell of a section, and nothing beyond that is a\nrequest anybody makes.",
+        "properties": {
+          "cells": {
+            "items": {
+              "$ref": "#/components/schemas/CellRef"
+            },
+            "maxItems": 400,
+            "minItems": 1,
+            "title": "Cells",
+            "type": "array"
+          },
+          "gap": {
+            "description": "True switches the cells off (no shelf stands there); false switches them back on, minting an empty shelf at the section's CURRENT default depth.",
+            "title": "Gap",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "cells",
+          "gap"
+        ],
+        "title": "SectionGapPatch",
         "type": "object"
       },
       "SectionPatch": {
@@ -5138,6 +5195,59 @@
           }
         },
         "summary": "Apply Depth",
+        "tags": [
+          "map"
+        ]
+      }
+    },
+    "/api/v1/map/sections/{section_id}/gaps": {
+      "patch": {
+        "description": "Switch cells off — the space a television stands in — or back on.\n\nThe owner's request, 2026-08-22: *\"to allow a place to TV in the middle…\nthe lower shelves should not get up now. They should remain in place.\"*\nSo this is **not** a resize: the section's extent is untouched, the\nshelves below a hole keep the level numbers their addresses print, and\nswitching the cells back on restores real shelves at the same addresses.\n\nThree answers a caller has to handle:\n\n  - **409 while one of the cells carries something the owner declared** —\n    books, photographs, a name, or a row behind it — naming how many.\n    Everywhere else a slot that loses its address DETACHES its shelf (the\n    books survive, the location does not); a gap refuses instead, so no\n    book loses its location to this gesture. ⚠ It is **not** loss-proof,\n    and an earlier draft of this docstring said it was: what a gapped\n    cell does not keep is its shelf's **id**, and standing decisions are\n    keyed by that id with no foreign key — so a phantom the owner\n    rejected at that cell stops being suppressed. `app.map_edit.\n    apply_gaps` states the whole cost; §3.11's alias is the fix, in\n    P6.4e;\n  - **400 for a cell outside the section**, rather than gapping whatever\n    is nearest. `with_gaps` raises for the reason `with_column_count`\n    records: the lenient answer would be the destructive one;\n  - **200 with `removal.detached` non-empty**, which is the race, not the\n    rule: a photograph landing between the check and the delete makes the\n    store refuse, and `_release` then unaddresses that shelf rather than\n    half-applying the edit. A client that assumes `detached` is always\n    empty here will be wrong eventually.\n\n⚠ It never deletes the bookcase, the section, or a column, however many\ncells are named — a section that is entirely gaps is a legal section with\nits full extent, which is exactly what the owner asked for.",
+        "operationId": "set_gaps_api_v1_map_sections__section_id__gaps_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "section_id",
+            "required": true,
+            "schema": {
+              "title": "Section Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SectionGapPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SectionEditDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Gaps",
         "tags": [
           "map"
         ]

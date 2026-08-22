@@ -1623,6 +1623,38 @@ def saves_and_reads_back_the_whole_drawing(stores):
 
 
 @map_contract
+def a_sections_gaps_survive_a_round_trip_and_leave_the_extent_alone(stores):
+    """P6.3.2: the cells switched off are part of the section, so they come
+    back with it — through `load_map`, which is the only query the elevation
+    makes, and through `get_section`, which every edit re-reads.
+
+    ⚠ It asserts the EXTENT as well, in the same breath. A store that
+    persisted the mask by shrinking the columns it masks would round-trip the
+    holes perfectly and quietly renumber every shelf below one — which is the
+    single behaviour this feature exists to avoid, and the one a test that
+    only checked `gaps` would never see.
+    """
+    maps, shelves, books = stores
+    section = _drawn(maps, shelves, columns=3, levels=4)
+    maps.save_section(LIB, replace(section, gaps=((2, 2), (2, 3))))
+
+    read = maps.get_section(LIB, section.id)
+    assert read.gaps == ((2, 2), (2, 3))
+    assert read.column_levels == (4, 4, 4), (
+        "the mask was stored by resizing the case it masks"
+    )
+    assert {(a.col, a.level) for a in read.addresses if a.col == 2} == {
+        (2, 1), (2, 4)}
+    assert maps.load_map(LIB).sections[0].gaps == ((2, 2), (2, 3))
+
+    # And back off again: a section written with no gaps HAS no gaps. An
+    # UPSERT that omitted the column would leave the old mask in place, and
+    # the cell the owner just restored would come back a hole on reload.
+    maps.save_section(LIB, replace(read, gaps=()))
+    assert maps.get_section(LIB, section.id).gaps == ()
+
+
+@map_contract
 def the_whole_drawing_comes_back_in_the_order_the_screens_want(stores):
     """⚠ Two of everything, deliberately. A review found the round-trip case
     building ONE of each, which makes order unobservable — the same defect
@@ -4328,6 +4360,201 @@ def test_a_v19_database_gains_the_map_and_keeps_its_shelves_unaddressed():
         # it tested v1–v19's constraints and not one of v20's. Now there is a
         # site → floor → place → bookcase → section → addressed shelf chain to
         # check.
+        after = sqlite3.connect(str(path))
+        try:
+            assert after.execute("PRAGMA foreign_key_check").fetchall() == []
+        finally:
+            after.close()
+
+
+def test_a_section_whose_mask_is_unreadable_names_itself_and_not_the_library():
+    """Measured by a security review, against the first cut of the loader.
+
+    `gaps` is JSON, and the loader turned it into cells inside a comprehension.
+    Seven stored shapes — `[[1,1,1]]`, `[1,1]`, `"abc"`, `null`, unparseable
+    text — raised `ValueError`/`TypeError`, which is **not** a `DomainError`,
+    so the API's `_translated()` never saw it: `GET /map` answered 500 for the
+    WHOLE library, every bookcase and every floor, with no screen left that
+    could repair the row.
+
+    Nothing reachable through `/api/v1` can write such a value (the writer
+    dumps normalised pairs, and both geometry columns move in one UPSERT), so
+    this is about a restore, a hand-edit or a tool. It still REFUSES — a mask
+    silently dropped is a hole the owner drew disappearing, and the shelves
+    are gone whether or not the cells can be read — but it refuses by name.
+
+    ⚠ Sqlite-only, and not a `@map_contract` case: the memory store holds
+    `Section` objects, so it has no way to be handed a malformed one.
+    """
+    import sqlite3
+
+    from app.adapters.sqlite_store import SqliteMapStore
+    from app.ports.store import UnreadableSection
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "bad.db"
+        maps = SqliteMapStore(path)
+        seed = sqlite3.connect(str(path))
+        try:
+            seed.execute("INSERT INTO accounts (id, label) VALUES ('acc','')")
+            seed.execute("INSERT INTO libraries (id, account_id, label)"
+                         " VALUES ('lib','acc','הבית')")
+            seed.commit()
+        finally:
+            seed.close()
+        lib = LibraryRef("lib")
+        maps.save_site(lib, new_site(id="st", library_id="lib", name="הבית"))
+        maps.save_floor(lib, new_floor(id="fl", library_id="lib",
+                                       site_id="st", name="קרקע"))
+        maps.save_place(lib, new_place(id="pl", library_id="lib",
+                                       floor_id="fl", rect=Rect(0, 0, 9, 7)))
+        maps.save_bookcase(lib, new_bookcase(id="bc", library_id="lib",
+                                             floor_id="fl",
+                                             rect=Rect(0, 0, 4, 1),
+                                             place_id="pl"))
+        maps.save_section(lib, new_section(id="se", library_id="lib",
+                                           bookcase_id="bc", columns=2,
+                                           default_levels=3))
+
+        # Every shape the review measured, plus the two that used to load
+        # SILENTLY as a different cell than the one stored.
+        for bad in ('[[1,1,1]]', '[1,1]', '"abc"', 'null', 'not json',
+                    '{"a":1}', '[[1.9,1.9]]', '[["1","1"]]'):
+            broken = sqlite3.connect(str(path))
+            try:
+                broken.execute("UPDATE sections SET gaps = ?", (bad,))
+                broken.commit()
+            finally:
+                broken.close()
+            try:
+                maps.load_map(lib)
+            except UnreadableSection as exc:
+                assert "se" in str(exc), (
+                    f"{bad} refused without naming the section, so the owner "
+                    f"is told the map is broken and not which row"
+                )
+            else:
+                raise AssertionError(
+                    f"{bad} loaded as a section — a mask that is not a list "
+                    f"of [column, level] pairs was read as one"
+                )
+
+        # …and a well-formed mask still loads, so the guard did not simply
+        # refuse everything.
+        good = sqlite3.connect(str(path))
+        try:
+            good.execute("UPDATE sections SET gaps = '[[2, 3]]'")
+            good.commit()
+        finally:
+            good.close()
+        assert maps.get_section(lib, "se").gaps == ((2, 3),)
+
+
+def test_a_v20_database_gains_the_gaps_column_and_keeps_its_drawing():
+    """v21 on an UPGRADED file — CLAUDE.md rule 11, and the frame is the
+    v19→v20 case above, deliberately.
+
+    What it is FOR: a library whose map was drawn before P6.3.2 arrives with
+    sections, shelves and books in them, and after the upgrade every one of
+    those is still standing, with no holes it did not ask for. Then it USES
+    the column — the ⚠ on the v19→v20 case records that its `foreign_key_check`
+    ran while every new table was empty, so this one writes a gap through the
+    real store, reads it back, and checks the file afterwards.
+    """
+    import sqlite3
+
+    from app.adapters.migrations import MIGRATIONS, SCHEMA_VERSION, current_version
+    from app.adapters.sqlite_store import SqliteMapStore, SqliteShelfStore
+    from app.domain import with_gaps
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "v20.db"
+        conn = sqlite3.connect(str(path))
+        try:
+            for version, step in MIGRATIONS:
+                if version > 20:
+                    break
+                if isinstance(step, str):
+                    conn.executescript(step)
+                else:
+                    step(conn)
+            conn.execute("PRAGMA user_version = 20")
+            conn.execute("INSERT INTO users (id, display_name) VALUES"
+                         " ('u1', 'משה')")
+            conn.execute("INSERT INTO accounts (id, label) VALUES ('acc', '')")
+            conn.execute("INSERT INTO libraries (id, account_id, label)"
+                         " VALUES ('lib', 'acc', 'הבית')")
+            conn.execute("INSERT INTO sites (id, library_id, name, \"order\")"
+                         " VALUES ('st', 'lib', 'הבית', 0)")
+            conn.execute("INSERT INTO floors (id, library_id, site_id, name,"
+                         " \"order\") VALUES ('fl', 'lib', 'st', 'קרקע', 0)")
+            conn.execute(
+                "INSERT INTO places (id, library_id, floor_id, name, x, y, w,"
+                " h, \"order\") VALUES ('pl','lib','fl','סלון',0,0,9,7,0)")
+            conn.execute(
+                "INSERT INTO bookcases (id, library_id, floor_id, place_id,"
+                " name, front, x, y, w, h, \"order\") VALUES"
+                " ('bc','lib','fl','pl','ספרייה','S',1,0,4,1,0)")
+            conn.execute(
+                "INSERT INTO sections (id, library_id, bookcase_id, ordinal,"
+                " column_levels, default_levels, default_depth) VALUES"
+                " ('se','lib','bc',1,'[3, 3]',3,1)")
+            conn.execute(
+                "INSERT INTO shelves (id, library_id, label, depth_count,"
+                " virtual, created_at, section_id, col, level) VALUES"
+                " ('sh-old','lib','',1,0,'2026-02-01T00:00:00Z','se',1,3)")
+            conn.commit()
+        finally:
+            conn.close()
+
+        # ⚠ BEFORE the store opens it: at v20 the column does not exist. Its
+        # absence is what the four lines on the v19→v20 case exist to prove —
+        # without them this test follows `MIGRATIONS` wherever the DDL is
+        # written, so folding the ALTER into `_V20` (the edit rule 11 forbids)
+        # stays green while the one database that matters never gains it.
+        before = sqlite3.connect(str(path))
+        try:
+            assert "gaps" not in {
+                r[1] for r in before.execute("PRAGMA table_info(sections)")
+            }, "v21's column arrived before v21"
+        finally:
+            before.close()
+
+        maps = SqliteMapStore(path)               # migrates 20 -> 21
+        shelves = SqliteShelfStore(path)
+        lib = LibraryRef("lib")
+
+        check = sqlite3.connect(str(path))
+        try:
+            assert current_version(check) == SCHEMA_VERSION
+            assert "gaps" in {
+                r[1] for r in check.execute("PRAGMA table_info(sections)")}
+            assert check.execute(
+                "SELECT gaps FROM sections").fetchone()[0] == "[]", (
+                "an existing section arrived with holes in it"
+            )
+            assert check.execute("PRAGMA foreign_key_check").fetchall() == []
+            names = {r[0] for r in check.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'")}
+            for wanted in ("sections_by_bookcase", "shelves_by_slot"):
+                assert wanted in names, f"the {wanted} index is gone"
+        finally:
+            check.close()
+
+        # The drawing that predates the column is intact, and the shelf still
+        # stands in its slot with the level number it had.
+        section = maps.get_section(lib, "se")
+        assert section.column_levels == (3, 3) and section.gaps == ()
+        assert shelves.get_shelf_at(lib, ShelfAddress("se", 1, 3)).id == "sh-old"
+
+        # …and the column is USED, through the real store, on the real file.
+        maps.save_section(lib, with_gaps(section, [(2, 2)], gap=True).section)
+        assert maps.get_section(lib, "se").gaps == ((2, 2),)
+        assert maps.load_map(lib).sections[0].gaps == ((2, 2),)
+        assert shelves.get_shelf_at(lib, ShelfAddress("se", 1, 3)).id == "sh-old", (
+            "gapping a cell moved the shelf below it"
+        )
+
         after = sqlite3.connect(str(path))
         try:
             assert after.execute("PRAGMA foreign_key_check").fetchall() == []

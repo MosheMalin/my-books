@@ -80,6 +80,7 @@ from app.ports.store import (
     DuplicateShelfSlot,
     ShelfNotEmpty,
     UnknownShelf,
+    UnreadableSection,
     WrongLibrary,
 )
 from app.ports.tenancy import EmailTaken, UnknownAccount, UnknownUser
@@ -1707,18 +1708,20 @@ class SqliteMapStore(_SqliteStore):
         try:
             conn.execute(
                 'INSERT INTO sections (id, library_id, bookcase_id,'
-                ' ordinal, column_levels, default_levels,'
-                ' default_depth) VALUES (?,?,?,?,?,?,?)'
+                ' ordinal, column_levels, gaps, default_levels,'
+                ' default_depth) VALUES (?,?,?,?,?,?,?,?)'
                 ' ON CONFLICT(id) DO UPDATE SET'
                 ' bookcase_id=excluded.bookcase_id,'
                 ' ordinal=excluded.ordinal,'
                 ' column_levels=excluded.column_levels,'
+                ' gaps=excluded.gaps,'
                 ' default_levels=excluded.default_levels,'
                 ' default_depth=excluded.default_depth'
                 ' WHERE sections.library_id = excluded.library_id',
                 (section.id, library.id, section.bookcase_id,
                  section.ordinal,
                  json.dumps(list(section.column_levels)),
+                 json.dumps([list(cell) for cell in section.gaps]),
                  section.default_levels, section.default_depth))
         except sqlite3.IntegrityError as exc:
             # By columns, like every other unique index in this file.
@@ -1837,10 +1840,46 @@ def _load_bookcase(row: sqlite3.Row) -> Bookcase:
                     place_id=row["place_id"], order=row["order"])
 
 
+def _gaps(row: sqlite3.Row) -> tuple[tuple[int, int], ...]:
+    """Read one section's mask, and NAME the row when it is unreadable.
+
+    ⚠ The shape is checked here rather than trusted. Nothing reachable through
+    `/api/v1` can write a bad one — `_write_section` always dumps normalised
+    2-int pairs, `Section.__post_init__` refuses a cell outside the extent,
+    and both columns move in one UPSERT — but a restore, a hand-edit or a
+    future tool can, and a security review measured what happened then: seven
+    stored shapes (`[[1,1,1]]`, `[1,1]`, `"abc"`, `null`, unparseable text…)
+    raised `ValueError`/`TypeError` out of a comprehension, which is not a
+    `DomainError`, so `_translated()` never saw it and **`GET /map` answered
+    500 for the whole library** — every bookcase, every floor, not just this
+    section — with no API path left to repair it.
+
+    It still refuses, deliberately: a mask silently dropped is a hole the
+    owner drew disappearing, and the shelves are gone whether or not we can
+    read the cells. What changes is that the refusal names the section, so
+    one bad row is a diagnosable row instead of a dead library.
+    """
+    try:
+        raw = json.loads(row["gaps"])
+        cells = tuple((col, level) for col, level in raw)
+        # `type(...) is int` rather than `int(...)`: coercing would read a
+        # stored `1.9` as level 1 and a stored `true` as column 1 — a cell
+        # quietly becoming a DIFFERENT cell, which is worse than refusing.
+        if any(type(n) is not int for cell in cells for n in cell):
+            raise TypeError("a cell is a pair of integers")
+        return cells
+    except (ValueError, TypeError) as exc:
+        raise UnreadableSection(
+            f"section {row['id']!r} stores a mask that is not a list of "
+            f"[column, level] pairs: {row['gaps']!r}"
+        ) from exc
+
+
 def _load_section(row: sqlite3.Row) -> Section:
     return Section(id=row["id"], library_id=row["library_id"],
                    bookcase_id=row["bookcase_id"], ordinal=row["ordinal"],
                    column_levels=tuple(json.loads(row["column_levels"])),
+                   gaps=_gaps(row),
                    default_levels=row["default_levels"],
                    default_depth=row["default_depth"])
 

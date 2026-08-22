@@ -173,6 +173,11 @@ The general form — free-form blocks placed anywhere in the elevation grid,
 which would also express a desk niche or an L — is a layout editor, and is
 deliberately **not** built until something asks for it.
 
+⚠ Something asked, on 2026-08-22: a television in the middle of a wall unit.
+What landed is **not** the layout editor — the grid is still columns × levels
+— but its cheap half: cells that hold no shelf, with the extent untouched.
+**§3.10a** is that decision, and this paragraph still stands for the rest.
+
 ### 3.7 Floors group rooms — they are **not** part of an address
 
 **[DECIDED 2026-08-16 — owner]** *"We should also support multiple floors, each
@@ -319,6 +324,81 @@ recognisable and carry no book data; nine lab passes never wanted one. They can
 be added later without touching the address, which is what makes deferring them
 cheap.
 
+### 3.10a A cell can be switched OFF — and the extent does not move
+
+**[DECIDED 2026-08-22 — owner]** *"I want to be able to delete cells in the
+bookcase — for example, to allow a place to TV in the middle. The lower shelves
+should not get up now. They should remain in place… when marking a cell and
+clicking on delete it should not delete the bookcase itself, only affect the
+cell(s). User should be able to click on a 'missing' cell and make it a real
+shelf again. Rather than completely deleting them, mark them as not
+available."*
+
+This is §3.6's deferred sentence arriving — *"the general form… would also
+express a desk niche or an L… deliberately not built until something asks for
+it"* — in its cheap form. It is **not** the free-form layout editor: the grid
+is still columns × levels, and the only new fact is which cells hold no shelf.
+
+**The model: a MASK, never a resize.** `Section.column_levels` stays the
+extent — how much wood there is — and `Section.gaps` holds the `(column,
+level)` cells that are switched off. Every consequence follows from that one
+choice:
+
+- **the shelves below a hole keep their level numbers.** Shrinking the column
+  is the alternative, and it is what the owner ruled out in the same breath:
+  those numbers are printed on addresses people have already been told to walk
+  to;
+- **a gapped cell is not a slot**, so `Section.addresses` skips it and no
+  `Shelf` row stands there. §3.1 says a drawn slot IS a shelf; a shelf row
+  flagged *unavailable* would be a shelf that is not a shelf, and every query
+  about "the books on this shelf" would have to learn the word;
+- **gapping every cell leaves the bookcase standing**, with its full extent to
+  switch back on. *"It should not delete the bookcase itself"* is therefore
+  structural rather than a UI courtesy — no number of gaps touches the extent,
+  and the extent is what the furniture is;
+- **a gap over a cell the owner has declared something about is REFUSED**,
+  naming what is in the way — the one place this deliberately disagrees with
+  every other slot edit, which DETACHES an occupied shelf
+  (`plan_slot_removal`). Detaching instead would make *delete these cells* a
+  gesture that quietly costs a book its address, with no way back until
+  P6.4b's undo journal exists.
+
+  ⚠ **What it covers, measured, not assumed.** The first draft of this
+  paragraph said the gesture was *loss-proof* — *"only empty shelves are ever
+  removed, so switching a cell back on restores what was there"* — and a
+  migration review drove the real routes and disproved it: an empty shelf
+  still carries a **label**, a **depth override** and an **id**. Books,
+  photographs, a label and a depth override therefore all refuse the gap.
+  **Standing decisions do not** — they are keyed `(library, shelf, depth,
+  book_key)` with no foreign key, so the shelf id going away orphans them and
+  §5.6 stops suppressing a phantom the owner already rejected at that cell.
+  They are not refused because the owner cannot act on such a refusal: no
+  screen clears a decision, and a refusal nobody can satisfy is one they
+  retry. §3.11's alias is the real fix and **P6.4e** is where it lands — the
+  same seam that already owes "history across the seam" an answer. A column
+  shrink has always had these costs; a gap is the gesture that makes them
+  routine, which is why they are written down instead of assumed away;
+- **the hole goes with the wood.** Shrinking a column past a gap prunes it, so
+  growing the column back yields a shelf and not a resurrected hole. A level
+  count is what the owner is editing at that moment, and a case returning
+  taller with an invisible cell missing from the middle is a surprise that
+  gets explained as a bug.
+
+⚠ **The word is *gap*** (owner's pick over *opening*, *not available* and
+*blank*), and it was **already in use three times** — the first draft of this
+paragraph said it was not, and a quality review counted:
+
+- `renumber_sections` said *"close the gaps"* about section ORDINALS.
+  Reworded, because that is the sense a reader would confuse;
+- `app/api/routers/map.py` and `app/ports/map.py` say the same thing about a
+  hole in a stack of section ordinals. Left as they are: both sentences are
+  about `ordinal`, and neither is anywhere near a cell;
+- ⚠ **`app/web/src/map/core/model.ts` has `gap = 6`, the pixel gutter of the
+  overview layout** — and that is the module **P6.3.2b lives in**. Renaming it
+  to `gutter` is that item's first step: a gutter and a missing shelf sharing
+  one name inside one file is the collision that will actually bite, and it
+  costs nothing while nothing reads the mask yet.
+
 ### 3.11 A merged shelf becomes an **alias** — of its id AND of its address
 
 **[DECIDED 2026-08-21 — owner]** *"Image keeps its own identity. Shelf and
@@ -380,6 +460,15 @@ workspace exists to show. Two rules come with it: a merge is **refused while
 a read of either identity is running**, and `apply_diff` resolves through
 the alias so a read that started at A finishes at B rather than raising
 *"shelf no longer exists; nothing to apply"* and discarding a whole diff.
+
+**An alias's former address may point at a cell that is now a GAP, and that is
+fine** (settled here so P6.4a does not have to argue it). §3.10a leaves the
+extent untouched, so `(section 1, column 2, level 3)` still exists after the
+owner puts a television there — it simply holds no shelf. The alias's address
+is **historical**: it answers *"the shelf that was at…"*, which is the whole
+reason §3.11 records it rather than deriving it. So an alias never needs a
+live slot at its former address, and a gap must never be refused because some
+alias remembers that cell — old history does not get to block new furniture.
 
 ### 3.12 Depth is preserved, never renumbered
 
@@ -678,7 +767,8 @@ this pillar.**
 | **P6.2** | **API + policy** — the map through `current_library`, one capability each, contracts regenerated. | M | ✅ |
 | **P6.3** | **The port** — the lab's editor moves into `app/web/src/map/` **verbatim** where it is framework-free, wired to the API by an adapter. **The lab is deleted in the same commit.** Behaviour identical to the lab's ninth pass — that is the acceptance test, not a rewrite. | M | ✅ |
 | **P6.3.1** | **The site picker** — the one thing the lab never had (§3.9). Sites and their floors become manageable in the ported editor; a single site renders no chrome. Deliberately AFTER P6.3, so "behaves the same" is verifiable before anything new is added. ⚠ Renumbered: this item was "P6.3b", and P6.3's own wiring commit spent that identifier in the git log. | S | ✅ |
-| **P6.4** | **Binding and merge** — photo-born shelves bind into drawn slots; several identities merge into one physical shelf, with aliases. | L | |
+| **P6.3.2** | **Gaps** — a cell of the elevation can be switched off (a television, a desk niche) and switched back on, with the extent untouched (§3.10a). Two items: **a** the model, schema **v21** and the route; **b** the editor's multi-cell selection and the hole it draws. Arrived mid-pillar, from the owner using the ported editor. | M | a ✅ · b | 
+| **P6.4** | **Binding and merge** — photo-born shelves bind into drawn slots; several identities merge into one physical shelf, with aliases. ⚠ Its schema step is now **v22**: P6.3.2a spent v21. | L | |
 | **P6.5** | **The map as navigation** — three drill levels, "where is it" incl. depth, stale-depth surfacing, capture handoff. | L | |
 | **P6.6** | *Optional:* bookcase photo → proposed levels via `segment.py`, confirmed by hand. | S | |
 
@@ -997,28 +1087,99 @@ it does not need a lock nothing else in this app takes.
   measured the thing the owner draws on. It is `position: absolute; inset: 0`
   now, and gated by a test that reads the declaration.
 
+### P6.3.2 — gaps, and why they arrived here
+
+The owner asked for this (2026-08-22) after drawing his real house in the
+ported editor: a wall unit with a television in the middle of it cannot be
+drawn as a grid of shelves. §3.10a is the decision; this is the shape of the
+work and the reason it goes BEFORE P6.4.
+
+| # | Item | Size | Reviewers |
+|---|---|---|---|
+| **P6.3.2a** | **The model, the step and the route** — `Section.gaps`, `with_gaps`, pruning on resize, schema **v21**, the sqlite round-trip, and `PATCH /map/sections/{id}/gaps`. No UI. | M | `review-migration` **before**, data-integrity, security, quality |
+| **P6.3.2b** | **The editor** — marking several cells, deleting them, and tapping a hole to bring the shelf back. Hebrew, RTL, and the elevation's existing single-cell selection widened. | M | quality, ux |
+
+**Why before P6.4 and not after.** It is independent of bind and merge, it is
+what the owner asked for now, and — the part that would have cost something —
+P6.4b's undo journal covers *destructive map edits*. Landing gaps first means
+the journal is designed knowing about them, instead of being amended by the
+next item. The price is one renumbering: P6.4a's step becomes v22.
+
+**Why the two items split there.** The same reason P6.4b gives for keeping
+bind and merge apart: the server half is the half that can lose something, and
+it gets its own diff, its own migration review and its own mutation checks. The
+editor half cannot destroy anything the route would not have refused.
+
+**What P6.3.2a's four reviews measured, and what is still open.** Migration,
+data-integrity, security and quality between them found no critical, one bug
+in the new code, two pre-existing concurrency defects the item made reachable
+by a friendlier route, and three claims that were false. Fixed in the
+follow-up commit: the depth clause (`!=` locked every cell of a section whose
+default had been edited — §3.3 guarantees that drift); the destructive loop
+re-reading only occupancy (a name typed on the phone mid-request was deleted
+outright, 200, nothing reported); the slot diff computed against a stale
+section (two tabs could strand a shelf outside the extent, permanently, and
+nothing healed it); the ceiling guard trusting the client's direction flag
+instead of asking what the change does; and half the cost of a 400-cell
+request (12.1s/1206 connections → 6.0s/408, measured).
+
+Filed, **not** fixed here, each with a named owner:
+
+- ⚠ **an open §5.4 duplicate question at a gapped cell becomes
+  un-answerable** — it stays in `GET /duplicates` and in the Books tab count,
+  while *answer* and *skip* both 404 forever, because both resolve through
+  the shelf. Worse than the orphaned decision, which is merely silent: this
+  one is visible and cannot be dismissed. Pre-existing — `DELETE /shelves/
+  {id}` produces the identical state — so it is not P6.3.2's to fix, but
+  §3.10a's cost list now names **three** orphaned kinds (decisions, duplicate
+  questions, reads), not one. Belongs with **P6.4e**, which already owes
+  history a resolver; if it lands sooner, the cheap form is for the release
+  path to clear the queue rows it orphans, since a question nobody can answer
+  is worse than no question;
+- **the other half of the 400-cell cost** is 400 per-shelf `delete_shelf`
+  calls, one connection each, ~3.4s. It wants a batched delete on
+  `ShelfStore` beside `save_shelves` — a port change with a contract case of
+  its own, and it makes the pre-existing column-shrink path faster too;
+- **`SectionEditDTO.created` reports the PLANNED additions**, while `_fill`
+  returns what it actually made — larger whenever it heals slots a concurrent
+  edit emptied. Cosmetic until a screen shows it, which is P6.3.2b;
+- **the client counts slots differently from the server**: `sync.ts` builds
+  one document shelf per cell of `column_levels`, so `limits.ts:overCeiling`
+  counts the extent while `check_bookcase_size` counts addresses. Safe
+  direction (the editor refuses what the server would allow) and unreachable
+  until the client knows about masks — but `limits.ts` claims it *mirrors*
+  the server, and that claim is now false. **P6.3.2b** fixes both together.
+
 ### P6.4 — binding and merge  *(planned, not started)*
 
 The decomposition, each landing on `main` before the next:
 
 | # | Item | Size | Reviewers |
 |---|---|---|---|
-| **P6.4a** | **The alias, and nothing using it** — schema **v21**, one alias row carrying the absorbed shelf's id AND its former address, the resolver, `BookStore.books_on_shelf`, and "a shelf other identities resolve to is OCCUPIED". No merge, no route. | M | `review-migration` **before**, data-integrity, quality |
+| **P6.4a** | **The alias, and nothing using it** — schema **v22**, one alias row carrying the absorbed shelf's id AND its former address, the resolver, `BookStore.books_on_shelf`, and "a shelf other identities resolve to is OCCUPIED". No merge, no route. | M | `review-migration` **before**, data-integrity, quality |
 | **P6.4b** | **Undo for destructive map edits** (§3.15) — the journal, the inverse, and the invalidation rule. Covers remove column, remove section, delete bookcase, remove site; the merge joins it in P6.4d. ⚠ Schema step. | L | `review-migration` **before**, data-integrity, quality, ux |
 | **P6.4c** | **Bind** — an unaddressed shelf gains an address, and loses one. No identities join; a taken slot is a 409 naming the occupant and offering the merge. | S | data-integrity, security, quality, ux |
 | **P6.4d** | **Merge** — two identities become one, undoable. ⚠ **carries the data-loss risk.** | L | data-integrity, security, quality, ux |
 | **P6.4e** | **History across the seam** — reads, streaks, staleness and the *formerly* line resolve through the alias. | M | data-integrity, quality, ux |
 | **P6.4f** | *Optional:* **the proposal** — candidates from typed labels only, each an explicit ✓. | S | quality, ux, security |
 
-**P6.4a is separate because it is the only item with a schema-version
+⚠ **The numbering moved once.** P6.4a's step was planned as v21 and is now
+**v22**: P6.3.2a landed first and spent v21 on the section mask (§3.10a). The
+sentence below about the test frame is unchanged in substance — v21→v22 copies
+what v20→v21 copied from v19→v20 — and P6.3.2a's own test is the nearest
+example, since it is an ALTER on an existing table rather than a new one.
+
+**P6.4a is separate because it is the only item of P6.4 with a schema-version
 change** — so it is the only one needing `review-migration` and a worktree,
 and the migration gets reviewed against a diff containing nothing else. The
-v20→v21 test copies the v19→v20 frame, including the four lines that assert
-the table is ABSENT on the v20 file: without them the test follows
-`MIGRATIONS` wherever the DDL is written, so folding it into `_V20` — the
+v21→v22 test copies the v19→v20 frame, including the four lines that assert
+the table is ABSENT on the v21 file: without them the test follows
+`MIGRATIONS` wherever the DDL is written, so folding it into `_V21` — the
 edit rule 11 forbids — stays green while the one database that matters never
 gains the table. And it must use the table afterwards: the v19→v20 test's own
 ⚠ records that its `foreign_key_check` ran while every new table was empty.
+Both halves were measured again on P6.3.2a's step, by mutation: folding the
+DDL into the previous step was caught by exactly one test, its own.
 
 **P6.4b is separate so that *bind* and *merge* are never one button.** The
 safe half is a shelf gaining an address; the dangerous half is two identities
