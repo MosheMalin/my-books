@@ -37,6 +37,7 @@ from app.adapters.memory_store import (
     MemoryDecisionStore,
     MemoryDuplicateQueue,
     MemoryMapStore,
+    MemoryMapUndoStore,
     MemoryReadStore,
     MemoryShelfStore,
     MemoryTenancyStore,
@@ -47,6 +48,7 @@ from app.adapters.sqlite_store import (
     SqliteDecisionStore,
     SqliteDuplicateQueue,
     SqliteMapStore,
+    SqliteMapUndoStore,
     SqliteReadStore,
     SqliteShelfStore,
     SqliteTenancyStore,
@@ -117,6 +119,7 @@ DECISION_CONTRACT: list = []
 DUPLICATE_CONTRACT: list = []
 TENANCY_CONTRACT: list = []
 MAP_CONTRACT: list = []
+UNDO_CONTRACT: list = []
 
 # The tenancy suite's own axis: users, not libraries (P3.1).
 USR = User(id="usr-a", display_name="משה")
@@ -151,6 +154,21 @@ def decision_contract(fn):
     """Mark a function as part of the DecisionStore spec (P2.5). A fourth
     list, same reasoning as `shelf_contract`/`read_contract`."""
     DECISION_CONTRACT.append(fn)
+    return fn
+
+
+def undo_contract(fn):
+    """Mark a function as part of the MapUndoStore spec (P6.4b).
+
+    ⚠ This list exists because its absence had already cost something. The
+    SQLite store's codec dropped ``MapRestore.created`` — not in
+    ``RESTORE_ORDER`` — and every entry carrying one became permanently
+    un-undoable while refusing with the name of a shelf that had not changed.
+    Nothing went red, because every test of the journal ran on the memory
+    store, and two docstrings asserted that a shared contract already caught
+    exactly this. A migration review found it by hand.
+    """
+    UNDO_CONTRACT.append(fn)
     return fn
 
 
@@ -2373,6 +2391,17 @@ def _sqlite_map_stores():
 
 
 @contextmanager
+def _memory_undo_store():
+    yield MemoryMapUndoStore()
+
+
+@contextmanager
+def _sqlite_undo_store():
+    with _fresh_db("booksnap-undo-") as path:
+        yield SqliteMapUndoStore(path)
+
+
+@contextmanager
 def _memory_tenancy_store():
     yield MemoryTenancyStore()
 
@@ -2396,6 +2425,8 @@ TENANCY_IMPLEMENTATIONS = (("memory", _memory_tenancy_store),
                            ("sqlite", _sqlite_tenancy_store))
 MAP_IMPLEMENTATIONS = (("memory", _memory_map_stores),
                        ("sqlite", _sqlite_map_stores))
+UNDO_IMPLEMENTATIONS = (("memory", _memory_undo_store),
+                        ("sqlite", _sqlite_undo_store))
 
 
 def _bind(fn, factory, name):
@@ -4562,6 +4593,261 @@ def test_a_v20_database_gains_the_gaps_column_and_keeps_its_drawing():
             after.close()
 
 
+# --- MapUndoStore (P6.4b) --------------------------------------------------
+
+def _full_restore():
+    """A restore with ALL SEVEN fields populated, nested types and Hebrew.
+
+    Every field on purpose: this is the one place the two implementations are
+    compared, so a field left out here is a field the codec is free to drop.
+    ``created`` is the field that WAS dropped, and it is last because it is
+    the one that is not an entity tuple and so not in ``RESTORE_ORDER``.
+    """
+    from app.domain import (Bookcase, Floor, Place, Rect, Section, Shelf,
+                            ShelfAddress, Site)
+    from app.domain.map_undo import MapRestore
+
+    return MapRestore(
+        sites=(Site(id="st", library_id=LIB.id, name="הבית", order=2),),
+        floors=(Floor(id="fl", library_id=LIB.id, site_id="st",
+                      name="קומת קרקע", order=1),),
+        places=(Place(id="pl", library_id=LIB.id, floor_id="fl",
+                      rect=Rect(1, 2, 9, 7), name="סלון", order=3),),
+        bookcases=(Bookcase(id="bc", library_id=LIB.id, floor_id="fl",
+                            rect=Rect(1, 0, 4, 1), name="ספרייה", front="N",
+                            place_id="pl", order=4),),
+        sections=(Section(id="se", library_id=LIB.id, bookcase_id="bc",
+                          ordinal=2, column_levels=(3, 4), gaps=((2, 2),),
+                          default_levels=4, default_depth=2),),
+        shelves=(Shelf(id="sh", library_id=LIB.id, label="מדף עליון",
+                       depth_count=2, created_at="2026-02-01T00:00:00Z",
+                       address=ShelfAddress("se", 1, 3)),),
+        created=("sh-minted", "sh-minted-2"),
+    )
+
+
+def _entry(store_id="u1", **kw):
+    from app.domain.map_undo import MapUndoEntry
+
+    fields = dict(id=store_id, library_id=LIB.id, kind="remove_column",
+                  tag="section:se", recorded_at="2026-08-24T10:00:00+00:00",
+                  restore=_full_restore(), fingerprint={"sections:se": "abc123"})
+    fields.update(kw)
+    return MapUndoEntry(**fields)
+
+
+@undo_contract
+def an_entry_round_trips_every_field_it_was_given(journal):
+    """The whole reason this spec exists.
+
+    ⚠ Asserted field by field rather than with one ``==`` on the entry, so a
+    failure says WHICH field the codec lost. Equality is checked too, at the
+    end, because a field added tomorrow is covered by that and by nothing
+    above it.
+    """
+    journal.record(LIB, _entry())
+    back = journal.recent(LIB, limit=5)[0]
+
+    assert back.id == "u1" and back.kind == "remove_column"
+    assert back.tag == "section:se", "the coalescing tag did not survive"
+    assert back.fingerprint == {"sections:se": "abc123"}
+    assert back.undone_at is None and back.is_live
+    r = back.restore
+    assert r.sites[0].name == "הבית" and r.sites[0].order == 2
+    assert r.floors[0].site_id == "fl" or r.floors[0].site_id == "st"
+    assert r.places[0].rect == Rect(1, 2, 9, 7) and r.places[0].order == 3
+    assert r.bookcases[0].front == "N" and r.bookcases[0].place_id == "pl"
+    assert r.sections[0].column_levels == (3, 4)
+    assert r.sections[0].gaps == ((2, 2),), "the mask was lost or reshaped"
+    assert r.sections[0].ordinal == 2 and r.sections[0].default_depth == 2
+    assert r.shelves[0].label == "מדף עליון" and r.shelves[0].depth_count == 2
+    assert r.shelves[0].address == ShelfAddress("se", 1, 3)
+    assert r.created == ("sh-minted", "sh-minted-2"), (
+        "`created` was dropped — the entry is now permanently un-undoable, "
+        "because its fingerprint watches a key the restore no longer names")
+    assert back == _entry(), "a field this spec does not name was lost"
+
+
+@undo_contract
+def recording_the_same_id_twice_replaces_rather_than_duplicates(journal):
+    """Coalescing rewrites the head IN PLACE — two rows would make the merged
+    entry the second-newest and leave the un-merged half at the front."""
+    journal.record(LIB, _entry())
+    journal.record(LIB, _entry(kind="delete_bookcase"))
+    rows = journal.recent(LIB, limit=9)
+    assert len(rows) == 1 and rows[0].kind == "delete_bookcase"
+
+
+@undo_contract
+def recent_returns_newest_first_and_honours_its_limit(journal):
+    """The head is defined by this ordering, so the two implementations
+    disagreeing about it is the two of them disagreeing about which edit undo
+    takes back."""
+    for n, when in ((1, "2026-08-24T10:00:00+00:00"),
+                    (2, "2026-08-24T11:00:00+00:00"),
+                    (3, "2026-08-24T09:00:00+00:00")):
+        journal.record(LIB, _entry(store_id=f"u{n}", recorded_at=when))
+    assert [e.id for e in journal.recent(LIB, limit=9)] == ["u2", "u1", "u3"]
+    assert [e.id for e in journal.recent(LIB, limit=1)] == ["u2"]
+    assert journal.recent(LIB, limit=0) == ()
+
+
+@undo_contract
+def marking_an_entry_undone_keeps_the_row(journal):
+    """No redo, and the journal is also the record that the undo happened —
+    so the row is stamped, never deleted."""
+    journal.record(LIB, _entry())
+    assert journal.mark_undone(LIB, "u1", "2026-08-24T12:00:00+00:00")
+    back = journal.recent(LIB, limit=9)
+    assert len(back) == 1
+    assert back[0].undone_at == "2026-08-24T12:00:00+00:00"
+    assert not back[0].is_live
+    assert not journal.mark_undone(LIB, "nope", "2026-08-24T12:00:00+00:00")
+
+
+@undo_contract
+def a_journal_is_scoped_to_its_library(journal):
+    """H2. Another library's entries are absent, not merely unreachable — and
+    an entry whose own `library_id` disagrees is refused rather than filed
+    under the wrong customer."""
+    journal.record(LIB, _entry())
+    assert journal.recent(OTHER, limit=9) == ()
+    assert not journal.mark_undone(OTHER, "u1", "2026-08-24T12:00:00+00:00")
+    try:
+        journal.record(OTHER, _entry(store_id="u2"))
+    except WrongLibrary:
+        pass
+    else:
+        raise AssertionError("an entry was filed under a library it disowns")
+
+
+def test_a_v21_database_gains_the_undo_journal_and_keeps_its_drawing():
+    """v22 on an UPGRADED file — CLAUDE.md rule 11, frame copied from v20→v21.
+
+    What it is FOR: a library drawn before P6.4b arrives with its map, its
+    shelves and books on them, and after the upgrade every one of those is
+    still standing and the journal is EMPTY — an existing library has no
+    recorded history and must not be given a fabricated one.
+
+    Then it USES the table, on the real file, through the real store: the
+    ⚠ on the v19→v20 case records that its ``foreign_key_check`` ran while
+    every new table was empty, so this one records an entry, reads it back
+    whole, and checks the file again afterwards.
+    """
+    import sqlite3
+
+    from app.adapters.migrations import MIGRATIONS, SCHEMA_VERSION, current_version
+    from app.adapters.sqlite_store import (
+        SqliteMapStore,
+        SqliteMapUndoStore,
+        SqliteShelfStore,
+    )
+    from app.domain.map_undo import MapRestore, MapUndoEntry
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "v21.db"
+        conn = sqlite3.connect(str(path))
+        try:
+            for version, step in MIGRATIONS:
+                if version > 21:
+                    break
+                if isinstance(step, str):
+                    conn.executescript(step)
+                else:
+                    step(conn)
+            conn.execute("PRAGMA user_version = 21")
+            conn.execute("INSERT INTO users (id, display_name) VALUES"
+                         " ('u1', 'משה')")
+            conn.execute("INSERT INTO accounts (id, label) VALUES ('acc', '')")
+            conn.execute("INSERT INTO libraries (id, account_id, label)"
+                         " VALUES ('lib', 'acc', 'הבית')")
+            conn.execute("INSERT INTO sites (id, library_id, name, \"order\")"
+                         " VALUES ('st', 'lib', 'הבית', 0)")
+            conn.execute("INSERT INTO floors (id, library_id, site_id, name,"
+                         " \"order\") VALUES ('fl', 'lib', 'st', 'קרקע', 0)")
+            conn.execute(
+                "INSERT INTO bookcases (id, library_id, floor_id, place_id,"
+                " name, front, x, y, w, h, \"order\") VALUES"
+                " ('bc','lib','fl',NULL,'ספרייה','S',1,0,4,1,0)")
+            conn.execute(
+                "INSERT INTO sections (id, library_id, bookcase_id, ordinal,"
+                " column_levels, gaps, default_levels, default_depth) VALUES"
+                " ('se','lib','bc',1,'[3, 3]','[]',3,1)")
+            conn.execute(
+                "INSERT INTO shelves (id, library_id, label, depth_count,"
+                " virtual, created_at, section_id, col, level) VALUES"
+                " ('sh-old','lib','מדף עליון',1,0,'2026-02-01T00:00:00Z',"
+                "'se',1,3)")
+            conn.commit()
+        finally:
+            conn.close()
+
+        # ⚠ BEFORE the store opens it: at v21 the TABLE does not exist. These
+        # four lines are the ones rule 11 exists for — without them the test
+        # follows `MIGRATIONS` wherever the DDL is written, so folding the
+        # CREATE into `_V21` (the edit rule 11 forbids) stays green while the
+        # one database that matters never gains the table.
+        before = sqlite3.connect(str(path))
+        try:
+            assert "map_undo" not in {
+                r[0] for r in before.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'")
+            }, "v22's table arrived before v22"
+        finally:
+            before.close()
+
+        maps = SqliteMapStore(path)               # migrates 21 -> 22
+        shelves = SqliteShelfStore(path)
+        journal = SqliteMapUndoStore(path)
+        lib = LibraryRef("lib")
+
+        check = sqlite3.connect(str(path))
+        try:
+            assert current_version(check) == SCHEMA_VERSION
+            assert "map_undo" in {
+                r[0] for r in check.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'")}
+            assert check.execute(
+                "SELECT COUNT(*) FROM map_undo").fetchone()[0] == 0, (
+                "the upgrade invented a history this library never had"
+            )
+            assert check.execute("PRAGMA foreign_key_check").fetchall() == []
+            names = {r[0] for r in check.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'")}
+            for wanted in ("map_undo_by_library", "sections_by_bookcase",
+                           "shelves_by_slot"):
+                assert wanted in names, f"the {wanted} index is gone"
+        finally:
+            check.close()
+
+        # The drawing that predates the table is intact, labels and all.
+        section = maps.get_section(lib, "se")
+        assert section.column_levels == (3, 3) and section.gaps == ()
+        standing = shelves.get_shelf_at(lib, ShelfAddress("se", 1, 3))
+        assert standing.id == "sh-old" and standing.label == "מדף עליון"
+
+        # …and the table is USED, through the real store, on the real file —
+        # a whole entry out and back, Hebrew label included.
+        journal.record(lib, MapUndoEntry(
+            id="u1", library_id="lib", kind="remove_column",
+            tag="section:se", recorded_at="2026-08-24T09:00:00Z",
+            restore=MapRestore(sections=(section,), shelves=(standing,)),
+            fingerprint={"sections:se": "abc123abc123"},
+        ))
+        back = journal.recent(lib, limit=5)
+        assert len(back) == 1
+        assert back[0].restore.shelves[0].label == "מדף עליון"
+        assert back[0].restore.sections[0].column_levels == (3, 3)
+        assert back[0].tag == "section:se", "the coalescing tag did not survive"
+        assert back[0].is_live
+
+        after = sqlite3.connect(str(path))
+        try:
+            assert after.execute("PRAGMA foreign_key_check").fetchall() == []
+        finally:
+            after.close()
+
+
 def test_a_v18_database_gains_the_binding_column_and_keeps_its_rows():
     """v19 on an UPGRADED file — the rule CLAUDE.md now carries."""
     import sqlite3
@@ -4615,3 +4901,13 @@ def test_a_v18_database_gains_the_binding_column_and_keeps_its_rows():
         assert store.consume_state(
             hash_token("fresh"), now="2026-08-13T12:05:00+00:00"
         ).belongs_to("mine")
+
+# ⚠ At the END of the file, unlike its six siblings, because the
+# `@undo_contract` cases are defined below them — and a binder that runs
+# before its list is filled binds NOTHING, silently. The suite still reported
+# ok, with ten fewer cases than the run before it. Same family as the
+# `unittest.TestCase` trap CLAUDE.md records: "0/0 passed" means exactly that.
+for _label, _factory in UNDO_IMPLEMENTATIONS:
+    for _fn in UNDO_CONTRACT:
+        _name = f"test_{_fn.__name__}__{_label}"
+        globals()[_name] = _bind(_fn, _factory, _name)

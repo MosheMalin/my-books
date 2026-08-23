@@ -1163,6 +1163,49 @@ export interface paths {
         patch: operations["patch_site_api_v1_map_sites__site_id__patch"];
         trace?: never;
     };
+    "/api/v1/map/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Undo
+         * @description What a press of *undo* would put back, or why it cannot.
+         *
+         *     ``BROWSE``, not ``EDIT_MAP``, and deliberately: this writes nothing, and
+         *     it is the same question *"what happened to my map last"* that everyone who
+         *     can see the map may ask. The route that ACTS is the one that needs the
+         *     capability.
+         *
+         *     Answers 200 with ``available: false`` rather than 404 when there is
+         *     nothing to take back — *"no map edit has been recorded"* is an answer, and
+         *     a client forced to read 404 as data cannot tell it from a misspelt path.
+         */
+        get: operations["get_undo_api_v1_map_undo_get"];
+        put?: never;
+        /**
+         * Post Undo
+         * @description Take back the last destructive map edit.
+         *
+         *     **409, naming what moved**, when the world has changed under the entry —
+         *     §3.15's *"an undo that cannot prove the world is still as it left it
+         *     refuses, and says why"*. 409 rather than 400: the request is not
+         *     malformed, the state conflicts with it, and that is the difference between
+         *     a client that offers to reload and one that edits the request.
+         *
+         *     The response is the offer as it stands AFTER the undo, so the control that
+         *     called it learns in the same round trip that there is now nothing more to
+         *     take back. There is no redo, and no second entry underneath.
+         */
+        post: operations["post_undo_api_v1_map_undo_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/members": {
         parameters: {
             query?: never;
@@ -3396,6 +3439,55 @@ export interface components {
          */
         Status: "auto" | "approved" | "manual";
         /**
+         * UndoOfferDTO
+         * @description Whether the last destructive map edit can be taken back (P6.4b, §3.15).
+         *
+         *     ⚠ ``reason`` is a machine-readable token and not a sentence, on purpose:
+         *     the client is Hebrew-first, so the words belong in
+         *     ``app/web/src/map/text.ts``, where they have a Hebrew form and a plural
+         *     that agrees. A server that shipped the sentence would ship it in one
+         *     language.
+         */
+        UndoOfferDTO: {
+            /**
+             * Available
+             * @description Whether a press of undo would succeed right now. False for all three of: nothing recorded, already taken back, and the world moved — `reason` says which.
+             */
+            available: boolean;
+            /**
+             * Changed
+             * @description For `world_moved`: which targets moved, as `table:id`. §3.15 requires the refusal to say WHY, and this is it.
+             * @default []
+             */
+            changed: string[];
+            /**
+             * Kind
+             * @description Which edit is at the head — `remove_column`, `gaps`, `clear_bookcase`, `delete_site` and so on. Empty when nothing was ever recorded.
+             * @default
+             */
+            kind: string;
+            /**
+             * Reason
+             * @description `nothing_recorded`, `already_undone` or `world_moved`. Empty exactly when `available` is true.
+             * @default
+             */
+            reason: string;
+            /**
+             * Recorded At
+             * @description When that edit happened.
+             * @default
+             */
+            recorded_at: string;
+            /**
+             * Restores
+             * @description What the undo would put back, counted per kind of row (plus `removed`, for shelves the edit created that the undo would take away again). Empty unless available.
+             * @default {}
+             */
+            restores: {
+                [key: string]: number;
+            };
+        };
+        /**
          * UserDTO
          * @description Who the server thinks is asking (§4.1).
          *
@@ -5187,6 +5279,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_undo_api_v1_map_undo_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UndoOfferDTO"];
+                };
+            };
+        };
+    };
+    post_undo_api_v1_map_undo_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UndoOfferDTO"];
                 };
             };
         };

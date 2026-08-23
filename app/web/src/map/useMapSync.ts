@@ -43,6 +43,17 @@ export type MapSource = {
    *  choice must not become another's) and the hook has no library id. */
   rememberedSite?: () => string
   rememberSite?: (id: string) => void
+  /**
+   * Why the server would refuse to undo — read only AFTER a refusal (P6.4b).
+   *
+   * ⚠ It exists because the three refusals are three different sentences and
+   * the 409 carries only one string, in English. *Nothing was recorded*,
+   * *you already took that back* and *things have moved since* must not be
+   * shown as each other: a wrong stated reason is worse than a vague one,
+   * because it is the thing that makes the next person distrust the control.
+   * One extra request, on the failure path only.
+   */
+  undoReason?: () => Promise<string>
 }
 
 /**
@@ -113,6 +124,9 @@ export type MapSync = {
   addSite: (name: string, order: number) => void
   renameSite: (id: string, name: string) => void
   removeSite: (id: string) => void
+  /** P6.4b: ask the server to take back the last DESTRUCTIVE map edit.
+   *  Not the drawing history — see the implementation. */
+  undoLastEdit: () => void
   /** The plan as the server last confirmed it — the editor's starting doc. */
   initial: Plan | null
   /** Hand the current document over; the hook works out what to send. */
@@ -359,6 +373,48 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
     })())
   }, [afterSite, announce, sites, source, T])
 
+  /**
+   * P6.4b: ask the SERVER to take back the last destructive map edit.
+   *
+   * ⚠ A different thing from the editor's own `undo`, which steps this
+   * session's drawing back one commit. That one cannot bring a shelf back —
+   * it re-DRAWS the slot, and the server mints a new empty shelf for it, so
+   * the label the owner typed and the books that stood there stay behind on a
+   * detached row. This asks for the recorded inverse instead.
+   *
+   * Goes through `afterSite` for its drain: an undo re-derives the whole
+   * document, and re-deriving over an edit that has not reached the server is
+   * how that edit disappears (measured, on the site gestures).
+   *
+   * The refusal is shown in OUR words, never the server's — the server's
+   * sentence is English by construction, and `text.ts` is where the Hebrew
+   * lives. `reason` is what the words are chosen from.
+   */
+  const undoLastEdit = useCallback(() => {
+    void afterSite((async () => {
+      try {
+        await source.api.post('/map/undo', undefined)
+        announce(T.undo_done)
+      } catch (err) {
+        const e = err as { status?: number; detail?: string; message?: string }
+        let detail = e?.detail || e?.message || T.save_failed_hint
+        if (e?.status === 409) {
+          // Ask WHY, and say that. `undo_moved` as a blanket answer would
+          // tell an owner who had just undone something that their shelves
+          // had changed underneath them, which is a lie about their data.
+          const reason = await source.undoReason?.().catch(() => '')
+          detail = reason === 'nothing_recorded' ? T.undo_nothing
+            : reason === 'already_undone' ? T.undo_already
+              : T.undo_moved
+        }
+        setNotice({
+          kind: typeof e?.status === 'number' ? 'refused' : 'dropped',
+          detail,
+        })
+      }
+    })())
+  }, [afterSite, announce, source, T])
+
   const record = useCallback((plan: Plan) => {
     setSaved('saving')
     // ⚠ SERIALISED, and the diff is computed INSIDE the task.
@@ -453,6 +509,7 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
     addSite,
     renameSite,
     removeSite,
+    undoLastEdit,
     initial,
     record,
     reload: startOver,

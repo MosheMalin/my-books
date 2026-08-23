@@ -1465,6 +1465,57 @@ class SlotRemovalDTO(BaseModel):
                    detached=list(removal.detached))
 
 
+class UndoOfferDTO(BaseModel):
+    """Whether the last destructive map edit can be taken back (P6.4b, §3.15).
+
+    ⚠ ``reason`` is a machine-readable token and not a sentence, on purpose:
+    the client is Hebrew-first, so the words belong in
+    ``app/web/src/map/text.ts``, where they have a Hebrew form and a plural
+    that agrees. A server that shipped the sentence would ship it in one
+    language.
+    """
+
+    available: bool = Field(
+        description="Whether a press of undo would succeed right now. False "
+                    "for all three of: nothing recorded, already taken back, "
+                    "and the world moved — `reason` says which.",
+    )
+    kind: str = Field(
+        default="",
+        description="Which edit is at the head — `remove_column`, `gaps`, "
+                    "`clear_bookcase`, `delete_site` and so on. Empty when "
+                    "nothing was ever recorded.",
+    )
+    recorded_at: str = Field(default="", description="When that edit happened.")
+    restores: dict[str, int] = Field(
+        default={},
+        description="What the undo would put back, counted per kind of row "
+                    "(plus `removed`, for shelves the edit created that the "
+                    "undo would take away again). Empty unless available.",
+    )
+    reason: str = Field(
+        default="",
+        description="`nothing_recorded`, `already_undone` or `world_moved`. "
+                    "Empty exactly when `available` is true.",
+    )
+    changed: list[str] = Field(
+        default=[],
+        description="For `world_moved`: which targets moved, as `table:id`. "
+                    "§3.15 requires the refusal to say WHY, and this is it.",
+    )
+
+    @classmethod
+    def of(cls, offer) -> "UndoOfferDTO":
+        return cls(
+            available=offer.available,
+            kind=offer.kind,
+            recorded_at=offer.recorded_at,
+            restores=dict(offer.restores or {}),
+            reason=offer.reason,
+            changed=list(offer.changed),
+        )
+
+
 class SectionEditDTO(BaseModel):
     """A section after an edit, with what it cost the shelves."""
 

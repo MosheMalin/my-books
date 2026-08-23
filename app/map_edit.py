@@ -48,6 +48,8 @@ from app.domain import (
     plan_slot_removal,
     unbind_shelf,
 )
+from app.domain.map_undo import MapRestore
+from app.map_undo import Journal, record
 from app.ports import Clock, IdGen
 from app.ports.map import MapStore
 from app.ports.store import BookStore, ShelfNotEmpty, ShelfStore
@@ -139,7 +141,8 @@ def draw_bookcase(
     map_store.save_section(library, section)
     made = _fill(shelves, library, section, section.addresses,
                  ids=ids, clock=clock)
-    return DrawnCase(bookcase=bookcase, sections=(section,), shelves=made)
+    return DrawnCase(bookcase=bookcase, sections=(section,),
+                     shelves=len(made))
 
 
 def apply_slot_change(
@@ -149,6 +152,7 @@ def apply_slot_change(
     library: LibraryRef,
     change: SlotChange,
     *,
+    journal: Journal,
     ids: IdGen,
     clock: Clock,
 ) -> SlotRemoval:
@@ -176,14 +180,25 @@ def apply_slot_change(
     and the write, and the measured case was a book added from the phone
     while the map was open on a laptop.
     """
-    removal = _release(shelves, books, library,
-                       _losing(shelves, library, change))
+    was = map_store.get_section(library, change.section.id)
+    removal, before = _release(shelves, books, library,
+                               _losing(shelves, library, change))
     map_store.save_section(library, change.section)
     # The WHOLE address set, not just `change.added` — `_fill` is idempotent
     # by address, so this costs nothing extra and heals a section whose slots
     # lost their shelves to a concurrent edit.
-    _fill(shelves, library, change.section, change.section.addresses,
-          ids=ids, clock=clock)
+    made = _fill(shelves, library, change.section, change.section.addresses,
+                 ids=ids, clock=clock)
+    # ⚠ Only if something was actually LOST. §3.15 is about destructive
+    # edits, and GROWING a column destroys nothing — but the journal is one
+    # deep, so an entry for a purely additive edit does not merely add noise,
+    # it evicts the real undo standing behind it. `made` rides along rather
+    # than triggering: `_fill` mints shelves on a removal too (it heals slots
+    # a concurrent edit emptied), and those must not survive the undo.
+    if before:
+        _record(journal, map_store, shelves, library, kind="remove_column",
+                tag=f"section:{change.section.id}", was=was,
+                shelves_before=before, created=made)
     return removal
 
 
@@ -194,6 +209,7 @@ def apply_gaps(
     library: LibraryRef,
     change: SlotChange,
     *,
+    journal: Journal,
     ids: IdGen,
     clock: Clock,
 ) -> SlotRemoval:
@@ -285,10 +301,21 @@ def apply_gaps(
     # `declared` again, INSIDE the destructive loop, because this check and
     # the delete are one query apart — see `_release`, where a review measured
     # a label typed in that window being destroyed outright.
-    removal = _release(shelves, books, library, losing, protect=declared)
+    was = map_store.get_section(library, change.section.id)
+    removal, before = _release(shelves, books, library, losing,
+                               protect=declared)
     map_store.save_section(library, change.section)
-    _fill(shelves, library, change.section, change.section.addresses,
-          ids=ids, clock=clock)
+    made = _fill(shelves, library, change.section, change.section.addresses,
+                 ids=ids, clock=clock)
+    # Switching cells OFF is the fifth destructive edit (P6.3.2, which
+    # arrived after §3.15 named four). Switching them back ON destroys
+    # nothing, so it records nothing — same rule and same reason as
+    # `apply_slot_change` above, and the client's own drawing history is
+    # what takes back an additive edit.
+    if before:
+        _record(journal, map_store, shelves, library, kind="gaps",
+                tag=f"section:{change.section.id}", was=was,
+                shelves_before=before, created=made)
     return removal
 
 
@@ -298,6 +325,8 @@ def clear_bookcase_slots(
     books: BookStore,
     library: LibraryRef,
     bookcase_id: str,
+    *,
+    journal: Journal,
 ) -> SlotRemoval:
     """Empty every slot of a bookcase, so the case can then be deleted.
 
@@ -307,16 +336,24 @@ def clear_bookcase_slots(
     emptied the slots itself would be the silent data-loss path MAP_PLAN §2
     predicted for this exact item.
     """
-    return _release(shelves, books, library,
-                    _standing_in_bookcase(map_store, shelves, library,
-                                          bookcase_id))
+    removal, before = _release(
+        shelves, books, library,
+        _standing_in_bookcase(map_store, shelves, library, bookcase_id))
+    # Tagged by the BOOKCASE, which is what makes this and the delete that
+    # follows it one undo — see `app.domain.map_undo.coalesces_with`.
+    _record(journal, map_store, shelves, library, kind="clear_bookcase",
+            tag=f"bookcase:{bookcase_id}", shelves_before=before)
+    return removal
 
 
 def clear_section_slots(
+    map_store: MapStore,
     shelves: ShelfStore,
     books: BookStore,
     library: LibraryRef,
     section_id: str,
+    *,
+    journal: Journal,
 ) -> SlotRemoval:
     """Empty ONE section's slots, so that section can then be deleted.
 
@@ -325,8 +362,100 @@ def clear_section_slots(
     implementing *"remove the hutch"* by clearing the case would detach or
     delete every shelf in the base as well.
     """
-    return _release(shelves, books, library,
-                    shelves.list_shelves_in_section(library, section_id))
+    removal, before = _release(
+        shelves, books, library,
+        shelves.list_shelves_in_section(library, section_id))
+    _record(journal, map_store, shelves, library, kind="clear_section",
+            tag=f"section:{section_id}", shelves_before=before)
+    return removal
+
+
+def remove_record(
+    map_store: MapStore,
+    shelves: ShelfStore,
+    library: LibraryRef,
+    what: str,
+    record_id: str,
+    *,
+    journal: Journal,
+) -> bool:
+    """Delete one map record, having first remembered it. ``False`` if absent.
+
+    The five deletes went through a shared helper in the router
+    (``_remove``), which is the right shape for turning a store's refusal into
+    a 404 or a 409 and the wrong place to capture an inverse: a router that
+    reads the row first is a router that can forget to. So the read, the
+    delete and the recording are one function here, and the router keeps only
+    the HTTP half.
+
+    A bookcase carries its sections, because ``sections`` CASCADEs from
+    ``bookcases`` in the schema — they go with it silently, and an undo that
+    restored the case alone would put back an unaddressable shell, which is
+    the state ``delete_section`` refuses to create on purpose.
+    """
+    table = {
+        "site": (map_store.get_site, map_store.delete_site, "sites"),
+        "floor": (map_store.get_floor, map_store.delete_floor, "floors"),
+        "place": (map_store.get_place, map_store.delete_place, "places"),
+        "bookcase": (map_store.get_bookcase, map_store.delete_bookcase,
+                     "bookcases"),
+        "section": (map_store.get_section, map_store.delete_section,
+                    "sections"),
+    }
+    get, delete, field = table[what]
+    was = get(library, record_id)
+    sections = ()
+    if what == "bookcase" and was is not None:
+        sections = tuple(s for s in map_store.load_map(library).sections
+                         if s.bookcase_id == record_id)
+
+    if not delete(library, record_id):
+        return False
+
+    # The tag is the thing removed, so `DELETE .../slots` followed by
+    # `DELETE .../bookcases/{id}` — two requests, one operation — coalesce
+    # into the single entry that puts both halves back. A site, floor or
+    # place has no slot-clearing half and so needs no tag: RESTRICT already
+    # refuses to remove one with anything under it.
+    tag = f"{what}:{record_id}" if what in ("bookcase", "section") else ""
+    tables = {field: (was,) if was is not None else ()}
+    if what == "bookcase":
+        tables["sections"] = sections
+    _record(journal, map_store, shelves, library, kind=f"delete_{what}",
+            tag=tag, **tables)
+    return True
+
+
+def _record(
+    journal: Journal,
+    map_store: MapStore,
+    shelves: ShelfStore,
+    library: LibraryRef,
+    *,
+    kind: str,
+    tag: str,
+    was: Section | None = None,
+    shelves_before: tuple[Shelf, ...] = (),
+    created: tuple[Shelf, ...] = (),
+    **tables,
+) -> None:
+    """Hand one destructive edit's inverse to the journal.
+
+    A thin adapter and nothing more — it exists so the five call sites read as
+    one line each, and so ``MapRestore``'s field names appear in one place
+    instead of five. ``was`` is the section as it stood, the argument the two
+    section editors have in common.
+    """
+    if was is not None:
+        tables.setdefault("sections", (was,))
+    record(
+        journal, map_store, shelves, library, kind=kind, tag=tag,
+        restore=MapRestore(
+            shelves=tuple(shelves_before),
+            created=tuple(shelf.id for shelf in created),
+            **{name: tuple(value) for name, value in tables.items()},
+        ),
+    )
 
 
 def _standing_in_bookcase(
@@ -351,11 +480,17 @@ def _release(
     losing: Iterable[Shelf],
     *,
     protect=None,
-) -> SlotRemoval:
+) -> tuple[SlotRemoval, tuple[Shelf, ...]]:
     """Let go of a set of slots: detach what is occupied, delete what is not.
 
     The one place either half happens, so the rule cannot be half-applied by
     one caller and not another.
+
+    Returns the removal AND **the rows as they stood when it acted** — the
+    inverse P6.4b's journal records. Returned rather than re-read by the
+    caller because by the time the caller has the removal the rows are gone:
+    an id is not enough to put a shelf back, and the only moment the whole row
+    exists is here.
 
     ``protect`` is an extra *"do not destroy this one"* test, applied to the
     shelf as it stands **at the moment of the delete**. :func:`apply_gaps`
@@ -375,23 +510,40 @@ def _release(
     occupied = deepest_occupied_depths(shelves, books, library, losing)
     removal = plan_slot_removal(losing, occupied_ids=occupied.keys())
     by_id = {s.id: s for s in losing}
+    # Re-read ONCE, before anything is written, and now UNCONDITIONALLY — the
+    # `protect` path below always needed it, and P6.4b's journal needs it for
+    # every path. The inverse recorded for an undo has to be the row as it
+    # stands at the moment it is destroyed, not as the caller last saw it: a
+    # label typed in the window between the two (the case measured below) is
+    # otherwise remembered in its OLD form, and an undo months later would put
+    # the stale row back over work nobody asked it to touch. The fingerprint
+    # cannot catch that one, because it is taken after this point and agrees
+    # with itself.
+    fresh: dict[str, Shelf] = {}
+    for section_id in {s.address.section_id for s in losing if s.address}:
+        fresh.update({sh.id: sh for sh in
+                      shelves.list_shelves_in_section(library, section_id)})
+    before = tuple(fresh.get(s.id) or s for s in losing)
     for shelf_id in removal.detached:
         # It keeps its label, its photos and its books. What it loses is a
         # location the owner has just erased from the drawing — a smaller loss
         # than the shelf, and the only one that was asked for.
-        shelves.save_shelf(library, unbind_shelf(by_id[shelf_id]))
+        #
+        # ⚠ Unbind the FRESH row, not the caller's snapshot. Same window and
+        # the same loss the `protect` argument was added for, one branch over:
+        # writing back `by_id[...]` reverts a label typed since the caller
+        # looked, so the detach quietly destroys the very thing detaching was
+        # meant to preserve. Found while hoisting the re-read for P6.4b's
+        # journal — the fix costs nothing now that `fresh` is always built.
+        shelves.save_shelf(library,
+                           unbind_shelf(fresh.get(shelf_id) or by_id[shelf_id]))
     deleted: list[str] = []
     detached = list(removal.detached)
-    # Re-read ONCE, not per shelf: `by_id` is the snapshot the caller planned
-    # against and what matters is what each row says NOW — but a `get_shelf`
-    # per shelf is a connection per shelf in the SQLite adapter, the cost
-    # `_losing` and `_fill` both exist to avoid. Measured over 400 cells: 807
-    # connections asking one at a time, 408 listing the sections once.
-    fresh: dict[str, Shelf] = {}
-    if protect is not None:
-        for section_id in {s.address.section_id for s in losing if s.address}:
-            fresh.update({sh.id: sh for sh in
-                          shelves.list_shelves_in_section(library, section_id)})
+    # `fresh` above is that re-read, and it is ONE listing per section rather
+    # than a `get_shelf` per shelf: the latter is a connection per shelf in
+    # the SQLite adapter, the cost `_losing` and `_fill` both exist to avoid.
+    # Measured over 400 cells: 807 connections asking one at a time, 408
+    # listing the sections once.
     for shelf_id in removal.deleted:
         current = fresh.get(shelf_id) or by_id[shelf_id]
         if protect is not None and protect(current):
@@ -408,7 +560,7 @@ def _release(
             # propagating, which is what left a half-applied edit behind.
             shelves.save_shelf(library, unbind_shelf(current))
             detached.append(shelf_id)
-    return SlotRemoval(deleted=tuple(deleted), detached=tuple(detached))
+    return SlotRemoval(deleted=tuple(deleted), detached=tuple(detached)), before
 
 
 def apply_depth_default(
@@ -522,8 +674,13 @@ def _fill(
     *,
     ids: IdGen,
     clock: Clock,
-) -> int:
+) -> tuple[Shelf, ...]:
     """Create one empty shelf per address that has none yet.
+
+    Returns the shelves it MINTED, not a count of them — P6.4b needs their
+    ids, because an edit that both drops a column and fills a restored cell
+    has to be undone in both directions, and a shelf that did not exist
+    before the edit must not exist after the undo either.
 
     **Two queries and one write, whatever the size of the bookcase.** The
     per-address version asked ``get_shelf_at`` and wrote once per slot, and
@@ -555,4 +712,4 @@ def _fill(
         for address in addresses if address not in standing
     )
     shelves.save_shelves(library, fresh)
-    return len(fresh)
+    return fresh

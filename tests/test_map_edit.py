@@ -22,6 +22,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from app.adapters.memory_store import (
+    MemoryMapUndoStore,
     MemoryBookStore,
     MemoryMapStore,
     MemoryShelfStore,
@@ -43,6 +44,7 @@ from app.domain import (
     with_column_count,
     with_default_depth,
 )
+from app.map_undo import Journal
 from app.map_edit import (
     apply_depth_default,
     apply_slot_change,
@@ -69,6 +71,19 @@ class SeqIdGen:
     def new_id(self) -> str:
         self._n += 1
         return f"id-{self._n}"
+
+
+def _journal(ids=None, clock=None) -> Journal:
+    """A throwaway undo journal for a test that is not about the journal.
+
+    P6.4b made ``journal`` a REQUIRED argument of every destructive function
+    here, which is the invariant: a destructive edit cannot be written without
+    somewhere to record its inverse. The tests that ARE about the journal live
+    in ``test_map_undo.py`` and build their own.
+    """
+    return Journal(store=MemoryMapUndoStore(),
+                   ids=ids if ids is not None else SeqIdGen(),
+                   clock=clock if clock is not None else StubClock())
 
 
 def _raises(exc, fn, *a, **kw):
@@ -166,12 +181,12 @@ def test_filling_slots_is_idempotent_so_a_retry_mints_no_twin():
     section = drawn.sections[0]
     change = with_column_count(section, 2)      # the request, computed once
 
-    first = apply_slot_change(maps, shelves, books, LIB, change, ids=ids,
+    first = apply_slot_change(maps, shelves, books, LIB, change, journal=_journal(), ids=ids,
                               clock=StubClock())
     assert first.total == 0
     assert len(shelves.list_shelves_in_section(LIB, section.id)) == 6
 
-    again = apply_slot_change(maps, shelves, books, LIB, change, ids=ids,
+    again = apply_slot_change(maps, shelves, books, LIB, change, journal=_journal(), ids=ids,
                               clock=StubClock())
     assert again.total == 0
     assert len(shelves.list_shelves_in_section(LIB, section.id)) == 6, (
@@ -189,14 +204,14 @@ def test_growing_a_section_adds_shelves_and_shrinking_removes_the_empty_ones():
                           clock=StubClock(), columns=1, levels=2, depth=1)
     section = drawn.sections[0]
     apply_slot_change(maps, shelves, books, LIB, with_column_count(section, 3),
-                      ids=ids, clock=StubClock())
+                      journal=_journal(), ids=ids, clock=StubClock())
     assert len(shelves.list_shelves_in_section(LIB, section.id)) == 6
     assert maps.get_section(LIB, section.id).column_levels == (2, 2, 2)
 
     back = apply_slot_change(
         maps, shelves, books, LIB,
         with_column_count(maps.get_section(LIB, section.id), 1),
-        ids=ids, clock=StubClock())
+        journal=_journal(), ids=ids, clock=StubClock())
     assert len(back.deleted) == 4 and back.detached == ()
     assert len(shelves.list_shelves_in_section(LIB, section.id)) == 2
 
@@ -218,7 +233,7 @@ def test_shrinking_a_section_detaches_an_occupied_shelf_instead_of_deleting_it()
     _shelve_a_book(books, photographed.id)
 
     removal = apply_slot_change(maps, shelves, books, LIB,
-                                with_column_count(section, 1), ids=ids,
+                                with_column_count(section, 1), journal=_journal(), ids=ids,
                                 clock=StubClock())
     assert removal.detached == (photographed.id,)
     assert removal.deleted == ()
@@ -253,7 +268,7 @@ def test_a_shelf_holding_books_but_no_photos_is_still_occupied():
     assert deepest_occupied_depths(shelves, books, LIB, standing) == {
         with_book.id: 1}
 
-    removal = clear_bookcase_slots(maps, shelves, books, LIB, "bc")
+    removal = clear_bookcase_slots(maps, shelves, books, LIB, "bc", journal=_journal())
     assert removal.detached == (with_book.id,)
     assert removal.deleted == (bare.id,)
     assert shelves.get_shelf(LIB, with_book.id) is not None, (
@@ -285,7 +300,7 @@ def test_a_shelf_holding_photos_but_no_books_is_still_occupied():
     assert deepest_occupied_depths(shelves, books, LIB, standing) == {
         photographed.id: 1}
 
-    removal = clear_bookcase_slots(maps, shelves, books, LIB, "bc")
+    removal = clear_bookcase_slots(maps, shelves, books, LIB, "bc", journal=_journal())
     assert removal.detached == (photographed.id,)
     assert removal.deleted == (bare.id,)
     assert shelves.get_shelf(LIB, photographed.id) is not None
@@ -333,7 +348,7 @@ def test_occupancy_is_recomputed_at_the_moment_of_the_write():
 
     _shelve_a_book(books, doomed.id)            # …the phone, mid-edit
 
-    removal = apply_slot_change(maps, shelves, books, LIB, change, ids=ids,
+    removal = apply_slot_change(maps, shelves, books, LIB, change, journal=_journal(), ids=ids,
                                 clock=StubClock())
     assert removal.detached == (doomed.id,)
     assert shelves.get_shelf(LIB, doomed.id) is not None, (
@@ -376,7 +391,7 @@ def test_a_failed_removal_leaves_the_drawing_untouched_and_heals_on_retry():
 
     shelves.delete_shelf = wedged
     try:
-        apply_slot_change(maps, shelves, books, LIB, change, ids=ids,
+        apply_slot_change(maps, shelves, books, LIB, change, journal=_journal(), ids=ids,
                           clock=StubClock())
     except RuntimeError:
         pass
@@ -395,12 +410,12 @@ def test_a_failed_removal_leaves_the_drawing_untouched_and_heals_on_retry():
     # finishes it. That is what "self-healing" means and what the other order
     # could not do: it recomputed `dropped` from an already-shrunk section,
     # got nothing, and left the case permanently undeletable.
-    removal = apply_slot_change(maps, shelves, books, LIB, change, ids=ids,
+    removal = apply_slot_change(maps, shelves, books, LIB, change, journal=_journal(), ids=ids,
                                 clock=StubClock())
     assert removal.deleted == (doomed.id,)
     assert maps.get_section(LIB, section.id).column_levels == (1,)
     assert shelves.list_shelves_in_section(LIB, section.id) != ()
-    assert clear_bookcase_slots(maps, shelves, books, LIB, "bc").total == 1
+    assert clear_bookcase_slots(maps, shelves, books, LIB, "bc", journal=_journal()).total == 1
     assert maps.delete_bookcase(LIB, "bc") is True
 
 
@@ -419,7 +434,7 @@ def test_a_bookcase_is_emptied_before_it_can_be_deleted():
 
     _raises(NotEmpty, maps.delete_bookcase, LIB, "bc")
 
-    removal = clear_bookcase_slots(maps, shelves, books, LIB, "bc")
+    removal = clear_bookcase_slots(maps, shelves, books, LIB, "bc", journal=_journal())
     assert removal.detached == (keeper.id,) and len(removal.deleted) == 1
     assert maps.delete_bookcase(LIB, "bc") is True
     assert maps.get_section(LIB, section.id) is None
@@ -445,9 +460,10 @@ def test_clearing_one_section_leaves_the_other_sections_alone():
                     ordinal=2, column_levels=(), default_levels=2)
     maps.save_section(LIB, hutch)
     apply_slot_change(maps, shelves, books, LIB, with_column_count(hutch, 1),
-                      ids=ids, clock=StubClock())
+                      journal=_journal(), ids=ids, clock=StubClock())
 
-    cleared = clear_section_slots(shelves, books, LIB, hutch.id)
+    cleared = clear_section_slots(maps, shelves, books, LIB, hutch.id,
+                                  journal=_journal())
     assert cleared.total == 2
     assert shelves.list_shelves_in_section(LIB, hutch.id) == ()
     assert len(shelves.list_shelves_in_section(LIB, base.id)) == 2, (
@@ -536,7 +552,7 @@ def test_gapping_a_cell_that_holds_books_is_refused_and_names_what_is_there():
 
     change = with_gaps(section, [(1, 1), (1, 2)], gap=True)
     refusal = _raises(SlotsOccupied, apply_gaps, maps, shelves, books, LIB,
-                      change, ids=ids, clock=clock)
+                      change, journal=_journal(), ids=ids, clock=clock)
 
     assert [s.id for s in refusal.shelves] == [occupied.id], (
         "the refusal did not say which shelf was in the way, so the screen "
@@ -573,7 +589,7 @@ def test_a_photographed_but_bookless_cell_is_occupied_too():
 
     change = with_gaps(section, [(1, 1)], gap=True)
     _raises(SlotsOccupied, apply_gaps, maps, shelves, books, LIB, change,
-            ids=ids, clock=clock)
+            journal=_journal(), ids=ids, clock=clock)
     assert shelves.get_shelf(LIB, photographed.id) is not None
     assert len(shelves.list_captures(LIB, photographed.id)) == 1
 
@@ -594,7 +610,7 @@ def test_gapping_empty_cells_removes_their_shelves_and_leaves_the_rest_standing(
     below = shelves.get_shelf_at(LIB, ShelfAddress(section.id, 1, 4))
 
     change = with_gaps(section, [(1, 2), (1, 3)], gap=True)
-    removal = apply_gaps(maps, shelves, books, LIB, change, ids=ids,
+    removal = apply_gaps(maps, shelves, books, LIB, change, journal=_journal(), ids=ids,
                          clock=clock)
 
     assert len(removal.deleted) == 2 and removal.detached == ()
@@ -621,11 +637,11 @@ def test_switching_a_gap_back_on_mints_an_empty_shelf_at_that_address():
                           columns=1, levels=3, depth=2)
     section = drawn.sections[0]
     holed = with_gaps(section, [(1, 2)], gap=True)
-    apply_gaps(maps, shelves, books, LIB, holed, ids=ids, clock=clock)
+    apply_gaps(maps, shelves, books, LIB, holed, journal=_journal(), ids=ids, clock=clock)
     assert shelves.get_shelf_at(LIB, ShelfAddress(section.id, 1, 2)) is None
 
     back = with_gaps(maps.get_section(LIB, section.id), [(1, 2)], gap=False)
-    apply_gaps(maps, shelves, books, LIB, back, ids=ids, clock=clock)
+    apply_gaps(maps, shelves, books, LIB, back, journal=_journal(), ids=ids, clock=clock)
 
     restored = shelves.get_shelf_at(LIB, ShelfAddress(section.id, 1, 2))
     assert restored is not None and restored.label == ""
@@ -651,7 +667,7 @@ def test_gapping_every_cell_leaves_the_bookcase_and_its_section_standing():
 
     every = [(col, level) for col in (1, 2) for level in (1, 2)]
     apply_gaps(maps, shelves, books, LIB,
-               with_gaps(section, every, gap=True), ids=ids, clock=clock)
+               with_gaps(section, every, gap=True), journal=_journal(), ids=ids, clock=clock)
 
     assert maps.get_bookcase(LIB, "bc") is not None
     standing = maps.get_section(LIB, section.id)
@@ -691,7 +707,7 @@ def test_a_named_cell_or_one_with_its_own_depth_refuses_the_gap_too():
     for cell in ((1, 1), (1, 2)):
         change = with_gaps(section, [cell], gap=True)
         _raises(SlotsOccupied, apply_gaps, maps, shelves, books, LIB, change,
-                ids=ids, clock=clock)
+                journal=_journal(), ids=ids, clock=clock)
 
     # Both survive, with what the owner said about them.
     assert shelves.get_shelf(LIB, named.id).label == "מדף הטלוויזיה"
@@ -700,7 +716,7 @@ def test_a_named_cell_or_one_with_its_own_depth_refuses_the_gap_too():
 
     # …and the third cell, which the owner never said anything about, goes.
     plain = with_gaps(section, [(1, 3)], gap=True)
-    removal = apply_gaps(maps, shelves, books, LIB, plain, ids=ids, clock=clock)
+    removal = apply_gaps(maps, shelves, books, LIB, plain, journal=_journal(), ids=ids, clock=clock)
     assert len(removal.deleted) == 1, (
         "the refusal widened until an ordinary empty cell could not be gapped"
     )
@@ -724,7 +740,7 @@ def test_a_cell_at_the_sections_own_default_depth_is_not_a_declaration():
                for s in shelves.list_shelves_in_section(LIB, section.id))
 
     change = with_gaps(section, [(1, 1)], gap=True)
-    removal = apply_gaps(maps, shelves, books, LIB, change, ids=ids,
+    removal = apply_gaps(maps, shelves, books, LIB, change, journal=_journal(), ids=ids,
                          clock=clock)
     assert len(removal.deleted) == 1
     assert maps.get_section(LIB, section.id).gaps == ((1, 1),)
@@ -772,7 +788,7 @@ def test_a_name_typed_while_the_gap_is_in_flight_survives_it():
     try:
         removal = apply_gaps(maps, shelves, books, LIB,
                              with_gaps(section, [(1, 1)], gap=True),
-                             ids=ids, clock=clock)
+                             journal=_journal(), ids=ids, clock=clock)
     finally:
         books.deepest_copy_depth = real
 
@@ -812,7 +828,7 @@ def test_a_slot_stranded_by_a_concurrent_edit_is_released_by_the_next_one():
                           columns=2, levels=4, depth=1)
     section = drawn.sections[0]
     apply_gaps(maps, shelves, books, LIB,
-               with_gaps(section, [(1, 4)], gap=True), ids=ids, clock=clock)
+               with_gaps(section, [(1, 4)], gap=True), journal=_journal(), ids=ids, clock=clock)
 
     # Two tabs, both computed from the section as it is NOW: one puts the
     # gapped cell back, the other shortens that column past it.
@@ -820,8 +836,8 @@ def test_a_slot_stranded_by_a_concurrent_edit_is_released_by_the_next_one():
     restore = with_gaps(stale, [(1, 4)], gap=False)
     shrink = with_column_levels(stale, 1, 2)
 
-    apply_gaps(maps, shelves, books, LIB, restore, ids=ids, clock=clock)
-    apply_slot_change(maps, shelves, books, LIB, shrink, ids=ids, clock=clock)
+    apply_gaps(maps, shelves, books, LIB, restore, journal=_journal(), ids=ids, clock=clock)
+    apply_slot_change(maps, shelves, books, LIB, shrink, journal=_journal(), ids=ids, clock=clock)
 
     settled = maps.get_section(LIB, section.id)
     standing = {(s.address.col, s.address.level)

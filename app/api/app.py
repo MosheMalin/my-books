@@ -34,6 +34,7 @@ from app.api.deps import (
     get_principal,
     get_read_store,
     get_reader,
+    get_journal,
     get_map_store,
     get_shelf_store,
     get_tenancy_store,
@@ -58,7 +59,9 @@ from app.ports.blobs import BlobStore
 from app.ports.decisions import DecisionStore
 from app.ports.duplicates import DuplicateQueue
 from app.ports.jobs import JobRunner
+from app.map_undo import Journal
 from app.ports.map import MapStore
+from app.ports.map_undo import MapUndoStore
 from app.ports.reader import Reader
 from app.ports.store import BookStore, ReadStore, ShelfStore
 from app.ports.tenancy import TenancyStore
@@ -94,6 +97,7 @@ def bind_ports(
     map_store: MapStore | None = None,
     blob_store: BlobStore | None = None,
     read_store: ReadStore | None = None,
+    map_undo_store: MapUndoStore | None = None,
     decision_store: DecisionStore | None = None,
     duplicate_queue: DuplicateQueue | None = None,
     reader: Reader | None = None,
@@ -137,6 +141,17 @@ def bind_ports(
                       (get_identity_providers, identity_providers)):
         if impl is not None:
             app.dependency_overrides[dep] = _always(impl)
+    # The journal is bound as one bundle (P6.4b) — see `deps.get_journal`.
+    # Loud rather than lazy about the trio: an entry with no id cannot be
+    # found again and one with no time cannot be ordered, so a journal bound
+    # without them is a journal that records unusable inverses and says
+    # nothing about it.
+    if map_undo_store is not None:
+        if id_gen is None or clock is None:
+            raise ValueError(
+                "binding a map undo journal needs an IdGen and a Clock too")
+        app.dependency_overrides[get_journal] = _always(
+            Journal(store=map_undo_store, ids=id_gen, clock=clock))
 
 
 def create_app(
@@ -148,6 +163,7 @@ def create_app(
     id_gen: IdGen | None = None,
     shelf_store: ShelfStore | None = None,
     map_store: MapStore | None = None,
+    map_undo_store: MapUndoStore | None = None,
     blob_store: BlobStore | None = None,
     read_store: ReadStore | None = None,
     decision_store: DecisionStore | None = None,
@@ -218,6 +234,7 @@ def create_app(
         principal_provider=principal_provider,
         book_store=book_store, clock=clock, id_gen=id_gen,
         shelf_store=shelf_store, map_store=map_store,
+        map_undo_store=map_undo_store,
         blob_store=blob_store,
         read_store=read_store, decision_store=decision_store,
         duplicate_queue=duplicate_queue, reader=reader,

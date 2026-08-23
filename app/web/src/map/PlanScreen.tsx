@@ -15,7 +15,14 @@ import MapScreen from './MapScreen'
 import { mapText, type MapText } from './text'
 import type { MapSource } from './useMapSync'
 import { useMapSync } from './useMapSync'
-import { getMap, listShelves, mapDelete, mapPatch, mapPost } from '../api/client'
+import {
+  getMap,
+  getUndoOffer,
+  listShelves,
+  mapDelete,
+  mapPatch,
+  mapPost,
+} from '../api/client'
 
 /**
  * Which site this library was last drawing.
@@ -36,6 +43,7 @@ export function PlanScreen({ library }: { library: string }) {
       const [map, shelves] = await Promise.all([getMap(), listShelves()])
       return { map: map as never, shelves: shelves as never }
     },
+    undoReason: async () => (await getUndoOffer()).reason || '',
     api: {
       post: (path, body) => mapPost(path, body),
       patch: (path, body) => mapPatch(path, body),
@@ -167,6 +175,7 @@ export function PlanScreen({ library }: { library: string }) {
                                         sync.sites.length),
           onRenameSite: sync.renameSite,
           onRemoveSite: sync.removeSite,
+          onUndoLastEdit: sync.undoLastEdit,
         }}
       />
     </>

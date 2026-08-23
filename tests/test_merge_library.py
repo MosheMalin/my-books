@@ -293,6 +293,48 @@ def test_the_source_drawing_moves_and_stands_beside_the_targets():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_the_source_undo_journal_is_dropped_rather_than_re_homed():
+    """P6.4b, and the one library-scoped table the merge DELETES.
+
+    Two independent reasons, either fatal alone: an entry's ``inverse`` holds
+    whole rows with the SOURCE ``library_id`` baked into each, so replaying a
+    re-homed entry writes rows the stores refuse outright; and its fingerprint
+    was taken in a world the merge has since rearranged, which is the state
+    §3.15 says an undo must refuse rather than guess its way through.
+
+    So: the source's entries are GONE, not moved — and the target's own undo
+    is untouched, because a merge is something that happened to the source,
+    not to the collection absorbing it.
+    """
+    from app.adapters.sqlite_store import SqliteMapUndoStore
+    from app.domain.map_undo import MapRestore, MapUndoEntry
+
+    w, tmp = _world()
+    try:
+        journal = SqliteMapUndoStore(w.db)
+        source_shelf = w.shelves.get_shelf(SRC, "sh-par")
+        assert source_shelf is not None, "fixture has no sh-par"
+        for lib, entry_id in ((SRC, "u-src"), (DST, "u-dst")):
+            # Both entries remember the SAME shelf row, which is the point:
+            # what decides their fate is whose journal they are in, not what
+            # they happen to name.
+            journal.record(lib, MapUndoEntry(
+                id=entry_id, library_id=lib.id, kind="clear_bookcase",
+                tag="bookcase:bc", recorded_at="2026-08-24T09:00:00Z",
+                restore=MapRestore(shelves=(source_shelf,)), fingerprint={},
+            ))
+
+        _merge(w)
+
+        assert journal.recent(SRC, limit=9) == (), (
+            "the source's undo entries survived the merge")
+        assert [e.id for e in journal.recent(DST, limit=9)] == ["u-dst"], (
+            "the merge re-homed the source's journal into the target, where "
+            "replaying it would write rows naming a library that is gone")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_every_library_scoped_table_is_in_the_leftover_check():
     """The tuple and the move loop must not drift apart, and only ONE
     direction was loud.

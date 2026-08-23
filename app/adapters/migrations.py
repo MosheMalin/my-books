@@ -1137,6 +1137,69 @@ ALTER TABLE sections ADD COLUMN gaps TEXT NOT NULL DEFAULT '[]';
 """
 
 
+# P6.4b — the undo journal for destructive map edits (MAP_PLAN §3.15).
+#
+# Five edits destroy or detach shelves behind nothing but a `confirm()`:
+# removing a column, removing a section, deleting a bookcase, removing a site,
+# and — since P6.3.2 — switching cells off. Each is one mis-tap. This table is
+# how the mis-tap is taken back.
+#
+# ⚠ **`inverse` is RECORDED, never derived**, and §3.15 gives the reason: a
+# book the owner typed onto a shelf by hand has no provenance, so a GUESSED
+# inverse moves books that never moved. What goes in is the rows as they
+# stood, whole, so an undo is an upsert of a remembered past rather than a
+# reconstruction of a plausible one.
+#
+# JSON in a TEXT column, for the third time in this file (`column_levels`,
+# then `gaps`): it is read and written whole with its entry and never queried
+# by field. ⚠ Unlike those two it is not small — a cleared bookcase is 400
+# shelf rows — and see `undone_at` below for why that is not bounded here.
+#
+# **`fingerprint` is how an undo proves the world is unchanged** (owner,
+# 2026-08-24). §3.15's literal reading — invalidated *"the moment anything
+# else touches those rows"* — was rejected as the expensive and quietly
+# incomplete shape: it puts this table on the hot path of every product write,
+# and the one write path that forgets to consult it produces a silently WRONG
+# undo, which is worse than a refused one. So nothing is invalidated on write.
+# Instead the digest of what the edit LEFT BEHIND is stored here, recomputed
+# at undo time over the same scope, and a mismatch refuses naming what moved.
+# It cannot be wrong, and it costs nothing until somebody presses undo.
+#
+# ⚠ **There is deliberately no expiry column, and no step may add an age
+# check as a substitute for the fingerprint** (owner, same decision, against
+# the recommendation, which carried a 24h floor to bound the table). A mis-tap
+# noticed a week later is still a mis-tap: age is not evidence that an undo is
+# unsafe, and the fingerprint is exact evidence that it is. The accepted
+# consequence is that this table only grows; retention is its own later item
+# and must arrive as one, not as a quiet `recorded_at` comparison.
+#
+# `undone_at` is NULL while an entry can still be replayed. It is set rather
+# than the row deleted because the journal is also the RECORD of what
+# happened — "record all, undo the head" (owner) — and an undo is itself one
+# of the things that happened. There is no redo: an entry is replayed once.
+_V22 = """
+CREATE TABLE map_undo (
+    id          TEXT PRIMARY KEY,
+    library_id  TEXT NOT NULL,
+    kind        TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    inverse     TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    undone_at   TEXT
+);
+
+-- The ONE query this table serves: the newest entry of one library. DESC on
+-- `recorded_at` because the head is the only entry that is ever offered — a
+-- cursor over the rest is the n-deep stack this item deliberately is not.
+--
+-- ⚠ `id DESC` too, matching the store's ORDER BY exactly. With `id` left
+-- implicitly ASC the plan measured `USE TEMP B-TREE FOR LAST TERM OF ORDER
+-- BY` — small today, and unfixable after this step ships without spending a
+-- whole schema version on a word.
+CREATE INDEX map_undo_by_library ON map_undo (library_id, recorded_at DESC, id DESC);
+"""
+
+
 # A step is either SQL to execute or a callable to run — both inside the same
 # once-only transaction. Callables exist because a derived column whose rule
 # lives in the domain must be backfilled BY that rule, not by a re-statement
@@ -1163,6 +1226,7 @@ MIGRATIONS: tuple[tuple[int, str | Step], ...] = (
     (19, _V19),
     (20, _V20),
     (21, _V21),
+    (22, _V22),
 )
 
 

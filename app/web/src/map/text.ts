@@ -49,6 +49,20 @@ export interface MapText {
   reload: string
   undo: string
   redo: string
+  /**
+   * P6.4b's SERVER undo, and its own label on purpose.
+   *
+   * ⚠ It is not `undo`, and the two must never announce the same name. They
+   * do different things: `undo` steps the DRAWING back one commit and can be
+   * pressed two hundred times; this one asks the server to put back the rows
+   * the last destructive edit destroyed — shelves, with their labels and the
+   * books standing on them — and there is exactly one of it, with no redo.
+   */
+  undo_last_edit: string
+  undo_done: string
+  undo_nothing: string
+  undo_already: string
+  undo_moved: string
   copy: string
   paste: string
   delete: string
@@ -241,6 +255,12 @@ const HE: MapText = {
   reload: 'טעינה מחדש מהשרת',
   undo: 'ביטול',
   redo: 'ביצוע מחדש',
+  undo_last_edit: 'שחזור המחיקה האחרונה',
+  undo_done: 'המחיקה האחרונה שוחזרה',
+  undo_nothing: 'אין מחיקה לשחזר',
+  undo_already: 'המחיקה האחרונה כבר שוחזרה, ואין ביצוע מחדש',
+  undo_moved: 'מאז המחיקה השתנו דברים במדפים האלה, ושחזור עכשיו היה מוחק '
+    + 'עבודה שנעשתה אחריה. לכן לא בוצע שום שינוי.',
   copy: 'העתקה',
   paste: 'הדבקה',
   delete: 'מחיקה',
@@ -488,6 +508,12 @@ const EN: MapText = {
   reload: 'Reload from the server',
   undo: 'Undo',
   redo: 'Redo',
+  undo_last_edit: 'Undo the last deletion',
+  undo_done: 'The last deletion was undone',
+  undo_nothing: 'There is no deletion to undo',
+  undo_already: 'The last deletion has already been undone, and there is no redo',
+  undo_moved: 'Things on those shelves have changed since the deletion, and '
+    + 'undoing now would overwrite work done after it. Nothing was changed.',
   copy: 'Copy',
   paste: 'Paste',
   delete: 'Delete',

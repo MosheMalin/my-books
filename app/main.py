@@ -47,6 +47,7 @@ from app.adapters.sqlite_store import (
     SqliteDuplicateQueue,
     SqliteReadStore,
     SqliteMapStore,
+    SqliteMapUndoStore,
     SqliteShelfStore,
     SqliteTenancyStore,
 )
@@ -253,6 +254,11 @@ def build() -> object:
         # in one transaction, and "delete this case" spanning two databases
         # is a delete that can half-happen.
         map_store=SqliteMapStore(path),
+        # P6.4b: an EIGHTH aggregate, same file, same reasoning taken to its
+        # sharpest point — an undo entry promises to put back rows that live
+        # in this database, so a journal in another one is a promise that can
+        # go stale with nothing able to notice.
+        map_undo_store=SqliteMapUndoStore(path),
         read_store=SqliteReadStore(path),
         # P2.5: a fourth aggregate, same file, same reasoning — a decision
         # made about a claim from a specific read must live next to that
