@@ -131,3 +131,59 @@ describe('map.css', () => {
       expect(line).not.toMatch(/^\s*(button|input|select|fieldset|legend)[\s.:[{]/)
   })
 })
+
+describe('the plan is a workspace, and a workspace needs a definite height', () => {
+  // jsdom applies no CSS, so this is a check on the TEXT — the same shape the
+  // scoping checks above use, and the right one: the property is "these four
+  // declarations exist", which is a fact about the sheet.
+  //
+  // ⚠ It exists because a UX review measured the plan canvas at 375x0 on a
+  // phone. `#root` had `min-height: 100%` — a MINIMUM is not a definite
+  // height, so the phone block's `flex: 0 0 38%` on `.map-side` resolved
+  // against `auto` and became the panel's CONTENT height (1155px for a
+  // 52-cell elevation). The settings panel was the entire page, and
+  // `elementFromPoint` over a bookcase returned a fold header. Nothing in
+  // pillar 6 had ever been walked on a phone, including the verification of
+  // the item that shipped just before this one.
+  const books = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'books.css'), 'utf8')
+  const map = readFileSync(SHEET, 'utf8')
+
+  it('gives the plan shell a definite height, not a minimum', () => {
+    // ⚠ Asserted on the whole sheet, not on a slice of the rule. The first
+    // cut sliced from the selector to the next closing brace — and a brace
+    // inside a COMMENT ended the slice early, so the assertion read a
+    // fragment that could not contain the declaration either way: it passed
+    // clean AND it passed mutated, which is the definition of not a gate.
+    // `books.css` declares this height exactly once, so the file is the
+    // honest scope.
+    expect(books.match(/^ {2}(?:min-)?height: 100%;/gm),
+      'the plan shell declares its height exactly once, and not as a minimum')
+      .toEqual(['  height: 100%;'])
+  })
+
+  it('lets both panes shrink below their content, on both axes', () => {
+    // A flex item defaults to `min-*: auto` — min-CONTENT — so without these
+    // the canvas cannot shrink and the panel cannot scroll; it grows instead.
+    expect(map).toMatch(/\.canvas-wrap \{[^}]*min-height: 0/)
+    expect(map).toMatch(/\.map-side \{[^}]*min-width: 0/)
+    const phone = map.slice(map.indexOf('@media (max-width: 640px)'))
+    // Bounded by the NEXT media query rather than by a closing brace, so the
+    // assertion cannot be satisfied by a `min-height: 0` somewhere else in
+    // the sheet — and so this file needs no newline literal, which is what
+    // broke its first cut.
+    const next = phone.indexOf('@media', 1)
+    expect(next > 0 ? phone.slice(0, next) : phone, 'the stacked panel must scroll')
+      .toMatch(/min-height: 0/)
+  })
+
+  it('makes the thumb-sized rules actually win', () => {
+    // ⚠ They did not: equal specificity, and the base `.mapscreen .elev-cell`
+    // comes LATER in the sheet, so the phone block's 40px lost to 30px while
+    // a comment above it recorded the review that added it. The doubled class
+    // is what makes it a real override — and the elevation cell is the hole,
+    // which is the only way back from a gap.
+    const phone = map.slice(map.indexOf('@media (max-width: 640px)'))
+    expect(phone).toContain('.elev-cell.elev-cell')
+    expect(phone).toContain('.elev-col-foot.elev-col-foot')
+  })
+})

@@ -300,7 +300,11 @@
 /* --- layout -------------------------------------------------------------- */
 
 .mapscreen .body { display: flex; flex: 1; min-height: 0; }
-.mapscreen .canvas-wrap { position: relative; flex: 1; min-width: 0; }
+/* ⚠ `min-height: 0` for the same reason `.map-side` carries `min-width: 0`,
+   one axis over: a flex item's default `min-*: auto` is min-CONTENT, so once
+   the phone stacks these in a column the canvas could never shrink below its
+   own content and the panel pushed it off the page. */
+.mapscreen .canvas-wrap { position: relative; flex: 1; min-width: 0; min-height: 0; }
 
 .mapscreen .resizer {
   flex: 0 0 6px;
@@ -343,6 +347,9 @@
   .mapscreen .map-side {
     width: auto !important;
     flex: 0 0 38% !important;
+    /* Its `overflow-y: auto` cannot engage without this: `min-height: auto`
+       is min-content, so the panel grew instead of scrolling. */
+    min-height: 0;
     border-inline-start: none;
     border-top: 1px solid var(--line);
   }
