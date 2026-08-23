@@ -176,6 +176,15 @@ async function run(api: Api, op: Op, ids: Ids, siteId: string): Promise<void> {
       await api.patch(`/map/sections/${ids.of(op.section.id)}`,
         { column: op.col + 1, levels: op.levels })
       return
+    case 'section.gaps':
+      // 1-based on the wire; the document counts from 0. One instruction with
+      // its sign — `gap: false` is what brings a cell back, and the server
+      // mints a fresh empty shelf at the section's current default depth.
+      await api.patch(`/map/sections/${ids.of(op.section.id)}/gaps`, {
+        gap: op.gap,
+        cells: op.cells.map((c) => ({ column: c.col + 1, level: c.level + 1 })),
+      })
+      return
     case 'section.defaults':
       await api.patch(`/map/sections/${ids.of(op.section.id)}`, {
         default_levels: op.section.defaultLevels,

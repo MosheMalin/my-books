@@ -26,6 +26,7 @@ import {
   snapPoint,
   snapRect,
 } from './rect'
+import type { Section } from './model'
 import {
   DEFAULT_COLUMNS,
   addSection,
@@ -36,6 +37,7 @@ import {
   columnDividers,
   depthLines,
   frontFor,
+  isGap,
   isTooSmall,
   mapSection,
   maxDepth,
@@ -51,6 +53,7 @@ import {
   shelvesDifferingFromDefaultDepth,
   withColumnCount,
   withColumnLevels,
+  withGaps,
   withDefaultDepth,
   withRect,
   withShelfDepth,
@@ -689,5 +692,70 @@ describe('the exported file', () => {
     if (!back.ok) throw new Error('should parse')
     expect(back.plan.cases[0]!.rect.y).toBe(back.plan.rooms[0]!.rect.y)
     expect(bottom(back.plan.rooms[0]!.rect)).toBe(12)
+  })
+})
+
+describe('gaps — cells switched off (MAP_PLAN §3.10a)', () => {
+  const sec = (): Section => ({
+    id: 's1',
+    columnLevels: [4, 4],
+    gaps: [],
+    defaultLevels: 4,
+    defaultDepth: 2,
+    shelves: [0, 1].flatMap((col) =>
+      [0, 1, 2, 3].map((level) => ({ col, level, depth: 2, photos: 0, books: 0 })),
+    ),
+  })
+
+  it('takes the shelf away and leaves the extent exactly where it was', () => {
+    // The owner's own condition, 2026-08-22: *"the lower shelves should not
+    // get up now."* Shrinking the column is the alternative and it renumbers
+    // every shelf below the hole — which is what an address prints.
+    const holed = withGaps(sec(), [{ col: 0, level: 1 }], true)
+
+    expect(holed.columnLevels).toEqual([4, 4])
+    expect(isGap(holed, 0, 1)).toBe(true)
+    expect(shelfAt(holed, 0, 1)).toBeNull()
+    // …and level 2 and 3 are still level 2 and 3.
+    expect(shelfAt(holed, 0, 2)).not.toBeNull()
+    expect(shelfAt(holed, 0, 3)).not.toBeNull()
+    expect(holed.shelves).toHaveLength(7)
+  })
+
+  it('brings a cell back at the section CURRENT default depth', () => {
+    // What the server mints (§3.3), so the optimistic document and the reply
+    // agree instead of flickering the number.
+    const holed = withGaps(sec(), [{ col: 1, level: 0 }], true)
+    const back = withGaps({ ...holed, defaultDepth: 3 }, [{ col: 1, level: 0 }], false)
+
+    expect(isGap(back, 1, 0)).toBe(false)
+    expect(shelfAt(back, 1, 0)).toEqual({ col: 1, level: 0, depth: 3, photos: 0, books: 0 })
+  })
+
+  it('never touches the extent, however many cells go', () => {
+    // *"It should not delete the bookcase itself. Only to effect the
+    // cell(s)"* — structural, not a courtesy: no number of gaps changes the
+    // extent, and the extent is what the furniture is.
+    const every = [0, 1].flatMap((col) => [0, 1, 2, 3].map((level) => ({ col, level })))
+    const empty = withGaps(sec(), every, true)
+
+    expect(empty.shelves).toEqual([])
+    expect(empty.columnLevels).toEqual([4, 4])
+    expect(columnCount(empty)).toBe(2)
+  })
+
+  it('drops a cell outside the extent instead of drawing a hole in nothing', () => {
+    // The server answers 400 for one of these, so a document holding one
+    // would draw a hole the next reload cannot explain.
+    const asked = withGaps(sec(), [{ col: 9, level: 0 }, { col: 0, level: 99 }], true)
+    expect(asked.gaps).toEqual([])
+    expect(asked.shelves).toHaveLength(8)
+  })
+
+  it('is idempotent in both directions, so a repeated gesture is safe', () => {
+    const holed = withGaps(sec(), [{ col: 0, level: 0 }], true)
+    expect(withGaps(holed, [{ col: 0, level: 0 }], true).gaps).toEqual(holed.gaps)
+    expect(withGaps(holed, [{ col: 1, level: 1 }], false).gaps).toEqual(holed.gaps)
+    expect(withGaps(holed, [{ col: 1, level: 1 }], false).shelves).toHaveLength(7)
   })
 })

@@ -66,6 +66,14 @@ export interface MapText {
   apply: string
   rows_deep: (n: number) => string
   shelf_at: (addr: string, col: number, level: number) => string
+  /** P6.3.2b — a cell switched off. Named for what tapping it DOES, not
+   *  for what it is: an accessible name has to name an action. */
+  restore_cell: (addr: string, col: number, level: number) => string
+  restore_cell_title: string
+  marked_cells: (n: number) => string
+  make_space: (n: number) => string
+  make_space_title: string
+  cells_not_empty: (n: number) => string
   remove_level: (addr: string, col: number) => string
   add_level: (addr: string, col: number) => string
   // sites (§3.9) — a grouping above the floors, never part of an address
@@ -244,6 +252,12 @@ const HE: MapText = {
   apply: 'החלה',
   rows_deep: (n) => `${n} שורות לעומק`,
   shelf_at: (a, c, l) => `מדף, ${a}עמודה ${c}, גובה ${l}`,
+  restore_cell: (a, c, l) => `החזרת מדף ב${a}עמודה ${c}, גובה ${l}`,
+  restore_cell_title: 'כאן אין מדף. לחיצה מחזירה מדף ריק.',
+  marked_cells: (n) => `${n} תאים מסומנים`,
+  make_space: (n) => `פינוי ${n} תאים`,
+  make_space_title: 'התאים יישארו ריקים ואפשר להחזיר אותם. הכוננית נשארת.',
+  cells_not_empty: (n) => `${n} מהתאים המסומנים אינם ריקים. פנו אותם קודם.`,
   remove_level: (a, c) => `הסרת מדף מ${a}עמודה ${c}`,
   add_level: (a, c) => `הוספת מדף ל${a}עמודה ${c}`,
   // ⚠ אתר for a SITE — the property — and חדר for a Place, which is the room.
@@ -458,6 +472,12 @@ const EN: MapText = {
   apply: 'apply',
   rows_deep: (n) => `${n} rows front-to-back`,
   shelf_at: (a, c, l) => `shelf, ${a}column ${c}, level ${l}`,
+  restore_cell: (a, c, l) => `put a shelf back at ${a}column ${c}, level ${l}`,
+  restore_cell_title: 'No shelf here. Tap to put an empty one back.',
+  marked_cells: (n) => `${n} cells marked`,
+  make_space: (n) => `Make space (${n})`,
+  make_space_title: 'The cells stay empty and can be brought back. The bookcase stays.',
+  cells_not_empty: (n) => `${n} of the marked cells are not empty. Clear them first.`,
   remove_level: (a, c) => `remove a level from ${a}column ${c}`,
   add_level: (a, c) => `add a level to ${a}column ${c}`,
   site: 'Site',

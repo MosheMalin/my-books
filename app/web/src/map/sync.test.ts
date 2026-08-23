@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import { emptyPlan, newBookcase, newSection, withColumnCount } from './core/model'
+import { allShelves, emptyPlan, newBookcase, newSection, withColumnCount, withGaps } from './core/model'
 import type { Bookcase, Plan, Section } from './core/model'
 import { Ids, push, type Api } from './push'
 import { planDiff, toPlan, type MapWire, type ShelfWire } from './sync'
@@ -33,10 +33,12 @@ const WIRE: MapWire = {
   sections: [
     {
       id: 'hutch', bookcase_id: 'bc', ordinal: 2, column_levels: [2],
+    gaps: [],
       default_levels: 2, default_depth: 1,
     },
     {
       id: 'base', bookcase_id: 'bc', ordinal: 1, column_levels: [2, 3],
+    gaps: [],
       default_levels: 3, default_depth: 2,
     },
   ],
@@ -212,6 +214,7 @@ const section = (
 ): Section => ({
   id,
   columnLevels,
+  gaps: [],
   defaultLevels,
   defaultDepth,
   shelves: columnLevels.flatMap((levels, col) =>
@@ -487,5 +490,89 @@ describe('pushing', () => {
     }], new Ids(), 'st')
     expect(calls[0]![1]).toBe('/map/sections/sec/shelves/2/3')
     expect(calls[0]![2]).toEqual({ depth_count: 3 })
+  })
+})
+
+describe('gaps on the wire (P6.3.2)', () => {
+  const wire = (gaps: { column: number; level: number }[]): MapWire => ({
+    sites: [{ id: 'st', name: 'הבית', order: 0 }],
+    floors: [{ id: 'f1', site_id: 'st', name: 'קרקע', order: 0 }],
+    places: [{ id: 'p1', floor_id: 'f1', name: 'סלון', rect: { x: 0, y: 0, w: 9, h: 7 }, order: 0 }],
+    bookcases: [{ id: 'c1', floor_id: 'f1', place_id: 'p1', name: 'כוננית', front: 'S',
+                  rect: { x: 0, y: 0, w: 4, h: 1 }, order: 0 }],
+    sections: [{ id: 's1', bookcase_id: 'c1', ordinal: 1, column_levels: [3, 3],
+                 gaps, default_levels: 3, default_depth: 1 }],
+  })
+
+  it('re-bases the mask to 0 and leaves the gapped cell without a shelf', () => {
+    // The pillar's one off-by-one, applied to the mask exactly as it is to an
+    // address: the wire is 1-based, the document counts from 0.
+    const plan = toPlan(wire([{ column: 2, level: 3 }]), [], 'st')
+    const sec = plan.cases[0]!.sections[0]!
+
+    expect(sec.gaps).toEqual([{ col: 1, level: 2 }])
+    expect(sec.columnLevels).toEqual([3, 3], )
+    expect(sec.shelves.some((s) => s.col === 1 && s.level === 2)).toBe(false)
+    // …and the five other cells of the case are all still there, at the
+    // levels they had. A gap is a mask, not a resize.
+    expect(sec.shelves).toHaveLength(5)
+    expect(sec.shelves.filter((s) => s.col === 1).map((s) => s.level)).toEqual([0, 1])
+  })
+
+  it('counts slots the way the server counts addresses, so the ceilings agree', () => {
+    // `limits.ts:overCeiling` promises it MIRRORS the server. It counts
+    // `allShelves`, and the server counts `Section.addresses` — which skips a
+    // gapped cell. Building a shelf per CELL would have made the client
+    // refuse gestures the server accepts, on a masked case.
+    const masked = toPlan(wire([{ column: 1, level: 1 }, { column: 1, level: 2 }]), [], 'st')
+    expect(allShelves(masked.cases[0]!)).toHaveLength(4)
+  })
+
+  it('sends one op per direction, and only after the grid has room for it', () => {
+    // A cell must EXIST before it can be switched off — the server answers
+    // 400 for a gap outside the extent — so the mask op follows the grid ops
+    // in the same push.
+    const had = toPlan(wire([]), [], 'st')
+    const now = structuredClone(had)
+    const sec = now.cases[0]!.sections[0]!
+    now.cases[0]!.sections[0] = withGaps(
+      { ...sec, columnLevels: [4, 3] }, [{ col: 0, level: 3 }], true)
+
+    const ops = planDiff(had, now)
+    expect(ops.map((o) => o.kind)).toEqual(['section.levels', 'section.gaps'])
+    const op = ops[1] as { kind: 'section.gaps'; cells: unknown[]; gap: boolean }
+    expect(op.gap).toBe(true)
+    expect(op.cells).toEqual([{ col: 0, level: 3 }])
+  })
+
+  it('splits opening from restoring, because the route carries one sign', () => {
+    const had = toPlan(wire([{ column: 1, level: 1 }]), [], 'st')
+    const now = structuredClone(had)
+    const sec = now.cases[0]!.sections[0]!
+    now.cases[0]!.sections[0] = withGaps(
+      withGaps(sec, [{ col: 0, level: 0 }], false),   // this one comes back
+      [{ col: 1, level: 1 }], true,                   // this one goes
+    )
+
+    const ops = planDiff(had, now).filter((o) => o.kind === 'section.gaps') as {
+      kind: 'section.gaps'; cells: { col: number; level: number }[]; gap: boolean
+    }[]
+    expect(ops).toHaveLength(2)
+    expect(ops.find((o) => o.gap)!.cells).toEqual([{ col: 1, level: 1 }])
+    expect(ops.find((o) => !o.gap)!.cells).toEqual([{ col: 0, level: 0 }])
+  })
+
+  it('does not ask to restore a cell the extent no longer has', () => {
+    // Shrinking a column past a hole takes the hole with it (the server's
+    // `_pruned`). Sending "put that cell back" afterwards would be a 400 for
+    // a cell that is not there — the client must not manufacture one.
+    const had = toPlan(wire([{ column: 1, level: 3 }]), [], 'st')
+    const now = structuredClone(had)
+    const sec = now.cases[0]!.sections[0]!
+    now.cases[0]!.sections[0] = { ...sec, columnLevels: [1, 3], gaps: [],
+      shelves: sec.shelves.filter((s) => s.col !== 0 || s.level < 1) }
+
+    const ops = planDiff(had, now)
+    expect(ops.map((o) => o.kind)).toEqual(['section.levels'])
   })
 })

@@ -59,11 +59,25 @@ export type Shelf = {
  * A plain bookcase has ONE section, so the ordinary case costs nothing: the
  * editor hides the section header entirely until a second one exists.
  */
+/** One cell of a section's face, 0-based — the document's convention. */
+export type GapCell = { col: number; level: number }
+
 export type Section = {
   id: string
   /** One entry per column, holding that column's level count. The column count
    *  is this array's length; there is no second field to disagree. */
   columnLevels: number[]
+  /** The cells that hold NO shelf — the space a television stands in
+   *  (MAP_PLAN §3.10a, owner 2026-08-22).
+   *
+   *  ⚠ A MASK over the extent, never a change to it. `columnLevels` still
+   *  says how tall the wood is, so the shelves BELOW a hole keep the level
+   *  numbers their addresses print — which is the owner's own condition:
+   *  *"the lower shelves should not get up now."* A gapped cell simply has no
+   *  entry in `shelves`, so everything that counts slots (`allShelves`, and
+   *  `limits.ts:overCeiling` through it) agrees with the server, which counts
+   *  addresses. */
+  gaps: GapCell[]
   /** Applied WHEN A SHELF IS CREATED. Editing them does not reach back into
    *  existing shelves — that is an explicit action (MAP_PLAN §3.3). */
   defaultLevels: number
@@ -181,6 +195,7 @@ export function newSection(id: string, columns = 1): Section {
   const base: Section = {
     id,
     columnLevels: [],
+    gaps: [],
     defaultLevels: DEFAULT_LEVELS,
     defaultDepth: DEFAULT_DEPTH,
     shelves: [],
@@ -218,6 +233,7 @@ export function addSection(bc: Bookcase, where: 'top' | 'bottom'): Bookcase {
   const blank: Section = {
     id: nextSectionId(bc),
     columnLevels: [],
+    gaps: [],
     defaultLevels: neighbour?.defaultLevels ?? DEFAULT_LEVELS,
     defaultDepth: neighbour?.defaultDepth ?? DEFAULT_DEPTH,
     shelves: [],
@@ -252,6 +268,45 @@ export function columnCount(sec: Section): number {
 
 export function shelfAt(sec: Section, col: number, level: number): Shelf | null {
   return sec.shelves.find((s) => s.col === col && s.level === level) ?? null
+}
+
+/** Is this cell switched off? A hole is drawn where a shelf would be, and it
+ *  is tappable — that is how it comes back (MAP_PLAN §3.10a). */
+export function isGap(sec: Section, col: number, level: number): boolean {
+  return sec.gaps.some((g) => g.col === col && g.level === level)
+}
+
+/**
+ * Switch cells off, or back on — the document's half of `PATCH /gaps`.
+ *
+ * The extent is untouched in both directions; what changes is which cells
+ * carry a shelf. A restored cell gets the section's CURRENT default depth,
+ * which is what the server mints (§3.3), so the optimistic document and the
+ * reply agree instead of flickering.
+ *
+ * ⚠ Cells outside the extent are dropped rather than stored: the server
+ * refuses them with a 400, and a document holding one would draw a hole in a
+ * case that has no such cell.
+ */
+export function withGaps(sec: Section, cells: GapCell[], gap: boolean): Section {
+  const inside = cells.filter(
+    (c) => c.col >= 0 && c.col < sec.columnLevels.length &&
+      c.level >= 0 && c.level < (sec.columnLevels[c.col] ?? 0),
+  )
+  if (inside.length === 0) return sec
+  const hit = (c: GapCell) => inside.some((x) => x.col === c.col && x.level === c.level)
+  const gaps = gap
+    ? sec.gaps.concat(inside.filter((c) => !isGap(sec, c.col, c.level)))
+    : sec.gaps.filter((g) => !hit(g))
+  const shelves = gap
+    ? sec.shelves.filter((s) => !hit(s))
+    : sec.shelves.concat(
+        inside
+          .filter((c) => isGap(sec, c.col, c.level))
+          .map((c) => ({ col: c.col, level: c.level, depth: sec.defaultDepth,
+                         photos: 0, books: 0 })),
+      )
+  return { ...sec, gaps, shelves }
 }
 
 /**
@@ -602,7 +657,7 @@ export function planBounds(plan: Plan, floorId?: string): { min: Pt; max: Pt } {
  */
 export function overviewLayout(
   plan: Plan,
-  gap = 6,
+  gutter = 6,
 ): { floor: Floor; dx: number; dy: number; band: number; bandStart: number; width: number }[] {
   // EQUAL bands, one per storey, STACKED — three floors make three rows
   // (owner, 2026-08-16). Rows rather than columns because that is how a
@@ -610,11 +665,11 @@ export function overviewLayout(
   // because comparing them is what the view is for, and a small storey packed
   // beside a large one just looks squeezed.
   const bounds = plan.floors.map((f) => planBounds(plan, f.id))
-  const width = Math.max(gap, ...bounds.map((b) => b.max.x - b.min.x))
-  const band = Math.max(gap, ...bounds.map((b) => b.max.y - b.min.y))
+  const width = Math.max(gutter, ...bounds.map((b) => b.max.x - b.min.x))
+  const band = Math.max(gutter, ...bounds.map((b) => b.max.y - b.min.y))
   return plan.floors.map((floor, i) => {
     const b = bounds[i]!
-    const bandStart = i * (band + gap)
+    const bandStart = i * (band + gutter)
     // centred in its band both ways, so a small storey sits under its own
     // label rather than hard against a divider
     const dx = (width - (b.max.x - b.min.x)) / 2 - b.min.x
@@ -624,8 +679,8 @@ export function overviewLayout(
 }
 
 /** The whole overview's extent, for *Show all* while it is on screen. */
-export function overviewBounds(plan: Plan, gap = 6): { min: Pt; max: Pt } {
-  const cells = overviewLayout(plan, gap)
+export function overviewBounds(plan: Plan, gutter = 6): { min: Pt; max: Pt } {
+  const cells = overviewLayout(plan, gutter)
   const last = cells[cells.length - 1]
   if (!last) return { min: pt(0, 0), max: pt(0, 0) }
   return { min: pt(0, -4), max: pt(last.width, last.bandStart + last.band) }

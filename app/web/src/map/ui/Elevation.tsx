@@ -19,14 +19,17 @@ import { mapText } from '../text'
  */
 
 import type { Bookcase, Section } from '../core/model'
-import { MAX_DEPTH, columnCount, sectionsTopDown, shelfAt, shelvesDifferingFromDefaultDepth, shelvesInColumns } from '../core/model'
+import { MAX_DEPTH, columnCount, isGap, sectionsTopDown, shelfAt, shelvesDifferingFromDefaultDepth, shelvesInColumns } from '../core/model'
 import { nothingBound } from '../cost'
+import { whyNotGap } from '../limits'
 import type { Selection } from './types'
 
 type Props = {
   bc: Bookcase
   selection: Selection
-  onSelectShelf: (sectionId: string, col: number, level: number) => void
+  onSelectShelf: (sectionId: string, col: number, level: number, add: boolean) => void
+  /** Switch the marked cells off, or a single hole back on (MAP_PLAN §3.10a). */
+  onGaps: (sectionId: string, cells: { col: number; level: number }[], gap: boolean) => void
   onColumnLevels: (sectionId: string, col: number, levels: number) => void
   onColumnCount: (sectionId: string, count: number) => void
   onDefaultLevels: (sectionId: string, n: number) => void
@@ -79,9 +82,11 @@ function SectionBlock({
 }: Props & { sec: Section; many: boolean }) {
   const T = mapText(useI18n().lang)
   const cols = columnCount(sec)
-  const selected = selection.shelf?.caseId === bc.id && selection.shelf.sectionId === sec.id
-    ? selection.shelf
-    : null
+  // The cells marked in THIS section. A set, since P6.3.2b: a television is
+  // a rectangle of cells and the owner marks them before pressing delete.
+  const marked = selection.cells.filter(
+    (c) => c.caseId === bc.id && c.sectionId === sec.id)
+  const blocked = marked.length > 0 ? whyNotGap(sec, marked) : null
   const index = bc.sections.findIndex((s) => s.id === sec.id)
   // Numbered BOTTOM-UP, because that is how the thing was built: section 1
   // stands on the floor.
@@ -123,6 +128,36 @@ function SectionBlock({
         </header>
       )}
 
+      {/* ABSENT until cells are marked, not disabled — the house rule. It is
+          the only destructive control in the elevation that acts on a set, so
+          it says how many, and it never mentions the bookcase: deleting cells
+          does not delete furniture (owner, 2026-08-22). */}
+      {marked.length > 0 && (
+        <div className="elev-marked" role="group" aria-label={T.marked_cells(marked.length)}>
+          <span className="note">{T.marked_cells(marked.length)}</span>
+          {/* ⚠ The reason INSTEAD of the button, not a disabled button beside
+              it. The server refuses these with a 409 in English, after the
+              press; MapScreen's rule is that a refusal the screen could have
+              stated belongs before it. The 409 remains the backstop for what
+              another tab did — and for a NAMED empty cell, which the document
+              cannot see. */}
+          {blocked ? (
+            <span className="note warn" role="status">{T.cells_not_empty(blocked.cells)}</span>
+          ) : (
+            <button
+              type="button"
+              className="danger"
+              aria-label={T.make_space(marked.length)}
+              title={T.make_space_title}
+              onClick={() =>
+                props.onGaps(sec.id, marked.map((c) => ({ col: c.col, level: c.level })), true)}
+            >
+              {T.make_space(marked.length)}
+            </button>
+          )}
+        </div>
+      )}
+
       {/* The scroll lives HERE, around one section's columns — not around the
           whole panel (owner, 2026-08-16). A wide bookcase should slide its own
           columns; it should not drag the name box and the depth rule sideways
@@ -137,8 +172,28 @@ function SectionBlock({
             <div className="elev-col-head">{T.col_head(col + 1)}</div>
             {Array.from({ length: sec.columnLevels[col] ?? 0 }, (_, level) => {
               const shelf = shelfAt(sec, col, level)
-              const isSel = selected?.col === col && selected.level === level
+              const gap = isGap(sec, col, level)
+              const isSel = marked.some((c) => c.col === col && c.level === level)
               const override = shelf ? shelf.depth !== sec.defaultDepth : false
+              // ⚠ A hole is still a BUTTON, and it is the only way back: the
+              // owner's own words, *"user should be able to click on a
+              // 'missing' cell and make it a real shelf again"*. It says what
+              // it will do, not what it is, because "gap" names a state and
+              // an accessible name has to name an action.
+              if (gap) {
+                return (
+                  <button
+                    key={level}
+                    type="button"
+                    className="elev-cell gap"
+                    aria-label={T.restore_cell(addr, col + 1, level + 1)}
+                    title={T.restore_cell_title}
+                    onClick={() => props.onGaps(sec.id, [{ col, level }], false)}
+                  >
+                    <span className="elev-level">{level + 1}</span>
+                  </button>
+                )
+              }
               return (
                 <button
                   key={level}
@@ -146,7 +201,11 @@ function SectionBlock({
                   className={`elev-cell${isSel ? ' selected' : ''}${override ? ' override' : ''}`}
                   aria-label={T.shelf_at(addr, col + 1, level + 1)}
                   aria-pressed={isSel}
-                  onClick={() => props.onSelectShelf(sec.id, col, level)}
+                  // Ctrl/Shift adds to the marked set — the same modifier the
+                  // plan already uses to select several rooms, so the gesture
+                  // is learned once.
+                  onClick={(e) =>
+                    props.onSelectShelf(sec.id, col, level, e.ctrlKey || e.metaKey || e.shiftKey)}
                 >
                   <span className="elev-level">{level + 1}</span>
                   {shelf && shelf.depth > 1 && (

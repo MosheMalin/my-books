@@ -333,9 +333,9 @@ export function PlanCanvas(props: Props) {
           ? {
               rooms: [...new Set([...selection.rooms, ...rooms])],
               cases: [...new Set([...selection.cases, ...cases])],
-              shelf: null,
+              cells: [],
             }
-          : { rooms, cases, shelf: null },
+          : { rooms, cases, cells: [] },
       )
     }
 

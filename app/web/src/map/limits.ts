@@ -15,8 +15,8 @@
  * server will not do.
  */
 
-import type { Bookcase } from './core/model'
-import { allShelves } from './core/model'
+import type { Bookcase, GapCell, Section } from './core/model'
+import { allShelves, shelfAt } from './core/model'
 
 /** The most slots one bookcase may hold, across every section. */
 export const MAX_SLOTS_PER_BOOKCASE = 400
@@ -65,4 +65,42 @@ export function overCeiling(before: Bookcase, after: Bookcase): OverCeiling {
       after.sections.length > before.sections.length)
     return { what: 'sections' }
   return null
+}
+
+
+/**
+ * Why these cells cannot be switched off — in the document, before the press.
+ *
+ * The server refuses a gap over anything the owner declared (books, a
+ * photograph, a name, a row behind the shelf) with a 409. That refusal is the
+ * backstop for what another tab did; it is not the right way for the owner to
+ * find out, because it arrives in English after the gesture, and MapScreen's
+ * own rule is *"a refusal for a rule the screen could have stated before the
+ * press"*.
+ *
+ * ⚠ **Books, photographs and depth only — a LABEL is not in the document.**
+ * `Shelf` here carries `books`, `photos` and `depth`; it has never carried the
+ * name, because nothing in the editor shows one. So a named-but-empty cell
+ * still meets the server's 409, and that is the one case this cannot pre-empt.
+ * Saying so here is cheaper than the next reader discovering it as a bug.
+ */
+export type NotGappable = { cells: number; books: number; photos: number; deeper: number }
+
+export function whyNotGap(sec: Section, cells: GapCell[]): NotGappable | null {
+  let books = 0, photos = 0, deeper = 0, blocked = 0
+  for (const cell of cells) {
+    const shelf = shelfAt(sec, cell.col, cell.level)
+    if (!shelf) continue
+    // DEEPER than a fresh shelf here would be, never merely different: the
+    // server compares the same way, and for the same reason — editing a
+    // section's default leaves existing shelves behind it (§3.3), and
+    // refusing on that would refuse every cell of an ordinary bookcase.
+    const isDeeper = shelf.depth > sec.defaultDepth
+    if (shelf.books === 0 && shelf.photos === 0 && !isDeeper) continue
+    blocked += 1
+    if (shelf.books > 0) books += 1
+    if (shelf.photos > 0) photos += 1
+    if (isDeeper) deeper += 1
+  }
+  return blocked > 0 ? { cells: blocked, books, photos, deeper } : null
 }

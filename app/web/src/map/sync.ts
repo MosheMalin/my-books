@@ -22,7 +22,7 @@
  * from array position on import, and `shelves.section_id` now refers to one.
  */
 
-import type { Bookcase, Floor, Plan, Room, Section, Shelf } from './core/model'
+import type { Bookcase, Floor, GapCell, Plan, Room, Section, Shelf } from './core/model'
 import {
   DEFAULT_DEPTH,
   DEFAULT_LEVELS,
@@ -53,6 +53,9 @@ export type MapWire = {
     bookcase_id: string
     ordinal: number
     column_levels: number[]
+    /** Cells that hold no shelf (P6.3.2). 1-BASED, like every address on the
+     *  wire; the document re-bases them with everything else. */
+    gaps: { column: number; level: number }[]
     default_levels: number
     default_depth: number
   }[]
@@ -89,24 +92,37 @@ export function toPlan(map: MapWire, shelves: ShelfWire[], siteId: string): Plan
     map.sections
       .filter((s) => s.bookcase_id === caseId)
       .sort((a, b) => a.ordinal - b.ordinal)      // BOTTOM first, as drawn
-      .map((s) => ({
-        id: s.id,
-        columnLevels: s.column_levels.slice(),
-        defaultLevels: s.default_levels,
-        defaultDepth: s.default_depth,
-        shelves: s.column_levels.flatMap((levels, col) =>
-          Array.from({ length: levels }, (_, level) => {
-            const shelf = byAddress.get(slotKey(s.id, col, level))
-            return {
-              col,
-              level,
-              depth: shelf?.depth_count ?? s.default_depth,
-              photos: shelf?.capture_count ?? 0,
-              books: shelf?.book_count ?? 0,
-            }
-          }),
-        ),
-      }))
+      .map((s) => {
+        // 1-based on the wire, 0-based here — the pillar's one off-by-one,
+        // applied to the mask exactly as it is to an address.
+        const gaps = (s.gaps ?? []).map((g) => ({ col: g.column - 1, level: g.level - 1 }))
+        const gapped = new Set(gaps.map((g) => slotKey(s.id, g.col, g.level)))
+        return {
+          id: s.id,
+          columnLevels: s.column_levels.slice(),
+          gaps,
+          defaultLevels: s.default_levels,
+          defaultDepth: s.default_depth,
+          // ⚠ The extent still says how tall the column is — a gap does NOT
+          // shorten it — but a gapped cell gets no shelf entry. That is what
+          // keeps `allShelves` (and `limits.ts:overCeiling` through it)
+          // counting what the server counts: addresses, not cells.
+          shelves: s.column_levels.flatMap((levels, col) =>
+            Array.from({ length: levels }, (_, level) => ({ col, level }))
+              .filter(({ col: c, level: l }) => !gapped.has(slotKey(s.id, c, l)))
+              .map(({ col: c, level: l }) => {
+                const shelf = byAddress.get(slotKey(s.id, c, l))
+                return {
+                  col: c,
+                  level: l,
+                  depth: shelf?.depth_count ?? s.default_depth,
+                  photos: shelf?.capture_count ?? 0,
+                  books: shelf?.book_count ?? 0,
+                }
+              }),
+          ),
+        }
+      })
   return {
     // ⚠ The fallback is a LAST RESORT, not a normal path, and it is why
     // `ensureHome` exists: an earlier version let this synthesise a storey the
@@ -160,6 +176,10 @@ export type Op =
   | { kind: 'section.columns'; section: Section; columns: number }
   | { kind: 'section.levels'; section: Section; col: number; levels: number }
   | { kind: 'section.defaults'; section: Section }
+  /** Cells switched off, or back on (P6.3.2). One op per DIRECTION, never
+   *  a mixed list: the route carries the sign explicitly, for the reason
+   *  `patch_section` refuses two grid instructions in one request. */
+  | { kind: 'section.gaps'; section: Section; cells: GapCell[]; gap: boolean }
   | { kind: 'section.remove'; id: string }
   | { kind: 'shelf.depth'; section: Section; col: number; level: number; depth: number }
 
@@ -307,6 +327,21 @@ function shapeOps(had: Section, section: Section): Op[] {
     if (heights[col] !== levels)
       ops.push({ kind: 'section.levels', section, col, levels })
   })
+  // ⚠ AFTER the grid ops, and split by direction. After, because a cell has
+  // to exist before it can be switched off — the server refuses a gap outside
+  // the extent with a 400. Split, because the route takes one instruction
+  // with a sign, and because the two are not each other's undo in a single
+  // request: gapping cannot be sent alongside restoring and still be read.
+  const key = (c: GapCell) => `${c.col}:${c.level}`
+  const before = new Set(had.gaps.map(key))
+  const after = new Set(section.gaps.map(key))
+  const opened = section.gaps.filter((g) => !before.has(key(g)))
+  const closed = had.gaps.filter((g) => !after.has(key(g)) &&
+    g.col < columnCount(section) && g.level < (section.columnLevels[g.col] ?? 0))
+  if (opened.length > 0)
+    ops.push({ kind: 'section.gaps', section, cells: opened, gap: true })
+  if (closed.length > 0)
+    ops.push({ kind: 'section.gaps', section, cells: closed, gap: false })
   for (const shelf of section.shelves) {
     const stood = had.shelves.find(
       (s) => s.col === shelf.col && s.level === shelf.level)
@@ -329,7 +364,8 @@ function shapeOps(had: Section, section: Section): Op[] {
  *  same arithmetic, so this is a prediction only in name. */
 const built = (id: string, columns: number, levels: number, depth: number): Section =>
   withColumnCount(
-    { id, columnLevels: [], defaultLevels: levels, defaultDepth: depth, shelves: [] },
+    { id, columnLevels: [], gaps: [], defaultLevels: levels, defaultDepth: depth,
+      shelves: [] },
     Math.max(1, columns),
   )
 

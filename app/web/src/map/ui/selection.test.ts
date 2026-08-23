@@ -23,7 +23,7 @@ describe('the selection set', () => {
   })
 
   it('counts rooms and cases together', () => {
-    const s = { rooms: ['r1'], cases: ['c1'], shelf: null }
+    const s = { rooms: ['r1'], cases: ['c1'], cells: [] }
     expect(count(s)).toBe(2)
     expect(hasRoom(s, 'r1')).toBe(true)
     expect(hasCase(s, 'c1')).toBe(true)
@@ -38,7 +38,7 @@ describe('the selection set', () => {
     // The panels that edit one object ask for this, and the resize handles do
     // too: eight grips on each of six rooms is a field of dots, every one of
     // them ambiguous.
-    expect(only({ rooms: ['r1'], cases: ['c1'], shelf: null }, plan)).toBeNull()
+    expect(only({ rooms: ['r1'], cases: ['c1'], cells: [] }, plan)).toBeNull()
   })
 
   it('toggles in and back out again — Ctrl+click both ways', () => {
@@ -51,8 +51,8 @@ describe('the selection set', () => {
     // A shelf belongs INSIDE one bookcase. Keeping it while the selection
     // moves to a different object would leave the panel editing a cell of
     // something nobody has selected.
-    const withShelf = { rooms: [], cases: ['c1'], shelf: { caseId: 'c1', sectionId: 'c1:s1', col: 0, level: 0 } }
-    expect(toggle(withShelf, 'room', 'r1').shelf).toBeNull()
+    const withShelf = { rooms: [], cases: ['c1'], cells: [{ caseId: 'c1', sectionId: 'c1:s1', col: 0, level: 0 }] }
+    expect(toggle(withShelf, 'room', 'r1').cells).toEqual([])
   })
 
   it('never resolves an id that is not in the plan', () => {

@@ -770,6 +770,28 @@
   border-style: solid;
   color: var(--warn-ink);
 }
+/* A cell that is NOT a shelf — the space a television stands in (P6.3.2b).
+   It reads as absence rather than as a disabled shelf: no fill, a fainter
+   edge, and the level number kept, because the numbers around it did not
+   move and the hole has to look like it is IN the grid rather than beside
+   it. Still a button, and it is the only way back. */
+.mapscreen .elev-cell.gap {
+  background: transparent;
+  border-style: dotted;
+  border-color: color-mix(in srgb, var(--line) 60%, transparent);
+  color: color-mix(in srgb, var(--dim) 55%, transparent);
+}
+.mapscreen .elev-cell.gap:hover { border-color: var(--accent); color: var(--ink); }
+/* The marked-cell bar sits above the grid, and only exists while cells are
+   marked — absent, not disabled. */
+.mapscreen .elev-marked {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 4px 0;
+}
+.mapscreen .elev-marked .note { margin: 0; }
 .mapscreen .elev-level { opacity: 0.7; }
 .mapscreen .elev-depth { font-weight: 600; }
 .mapscreen .elev-photos { font-size: 10px; }
