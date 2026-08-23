@@ -58,6 +58,11 @@ function fakeMapServer() {
     refuseDeleteNext: null as number | null,
     /** Drop the next write the way a lift does: no response at all. */
     dropNext: false,
+    /** P6.4b: refuse `POST /map/undo` with this status. */
+    refuseUndo: null as number | null,
+    /** …and the reason `GET /map/undo` then gives for it. */
+    undoReason: 'world_moved',
+    undone: 0,
     /** Hold every POST until `release()`, so a test can make an edit arrive
      *  while an earlier one is still in flight. */
     holding: false,
@@ -113,6 +118,23 @@ function fakeMapServer() {
       return respond(null, 204)
     }
     if (method === 'GET' && path === '/shelves') return respond([])
+    // P6.4b's two routes. The GET is read only AFTER a refusal, and it is
+    // what decides WHICH refusal the owner is shown — so the fake honours
+    // `undoReason` rather than answering one shape for every case, which is
+    // the trap this suite already records about `limit`.
+    if (path === '/map/undo') {
+      if (method === 'GET') return respond({
+        available: false, reason: state.undoReason, kind: '', recorded_at: '',
+        restores: {}, changed: [],
+      })
+      if (state.refuseUndo) {
+        return respond({ detail: 'the world moved' }, state.refuseUndo)
+      }
+      state.undone += 1
+      return respond({ available: false, reason: 'already_undone', kind:
+                       'remove_column', recorded_at: '', restores: {},
+                       changed: [] })
+    }
     if (method === 'POST') {
       if (state.holding || (state.holdFloors && path === '/map/floors'))
         await new Promise<void>((go) => state.held.push(go))
@@ -551,5 +573,116 @@ describe('the sites of one library', () => {
     expect(screen.getByRole('alert')).toHaveTextContent(HE.refused_lead)
     expect(screen.getByRole('alert')).toHaveTextContent('עדיין יש כאן חדרים')
     expect(server.sites).toHaveLength(2)
+  })
+})
+
+
+/**
+ * P6.4b — the server undo, from the one control the owner has for it.
+ *
+ * Not covered by the dead-key scan, which proves only that a key is READ
+ * somewhere. What matters here is that the right one is shown: the three
+ * refusals are three different sentences, and showing "things have changed
+ * on those shelves" to somebody who had simply already pressed undo is a
+ * false statement about their data.
+ */
+describe('taking back the last destructive map edit', () => {
+  const openEdit = (user: ReturnType<typeof userEvent.setup>) =>
+    user.click(screen.getByRole('button', { name: HE.menu_edit }))
+
+  const press = async (user: ReturnType<typeof userEvent.setup>) => {
+    await openEdit(user)
+    await user.click(screen.getByRole('menuitem', { name: HE.undo_last_edit }))
+  }
+
+  /** What the owner is actually told, and where. `status` is the neutral
+   *  acknowledgement, `alert` the refusal — asserted by ROLE because that is
+   *  what makes the sentence announced rather than merely present.
+   *
+   *  ⚠ getAll, not get: the toolbar's *saved* indicator is a `status` too, so
+   *  the singular query throws "found multiple" and the failure reads as a
+   *  missing message rather than a second live region. */
+  const saidIn = (role: string, wanted: string) =>
+    waitFor(() => expect(
+      screen.getAllByRole(role).map((e) => e.textContent).join(' | '),
+    ).toContain(wanted), WAIT)
+      .then(() => screen.getAllByRole(role).map((e) => e.textContent).join(' | '))
+
+  it('is its own control, named differently from the drawing undo', async () => {
+    const user = userEvent.setup()
+    open()
+    await screen.findByRole('radio', { name: HE.arrow }, WAIT)
+    await openEdit(user)
+
+    // ⚠ Compared over the menu's OWN accessible names, not by looking each
+    // one up: the drawing undo announces as "ביטולCtrl+Z" — its label and its
+    // <kbd> — so fetching it by `HE.undo` finds nothing and would have made
+    // this test pass for the wrong reason if it had been written the other
+    // way round. What the rule forbids is two rows sharing a name.
+    const names = screen.getAllByRole('menuitem').map((m) => m.textContent)
+    expect(names).toContain(HE.undo_last_edit)
+    expect(new Set(names).size).toBe(names.length)
+    expect(HE.undo_last_edit).not.toBe(HE.undo)
+  })
+
+  it('asks the server, and says so when it worked', async () => {
+    const user = userEvent.setup()
+    open()
+    await screen.findByRole('radio', { name: HE.arrow }, WAIT)
+    await press(user)
+
+    await waitFor(() => expect(posted('/map/undo')).toHaveLength(1), WAIT)
+    expect(await saidIn('status', HE.undo_done)).toContain(HE.undo_done)
+    // …and the drawing is re-derived, because the server has just changed
+    // rows this session's document knows nothing about.
+    await waitFor(() => expect(derives()).toBeGreaterThan(1), WAIT)
+  })
+
+  it('says nothing changed when the refusal is that it was already undone',
+     async () => {
+    const user = userEvent.setup()
+    server.refuseUndo = 409
+    server.undoReason = 'already_undone'
+    open()
+    await screen.findByRole('radio', { name: HE.arrow }, WAIT)
+    await press(user)
+
+    const said = await saidIn('alert', HE.undo_already)
+    expect(said).toContain(HE.undo_already)
+    expect(said).not.toContain(HE.undo_moved)
+    // It ASKED why rather than assuming — the request that makes the
+    // difference between an honest sentence and a plausible one.
+    expect(server.calls).toContain('GET /map/undo')
+  })
+
+  it('says the shelves moved only when they actually did', async () => {
+    const user = userEvent.setup()
+    server.refuseUndo = 409
+    server.undoReason = 'world_moved'
+    open()
+    await screen.findByRole('radio', { name: HE.arrow }, WAIT)
+    await press(user)
+
+    const said = await saidIn('alert', HE.undo_moved)
+    expect(said).toContain(HE.undo_moved)
+    expect(said).not.toContain(HE.undo_already)
+  })
+
+  it('never claims a reason it was not given', async () => {
+    // The fallback, and the one that matters: if the GET fails or answers
+    // something new, the owner must not be told a specific thing that may be
+    // untrue. `world_moved` is the safe default because it is the only one
+    // that describes a state the server is in rather than one the OWNER is
+    // in — being told to look again is never a lie about what they did.
+    const user = userEvent.setup()
+    server.refuseUndo = 409
+    server.undoReason = 'something_new'
+    open()
+    await screen.findByRole('radio', { name: HE.arrow }, WAIT)
+    await press(user)
+
+    const said = await saidIn('alert', HE.undo_moved)
+    expect(said).not.toContain(HE.undo_already)
+    expect(said).not.toContain(HE.undo_nothing)
   })
 })

@@ -37,6 +37,7 @@ type Props = {
   onGhosts: (on: boolean) => void
   onAllFloors: (on: boolean) => void
   onUndo: () => void
+  onUndoLastEdit: () => void
   onRedo: () => void
   onFit: () => void
   onZoom: (factor: number) => void
@@ -146,6 +147,13 @@ export function Toolbar(props: Props) {
           items={[
             { label: T.undo, shortcut: 'Ctrl+Z', disabled: !props.canUndo, onSelect: props.onUndo },
             { label: T.redo, shortcut: 'Ctrl+Y', disabled: !props.canRedo, onSelect: props.onRedo },
+            // P6.4b. Its OWN label, never `T.undo`'s: two rows of one menu
+            // announcing the same accessible name is the collision this
+            // file's ⚠ is about, and these two genuinely differ — `undo`
+            // steps the drawing back, this asks the server to put destroyed
+            // shelves back. No shortcut: it is one server round trip with a
+            // real refusal, not something to hold a key down on.
+            { label: T.undo_last_edit, onSelect: props.onUndoLastEdit },
             { label: T.copy, shortcut: 'Ctrl+C', disabled: nothingSelected, onSelect: props.onCopy },
             { label: T.paste, shortcut: 'Ctrl+V', disabled: !props.canPaste, onSelect: props.onPaste },
             {

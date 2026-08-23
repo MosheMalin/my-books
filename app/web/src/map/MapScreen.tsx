@@ -85,6 +85,11 @@ export type MapScreenProps = {
     onAddSite: () => void
     onRenameSite: (id: string, name: string) => void
     onRemoveSite: (id: string) => void
+    /** P6.4b's SERVER undo — a different thing from `onUndo`, which is this
+     *  session's drawing history. It lives on `site` for the same reason the
+     *  site gestures do: it is not expressible in the document, because what
+     *  it takes back is rows the document never held. */
+    onUndoLastEdit: () => void
   }
 }
 
@@ -742,6 +747,7 @@ export default function MapScreen(props: MapScreenProps) {
         onTheme={setTheme}
         onUndo={() => setHist(undo)}
         onRedo={() => setHist(redo)}
+        onUndoLastEdit={props.site.onUndoLastEdit}
         onFit={doFit}
         onCopy={copySelection}
         onPaste={paste}

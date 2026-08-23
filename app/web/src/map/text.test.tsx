@@ -102,6 +102,7 @@ const ONE_SITE = {
   onAddSite: () => {},
   onRenameSite: () => {},
   onRemoveSite: () => {},
+        onUndoLastEdit: () => {},
 }
 
 const openEditor = () =>

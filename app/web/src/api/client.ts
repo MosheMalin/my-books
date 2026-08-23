@@ -635,6 +635,14 @@ export type MapDrawing = components['schemas']['MapDTO']
 export const getMap = (opts: ApiOptions = {}): Promise<MapDrawing> =>
   getJson('/api/v1/map', opts)
 
+/** Whether the last destructive map edit can still be taken back (P6.4b).
+ *  Named rather than left to `mapPost`'s generic shape because it is a GET,
+ *  and the three verbs beside it are all writes. */
+export type UndoOffer = components['schemas']['UndoOfferDTO']
+
+export const getUndoOffer = (opts: ApiOptions = {}): Promise<UndoOffer> =>
+  getJson('/api/v1/map/undo', opts)
+
 export const mapPost = (path: string, body?: unknown, opts?: ApiOptions) =>
   send('POST', `/api/v1${path}`, body, opts) as Promise<any>
 
