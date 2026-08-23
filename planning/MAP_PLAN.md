@@ -1185,12 +1185,37 @@ The decomposition, each landing on `main` before the next:
 
 | # | Item | Size | Reviewers |
 |---|---|---|---|
-| **P6.4a** | **The alias, and nothing using it** — schema **v22**, one alias row carrying the absorbed shelf's id AND its former address, the resolver, `BookStore.books_on_shelf`, and "a shelf other identities resolve to is OCCUPIED". No merge, no route. | M | `review-migration` **before**, data-integrity, quality |
-| **P6.4b** | **Undo for destructive map edits** (§3.15) — the journal, the inverse, and the invalidation rule. Covers remove column, remove section, delete bookcase, remove site; the merge joins it in P6.4d. ⚠ Schema step. | L | `review-migration` **before**, data-integrity, quality, ux |
+| **P6.4a** | **The alias, and nothing using it** — schema **v23**, one alias row carrying the absorbed shelf's id AND its former address, the resolver, `BookStore.books_on_shelf`, and "a shelf other identities resolve to is OCCUPIED". No merge, no route. | M | `review-migration` **before**, data-integrity, quality |
+| **P6.4b** | **Undo for destructive map edits** (§3.15) — the journal, the inverse, and the invalidation rule. Covers remove column, remove section, delete bookcase, remove site, **and switching cells off** (P6.3.2, which arrived after §3.15 was written); the merge joins it in P6.4d. ⚠ Schema **v22**, and it runs FIRST — see the note below. | L | `review-migration` **before**, data-integrity, quality, ux |
 | **P6.4c** | **Bind** — an unaddressed shelf gains an address, and loses one. No identities join; a taken slot is a 409 naming the occupant and offering the merge. | S | data-integrity, security, quality, ux |
 | **P6.4d** | **Merge** — two identities become one, undoable. ⚠ **carries the data-loss risk.** | L | data-integrity, security, quality, ux |
 | **P6.4e** | **History across the seam** — reads, streaks, staleness and the *formerly* line resolve through the alias. | M | data-integrity, quality, ux |
 | **P6.4f** | *Optional:* **the proposal** — candidates from typed labels only, each an explicit ✓. | S | quality, ux, security |
+
+⚠ **The order moved, and so did the numbering** (owner, 2026-08-23). **P6.4b
+runs FIRST**: §3.15 says every destructive map edit is undoable *"and that
+lands before the merge"*, and P6.3.2 has since added a fifth destructive edit
+(switching cells off) to the four that decision named. Landing the journal
+first means gaps, column removal, section removal and bookcase deletion all
+become reversible before anything can merge — rather than the journal being
+amended by each item that arrives after it. So the steps are **v22 for the
+undo journal** and **v23 for the alias**.
+
+**Two questions §3.11 did not settle, answered before P6.4a starts** (owner,
+2026-08-23):
+
+- **deleting a shelf that other identities resolve to is REFUSED**, naming the
+  count — the same shape as `ShelfNotEmpty`. Cascading would discard *"the
+  shelf that was at section 1, column 2, level 3"*, which is the one thing the
+  alias exists to answer, and it would take the P6.4c census's baseline with
+  it. Keeping the aliases pointing at a deleted shelf was the third option and
+  is worse than either: it breaks the foreign key that makes an alias of an
+  alias unrepresentable, so the resolver would need a cycle guard and a null
+  check on every call;
+- **two aliases may not claim one former address** — a unique index over
+  `(library_id, section_id, col, level)` where it is not null. The
+  address→survivor lookup must have exactly one answer, and the alternative is
+  a query that silently picks the first of several.
 
 ⚠ **The numbering moved once.** P6.4a's step was planned as v21 and is now
 **v22**: P6.3.2a landed first and spent v21 on the section mask (§3.10a). The
