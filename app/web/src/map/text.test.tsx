@@ -255,3 +255,53 @@ describe('the editor in Hebrew', () => {
     expect(saved.getAttribute('title')).not.toMatch(/Save to file/)
   })
 })
+
+describe('counted strings say ONE, in both languages', () => {
+  it('never renders a bare `1 <plural>`', () => {
+    // ⚠ The FOURTH time this class of defect has been caught here. The table
+    // already carries a ⚠ from `delete_many` (*"a review found `1 פריטים` /
+    // `1 חדרים` where every English counterpart handled the singular"*), and
+    // P6.3.2b shipped `1 תאים מסומנים` under it — because a note is not a
+    // gate. This is the gate, and it found a fifth on its first run:
+    // `rows_deep` had been rendering "1 שורות לעומק" since the port.
+    //
+    // ⚠⚠ **Which keys are counts comes from the TYPE, not from a list and not
+    // from a probe.** Two cheaper discriminators were tried and both were
+    // wrong: a hand-kept skip list grows silently stale, and a sentinel
+    // string handed to the function comes back out of EVERY template, which
+    // silently skipped every key including the broken ones — measured, the
+    // guard passed with the bug restored. `(n: number) => string` in
+    // `MapText` is the declaration that a parameter counts something, so
+    // declaring one opts the key in automatically.
+    const declared = readFileSync(join(HERE, 'text.ts'), 'utf8')
+    // Only the INTERFACE spells the types out; the two tables write
+    // `key: (n) => …` with none. So the typed form is unambiguous without
+    // having to slice the file, and slicing it on a literal newline is what
+    // broke this test's first cut.
+    const counted = new Set(
+      [...declared.matchAll(/^ {2}(\w+): \(n: number\) => string$/gm)].map((m) => m[1]!))
+    expect(counted.size, 'no counted keys found — the interface shape moved')
+      .toBeGreaterThan(5)
+
+    const nounless = new Set(['selected_n'])
+
+    for (const [lang, table] of Object.entries(TABLES)) {
+      for (const key of counted) {
+        const fn = (table as unknown as Record<string, unknown>)[key] as (n: number) => string
+        const one = fn(1)
+        const two = fn(2)
+        // A count with NO NOUN after it has nothing to agree with, so it is
+        // right in every language at every number. English «1 selected» is
+        // correct; «1 cells marked» is not, and the difference is the noun.
+        // Opt-OUT rather than opt-in, deliberately: a new counted string is
+        // checked by default, and only a deliberate edit here excuses one.
+        if (nounless.has(key)) continue
+        // A phrase that ENDS with its number is naming a value, not counting
+        // anything («עמודה 1», "level 1") — no noun after it to agree with.
+        if (one.trim().endsWith('1')) continue
+        expect(one, `${lang}.${key} reads "${one}" — the plural with a 1 in it`)
+          .not.toBe(two.replace(/2/g, '1'))
+      }
+    }
+  })
+})

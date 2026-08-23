@@ -37,19 +37,30 @@ export type Theme = 'dark' | 'light'
  * selected INSIDE a bookcase — it is not a plan object, it never joins a
  * marquee, and it never gets deleted by the Delete key.
  */
+/** One cell of one section's face. 0-based here, like every index in the
+ *  document; the wire is 1-based (see `sync.ts`'s ⚠). */
+export type Cell = { caseId: string; sectionId: string; col: number; level: number }
+
 export type Selection = {
   rooms: string[]
   cases: string[]
-  /** The cell selected INSIDE a bookcase. Its address is (section, column,
+  /** The cells selected INSIDE a bookcase. Their address is (section, column,
    *  level) — a case may be built of a base and a taller unit standing on it,
-   *  and those divide differently. */
-  shelf: { caseId: string; sectionId: string; col: number; level: number } | null
+   *  and those divide differently.
+   *
+   *  ⚠ A LIST since P6.3.2b, and for the owner's reason: *"I want to be able
+   *  to mark several cells and click delete"* — a television is a rectangle
+   *  of cells, not one. Panels that edit a single shelf ask `onlyCell`, the
+   *  way panels that edit one object already ask `only`. It still never joins
+   *  a marquee and is still never deleted by the Delete key: that key means
+   *  furniture, and a cell is not furniture. */
+  cells: Cell[]
 }
 
-export const EMPTY: Selection = { rooms: [], cases: [], shelf: null }
+export const EMPTY: Selection = { rooms: [], cases: [], cells: [] }
 
-export const selectRoom = (id: string): Selection => ({ rooms: [id], cases: [], shelf: null })
-export const selectCase = (id: string): Selection => ({ rooms: [], cases: [id], shelf: null })
+export const selectRoom = (id: string): Selection => ({ rooms: [id], cases: [], cells: [] })
+export const selectCase = (id: string): Selection => ({ rooms: [], cases: [id], cells: [] })
 
 export const count = (s: Selection): number => s.rooms.length + s.cases.length
 
@@ -71,7 +82,36 @@ export function toggle(s: Selection, kind: 'room' | 'case', id: string): Selecti
   const key = kind === 'room' ? 'rooms' : 'cases'
   const list = s[key]
   const next = list.includes(id) ? list.filter((x) => x !== id) : list.concat(id)
-  return { ...s, [key]: next, shelf: null }
+  return { ...s, [key]: next, cells: [] }
+}
+
+const sameCell = (a: Cell, b: Cell): boolean =>
+  a.sectionId === b.sectionId && a.col === b.col && a.level === b.level
+
+/** The single selected cell, or null when zero or several are. The shelf
+ *  panel edits ONE shelf's depth, so it asks this rather than reaching into
+ *  the list — `only`'s rule, one level down. */
+export function onlyCell(s: Selection): Cell | null {
+  return s.cells.length === 1 ? (s.cells[0] ?? null) : null
+}
+
+export const hasCell = (s: Selection, cell: Cell): boolean =>
+  s.cells.some((c) => sameCell(c, cell))
+
+/**
+ * Mark a cell, or add it to the marked set.
+ *
+ * ⚠ Cells of ONE bookcase, always: `caseId` is what the elevation is showing,
+ * and a set spanning two cases could be deleted by one gesture while only one
+ * of them is on screen. Marking a cell of another case starts a new set.
+ */
+export function markCell(s: Selection, cell: Cell, add: boolean): Selection {
+  const mine = s.cells.filter((c) => c.caseId === cell.caseId)
+  if (!add) return { rooms: [], cases: s.cases, cells: [cell] }
+  const next = mine.some((c) => sameCell(c, cell))
+    ? mine.filter((c) => !sameCell(c, cell))
+    : mine.concat(cell)
+  return { rooms: [], cases: s.cases, cells: next }
 }
 
 /**

@@ -24,7 +24,7 @@
  */
 
 import type { Bookcase, Floor, Plan, Room, Section, Shelf } from './model'
-import { DEFAULT_DEPTH, DEFAULT_LEVELS, GROUND_FLOOR, emptyPlan } from './model'
+import { DEFAULT_DEPTH, DEFAULT_LEVELS, GROUND_FLOOR, emptyPlan, inExtent } from './model'
 import type { Rect, Side } from './rect'
 import { integral } from './rect'
 
@@ -156,12 +156,27 @@ function readSection(v: unknown): Section | null {
     .map((n) => num(n, 1))
     .map((n) => Math.max(1, Math.round(n)))
   if (columnLevels.length === 0) return null
+  // ⚠ The mask is READ, not defaulted away (P6.3.2b). A file's gaps are cells
+  // the owner switched off; dropping them on import would silently fill the
+  // television's space with shelves, and `serializePlan` writes the whole section,
+  // so an import that forgot them would lose them on the next export too.
+  // Out-of-extent cells are dropped, exactly as `withGaps` and the server do.
+  const gaps = asArray(v['gaps'])
+    .map((g) => (isRecord(g)
+      ? { col: Math.round(num(g['col'], -1)), level: Math.round(num(g['level'], -1)) }
+      : { col: -1, level: -1 }))
+    .filter((g) => inExtent({ columnLevels } as Section, g))
+  const gapped = new Set(gaps.map((g) => `${g.col}:${g.level}`))
   return {
     id: '', // assigned by readSections
     columnLevels,
+    gaps,
     defaultLevels: Math.max(1, Math.round(num(v['defaultLevels'], DEFAULT_LEVELS))),
     defaultDepth: Math.max(1, Math.round(num(v['defaultDepth'], DEFAULT_DEPTH))),
-    shelves: asArray(v['shelves']).map(readShelf).filter(isPresent),
+    // A gapped cell holds no shelf, so a file listing both loses the shelf —
+    // the same precedence `toPlan` applies to the server's answer.
+    shelves: asArray(v['shelves']).map(readShelf).filter(isPresent)
+      .filter((s) => !gapped.has(`${s.col}:${s.level}`)),
   }
 }
 

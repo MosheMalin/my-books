@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { EMPTY, count, hasCase, hasRoom, only, selectCase, selectRoom, toggle } from './types'
+import { EMPTY, count, hasCase, hasRoom, markCell, only, selectCase, selectRoom, toggle } from './types'
 import { emptyPlan, newBookcase } from '../core/model'
 import type { Plan } from '../core/model'
 
@@ -23,7 +23,7 @@ describe('the selection set', () => {
   })
 
   it('counts rooms and cases together', () => {
-    const s = { rooms: ['r1'], cases: ['c1'], shelf: null }
+    const s = { rooms: ['r1'], cases: ['c1'], cells: [] }
     expect(count(s)).toBe(2)
     expect(hasRoom(s, 'r1')).toBe(true)
     expect(hasCase(s, 'c1')).toBe(true)
@@ -38,7 +38,7 @@ describe('the selection set', () => {
     // The panels that edit one object ask for this, and the resize handles do
     // too: eight grips on each of six rooms is a field of dots, every one of
     // them ambiguous.
-    expect(only({ rooms: ['r1'], cases: ['c1'], shelf: null }, plan)).toBeNull()
+    expect(only({ rooms: ['r1'], cases: ['c1'], cells: [] }, plan)).toBeNull()
   })
 
   it('toggles in and back out again — Ctrl+click both ways', () => {
@@ -51,11 +51,34 @@ describe('the selection set', () => {
     // A shelf belongs INSIDE one bookcase. Keeping it while the selection
     // moves to a different object would leave the panel editing a cell of
     // something nobody has selected.
-    const withShelf = { rooms: [], cases: ['c1'], shelf: { caseId: 'c1', sectionId: 'c1:s1', col: 0, level: 0 } }
-    expect(toggle(withShelf, 'room', 'r1').shelf).toBeNull()
+    const withShelf = { rooms: [], cases: ['c1'], cells: [{ caseId: 'c1', sectionId: 'c1:s1', col: 0, level: 0 }] }
+    expect(toggle(withShelf, 'room', 'r1').cells).toEqual([])
   })
 
   it('never resolves an id that is not in the plan', () => {
     expect(only(selectRoom('ghost'), plan)).toBeNull()
+  })
+})
+
+describe('markCell — several cells of ONE bookcase (P6.3.2b)', () => {
+  const A = { caseId: 'c1', sectionId: 's1', col: 0, level: 0 }
+  const B = { caseId: 'c1', sectionId: 's1', col: 0, level: 1 }
+  const elsewhere = { caseId: 'c2', sectionId: 's9', col: 0, level: 0 }
+  const held = (cells: typeof A[]) => ({ rooms: [], cases: ['c1'], cells })
+
+  it('adds with the modifier and replaces without it', () => {
+    expect(markCell(held([A]), B, true).cells).toEqual([A, B])
+    expect(markCell(held([A]), B, false).cells).toEqual([B])
+  })
+
+  it('toggles a marked cell back out, like Ctrl+click on a room', () => {
+    expect(markCell(held([A, B]), B, true).cells).toEqual([A])
+  })
+
+  it('starts a new set when the cell belongs to another bookcase', () => {
+    // ⚠ The clause's own hazard: a set spanning two cases could be emptied by
+    // one gesture while only one of them is on screen.
+    expect(markCell({ rooms: [], cases: ['c2'], cells: [elsewhere] }, B, true).cells)
+      .toEqual([B])
   })
 })

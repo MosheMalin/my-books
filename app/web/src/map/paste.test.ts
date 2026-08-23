@@ -18,6 +18,7 @@ import type { Doc } from './ui/types'
 const section = (id: string, cols: number, levels: number, depth: number): Section => ({
   id,
   columnLevels: Array.from({ length: cols }, () => levels),
+  gaps: [],
   defaultLevels: levels,
   defaultDepth: depth,
   shelves: Array.from({ length: cols }, (_, col) =>
@@ -95,7 +96,7 @@ describe('pasting a bookcase', () => {
     const { doc, selection } = pasteInto(docOf(plan), clip, 'f2')
     expect(doc.plan.cases[1]!.floorId).toBe('f2')
     expect(selection.cases).toEqual([doc.plan.cases[1]!.id])
-    expect(selection.shelf).toBeNull()
+    expect(selection.cells).toEqual([])
   })
 
   it('numbers from the document, so two pastes never collide', () => {

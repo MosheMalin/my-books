@@ -22,6 +22,7 @@ import {
   withColumnCount,
   withColumnLevels,
   withDefaultDepth,
+  withGaps,
   withDefaultLevels,
   withRect,
   withShelfDepth,
@@ -500,12 +501,28 @@ export default function MapScreen(props: MapScreenProps) {
         (bc) => mapSection(bc, sid, (s) => withShelfDepth(s, col, level, n)),
         `shelfdepth:${sid}:${col}:${level}`,
       ),
+    // ⚠ `growCase`, not `mapCase`, and only for the RESTORE direction — that
+    // is the one that creates slots, and the ceiling guard is one-directional
+    // for the reason `limits.ts` states. Switching cells OFF can never cross
+    // a ceiling, and refusing it would trap a case that is already over one.
+    setGaps: (id, sid, cells, gap) => {
+      const edit = (bc: Bookcase) => mapSection(bc, sid, (s) => withGaps(s, cells, gap))
+      if (gap) {
+        mapCase(id, edit)
+        // The cells the owner just emptied are no longer cells to act on, and
+        // leaving them marked would offer *make space* for holes.
+        setSelection((sel) => ({ ...sel, cells: [] }))
+      } else {
+        growCase(id, edit)
+      }
+    },
     addSection: (id, where) => growCase(id, (bc) => addSection(bc, where)),
     removeSection: (id, sid) => {
       mapCase(id, (bc) => removeSection(bc, sid))
       // The selected cell may have been inside it. Dropping the shelf while
       // keeping the case selected is the least surprising landing.
-      setSelection((sel) => (sel.shelf?.sectionId === sid ? { ...sel, shelf: null } : sel))
+      setSelection((sel) =>
+        sel.cells.some((c) => c.sectionId === sid) ? { ...sel, cells: [] } : sel)
     },
     deleteSelection,
     copySelection,

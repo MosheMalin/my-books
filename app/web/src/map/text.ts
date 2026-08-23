@@ -66,6 +66,23 @@ export interface MapText {
   apply: string
   rows_deep: (n: number) => string
   shelf_at: (addr: string, col: number, level: number) => string
+  /** P6.3.2b — a cell switched off. Named for what tapping it DOES, not
+   *  for what it is: an accessible name has to name an action. */
+  restore_cell: (addr: string, col: number, level: number) => string
+  restore_cell_title: string
+  marked_cells: (n: number) => string
+  make_space: (n: number) => string
+  make_space_title: string
+  /** Named per CAUSE. A review pressed the control with a cell that was empty
+   *  but two rows deep and read *"clear them first"* — a remedy that does not
+   *  exist for that cause, which is CLAUDE.md's "a wrong stated reason is
+   *  worse than none" exactly. */
+  cells_have_books: (n: number) => string
+  cells_have_photos: (n: number) => string
+  cells_are_deep: (n: number) => string
+  gaps_are_tappable: string
+  add_more_cells: string
+  adding_more_cells: string
   remove_level: (addr: string, col: number) => string
   add_level: (addr: string, col: number) => string
   // sites (§3.9) — a grouping above the floors, never part of an address
@@ -242,8 +259,38 @@ const HE: MapText = {
   apply_levels: 'החלת ברירת המחדל על כל העמודות',
   apply_levels_of: (s) => `החלת ברירת המחדל על כל העמודות של ${s}`,
   apply: 'החלה',
-  rows_deep: (n) => `${n} שורות לעומק`,
+  // ⚠ Found by the singular guard, and PRE-EXISTING: this shipped reading
+  // "1 שורות לעומק" — one ROWS deep — in the tooltip of every shelf whose
+  // depth is its own.
+  rows_deep: (n) => (n === 1 ? 'שורה אחת לעומק' : `${n} שורות לעומק`),
   shelf_at: (a, c, l) => `מדף, ${a}עמודה ${c}, גובה ${l}`,
+  restore_cell: (a, c, l) => `החזרת מדף ב${a}עמודה ${c}, גובה ${l}`,
+  restore_cell_title: 'כאן אין מדף. לחיצה מחזירה מדף ריק.',
+  // ⚠ Singular branches, and the ⚠ on `delete_many` above is why: the same
+  // defect shipped there once already. A review measured `1 תאים מסומנים`
+  // here — and, because a phone cannot mark a second cell at all (below),
+  // ONE is the only count a phone owner ever reads.
+  marked_cells: (n) => (n === 1 ? 'תא אחד מסומן' : `${n} תאים מסומנים`),
+  // ⚠ NOT `פינוי`. That is the verb the refusal beside it uses for *take the
+  // books off*, so one word meant two things 40px apart — a review caught the
+  // reader being told to do the thing the button claims to do.
+  make_space: (n) => (n === 1 ? 'השארת מקום (תא אחד)' : `השארת מקום (${n} תאים)`),
+  // ⚠ It does NOT promise reversibility. The address comes back; the shelf's
+  // id does not, and standing decisions are keyed by it (see `apply_gaps`).
+  // §3.11's alias makes the fuller promise true, in P6.4e.
+  make_space_title: 'התאים יפסיקו להיות מדפים. הכוננית והגבהים נשארים.',
+  cells_have_books: (n) => (n === 1
+    ? 'על אחד התאים המסומנים עומדים ספרים. הסירו אותם קודם.'
+    : `על ${n} מהתאים המסומנים עומדים ספרים. הסירו אותם קודם.`),
+  cells_have_photos: (n) => (n === 1
+    ? 'לאחד התאים המסומנים יש צילום. מחקו אותו במסך המדף קודם.'
+    : `ל-${n} מהתאים המסומנים יש צילומים. מחקו אותם במסך המדף קודם.`),
+  cells_are_deep: (n) => (n === 1
+    ? 'אחד התאים המסומנים הוגדר עם שורה מאחור. שנו את העומק שלו קודם.'
+    : `${n} מהתאים המסומנים הוגדרו עם שורה מאחור. שנו את העומק שלהם קודם.`),
+  gaps_are_tappable: 'תא ריק — לחיצה מחזירה מדף.',
+  add_more_cells: 'סימון תאים נוספים',
+  adding_more_cells: 'לחיצה מוסיפה תאים לסימון',
   remove_level: (a, c) => `הסרת מדף מ${a}עמודה ${c}`,
   add_level: (a, c) => `הוספת מדף ל${a}עמודה ${c}`,
   // ⚠ אתר for a SITE — the property — and חדר for a Place, which is the room.
@@ -350,7 +397,7 @@ const HE: MapText = {
   in_room: (name) => ` · ב${name}`,   // caller passes a NAMED room
 
   in_no_room: ' · לא מחוברת לחדר',
-  in_sections: (n) => ` ב-${n} יחידות`,
+  in_sections: (n) => (n === 1 ? ' ביחידה אחת' : ` ב-${n} יחידות`),
   free_measurement:
     'מדידה חופשית — יחסית לקירות החדר, לעולם לא בסנטימטרים, ושום דבר כאן אינו מסיק כמה ספרים נכנסים.',
   counts: (rooms, cases) =>
@@ -456,8 +503,25 @@ const EN: MapText = {
   apply_levels: 'apply the level default to every column',
   apply_levels_of: (s) => `apply the level default to every column of ${s.toLowerCase()}`,
   apply: 'apply',
-  rows_deep: (n) => `${n} rows front-to-back`,
+  rows_deep: (n) => (n === 1 ? 'one row front-to-back' : `${n} rows front-to-back`),
   shelf_at: (a, c, l) => `shelf, ${a}column ${c}, level ${l}`,
+  restore_cell: (a, c, l) => `put a shelf back at ${a}column ${c}, level ${l}`,
+  restore_cell_title: 'No shelf here. Tap to put an empty one back.',
+  marked_cells: (n) => (n === 1 ? 'one cell marked' : `${n} cells marked`),
+  make_space: (n) => (n === 1 ? 'Leave a space (1 cell)' : `Leave a space (${n} cells)`),
+  make_space_title: 'The cells stop being shelves. The bookcase and the levels stay.',
+  cells_have_books: (n) => (n === 1
+    ? 'One marked cell has books on it. Move them first.'
+    : `${n} marked cells have books on them. Move them first.`),
+  cells_have_photos: (n) => (n === 1
+    ? 'One marked cell has a photograph. Delete it from the shelf screen first.'
+    : `${n} marked cells have photographs. Delete them from the shelf screen first.`),
+  cells_are_deep: (n) => (n === 1
+    ? 'One marked cell was given a row behind it. Change its depth first.'
+    : `${n} marked cells were given a row behind them. Change their depth first.`),
+  gaps_are_tappable: 'An empty cell — tap to put a shelf back.',
+  add_more_cells: 'Mark more cells',
+  adding_more_cells: 'Tapping adds cells to the selection',
   remove_level: (a, c) => `remove a level from ${a}column ${c}`,
   add_level: (a, c) => `add a level to ${a}column ${c}`,
   site: 'Site',
@@ -557,7 +621,7 @@ const EN: MapText = {
     `${units} units of wall, ${deep} deep as drawn · ${shelves} shelves`,
   in_room: (name) => ` · in ${name}`,
   in_no_room: ' · attached to no room',
-  in_sections: (n) => ` in ${n} sections`,
+  in_sections: (n) => (n === 1 ? ' in one section' : ` in ${n} sections`),
   free_measurement:
     'Free measurement — relative to this room’s walls, never centimetres, and nothing here infers how many books fit.',
   counts: (rooms, cases) => `${rooms} rooms · ${cases} bookcases.`,

@@ -71,7 +71,7 @@ export function pasteInto(
     selection: {
       rooms: rooms.map((r) => r.id),
       cases: cases.map((c) => c.id),
-      shelf: null,
+      cells: [],
     },
   }
 }

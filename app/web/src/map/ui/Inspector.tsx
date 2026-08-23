@@ -19,9 +19,9 @@ import { Select } from '@booksnap/ui'
 
 import { Elevation } from './Elevation'
 import type { Doc, Selection } from './types'
-import { count, only } from './types'
+import { count, markCell, only, onlyCell } from './types'
 import { useSticky } from './useSticky'
-import type { Bookcase, Plan, Room } from '../core/model'
+import type { Bookcase, GapCell, Plan, Room } from '../core/model'
 import {
   MAX_DEPTH,
   allShelves,
@@ -46,6 +46,8 @@ export type Actions = {
   setDefaultDepth: (id: string, sectionId: string, n: number) => void
   applyDefaultDepth: (id: string, sectionId: string) => void
   setShelfDepth: (id: string, sectionId: string, col: number, level: number, n: number) => void
+  /** Switch cells off, or a hole back on (MAP_PLAN §3.10a). */
+  setGaps: (id: string, sectionId: string, cells: GapCell[], gap: boolean) => void
   addSection: (id: string, where: 'top' | 'bottom') => void
   removeSection: (id: string, sectionId: string) => void
   deleteSelection: () => void
@@ -227,7 +229,7 @@ function RoomPanel({
                     type="button"
                     className="link rtl-safe"
                     aria-label={T.select_case(c.name || c.id)}
-                    onClick={() => actions.select({ rooms: [], cases: [c.id], shelf: null })}
+                    onClick={() => actions.select({ rooms: [], cases: [c.id], cells: [] })}
                   >
                     {c.name || T.unnamed_case(c.rect.w, c.rect.h)}
                   </button>
@@ -368,13 +370,11 @@ function CasePanel({
       <Elevation
         bc={bc}
         selection={selection}
-        onSelectShelf={(sectionId, col, level) =>
-          actions.select({
-            rooms: [],
-            cases: [bc.id],
-            shelf: { caseId: bc.id, sectionId, col, level },
-          })
+        onSelectShelf={(sectionId, col, level, add) =>
+          actions.select(
+            markCell(selection, { caseId: bc.id, sectionId, col, level }, add))
         }
+        onGaps={(sectionId, cells, gap) => actions.setGaps(bc.id, sectionId, cells, gap)}
         onColumnLevels={(sectionId, col, n) => actions.setColumnLevels(bc.id, sectionId, col, n)}
         onColumnCount={(sectionId, n) => actions.setColumnCount(bc.id, sectionId, n)}
         onDefaultLevels={(sectionId, n) => actions.setDefaultLevels(bc.id, sectionId, n)}
@@ -501,7 +501,7 @@ function ShelfPanel({
   actions: Actions
 }) {
   const T = mapText(useI18n().lang)
-  const sel = selection.shelf
+  const sel = onlyCell(selection)
   if (!sel || sel.caseId !== bc.id) {
     return <p className="note">{T.pick_a_cell}</p>
   }

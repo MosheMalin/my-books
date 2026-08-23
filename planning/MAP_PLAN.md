@@ -1150,6 +1150,35 @@ Filed, **not** fixed here, each with a named owner:
   until the client knows about masks — but `limits.ts` claims it *mirrors*
   the server, and that claim is now false. **P6.3.2b** fixes both together.
 
+**What P6.3.2b's two reviews measured.** Quality found a critical the item
+caused: the client's `withColumnCount`/`withColumnLevels` did not prune the
+mask, so shrinking a column past a hole and growing it back produced a cell
+that was a gap AND a shelf — a shape the server's `Section.__post_init__`
+refuses — and the next diff asked the server to re-open a hole nobody made.
+§3.10a's *"the hole goes with the wood"* was implemented on one side only.
+Fixed, with one exported `inExtent` so the three longhand copies became one.
+UX walked the real house and found five more in this item's own work: the
+broken singular («1 תאים מסומנים»), a Hebrew sentence beginning with a digit
+rendering right-to-left wrong, a refusal naming a remedy that does not exist
+for its cause, a hole whose contrast was 1.15:1 with its only affordances in a
+`:hover` and a `title`, and — the one that mattered most — **no way for a
+finger to mark a second cell at all**. All fixed; the guard against the
+singular is now a test rather than a note, and it found `rows_deep` and
+`in_sections` broken since before this pillar.
+
+⚠ **FILED, not fixed — the map is unusable on a phone, and this item did not
+cause it.** At 375×812 the plan canvas measures 375×**0**: `#root` gets a
+`min-height` rather than a definite height, and the phone block's
+`flex: 0 0 38%` on `.map-side` resolves against an indefinite column, so the
+inspector takes the whole page and `elementFromPoint` over a bookcase returns
+the settings panel. **No pillar-6 flow has ever been walked on a phone**,
+including P6.3.2b's own verification, which was a desktop verification
+truthfully reported as a browser one. The same defect is visible on desktop as
+a 488px page scroll whenever an elevation is taller than the viewport. It wants
+its own item — a definite height plus `min-height: 0` on the scrolling panel —
+and it should come before P6.5 puts navigation on the map, because a phone is
+the device this catalogue is used from.
+
 ### P6.4 — binding and merge  *(planned, not started)*
 
 The decomposition, each landing on `main` before the next:
