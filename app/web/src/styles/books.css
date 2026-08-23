@@ -237,7 +237,23 @@
      of the viewport, and where the two differ (measured: a 829px client area
      against an 844px dvh) the shell overshoots and the workspace scrolls by
      the difference. Percentages cannot disagree with the box they are in. */
-  min-height: 100%;
+  /* ⚠ `height`, not `min-height`, and it is the whole reason the plan is
+     usable on a phone. A MINIMUM is not a definite height, so every
+     percentage below it resolves against `auto`: the phone block's
+     `flex: 0 0 38%` on `.map-side` became the panel's CONTENT height (1155px
+     for a 52-cell elevation), `.canvas-wrap`'s own flex got what was left,
+     and a UX review measured the plan canvas at 375x0 — the settings panel
+     WAS the page, and `elementFromPoint` over a bookcase returned a fold
+     header. Nothing in pillar 6 had ever been walked on a phone.
+     `100%` still beats `100dvh` for the reason above; what changed is that
+     the box is now definite, which is what a workspace that "scrolls inside
+     its own panes" always meant.
+
+     ⚠ No braces in this comment, deliberately: anything that scans a rule
+     block by scanning for its closing brace — including this sheet's own
+     tests — ends
+     the block at a brace inside a comment. Cost one debugging pass. */
+  height: 100%;
 }
 
 .page {
