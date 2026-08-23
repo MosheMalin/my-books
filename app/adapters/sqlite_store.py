@@ -66,6 +66,7 @@ from app.domain import (
     WorkFields,
     check_removable,
 )
+from app.domain.map_undo import RESTORE_ORDER, MapRestore, MapUndoEntry
 from app.domain.place import NotEmpty, NotOnThisFloor
 from app.domain.tenancy import remove_member, set_role
 from app.domain.search import compile_sql_like, haystack, parse
@@ -1811,6 +1812,184 @@ class SqliteMapStore(_SqliteStore):
     @staticmethod
     def _count(conn, sql: str, params: tuple) -> int:
         return int(conn.execute(sql, params).fetchone()[0])
+
+
+class SqliteMapUndoStore(_SqliteStore):
+    """Implements ``app.ports.map_undo.MapUndoStore`` (P6.4b, MAP_PLAN §3.15).
+
+    Shares the file with the other stores, and here that is not merely
+    convenient: an entry promises to put back rows that live in this database,
+    so a journal in a different one is a promise that can go stale without
+    anything noticing.
+
+    ⚠ **This store owns the JSON codec**, exactly like ``_load_section``
+    beside it owns ``column_levels`` and ``gaps``. The port speaks entities,
+    the column holds text, and the seam is here — so
+    :class:`MemoryMapUndoStore` keeps live objects and ``UNDO_CONTRACT`` in
+    ``tests/test_store_contract.py`` runs one spec across both, which is what
+    turns a dropped field in this codec into a red test rather than a shelf
+    that quietly cannot come home.
+
+    ⚠ That sentence was written BEFORE the spec existed and was therefore
+    false, and a migration review found the exact bug it promised was
+    impossible: ``MapRestore.created`` is not in ``RESTORE_ORDER``, so the
+    codec dropped it and every entry carrying one became permanently
+    un-undoable — while every test passed, because they all ran on the memory
+    store. The lesson is not about this field. It is that a docstring
+    asserting a test exists is worth nothing until it does.
+    """
+
+    def __init__(self, path: str | Path) -> None:
+        super().__init__(path, kind="SqliteMapUndoStore")
+
+    def record(self, library: LibraryRef, entry: MapUndoEntry) -> None:
+        _same_library(entry, library, "undo entry")
+        with self._connect() as conn, conn:
+            conn.execute(
+                "INSERT INTO map_undo (id, library_id, kind, recorded_at,"
+                " inverse, fingerprint, undone_at) VALUES (?,?,?,?,?,?,?)"
+                " ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,"
+                " inverse=excluded.inverse, fingerprint=excluded.fingerprint,"
+                " undone_at=excluded.undone_at"
+                " WHERE map_undo.library_id = excluded.library_id",
+                (entry.id, library.id, entry.kind, entry.recorded_at,
+                 _dump_inverse(entry), json.dumps(entry.fingerprint,
+                                                  sort_keys=True),
+                 entry.undone_at),
+            )
+
+    def recent(
+        self, library: LibraryRef, *, limit: int = 1,
+    ) -> tuple[MapUndoEntry, ...]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM map_undo WHERE library_id = ?"
+                " ORDER BY recorded_at DESC, id DESC LIMIT ?",
+                (library.id, max(0, int(limit))),
+            ).fetchall()
+        return tuple(_load_undo(row) for row in rows)
+
+    def mark_undone(
+        self, library: LibraryRef, entry_id: str, at: str,
+    ) -> bool:
+        with self._connect() as conn, conn:
+            cur = conn.execute(
+                "UPDATE map_undo SET undone_at = ? WHERE id = ?"
+                " AND library_id = ?", (at, entry_id, library.id))
+            return cur.rowcount > 0
+
+
+# --- the journal's codec --------------------------------------------------
+#
+# Entities in, text out. Every decoder below is `Type(**payload)` with only
+# the NESTED values converted by hand, and that shape is the point: a plain
+# field added to `Shelf` or `Section` tomorrow flows through untouched, and a
+# decoder that has fallen behind its dataclass raises `TypeError: unexpected
+# keyword argument` rather than dropping the field in silence. A hand-written
+# field list here would have exactly the opposite failure mode, which is the
+# one that loses a shelf.
+#
+# ⚠ What that does NOT buy, corrected after a review measured it: a new
+# NESTED field is neither dropped nor loud. `Place(rect=<dict>)` and
+# `Shelf(address=<dict>)` are both accepted in silence — a dataclass
+# `__init__` type-checks nothing — and surface much later as an
+# `AttributeError` inside `_replay`, if at all. The guard against that is not
+# this shape, it is `UNDO_CONTRACT` round-tripping a fully populated instance
+# of all six types against the memory store.
+
+def _dump_inverse(entry: MapUndoEntry) -> str:
+    """The restore, plus the coalescing tag, as one blob.
+
+    ⚠ The tag rides INSIDE the JSON rather than in a column of its own, and
+    it has to be persisted at all because coalescing spans two HTTP requests:
+    ``DELETE .../slots`` then ``DELETE .../bookcases/{id}`` arrive on
+    different connections, so the tag the second one compares against is read
+    back from this file, not remembered. It is never queried BY tag — the
+    head is fetched by recency and its tag is then compared in Python — which
+    is exactly the test `column_levels` and `gaps` already pass in this
+    module, so it earns no column.
+    """
+    payload = {name: [asdict(record) for record in getattr(entry.restore, name)]
+               for name in RESTORE_ORDER}
+    payload["tag"] = entry.tag
+    # ⚠ `created` is the SEVENTH field of `MapRestore` and NOT in
+    # `RESTORE_ORDER`, which holds the six entity tuples. Dropping it here is
+    # measured and specific, not theoretical: `target_keys` includes a
+    # `shelves:<created id>` key, so an entry written with `created` and read
+    # back without it produces a fingerprint that can never match — the entry
+    # becomes permanently un-undoable AND the refusal names a shelf that did
+    # not change. A migration review caught it; `UNDO_CONTRACT` is what keeps
+    # it caught.
+    payload["created"] = list(entry.restore.created)
+    # The shape stamp. Free now, permanently absent from existing entries
+    # afterwards — and these blobs never expire (owner, 2026-08-24), so the
+    # oldest of them has to stay decodable forever. The day a step renames a
+    # column on `Shelf` or `Section`, this is what tells a rewrite which shape
+    # it is looking at instead of making it guess.
+    payload["v"] = 1
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def _undo_site(d: dict) -> Site:
+    return Site(**d)
+
+
+def _undo_floor(d: dict) -> Floor:
+    return Floor(**d)
+
+
+def _undo_place(d: dict) -> Place:
+    d = dict(d)
+    return Place(rect=Rect(**d.pop("rect")), **d)
+
+
+def _undo_bookcase(d: dict) -> Bookcase:
+    d = dict(d)
+    return Bookcase(rect=Rect(**d.pop("rect")), **d)
+
+
+def _undo_section(d: dict) -> Section:
+    d = dict(d)
+    return Section(
+        column_levels=tuple(d.pop("column_levels")),
+        gaps=tuple(tuple(cell) for cell in d.pop("gaps")),
+        **d,
+    )
+
+
+def _undo_shelf(d: dict) -> Shelf:
+    d = dict(d)
+    address = d.pop("address")
+    return Shelf(address=ShelfAddress(**address) if address else None, **d)
+
+
+_UNDO_DECODERS = {
+    "sites": _undo_site,
+    "floors": _undo_floor,
+    "places": _undo_place,
+    "bookcases": _undo_bookcase,
+    "sections": _undo_section,
+    "shelves": _undo_shelf,
+}
+
+
+def _load_undo(row: sqlite3.Row) -> MapUndoEntry:
+    payload = json.loads(row["inverse"])
+    return MapUndoEntry(
+        id=row["id"],
+        library_id=row["library_id"],
+        kind=row["kind"],
+        tag=payload.get("tag", ""),
+        recorded_at=row["recorded_at"],
+        restore=MapRestore(
+            created=tuple(payload.get("created", ())),
+            **{name: tuple(_UNDO_DECODERS[name](d)
+                           for d in payload.get(name, ()))
+               for name in RESTORE_ORDER}
+        ),
+        fingerprint=json.loads(row["fingerprint"]),
+        undone_at=row["undone_at"],
+    )
 
 
 def _rect(row: sqlite3.Row) -> Rect:

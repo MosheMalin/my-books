@@ -69,7 +69,12 @@ _LIBRARY_TABLES = ("books", "copies", "shelves", "captures", "reads",
                    # moves aborts every merge, and a table moved but missing
                    # from it commits an orphan. The leftover check exists to
                    # make forgetting either one loud.
-                   "sites", "floors", "places", "bookcases", "sections")
+                   "sites", "floors", "places", "bookcases", "sections",
+                   # P6.4b: the undo journal. In this tuple like the rest —
+                   # the leftover check must still see zero rows naming the
+                   # source — but it is the one table the merge DELETES
+                   # rather than moves. The reason is at the delete.
+                   "map_undo")
 
 
 class MergeRefused(Exception):
@@ -312,6 +317,24 @@ def merge_library(
                 conn.execute(
                     f"UPDATE {table} SET library_id = ? WHERE library_id = ?",
                     (dst_id, src_id))
+
+            # P6.4b: the undo journal is DROPPED, not re-homed — the one
+            # library-scoped table here that is deleted rather than moved.
+            #
+            # A moved entry would be broken two ways over. Its `inverse`
+            # holds whole rows with the SOURCE `library_id` baked into each
+            # one, so replaying it writes rows the stores refuse outright
+            # (`WrongLibrary`); and its fingerprint was taken in a world that
+            # no longer exists, which is exactly the state §3.15 says an undo
+            # must refuse rather than guess its way through. Rewriting the
+            # JSON would produce an entry that LOOKS replayable and is not,
+            # which is the worst of the three options.
+            #
+            # So: a merge is not undoable through this journal, and P6.4d
+            # owns undoing a merge. Dropping the rows says that plainly;
+            # carrying them would say the opposite.
+            conn.execute("DELETE FROM map_undo WHERE library_id = ?",
+                         (src_id,))
 
             # Retire the emptied library. Memberships are untouched on
             # purpose since P3.7b: they belong to the ACCOUNT, which still

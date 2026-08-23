@@ -303,6 +303,17 @@ def get_map_store() -> MapStore:
     raise RuntimeError("no MapStore bound; build the app via create_app")
 
 
+def get_journal() -> Journal:
+    """The undo journal, with the id source and clock that writing to it needs.
+
+    One dependency rather than three, mirroring :class:`app.map_undo.Journal`:
+    the destructive map routes already carry five or six ``Depends`` each, and
+    bundling means a route cannot take the journal without also holding what
+    it needs to write a usable entry into it.
+    """
+    raise RuntimeError("no Journal bound; build the app via create_app")
+
+
 def get_decision_store() -> DecisionStore:
     raise RuntimeError("no DecisionStore bound; build the app via create_app")
 

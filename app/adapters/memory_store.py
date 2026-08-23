@@ -41,6 +41,7 @@ from app.domain import (
     User,
     check_removable,
 )
+from app.domain.map_undo import MapUndoEntry
 from app.domain.place import NotEmpty, NotOnThisFloor
 from app.domain.tenancy import remove_member, set_role
 from app.domain.search import parse
@@ -477,6 +478,57 @@ class MemoryDecisionStore:
     ) -> bool:
         key = (shelf_id, depth, book_key)
         return self._d(library).pop(key, None) is not None
+
+
+class MemoryMapUndoStore:
+    """Implements ``app.ports.map_undo.MapUndoStore`` (P6.4b).
+
+    Same role as the other memory stores: the API ring's store, and the
+    second implementation that turns the journal contract into a spec.
+
+    ⚠ It keeps live entities and never serialises, which is precisely what
+    makes it worth running ``UNDO_CONTRACT`` against both — the SQLite store
+    round trips every entry through JSON, so any field that codec drops shows
+    up as two implementations disagreeing rather than as a shelf that quietly
+    cannot come home. See that store's own ⚠ for what happened while this
+    paragraph was true of the intention and not of the suite.
+    """
+
+    def __init__(self) -> None:
+        self._by_library: dict[str, list[MapUndoEntry]] = {}
+
+    def _j(self, library: LibraryRef) -> list[MapUndoEntry]:
+        return self._by_library.setdefault(library.id, [])
+
+    def record(self, library: LibraryRef, entry: MapUndoEntry) -> None:
+        _same_library(entry, library, "undo entry")
+        journal = self._j(library)
+        for i, existing in enumerate(journal):
+            if existing.id == entry.id:
+                journal[i] = entry
+                return
+        journal.append(entry)
+
+    def recent(
+        self, library: LibraryRef, *, limit: int = 1,
+    ) -> tuple[MapUndoEntry, ...]:
+        # `id` breaks the tie descending, exactly as the SQLite ORDER BY does:
+        # two entries can share a `recorded_at` when the clock is coarse, and
+        # two stores disagreeing about which one is the head would read as a
+        # contract test that fails one run in fifty.
+        rows = sorted(self._j(library),
+                      key=lambda e: (e.recorded_at, e.id), reverse=True)
+        return tuple(rows[:max(0, int(limit))])
+
+    def mark_undone(
+        self, library: LibraryRef, entry_id: str, at: str,
+    ) -> bool:
+        journal = self._j(library)
+        for i, entry in enumerate(journal):
+            if entry.id == entry_id:
+                journal[i] = replace(entry, undone_at=at)
+                return True
+        return False
 
 
 class MemoryDuplicateQueue:

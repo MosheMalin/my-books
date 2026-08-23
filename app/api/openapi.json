@@ -2944,6 +2944,57 @@
         "title": "Status",
         "type": "string"
       },
+      "UndoOfferDTO": {
+        "description": "Whether the last destructive map edit can be taken back (P6.4b, §3.15).\n\n⚠ ``reason`` is a machine-readable token and not a sentence, on purpose:\nthe client is Hebrew-first, so the words belong in\n``app/web/src/map/text.ts``, where they have a Hebrew form and a plural\nthat agrees. A server that shipped the sentence would ship it in one\nlanguage.",
+        "properties": {
+          "available": {
+            "description": "Whether a press of undo would succeed right now. False for all three of: nothing recorded, already taken back, and the world moved — `reason` says which.",
+            "title": "Available",
+            "type": "boolean"
+          },
+          "changed": {
+            "default": [],
+            "description": "For `world_moved`: which targets moved, as `table:id`. §3.15 requires the refusal to say WHY, and this is it.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Changed",
+            "type": "array"
+          },
+          "kind": {
+            "default": "",
+            "description": "Which edit is at the head — `remove_column`, `gaps`, `clear_bookcase`, `delete_site` and so on. Empty when nothing was ever recorded.",
+            "title": "Kind",
+            "type": "string"
+          },
+          "reason": {
+            "default": "",
+            "description": "`nothing_recorded`, `already_undone` or `world_moved`. Empty exactly when `available` is true.",
+            "title": "Reason",
+            "type": "string"
+          },
+          "recorded_at": {
+            "default": "",
+            "description": "When that edit happened.",
+            "title": "Recorded At",
+            "type": "string"
+          },
+          "restores": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "default": {},
+            "description": "What the undo would put back, counted per kind of row (plus `removed`, for shelves the edit created that the undo would take away again). Empty unless available.",
+            "title": "Restores",
+            "type": "object"
+          }
+        },
+        "required": [
+          "available"
+        ],
+        "title": "UndoOfferDTO",
+        "type": "object"
+      },
       "UserDTO": {
         "description": "Who the server thinks is asking (§4.1).\n\nThe session's user (P4.1b). On the wire because the switcher's list\nis *this user's* libraries, and a client that cannot name the user\ncannot explain an empty list.\n\n⚠ Called ``AccountDTO`` until P3.7a. The word \"account\" now belongs to the\nCUSTOMER (VISION §4.1, 2026-08-11) and arrives on the wire at P3.7b —\nreading this field as a tenant is the mistake the rename exists to stop.",
         "properties": {
@@ -5532,6 +5583,48 @@
           }
         },
         "summary": "Patch Site",
+        "tags": [
+          "map"
+        ]
+      }
+    },
+    "/api/v1/map/undo": {
+      "get": {
+        "description": "What a press of *undo* would put back, or why it cannot.\n\n``BROWSE``, not ``EDIT_MAP``, and deliberately: this writes nothing, and\nit is the same question *\"what happened to my map last\"* that everyone who\ncan see the map may ask. The route that ACTS is the one that needs the\ncapability.\n\nAnswers 200 with ``available: false`` rather than 404 when there is\nnothing to take back — *\"no map edit has been recorded\"* is an answer, and\na client forced to read 404 as data cannot tell it from a misspelt path.",
+        "operationId": "get_undo_api_v1_map_undo_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UndoOfferDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Undo",
+        "tags": [
+          "map"
+        ]
+      },
+      "post": {
+        "description": "Take back the last destructive map edit.\n\n**409, naming what moved**, when the world has changed under the entry —\n§3.15's *\"an undo that cannot prove the world is still as it left it\nrefuses, and says why\"*. 409 rather than 400: the request is not\nmalformed, the state conflicts with it, and that is the difference between\na client that offers to reload and one that edits the request.\n\nThe response is the offer as it stands AFTER the undo, so the control that\ncalled it learns in the same round trip that there is now nothing more to\ntake back. There is no redo, and no second entry underneath.",
+        "operationId": "post_undo_api_v1_map_undo_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UndoOfferDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Post Undo",
         "tags": [
           "map"
         ]

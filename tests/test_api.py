@@ -37,6 +37,7 @@ from app import API_PREFIX, __version__
 from app.adapters.disk_blobs import DiskBlobStore
 from app.adapters.queued_jobs import QueuedJobRunner
 from app.adapters.memory_store import (
+    MemoryMapUndoStore,
     MemoryAuthStore,
     MemoryInviteStore,
     MemoryOAuthStateStore,
@@ -193,7 +194,7 @@ def _app(principal: StubPrincipal | None = None, store=None, shelves=None,
          blobs=None, reads=None, reader=None, jobs=None, decisions=None,
          duplicates=None, tenancy=None, auth=None, mailer=None, clock=None,
          invites=None, oauth_states=None, providers=None, maps=None,
-         principal_provider=None, recycle: bool = True):
+         undo=None, principal_provider=None, recycle: bool = True):
     """Build (or recycle) an app with these ports bound.
 
     :param recycle: pass ``False`` for an app whose per-app state a later test
@@ -222,6 +223,7 @@ def _app(principal: StubPrincipal | None = None, store=None, shelves=None,
         book_store=book_store,
         shelf_store=shelf_store,
         map_store=map_store,
+        map_undo_store=undo if undo is not None else MemoryMapUndoStore(),
         blob_store=blobs,
         read_store=reads if reads is not None else MemoryReadStore(),
         decision_store=decisions if decisions is not None else MemoryDecisionStore(),
@@ -6636,6 +6638,10 @@ def test_every_write_in_the_map_router_needs_edit_map_and_says_so():
             ("patch", "/api/v1/map/sections/se/shelves/1/1", {"depth_count": 2}),
             ("patch", "/api/v1/map/sections/se/gaps",
              {"gap": True, "cells": [{"column": 1, "level": 1}]}),
+            # P6.4b. The GET beside it is BROWSE deliberately (it writes
+            # nothing), which is why only the POST is here — and this test is
+            # what noticed the route the moment it was added.
+            ("post", "/api/v1/map/undo", None),
         ]
         for method, path, body in writes:
             call = getattr(client, method)

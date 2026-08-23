@@ -51,6 +51,7 @@ from app.api.deps import (
     get_book_store,
     get_clock,
     get_id_gen,
+    get_journal,
     get_map_store,
     get_shelf_store,
 )
@@ -78,6 +79,7 @@ from app.api.dto import (
     SitePatch,
     SlotDepthPatch,
     SlotRemovalDTO,
+    UndoOfferDTO,
 )
 from app.api.policy import require
 from app.domain import (
@@ -118,7 +120,9 @@ from app.map_edit import (
     clear_bookcase_slots,
     clear_section_slots,
     draw_bookcase,
+    remove_record,
 )
+from app.map_undo import Journal, UndoRefused, offer, undo
 from app.ports import Clock, IdGen
 from app.ports.map import MapStore
 from app.ports.store import (
@@ -205,12 +209,25 @@ def _translated():
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
 
 
-def _remove(delete, library: LibraryRef, record_id: str, what: str) -> None:
+def _remove(
+    store: MapStore,
+    shelves: ShelfStore,
+    journal: Journal,
+    library: LibraryRef,
+    what: str,
+    record_id: str,
+) -> None:
     # 409 (via `_translated`) carries the message that says WHAT is in the
     # way — "cannot delete" with no reason is what makes the next reader
     # delete the guard.
+    #
+    # The delete itself moved to `app.map_edit.remove_record` at P6.4b: it now
+    # reads the row before destroying it, because an id cannot put a bookcase
+    # back. This function keeps exactly the HTTP half — 404 for a record that
+    # was not there, 409 for one that refused.
     with _translated():
-        removed = delete(library, record_id)
+        removed = remove_record(store, shelves, library, what, record_id,
+                                journal=journal)
     if not removed:
         raise _gone(what)
 
@@ -267,10 +284,12 @@ def delete_site(
     site_id: str,
     library: LibraryRef = Depends(require(EDIT)),
     store: MapStore = Depends(get_map_store),
+    shelves: ShelfStore = Depends(get_shelf_store),
+    journal: Journal = Depends(get_journal),
 ) -> None:
     """Remove a site and its EMPTY storeys. **409** if a room or a bookcase
     still stands on one of them, or if it is the only site."""
-    _remove(store.delete_site, library, site_id, "site")
+    _remove(store, shelves, journal, library, "site", site_id)
 
 
 # --- floors ---------------------------------------------------------------
@@ -310,10 +329,12 @@ def delete_floor(
     floor_id: str,
     library: LibraryRef = Depends(require(EDIT)),
     store: MapStore = Depends(get_map_store),
+    shelves: ShelfStore = Depends(get_shelf_store),
+    journal: Journal = Depends(get_journal),
 ) -> None:
     """**409** naming the rooms and cases still on it, or if it is its site's
     only storey — the way out of that is to remove the site."""
-    _remove(store.delete_floor, library, floor_id, "floor")
+    _remove(store, shelves, journal, library, "floor", floor_id)
 
 
 # --- places (rooms) -------------------------------------------------------
@@ -362,10 +383,12 @@ def delete_place(
     place_id: str,
     library: LibraryRef = Depends(require(EDIT)),
     store: MapStore = Depends(get_map_store),
+    shelves: ShelfStore = Depends(get_shelf_store),
+    journal: Journal = Depends(get_journal),
 ) -> None:
     """Remove a room. **Its bookcases stay** where they stand, attached to no
     room — deleting a container never destroys what it held."""
-    _remove(store.delete_place, library, place_id, "place")
+    _remove(store, shelves, journal, library, "place", place_id)
 
 
 # --- bookcases ------------------------------------------------------------
@@ -456,6 +479,7 @@ def clear_bookcase(
     store: MapStore = Depends(get_map_store),
     shelves: ShelfStore = Depends(get_shelf_store),
     books: BookStore = Depends(get_book_store),
+    journal: Journal = Depends(get_journal),
 ) -> SlotRemovalDTO:
     """Empty every slot of a bookcase, so the case can then be deleted.
 
@@ -466,7 +490,8 @@ def clear_bookcase(
     """
     _bookcase(store, library, case_id)
     return SlotRemovalDTO.of(
-        clear_bookcase_slots(store, shelves, books, library, case_id))
+        clear_bookcase_slots(store, shelves, books, library, case_id,
+                             journal=journal))
 
 
 @router.delete("/bookcases/{case_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -474,10 +499,12 @@ def delete_bookcase(
     case_id: str,
     library: LibraryRef = Depends(require(EDIT)),
     store: MapStore = Depends(get_map_store),
+    shelves: ShelfStore = Depends(get_shelf_store),
+    journal: Journal = Depends(get_journal),
 ) -> None:
     """Remove a case and its sections. **409** while any shelf still stands in
     one of its slots — empty them first, through ``DELETE .../slots``."""
-    _remove(store.delete_bookcase, library, case_id, "bookcase")
+    _remove(store, shelves, journal, library, "bookcase", case_id)
 
 
 # --- sections -------------------------------------------------------------
@@ -490,6 +517,7 @@ def create_section(
     store: MapStore = Depends(get_map_store),
     shelves: ShelfStore = Depends(get_shelf_store),
     books: BookStore = Depends(get_book_store),
+    journal: Journal = Depends(get_journal),
     ids: IdGen = Depends(get_id_gen),
     clock: Clock = Depends(get_clock),
 ) -> SectionEditDTO:
@@ -560,7 +588,8 @@ def create_section(
     # decision recorded 200 lines away rather than a property of this caller.
     blank = _replace(section, column_levels=(), gaps=())
     change = with_column_count(blank, section.column_count)
-    return _edit(store, shelves, books, library, change, ids=ids, clock=clock)
+    return _edit(store, shelves, books, library, change, journal=journal,
+                 ids=ids, clock=clock)
 
 
 @router.patch("/sections/{section_id}", response_model=SectionEditDTO)
@@ -571,6 +600,7 @@ def patch_section(
     store: MapStore = Depends(get_map_store),
     shelves: ShelfStore = Depends(get_shelf_store),
     books: BookStore = Depends(get_book_store),
+    journal: Journal = Depends(get_journal),
     ids: IdGen = Depends(get_id_gen),
     clock: Clock = Depends(get_clock),
 ) -> SectionEditDTO:
@@ -619,7 +649,8 @@ def patch_section(
         with _translated():
             store.save_section(library, section)
         return SectionEditDTO(section=SectionDTO.of(section))
-    return _edit(store, shelves, books, library, change, ids=ids, clock=clock)
+    return _edit(store, shelves, books, library, change, journal=journal,
+                 ids=ids, clock=clock)
 
 
 @router.patch("/sections/{section_id}/shelves/{col}/{level}",
@@ -676,6 +707,7 @@ def set_gaps(
     store: MapStore = Depends(get_map_store),
     shelves: ShelfStore = Depends(get_shelf_store),
     books: BookStore = Depends(get_book_store),
+    journal: Journal = Depends(get_journal),
     ids: IdGen = Depends(get_id_gen),
     clock: Clock = Depends(get_clock),
 ) -> SectionEditDTO:
@@ -739,7 +771,7 @@ def set_gaps(
                         and s.id != section.id]
             check_bookcase_size(siblings + [change.section])
         removal = apply_gaps(store, shelves, books, library, change,
-                             ids=ids, clock=clock)
+                             journal=journal, ids=ids, clock=clock)
     return SectionEditDTO(
         section=SectionDTO.of(change.section),
         created=len(change.added),
@@ -754,6 +786,7 @@ def apply_levels(
     store: MapStore = Depends(get_map_store),
     shelves: ShelfStore = Depends(get_shelf_store),
     books: BookStore = Depends(get_book_store),
+    journal: Journal = Depends(get_journal),
     ids: IdGen = Depends(get_id_gen),
     clock: Clock = Depends(get_clock),
 ) -> SectionEditDTO:
@@ -766,7 +799,8 @@ def apply_levels(
                     if s.bookcase_id == section.bookcase_id
                     and s.id != section.id]
         check_bookcase_size(siblings + [change.section])
-    return _edit(store, shelves, books, library, change, ids=ids, clock=clock)
+    return _edit(store, shelves, books, library, change, journal=journal,
+                 ids=ids, clock=clock)
 
 
 @router.post("/sections/{section_id}/depth", response_model=DepthApplyDTO)
@@ -795,13 +829,15 @@ def clear_section(
     store: MapStore = Depends(get_map_store),
     shelves: ShelfStore = Depends(get_shelf_store),
     books: BookStore = Depends(get_book_store),
+    journal: Journal = Depends(get_journal),
 ) -> SlotRemovalDTO:
     """Empty ONE section's slots. Separate from the bookcase's, because a
     case with a base and a hutch has two, and *"remove the hutch"* must not
     touch the base."""
     _section(store, library, section_id)
     return SlotRemovalDTO.of(
-        clear_section_slots(shelves, books, library, section_id))
+        clear_section_slots(store, shelves, books, library, section_id,
+                            journal=journal))
 
 
 @router.delete("/sections/{section_id}",
@@ -810,10 +846,67 @@ def delete_section(
     section_id: str,
     library: LibraryRef = Depends(require(EDIT)),
     store: MapStore = Depends(get_map_store),
+    shelves: ShelfStore = Depends(get_shelf_store),
+    journal: Journal = Depends(get_journal),
 ) -> None:
     """**409** for the last section of a bookcase (a case with none is not
     simpler, it is unaddressable) and while any of its slots is filled."""
-    _remove(store.delete_section, library, section_id, "section")
+    _remove(store, shelves, journal, library, "section", section_id)
+
+
+# --- undo (P6.4b, MAP_PLAN §3.15) -----------------------------------------
+
+@router.get("/undo", response_model=UndoOfferDTO)
+def get_undo(
+    library: LibraryRef = Depends(require(READ)),
+    store: MapStore = Depends(get_map_store),
+    shelves: ShelfStore = Depends(get_shelf_store),
+    journal: Journal = Depends(get_journal),
+) -> UndoOfferDTO:
+    """What a press of *undo* would put back, or why it cannot.
+
+    ``BROWSE``, not ``EDIT_MAP``, and deliberately: this writes nothing, and
+    it is the same question *"what happened to my map last"* that everyone who
+    can see the map may ask. The route that ACTS is the one that needs the
+    capability.
+
+    Answers 200 with ``available: false`` rather than 404 when there is
+    nothing to take back — *"no map edit has been recorded"* is an answer, and
+    a client forced to read 404 as data cannot tell it from a misspelt path.
+    """
+    return UndoOfferDTO.of(offer(journal, store, shelves, library))
+
+
+@router.post("/undo", response_model=UndoOfferDTO)
+def post_undo(
+    library: LibraryRef = Depends(require(EDIT)),
+    store: MapStore = Depends(get_map_store),
+    shelves: ShelfStore = Depends(get_shelf_store),
+    journal: Journal = Depends(get_journal),
+) -> UndoOfferDTO:
+    """Take back the last destructive map edit.
+
+    **409, naming what moved**, when the world has changed under the entry —
+    §3.15's *"an undo that cannot prove the world is still as it left it
+    refuses, and says why"*. 409 rather than 400: the request is not
+    malformed, the state conflicts with it, and that is the difference between
+    a client that offers to reload and one that edits the request.
+
+    The response is the offer as it stands AFTER the undo, so the control that
+    called it learns in the same round trip that there is now nothing more to
+    take back. There is no redo, and no second entry underneath.
+    """
+    try:
+        undo(journal, store, shelves, library)
+    except UndoRefused as exc:
+        # ⚠ A STRING detail, never the dict this first carried. The client
+        # reads `e.detail || e.message` and renders it, so an object arrives
+        # as an empty alert (the trap CLAUDE.md records) — and the words a
+        # person sees have to come from `app/web/src/map/text.ts` anyway,
+        # where they have a Hebrew form. What moved stays machine-readable on
+        # `GET /map/undo`, which answers `reason` and `changed`.
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    return UndoOfferDTO.of(offer(journal, store, shelves, library))
 
 
 # --- helpers --------------------------------------------------------------
@@ -833,11 +926,11 @@ def _replace(record, **fields):
 
 
 def _edit(store: MapStore, shelves: ShelfStore, books: BookStore,
-          library: LibraryRef, change, *, ids: IdGen,
+          library: LibraryRef, change, *, journal: Journal, ids: IdGen,
           clock: Clock) -> SectionEditDTO:
     with _translated():
         removal = apply_slot_change(store, shelves, books, library, change,
-                                    ids=ids, clock=clock)
+                                    journal=journal, ids=ids, clock=clock)
     return SectionEditDTO(
         section=SectionDTO.of(change.section),
         created=len(change.added),

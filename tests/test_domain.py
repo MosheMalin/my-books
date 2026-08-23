@@ -577,8 +577,12 @@ def test_depth_is_never_called_row_or_band_in_the_shelf_module():
     # reader reaches for to mean a level. It would then sit two lines from a
     # depth, which is exactly the collision §5.7 named. A review found the
     # scope stopping at `app/domain/`, so the grid arithmetic was outside it.
+    # SIX since P6.4b: the undo journal is written in terms of the grid it
+    # puts back, so it reaches for the same wrong word — and it caught one on
+    # the day it was written (a local named `rows`, holding tables).
     for module in ("app/domain/shelf.py", "app/domain/place.py",
-                   "app/map_edit.py", "app/ports/map.py"):
+                   "app/domain/map_undo.py", "app/map_edit.py",
+                   "app/map_undo.py", "app/ports/map.py"):
         src = (REPO_ROOT / module).read_text(encoding="utf-8")
         offenders = _banned_names(src, banned)
         assert not offenders, (

@@ -181,9 +181,10 @@ def test_api_does_not_import_adapters():
 
 
 def test_the_port_only_modules_never_reach_for_an_adapter():
-    """The three top-level orchestrators are ports-only, and nothing said so.
+    """The four top-level orchestrators are ports-only, and nothing said so.
 
-    ``reconcile_apply.py``, ``blob_lifecycle.py`` and (P6.1) ``map_edit.py``
+    ``reconcile_apply.py``, ``blob_lifecycle.py``, (P6.1) ``map_edit.py`` and
+    (P6.4b) ``map_undo.py``
     each sit directly under ``app/`` because they need BOTH the domain and
     several ports — and each one's docstring promises it will never import
     ``app.adapters``. Until now that promise was prose: the composition root
@@ -196,7 +197,7 @@ def test_the_port_only_modules_never_reach_for_an_adapter():
     """
     bad = []
     for module in ("app/reconcile_apply.py", "app/blob_lifecycle.py",
-                   "app/map_edit.py"):
+                   "app/map_edit.py", "app/map_undo.py"):
         bad += _violations(
             module, {"app.adapters", "app.api", "fastapi"},
             "a port-only module must depend on ports, not implementations "
