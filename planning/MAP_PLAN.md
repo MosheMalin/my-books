@@ -768,7 +768,8 @@ this pillar.**
 | **P6.3** | **The port** — the lab's editor moves into `app/web/src/map/` **verbatim** where it is framework-free, wired to the API by an adapter. **The lab is deleted in the same commit.** Behaviour identical to the lab's ninth pass — that is the acceptance test, not a rewrite. | M | ✅ |
 | **P6.3.1** | **The site picker** — the one thing the lab never had (§3.9). Sites and their floors become manageable in the ported editor; a single site renders no chrome. Deliberately AFTER P6.3, so "behaves the same" is verifiable before anything new is added. ⚠ Renumbered: this item was "P6.3b", and P6.3's own wiring commit spent that identifier in the git log. | S | ✅ |
 | **P6.3.2** | **Gaps** — a cell of the elevation can be switched off (a television, a desk niche) and switched back on, with the extent untouched (§3.10a). Two items: **a** the model, schema **v21** and the route; **b** the editor's multi-cell selection and the hole it draws. Arrived mid-pillar, from the owner using the ported editor. | M | ✅ 
-| **P6.4** | **Binding and merge** — photo-born shelves bind into drawn slots; several identities merge into one physical shelf, with aliases. ⚠ Its schema step is now **v22**: P6.3.2a spent v21. | L | |
+| **P6.3.3** | **The plan tab on a phone** — the drawing surface measured 375x**0**: `#root` had a `min-height` where a definite height was meant, so the settings panel became the whole page and no pillar-6 flow had ever been walked on a phone. Two flex minimums and two dead thumb-size rules came with it. Arrived from P6.3.2b's UX review, and taken BEFORE P6.4 (owner) so four more items would not land unverified on the device this catalogue is used from. | S | ✅ |
+| **P6.4** | **Binding and merge** — photo-born shelves bind into drawn slots; several identities merge into one physical shelf, with aliases. ⚠ Two schema steps now, and **b runs before a**: **v22** the undo journal, **v23** the alias. P6.3.2a spent v21. | L | |
 | **P6.5** | **The map as navigation** — three drill levels, "where is it" incl. depth, stale-depth surfacing, capture handoff. | L | |
 | **P6.6** | *Optional:* bookcase photo → proposed levels via `segment.py`, confirmed by hand. | S | |
 
@@ -1179,6 +1180,37 @@ its own item — a definite height plus `min-height: 0` on the scrolling panel �
 and it should come before P6.5 puts navigation on the map, because a phone is
 the device this catalogue is used from.
 
+### P6.3.3 — the plan tab on a phone
+
+Found by P6.3.2b's UX review while walking the flows: at 375x812 the drawing
+surface measured 375x**0**, `elementFromPoint` over a bookcase returned a fold
+header, and the settings panel was the entire page. **No pillar-6 flow had ever
+been walked on a phone** — including P6.3.2b's own verification, which was a
+desktop verification reported as a browser one.
+
+`:root:has(.page-plan) #root` had `min-height: 100%`. A minimum is not a
+definite height, so every percentage below it resolved against `auto`: the
+phone block's `flex: 0 0 38%` on `.map-side` became the panel's CONTENT height
+(1155px for a 52-cell elevation) and the canvas got what was left. `height:
+100%` is what *"a workspace that scrolls inside its own panes"* always meant.
+Measured after: canvas 375x411, panel 252 and scrolling, a tap at the canvas
+centre landing on furniture.
+
+Two flex minimums came with it — the argument `.map-side` already carried on
+the horizontal axis, applied to the vertical one — and **two thumb-size rules
+that a comment claimed were alive**: at equal specificity the base sheet comes
+later and wins, so the elevation cell had been 30px throughout. That cell is
+the hole, which is the only way back from a gap.
+
+⚠ Filed, not fixed: a CLOSED drawer stays mounted below the fold and extends
+the document by 237px, so the plan still scrolls a little though its own layout
+is exact. It is `aria-hidden`, it belongs to the books tab, and it predates
+this pillar.
+
+⚠⚠ **The lesson for the rest of the pillar**: a browser verification is not a
+phone verification unless the viewport says so. P6.5 puts navigation on this
+map; every item from here walks 375x812 before it claims a flow works.
+
 ### P6.4 — binding and merge  *(planned, not started)*
 
 The decomposition, each landing on `main` before the next:
@@ -1234,6 +1266,60 @@ gains the table. And it must use the table afterwards: the v19→v20 test's own
 ⚠ records that its `foreign_key_check` ran while every new table was empty.
 Both halves were measured again on P6.3.2a's step, by mutation: folding the
 DDL into the previous step was caught by exactly one test, its own.
+
+#### P6.4b in detail — the journal  *(next; three questions OPEN)*
+
+**One sentence:** a destructive map edit records its own inverse, and an undo
+that cannot prove the world is unchanged refuses and says why.
+
+**The five destructive edits it must cover.** §3.15 named four — remove a
+column, remove a section, delete a bookcase, remove a site. P6.3.2 added the
+fifth, **switching cells off**, which is the reason the owner moved this item
+ahead of the alias (2026-08-23): the journal is written knowing about gaps
+rather than amended by them. Each already destroys or detaches shelves behind
+nothing but a `confirm()`, and each is one mis-tap.
+
+**Recording, not deriving**, and §3.15 gives the reason: a book the owner typed
+onto a shelf by hand has no provenance, so a GUESSED inverse moves books that
+never moved. The inverse is captured at the moment of the edit — which rows
+went, which slots were detached, what each shelf's label and depth were — and
+the undo replays exactly that.
+
+**Schema v22**, its own step. Sketch, not settled:
+
+    map_undo(id, library_id, kind, recorded_at, inverse TEXT)
+
+`inverse` is JSON for the same reason `sections.gaps` is (P6.3.2a): it is read
+and written whole with its entry and never queried by field. ⚠ Unlike `gaps`,
+it is not small — a cleared bookcase is 400 rows — so the size question
+belongs with the retention question below.
+
+**THREE QUESTIONS FOR THE OWNER, and none is derivable from the code:**
+
+1. **How long does an undo stay valid, and how is that enforced?** §3.15 says
+   *"invalidated the moment anything else touches those rows"*. That is precise
+   and expensive: every write in the product would have to consult the journal.
+   The cheaper shape with the same honesty is a **fingerprint checked at undo
+   time** — the undo re-reads what it would restore, compares it against what
+   it recorded, and refuses if anything moved. It cannot be wrong, it costs
+   nothing on the write path, and the refusal can name what changed. A time
+   window (say 24h) can ride along to bound the table.
+2. **One undo, or a stack?** The editor already has a client-side undo stack
+   for the DRAWING. A server journal that is one-deep — *undo the last
+   destructive edit in this library* — covers the mis-tap §3.15 is about, and
+   is a fraction of the work. An n-deep stack needs an order, a cursor, and an
+   answer for undoing out of order.
+3. **Does a UI land here, or is this the route only?** P6.4b is already an L.
+   Route-only keeps the schema review looking at a diff with no client in it;
+   the editor's *undo* learning to call it is a natural S afterwards.
+
+**What P6.3.2 filed that this item should look at:** the `SectionEditDTO.
+created` count reports planned rather than actual additions, and `_release`
+deletes one shelf per connection (~3.4s of a 400-cell request). Neither blocks
+the journal; both live near it.
+
+**Reviewers:** `review-migration` **before** the commit, then data-integrity,
+quality, and — only if a UI lands — ux. **Worktree**, per rule 1.
 
 **P6.4b is separate so that *bind* and *merge* are never one button.** The
 safe half is a shelf gaining an address; the dangerous half is two identities
