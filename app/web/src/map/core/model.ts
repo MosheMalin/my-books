@@ -288,11 +288,33 @@ export function isGap(sec: Section, col: number, level: number): boolean {
  * refuses them with a 400, and a document holding one would draw a hole in a
  * case that has no such cell.
  */
+/**
+ * Is this cell inside the section's extent?
+ *
+ * ⚠ Exported and used by everything that touches the mask, because a review
+ * counted THREE longhand copies of it here and found the fourth caller
+ * missing: `withColumnCount` and `withColumnLevels` did not prune, so
+ * shrinking a column past a hole and growing it back produced a cell that was
+ * BOTH a gap and a shelf — a shape `Section.__post_init__` refuses on the
+ * server, and one whose next diff asked the server to re-open a hole the
+ * owner never made.
+ */
+export function inExtent(sec: Section, cell: GapCell): boolean {
+  return cell.col >= 0 && cell.col < sec.columnLevels.length &&
+    cell.level >= 0 && cell.level < (sec.columnLevels[cell.col] ?? 0)
+}
+
+/** Drop the gaps a resized extent no longer contains — the client's copy of
+ *  `app/domain/place.py:_pruned`, and MAP_PLAN §3.10a's *"the hole goes with
+ *  the wood"*. Growing the column back yields a SHELF, not a resurrected
+ *  hole: a level count is what the owner is editing at that moment. */
+const pruned = (sec: Section): Section =>
+  sec.gaps.every((g) => inExtent(sec, g))
+    ? sec
+    : { ...sec, gaps: sec.gaps.filter((g) => inExtent(sec, g)) }
+
 export function withGaps(sec: Section, cells: GapCell[], gap: boolean): Section {
-  const inside = cells.filter(
-    (c) => c.col >= 0 && c.col < sec.columnLevels.length &&
-      c.level >= 0 && c.level < (sec.columnLevels[c.col] ?? 0),
-  )
+  const inside = cells.filter((c) => inExtent(sec, c))
   if (inside.length === 0) return sec
   const hit = (c: GapCell) => inside.some((x) => x.col === c.col && x.level === c.level)
   const gaps = gap
@@ -318,11 +340,11 @@ export function withColumnCount(sec: Section, count: number): Section {
   const n = Math.max(1, Math.round(count))
   if (n === sec.columnLevels.length) return sec
   if (n < sec.columnLevels.length) {
-    return {
+    return pruned({
       ...sec,
       columnLevels: sec.columnLevels.slice(0, n),
       shelves: sec.shelves.filter((s) => s.col < n),
-    }
+    })
   }
   const columnLevels = sec.columnLevels.slice()
   const shelves = sec.shelves.slice()
@@ -332,7 +354,7 @@ export function withColumnCount(sec: Section, count: number): Section {
       shelves.push({ col, level, depth: sec.defaultDepth, photos: 0, books: 0 })
     }
   }
-  return { ...sec, columnLevels, shelves }
+  return pruned({ ...sec, columnLevels, shelves })
 }
 
 /** Change ONE column's level count. Growing creates shelves at the section's
@@ -350,7 +372,7 @@ export function withColumnLevels(sec: Section, col: number, levels: number): Sec
       shelves = shelves.concat({ col, level, depth: sec.defaultDepth, photos: 0, books: 0 })
     }
   }
-  return { ...sec, columnLevels, shelves }
+  return pruned({ ...sec, columnLevels, shelves })
 }
 
 /** How many shelves live in columns at or beyond `from` — what a "remove

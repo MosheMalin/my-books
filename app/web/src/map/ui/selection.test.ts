@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { EMPTY, count, hasCase, hasRoom, only, selectCase, selectRoom, toggle } from './types'
+import { EMPTY, count, hasCase, hasRoom, markCell, only, selectCase, selectRoom, toggle } from './types'
 import { emptyPlan, newBookcase } from '../core/model'
 import type { Plan } from '../core/model'
 
@@ -57,5 +57,28 @@ describe('the selection set', () => {
 
   it('never resolves an id that is not in the plan', () => {
     expect(only(selectRoom('ghost'), plan)).toBeNull()
+  })
+})
+
+describe('markCell — several cells of ONE bookcase (P6.3.2b)', () => {
+  const A = { caseId: 'c1', sectionId: 's1', col: 0, level: 0 }
+  const B = { caseId: 'c1', sectionId: 's1', col: 0, level: 1 }
+  const elsewhere = { caseId: 'c2', sectionId: 's9', col: 0, level: 0 }
+  const held = (cells: typeof A[]) => ({ rooms: [], cases: ['c1'], cells })
+
+  it('adds with the modifier and replaces without it', () => {
+    expect(markCell(held([A]), B, true).cells).toEqual([A, B])
+    expect(markCell(held([A]), B, false).cells).toEqual([B])
+  })
+
+  it('toggles a marked cell back out, like Ctrl+click on a room', () => {
+    expect(markCell(held([A, B]), B, true).cells).toEqual([A])
+  })
+
+  it('starts a new set when the cell belongs to another bookcase', () => {
+    // ⚠ The clause's own hazard: a set spanning two cases could be emptied by
+    // one gesture while only one of them is on screen.
+    expect(markCell({ rooms: [], cases: ['c2'], cells: [elsewhere] }, B, true).cells)
+      .toEqual([B])
   })
 })

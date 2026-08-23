@@ -24,7 +24,7 @@
  */
 
 import type { Bookcase, Floor, Plan, Room, Section, Shelf } from './model'
-import { DEFAULT_DEPTH, DEFAULT_LEVELS, GROUND_FLOOR, emptyPlan } from './model'
+import { DEFAULT_DEPTH, DEFAULT_LEVELS, GROUND_FLOOR, emptyPlan, inExtent } from './model'
 import type { Rect, Side } from './rect'
 import { integral } from './rect'
 
@@ -158,15 +158,14 @@ function readSection(v: unknown): Section | null {
   if (columnLevels.length === 0) return null
   // ⚠ The mask is READ, not defaulted away (P6.3.2b). A file's gaps are cells
   // the owner switched off; dropping them on import would silently fill the
-  // television's space with shelves, and `toJson` writes the whole section,
+  // television's space with shelves, and `serializePlan` writes the whole section,
   // so an import that forgot them would lose them on the next export too.
   // Out-of-extent cells are dropped, exactly as `withGaps` and the server do.
   const gaps = asArray(v['gaps'])
     .map((g) => (isRecord(g)
       ? { col: Math.round(num(g['col'], -1)), level: Math.round(num(g['level'], -1)) }
       : { col: -1, level: -1 }))
-    .filter((g) => g.col >= 0 && g.col < columnLevels.length &&
-      g.level >= 0 && g.level < (columnLevels[g.col] ?? 0))
+    .filter((g) => inExtent({ columnLevels } as Section, g))
   const gapped = new Set(gaps.map((g) => `${g.col}:${g.level}`))
   return {
     id: '', // assigned by readSections

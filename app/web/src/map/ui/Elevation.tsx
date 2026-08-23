@@ -1,3 +1,5 @@
+import { useState } from 'react'
+
 import { useI18n } from '../../lib/i18n'
 import { mapText } from '../text'
 /**
@@ -87,6 +89,13 @@ function SectionBlock({
   const marked = selection.cells.filter(
     (c) => c.caseId === bc.id && c.sectionId === sec.id)
   const blocked = marked.length > 0 ? whyNotGap(sec, marked) : null
+  // ⚠ The touch path for marking a SET. `onClick`'s `ctrlKey`/`shiftKey` are
+  // desktop-only — a review measured that a finger carries none of them, so
+  // the set could never exceed one cell on a phone and the item's whole
+  // premise ("a television is a rectangle of cells") was a desktop feature.
+  // A latch is one control, it is absent until a cell is marked, and it says
+  // its own rule rather than hiding a modifier nothing mentions.
+  const [adding, setAdding] = useState(false)
   const index = bc.sections.findIndex((s) => s.id === sec.id)
   // Numbered BOTTOM-UP, because that is how the thing was built: section 1
   // stands on the floor.
@@ -133,21 +142,47 @@ function SectionBlock({
           it says how many, and it never mentions the bookcase: deleting cells
           does not delete furniture (owner, 2026-08-22). */}
       {marked.length > 0 && (
-        <div className="elev-marked" role="group" aria-label={T.marked_cells(marked.length)}>
-          <span className="note">{T.marked_cells(marked.length)}</span>
+        <div className="elev-marked" role="group">
+          {/* ⚠ `.rtl-safe` on every counted sentence. A review measured these
+              in the LTR-pinned elevation: a string BEGINNING with a digit has
+              no strong first character, so `2 תאים מסומנים` rendered with the
+              2 at the far left — the end of the phrase for a Hebrew reader —
+              and the refusal's full stop landed before its first word.
+              `unicode-bidi: plaintext` takes the direction from the first
+              STRONG character, which is the Hebrew, and resolves it right.
+              The group carried this same text as an `aria-label` too, so a
+              screen reader said it twice; the visible text is enough. */}
+          <span className="note rtl-safe">{T.marked_cells(marked.length)}</span>
           {/* ⚠ The reason INSTEAD of the button, not a disabled button beside
               it. The server refuses these with a 409 in English, after the
               press; MapScreen's rule is that a refusal the screen could have
               stated belongs before it. The 409 remains the backstop for what
               another tab did — and for a NAMED empty cell, which the document
               cannot see. */}
+          <button
+            type="button"
+            className={`latch${adding ? ' on' : ''}`}
+            aria-pressed={adding}
+            title={T.adding_more_cells}
+            onClick={() => setAdding((on) => !on)}
+          >
+            {T.add_more_cells}
+          </button>
           {blocked ? (
-            <span className="note warn" role="status">{T.cells_not_empty(blocked.cells)}</span>
+            // Named per CAUSE, and each names a remedy that EXISTS. A review
+            // pressed this on a cell that was empty but two rows deep and was
+            // told to "clear it first" — of nothing.
+            <span className="note warn rtl-safe" role="status">
+              {blocked.books > 0
+                ? T.cells_have_books(blocked.books)
+                : blocked.photos > 0
+                  ? T.cells_have_photos(blocked.photos)
+                  : T.cells_are_deep(blocked.deeper)}
+            </span>
           ) : (
             <button
               type="button"
               className="danger"
-              aria-label={T.make_space(marked.length)}
               title={T.make_space_title}
               onClick={() =>
                 props.onGaps(sec.id, marked.map((c) => ({ col: c.col, level: c.level })), true)}
@@ -156,6 +191,14 @@ function SectionBlock({
             </button>
           )}
         </div>
+      )}
+
+      {/* ⚠ On screen, not in a `title`. The hole's own explanation lived in a
+          hover tooltip, which a phone never shows — and the phone is the
+          device this is catalogued from. One line, only while the section
+          has a hole, saying the one thing that is not discoverable. */}
+      {sec.gaps.length > 0 && (
+        <p className="note rtl-safe elev-gap-hint">{T.gaps_are_tappable}</p>
       )}
 
       {/* The scroll lives HERE, around one section's columns — not around the
@@ -190,7 +233,17 @@ function SectionBlock({
                     title={T.restore_cell_title}
                     onClick={() => props.onGaps(sec.id, [{ col, level }], false)}
                   >
-                    <span className="elev-level">{level + 1}</span>
+                    {/* ⚠ Not `.elev-level`: that class dims to 0.7, and a
+                        review measured the hole's number at 1.7–2.1:1 against
+                        the panel — under the 4.5:1 floor, effectively blank in
+                        the light theme. A hole is the ONLY way back, and its
+                        every other affordance (a `title`, a `:hover`) is
+                        invisible to the device this is catalogued from. So it
+                        is drawn as DIFFERENT ink, not less: the number at full
+                        strength, and a glyph that says something can be done
+                        here. */}
+                    <span className="elev-level gap-level">{level + 1}</span>
+                    <span className="gap-mark" aria-hidden="true">+</span>
                   </button>
                 )
               }
@@ -205,7 +258,8 @@ function SectionBlock({
                   // plan already uses to select several rooms, so the gesture
                   // is learned once.
                   onClick={(e) =>
-                    props.onSelectShelf(sec.id, col, level, e.ctrlKey || e.metaKey || e.shiftKey)}
+                    props.onSelectShelf(sec.id, col, level,
+                      adding || e.ctrlKey || e.metaKey || e.shiftKey)}
                 >
                   <span className="elev-level">{level + 1}</span>
                   {shelf && shelf.depth > 1 && (
@@ -214,6 +268,15 @@ function SectionBlock({
                     </span>
                   )}
                   {shelf && shelf.photos > 0 && <span className="elev-photos">{shelf.photos}📷</span>}
+                  {/* ⚠ `books` was on `Shelf` and rendered nowhere, so a
+                      refusal naming a cell with books pointed at a cell
+                      carrying no marker at all — nothing on the grid to
+                      look for. */}
+                  {shelf && shelf.books > 0 && (
+                    <span className="elev-books" title={T.marked_cells(shelf.books)}>
+                      {shelf.books}
+                    </span>
+                  )}
                 </button>
               )
             })}

@@ -357,8 +357,8 @@
      `minmax(44px, 1fr)` governs the column WIDTH, which was never the tight
      axis. The panel is 38% of a phone, so this is where a fat finger meets
      the one control that changes the shelf count. */
-  .mapscreen .elev-cell { min-height: 40px; }
-  .mapscreen .elev-col-foot button { min-height: 40px; }
+  .mapscreen .elev-cell.elev-cell { min-height: 44px; }
+  .mapscreen .elev-col-foot.elev-col-foot button { min-height: 40px; }
   .mapscreen .elevation-cols button { min-height: 40px; }
   .mapscreen .toolbar { gap: 5px; padding: 5px 6px; }
   .mapscreen .toolbar button { padding: 6px 9px; font-size: 12px; }
@@ -777,11 +777,29 @@
    it. Still a button, and it is the only way back. */
 .mapscreen .elev-cell.gap {
   background: transparent;
-  border-style: dotted;
-  border-color: color-mix(in srgb, var(--line) 60%, transparent);
-  color: color-mix(in srgb, var(--dim) 55%, transparent);
+  border-style: dashed;
+  border-color: var(--line);
+  color: var(--dim);
 }
+/* ⚠ Full strength, both of them. A review measured the first cut — the border
+   at 1.15:1 against the panel and the number at 1.7-2.1:1, under the 3:1
+   floor for a boundary and the 4.5:1 floor for text, effectively blank in the
+   light theme. A hole is the ONLY way back and every other cue it had (a
+   `title`, a `:hover`) is invisible on a touch device, so it is drawn as
+   DIFFERENT ink rather than less of it: a dashed edge at full `--line`, the
+   level number undimmed, and a `+` that says something can be done here. */
+.mapscreen .elev-cell.gap .gap-level { opacity: 1; }
+.mapscreen .gap-mark { font-weight: 700; opacity: 0.85; }
 .mapscreen .elev-cell.gap:hover { border-color: var(--accent); color: var(--ink); }
+/* Books standing on a cell, so the cell a refusal names carries a marker. */
+.mapscreen .elev-books { font-size: 10px; font-weight: 600; }
+/* The touch latch: a pressed-state toggle, so a finger can mark a set. */
+.mapscreen .elev-marked .latch { font-size: 11px; }
+.mapscreen .elev-marked .latch.on {
+  background: var(--accent);
+  color: var(--btn);
+  border-color: var(--accent);
+}
 /* The marked-cell bar sits above the grid, and only exists while cells are
    marked — absent, not disabled. */
 .mapscreen .elev-marked {

@@ -507,16 +507,20 @@ describe('gaps on the wire (P6.3.2)', () => {
   it('re-bases the mask to 0 and leaves the gapped cell without a shelf', () => {
     // The pillar's one off-by-one, applied to the mask exactly as it is to an
     // address: the wire is 1-based, the document counts from 0.
-    const plan = toPlan(wire([{ column: 2, level: 3 }]), [], 'st')
+    // ⚠ A MIDDLE cell, not the top one. With the top cell, filtering the
+    // gapped slot out and COMPACTING the ones below it are indistinguishable
+    // — a quality review rewrote `toPlan` to renumber and every test stayed
+    // green, which is the one behaviour the owner ruled out.
+    const plan = toPlan(wire([{ column: 2, level: 2 }]), [], 'st')
     const sec = plan.cases[0]!.sections[0]!
 
-    expect(sec.gaps).toEqual([{ col: 1, level: 2 }])
+    expect(sec.gaps).toEqual([{ col: 1, level: 1 }])
     expect(sec.columnLevels).toEqual([3, 3], )
-    expect(sec.shelves.some((s) => s.col === 1 && s.level === 2)).toBe(false)
-    // …and the five other cells of the case are all still there, at the
-    // levels they had. A gap is a mask, not a resize.
+    expect(sec.shelves.some((s) => s.col === 1 && s.level === 1)).toBe(false)
+    // …and the cell BELOW the hole still answers to level 2. That number is
+    // what an address prints, and keeping it is the whole feature.
     expect(sec.shelves).toHaveLength(5)
-    expect(sec.shelves.filter((s) => s.col === 1).map((s) => s.level)).toEqual([0, 1])
+    expect(sec.shelves.filter((s) => s.col === 1).map((s) => s.level)).toEqual([0, 2])
   })
 
   it('counts slots the way the server counts addresses, so the ceilings agree', () => {

@@ -11,7 +11,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { newBookcase, newSection, withColumnCount } from './core/model'
-import type { Bookcase, Section } from './core/model'
+import type { Bookcase, Section, Shelf } from './core/model'
 import { deletionCost } from './cost'
 import {
   MAX_COLUMNS_PER_SECTION,
@@ -20,6 +20,7 @@ import {
   clampColumns,
   clampLevels,
   overCeiling,
+  whyNotGap,
 } from './limits'
 
 const wide = (id: string, cols: number, levels: number): Section =>
@@ -117,5 +118,44 @@ describe('what deleting a bookcase would cost', () => {
     held.sections[0]!.shelves[0]!.books = 1
     expect(deletionCost([held]).empty).toBe(false)
     expect(deletionCost([held]).books).toBe(1)
+  })
+})
+
+describe('whyNotGap — the server refusal, stated before the press', () => {
+  const sec = (shelves: Shelf[]): Section => ({
+    id: 's1', columnLevels: [2], gaps: [], defaultLevels: 2, defaultDepth: 2, shelves,
+  })
+  const cell = { col: 0, level: 0 }
+  const at = (over: Partial<Shelf>): Shelf =>
+    ({ col: 0, level: 0, depth: 2, photos: 0, books: 0, ...over })
+
+  it('lets an empty cell through', () => {
+    expect(whyNotGap(sec([at({})]), [cell])).toBeNull()
+  })
+
+  it('refuses books and photographs, the way the server asks both stores', () => {
+    expect(whyNotGap(sec([at({ books: 1 })]), [cell])).toMatchObject({ cells: 1, books: 1 })
+    expect(whyNotGap(sec([at({ photos: 1 })]), [cell])).toMatchObject({ cells: 1, photos: 1 })
+  })
+
+  it('refuses a row declared BEHIND the shelf, and only that', () => {
+    // ⚠ Deeper, never merely different — the same clause, and the same
+    // reason, as `app/map_edit.py:apply_gaps`. §3.3 makes a section's default
+    // drift away from its shelves by design, so `!==` would refuse every cell
+    // of any case whose default had been edited: the feature's own scenario,
+    // and it would refuse it BEFORE the press, with the button absent.
+    expect(whyNotGap(sec([at({ depth: 3 })]), [cell])).toMatchObject({ cells: 1, deeper: 1 })
+    expect(whyNotGap(sec([at({ depth: 1 })]), [cell])).toBeNull()
+    expect(whyNotGap(sec([at({ depth: 2 })]), [cell])).toBeNull()
+  })
+
+  it('counts the cells that block, not the reasons', () => {
+    const two = sec([at({ books: 1, photos: 2 }), at({ level: 1, depth: 4 })])
+    expect(whyNotGap(two, [cell, { col: 0, level: 1 }]))
+      .toEqual({ cells: 2, books: 1, photos: 1, deeper: 1 })
+  })
+
+  it('says nothing about a cell that is already a hole', () => {
+    expect(whyNotGap({ ...sec([]), gaps: [cell] }, [cell])).toBeNull()
   })
 })

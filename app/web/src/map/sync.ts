@@ -27,6 +27,7 @@ import {
   DEFAULT_DEPTH,
   DEFAULT_LEVELS,
   columnCount,
+  inExtent,
   withColumnCount,
 } from './core/model'
 import type { Rect, Side } from './core/rect'
@@ -336,8 +337,7 @@ function shapeOps(had: Section, section: Section): Op[] {
   const before = new Set(had.gaps.map(key))
   const after = new Set(section.gaps.map(key))
   const opened = section.gaps.filter((g) => !before.has(key(g)))
-  const closed = had.gaps.filter((g) => !after.has(key(g)) &&
-    g.col < columnCount(section) && g.level < (section.columnLevels[g.col] ?? 0))
+  const closed = had.gaps.filter((g) => !after.has(key(g)) && inExtent(section, g))
   if (opened.length > 0)
     ops.push({ kind: 'section.gaps', section, cells: opened, gap: true })
   if (closed.length > 0)

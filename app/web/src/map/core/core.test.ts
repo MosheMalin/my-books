@@ -759,3 +759,54 @@ describe('gaps — cells switched off (MAP_PLAN §3.10a)', () => {
     expect(withGaps(holed, [{ col: 1, level: 1 }], false).shelves).toHaveLength(7)
   })
 })
+
+describe('gaps and the extent, in both directions (P6.3.2b)', () => {
+  const holed = (): Section => {
+    const sec: Section = {
+      id: 's1', columnLevels: [4, 4], gaps: [], defaultLevels: 4, defaultDepth: 2,
+      shelves: [0, 1].flatMap((col) =>
+        [0, 1, 2, 3].map((level) => ({ col, level, depth: 2, photos: 0, books: 0 }))),
+    }
+    return withGaps(sec, [{ col: 0, level: 3 }], true)
+  }
+
+  it('takes the hole with the wood, so growing back yields a SHELF', () => {
+    // MAP_PLAN §3.10a, DECIDED: *"the hole goes with the wood… growing the
+    // column back yields a shelf and not a resurrected hole."* The server
+    // does this in `_pruned`; a quality review measured that the client's two
+    // counterparts did NOT, which left one cell that was a gap and a shelf at
+    // once — a section shape `Section.__post_init__` refuses — and made the
+    // next diff ask the server to re-open a hole nobody made.
+    const shorter = withColumnLevels(holed(), 0, 3)
+    expect(shorter.columnLevels).toEqual([3, 4])
+    expect(shorter.gaps).toEqual([])
+
+    const back = withColumnLevels(shorter, 0, 4)
+    expect(isGap(back, 0, 3)).toBe(false)
+    expect(shelfAt(back, 0, 3)).not.toBeNull()
+  })
+
+  it('takes the holes of a column that is removed entirely', () => {
+    const narrower = withColumnCount(withGaps(holed(), [{ col: 1, level: 0 }], true), 1)
+    expect(narrower.gaps).toEqual([{ col: 0, level: 3 }])
+  })
+
+  it('never leaves a cell that is a gap AND a shelf', () => {
+    // The invariant `toPlan` and `readSection` each enforce on the way in.
+    // Nothing may break it on the way through.
+    let sec = holed()
+    for (const step of [
+      (s: Section) => withColumnLevels(s, 0, 2),
+      (s: Section) => withColumnLevels(s, 0, 4),
+      (s: Section) => withColumnCount(s, 3),
+      (s: Section) => withColumnCount(s, 1),
+    ]) {
+      sec = step(sec)
+      for (const g of sec.gaps) {
+        expect(shelfAt(sec, g.col, g.level)).toBeNull()
+        expect(g.col).toBeLessThan(sec.columnLevels.length)
+        expect(g.level).toBeLessThan(sec.columnLevels[g.col] ?? 0)
+      }
+    }
+  })
+})

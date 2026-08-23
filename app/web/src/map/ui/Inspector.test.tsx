@@ -193,18 +193,37 @@ describe('the elevation, with cells switched off (P6.3.2b)', () => {
   })
 
   it('marks several cells with the modifier the plan already uses', async () => {
+    // ⚠ The selection prop ALREADY holds a cell, and that is the whole point.
+    // A review measured the first version of this test: with `cells: []`,
+    // `markCell(sel, B, true)` and `markCell(sel, B, false)` both answer
+    // `[B]`, so deleting the modifier from `Elevation.tsx` entirely left 305
+    // tests green. Starting from a held cell makes ADD and REPLACE tell
+    // themselves apart in one assertion.
+    //
+    // ⚠⚠ `userEvent.setup()`, not the direct API: the direct one builds a
+    // fresh instance per call, so a held `{Control>}` never reaches a
+    // separate `.click()` — the same review measured the received call
+    // arriving with `ctrlKey: false`, i.e. the test exercising a plain click
+    // under a comment that said Ctrl.
+    const A = { caseId: 'c1', sectionId: 's1', col: 0, level: 0 }
     const acts = actions()
-    showPlan({ rooms: [], cases: ['c1'], cells: [] }, acts)
+    showPlan({ rooms: [], cases: ['c1'], cells: [A] }, acts)
+    const user = userEvent.setup()
 
-    await userEvent.click(screen.getByRole('button', { name: /מדף, עמודה 1, גובה 1/ }))
-    expect(acts.select).toHaveBeenCalledWith(expect.objectContaining({
-      cells: [{ caseId: 'c1', sectionId: 's1', col: 0, level: 0 }],
+    await user.keyboard('{Control>}')
+    await user.click(screen.getByRole('button', { name: /מדף, עמודה 1, גובה 2/ }))
+    await user.keyboard('{/Control}')
+    expect(acts.select).toHaveBeenLastCalledWith(expect.objectContaining({
+      cells: [A, { caseId: 'c1', sectionId: 's1', col: 0, level: 1 }],
     }))
+  })
 
-    // Ctrl ADDS — the same gesture that selects a second room.
-    await userEvent.keyboard('{Control>}')
+  it('replaces the marked set on a plain click', async () => {
+    const A = { caseId: 'c1', sectionId: 's1', col: 0, level: 0 }
+    const acts = actions()
+    showPlan({ rooms: [], cases: ['c1'], cells: [A] }, acts)
+
     await userEvent.click(screen.getByRole('button', { name: /מדף, עמודה 1, גובה 2/ }))
-    await userEvent.keyboard('{/Control}')
     expect(acts.select).toHaveBeenLastCalledWith(expect.objectContaining({
       cells: [{ caseId: 'c1', sectionId: 's1', col: 0, level: 1 }],
     }))
@@ -215,7 +234,7 @@ describe('the elevation, with cells switched off (P6.3.2b)', () => {
     // bookcase: deleting cells does not delete furniture.
     const acts = actions()
     const { unmount } = showPlan({ rooms: [], cases: ['c1'], cells: [] }, acts, emptyCase())
-    expect(screen.queryByRole('button', { name: /פינוי/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /השארת מקום/ })).toBeNull()
     unmount()
 
     showPlan({
@@ -225,8 +244,7 @@ describe('the elevation, with cells switched off (P6.3.2b)', () => {
         { caseId: 'c1', sectionId: 's1', col: 0, level: 1 },
       ],
     }, acts, emptyCase())
-    const button = screen.getByRole('button', { name: /פינוי 2 תאים/ })
-    expect(button).toBeTruthy()
+    expect(screen.getByRole('button', { name: /השארת מקום \(2 תאים\)/ })).toBeTruthy()
   })
 
   it('switches off exactly the marked cells, with no confirm in the way', async () => {
@@ -243,7 +261,7 @@ describe('the elevation, with cells switched off (P6.3.2b)', () => {
       ],
     }, acts, emptyCase())
 
-    await userEvent.click(screen.getByRole('button', { name: /פינוי 2 תאים/ }))
+    await userEvent.click(screen.getByRole('button', { name: /השארת מקום \(2 תאים\)/ }))
     expect(acts.setGaps).toHaveBeenCalledWith(
       'c1', 's1', [{ col: 0, level: 0 }, { col: 0, level: 1 }], true)
   })
@@ -282,8 +300,40 @@ describe('the elevation, with cells switched off (P6.3.2b)', () => {
       cells: [{ caseId: 'c1', sectionId: 's1', col: 0, level: 0 }],
     }, acts, p)
 
-    expect(screen.queryByRole('button', { name: /פינוי/ })).toBeNull()
-    expect(screen.getByText(/אינם ריקים/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /השארת מקום/ })).toBeNull()
+    // Named per CAUSE: this cell holds photographs, so the sentence says so
+    // and names a remedy that exists — not "clear them first" of nothing.
+    expect(screen.getByText(/יש צילום/)).toBeTruthy()
     expect(acts.setGaps).not.toHaveBeenCalled()
+  })
+  it('lets a FINGER mark a set, since a tap carries no modifier', async () => {
+    // A UX review measured this: `onClick`'s ctrlKey/metaKey/shiftKey are all
+    // false for a touch tap, and the tree had no long-press and no toggle —
+    // so on a phone the marked set could never exceed one cell, and the whole
+    // premise of the item ("a television is a rectangle of cells") was a
+    // desktop feature that nothing on screen mentioned.
+    //
+    // The latch is absent until a cell is marked, states its own rule, and
+    // makes plain taps accumulate. `userEvent.click` sends no modifiers, so
+    // this test IS the touch path.
+    const A = { caseId: 'c1', sectionId: 's1', col: 0, level: 0 }
+    const acts = actions()
+    showPlan({ rooms: [], cases: ['c1'], cells: [A] }, acts, emptyCase())
+
+    const latch = screen.getByRole('button', { name: 'סימון תאים נוספים' })
+    expect(latch.getAttribute('aria-pressed')).toBe('false')
+    await userEvent.click(latch)
+    expect(latch.getAttribute('aria-pressed')).toBe('true')
+
+    await userEvent.click(screen.getByRole('button', { name: /מדף, עמודה 1, גובה 2/ }))
+    expect(acts.select).toHaveBeenLastCalledWith(expect.objectContaining({
+      cells: [A, { caseId: 'c1', sectionId: 's1', col: 0, level: 1 }],
+    }))
+  })
+
+  it('explains a hole on SCREEN, not only in a tooltip a phone never shows', () => {
+    const acts = actions()
+    showPlan({ rooms: [], cases: ['c1'], cells: [] }, acts, holed())
+    expect(screen.getByText(/לחיצה מחזירה מדף/)).toBeTruthy()
   })
 })
