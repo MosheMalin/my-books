@@ -1218,7 +1218,7 @@ The decomposition, each landing on `main` before the next:
 | # | Item | Size | Reviewers |
 |---|---|---|---|
 | **P6.4a** | **The alias, and nothing using it** — schema **v23**, one alias row carrying the absorbed shelf's id AND its former address, the resolver, `BookStore.books_on_shelf`, and "a shelf other identities resolve to is OCCUPIED". No merge, no route. | M | `review-migration` **before**, data-integrity, quality |
-| **P6.4b** | **Undo for destructive map edits** (§3.15) — the journal, the inverse, and the invalidation rule. Covers remove column, remove section, delete bookcase, remove site, **and switching cells off** (P6.3.2, which arrived after §3.15 was written); the merge joins it in P6.4d. ⚠ Schema **v22**, and it runs FIRST — see the note below. | L | `review-migration` **before**, data-integrity, quality, ux |
+| **P6.4b** | **Undo for destructive map edits** (§3.15) — the journal, the inverse, and the invalidation rule. Covers remove column, remove section, delete bookcase, remove site, **and switching cells off** (P6.3.2, which arrived after §3.15 was written); the merge joins it in P6.4d. Fingerprint at undo time and no expiry; record all, undo the head; a minimal UI lands with it (owner, 2026-08-24). ⚠ Schema **v22**, and it runs FIRST — see the note below. | L | `review-migration` **before**, data-integrity, quality, ux |
 | **P6.4c** | **Bind** — an unaddressed shelf gains an address, and loses one. No identities join; a taken slot is a 409 naming the occupant and offering the merge. | S | data-integrity, security, quality, ux |
 | **P6.4d** | **Merge** — two identities become one, undoable. ⚠ **carries the data-loss risk.** | L | data-integrity, security, quality, ux |
 | **P6.4e** | **History across the seam** — reads, streaks, staleness and the *formerly* line resolve through the alias. | M | data-integrity, quality, ux |
@@ -1267,7 +1267,7 @@ gains the table. And it must use the table afterwards: the v19→v20 test's own
 Both halves were measured again on P6.3.2a's step, by mutation: folding the
 DDL into the previous step was caught by exactly one test, its own.
 
-#### P6.4b in detail — the journal  *(next; three questions OPEN)*
+#### P6.4b in detail — the journal  *(next; all three questions CLOSED)*
 
 **One sentence:** a destructive map edit records its own inverse, and an undo
 that cannot prove the world is unchanged refuses and says why.
@@ -1291,35 +1291,57 @@ the undo replays exactly that.
 
 `inverse` is JSON for the same reason `sections.gaps` is (P6.3.2a): it is read
 and written whole with its entry and never queried by field. ⚠ Unlike `gaps`,
-it is not small — a cleared bookcase is 400 rows — so the size question
-belongs with the retention question below.
+it is not small — a cleared bookcase is 400 rows — and question 1 below
+decided the table is **not** bounded by age, so its growth is a real thing to
+watch and a later item's problem, not a reason to expire an honest undo.
 
-**THREE QUESTIONS FOR THE OWNER, and none is derivable from the code:**
+**THE THREE QUESTIONS, ANSWERED** (owner, 2026-08-24). None was derivable
+from the code, and two overruled the recommendation on record:
 
-1. **How long does an undo stay valid, and how is that enforced?** §3.15 says
-   *"invalidated the moment anything else touches those rows"*. That is precise
-   and expensive: every write in the product would have to consult the journal.
-   The cheaper shape with the same honesty is a **fingerprint checked at undo
-   time** — the undo re-reads what it would restore, compares it against what
-   it recorded, and refuses if anything moved. It cannot be wrong, it costs
-   nothing on the write path, and the refusal can name what changed. A time
-   window (say 24h) can ride along to bound the table.
-2. **One undo, or a stack?** The editor already has a client-side undo stack
-   for the DRAWING. A server journal that is one-deep — *undo the last
-   destructive edit in this library* — covers the mis-tap §3.15 is about, and
-   is a fraction of the work. An n-deep stack needs an order, a cursor, and an
-   answer for undoing out of order.
-3. **Does a UI land here, or is this the route only?** P6.4b is already an L.
-   Route-only keeps the schema review looking at a diff with no client in it;
-   the editor's *undo* learning to call it is a natural S afterwards.
+1. **How does an undo prove the world is unchanged?** → **A fingerprint
+   checked at undo time, with NO time window** (owner; the recommendation was
+   the same fingerprint plus a 24h floor). §3.15's literal reading —
+   *"invalidated the moment anything else touches those rows"* — was rejected
+   as the expensive and quietly-incomplete shape: it puts the journal on the
+   hot path of every product write, and the one write path that forgets to
+   check produces a silently WRONG undo, which is worse than a refused one.
+   So the undo re-reads exactly what it would restore, digests it, compares
+   against the digest recorded with the entry, and **refuses naming what
+   moved** if they differ. It cannot be wrong and it costs nothing on the
+   write path. The 24h floor was dropped on the owner's argument that a
+   mis-tap noticed a week later is still a mis-tap: age is not evidence that
+   an undo is unsafe — the fingerprint is the only evidence, and it is exact.
+   ⚠ The consequence is accepted deliberately: **entries never expire**, so
+   the table is unbounded and retention becomes its own later item. Nothing
+   in this item may quietly reintroduce an age check as a substitute.
+2. **One undo, or a stack?** → **Record all, undo the head** (owner; as
+   recommended). Every destructive edit writes a row — the journal is also a
+   record of what happened — but only the newest still-undoable entry for the
+   library can be replayed. No cursor, no out-of-order semantics, no redo.
+   Older rows stay as history and are **never** replayable. Growing to n-deep
+   later is a behaviour change, not a migration:
+
+       POST /map/undo   → undoes the newest live entry
+       GET  /map/undo   → what would be undone, or why nothing can be
+
+3. **Does a UI land here, or is this the route only?** → **Route plus a
+   minimal UI** (owner; the recommendation was route-only). One control in
+   the map editor, the refusal surfaced honestly — not a preview of what will
+   be restored, which stays with P6.4d where the stakes need it. So this item
+   grows past an L and **`review-ux` is back in its reviewer list**, with the
+   375x812 walk in a real browser that P6.3.3 taught us to do before claiming
+   any flow works. The schema review is protected the other way instead: the
+   v22 step is committed on its own, reviewed against a diff with no client
+   in it, before the UI half is written.
 
 **What P6.3.2 filed that this item should look at:** the `SectionEditDTO.
 created` count reports planned rather than actual additions, and `_release`
 deletes one shelf per connection (~3.4s of a 400-cell request). Neither blocks
 the journal; both live near it.
 
-**Reviewers:** `review-migration` **before** the commit, then data-integrity,
-quality, and — only if a UI lands — ux. **Worktree**, per rule 1.
+**Reviewers:** `review-migration` **before** the v22 commit, then
+data-integrity, quality, and **ux** — a UI lands (question 3), so ux is not
+optional here. **Worktree**, per rule 1.
 
 **P6.4b is separate so that *bind* and *merge* are never one button.** The
 safe half is a shelf gaining an address; the dangerous half is two identities
