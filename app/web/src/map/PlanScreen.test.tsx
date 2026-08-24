@@ -28,7 +28,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 
 import { userEvent } from '../test/user'
-import { I18nProvider } from '../lib/i18n'
+import { I18nProvider, useI18n } from '../lib/i18n'
 import { PlanScreen } from './PlanScreen'
 import { mapText } from './text'
 
@@ -62,6 +62,8 @@ function fakeMapServer() {
     refuseUndo: null as number | null,
     /** …and the reason `GET /map/undo` then gives for it. */
     undoReason: 'world_moved',
+    /** What `GET /map/undo` says MOVED — the counted sentence reads it. */
+    undoChanged: ['shelves:sh-1'] as string[],
     /** Hold every POST until `release()`, so a test can make an edit arrive
      *  while an earlier one is still in flight. */
     holding: false,
@@ -124,7 +126,7 @@ function fakeMapServer() {
     if (path === '/map/undo') {
       if (method === 'GET') return respond({
         available: false, reason: state.undoReason, kind: '', recorded_at: '',
-        restores: {}, changed: [],
+        restores: {}, changed: state.undoChanged,
       })
       if (state.refuseUndo) {
         return respond({ detail: 'the world moved' }, state.refuseUndo)
@@ -632,7 +634,7 @@ describe('taking back the last destructive map edit', () => {
 
     await waitFor(() => expect(posted('/map/undo')).toHaveLength(1), WAIT)
     await waitFor(() => expect(derives()).toBeGreaterThan(settled), WAIT)
-    expect(await saidIn('status', HE.undo_done)).toContain(HE.undo_done)
+    expect(await saidIn('status', HE.undo_done(0))).toContain(HE.undo_done(0))
     // …and the drawing is re-derived, because the server has just changed
     // rows this session's document knows nothing about.
     //
@@ -653,9 +655,13 @@ describe('taking back the last destructive map edit', () => {
     await screen.findByRole('radio', { name: HE.arrow }, WAIT)
     await press(user)
 
-    const said = await saidIn('alert', HE.undo_already)
+    // ⚠ The FLASH (`status`), not the banner. Nothing was refused — the
+    // owner's library is fine and everything is already back — and reporting
+    // that under "the server refused the change" is a fault report where
+    // there is no fault.
+    const said = await saidIn('status', HE.undo_already)
     expect(said).toContain(HE.undo_already)
-    expect(said).not.toContain(HE.undo_moved)
+    expect(screen.queryByRole('alert')).toBeNull()
     // It ASKED why rather than assuming — the request that makes the
     // difference between an honest sentence and a plausible one.
     expect(server.calls).toContain('GET /map/undo')
@@ -669,9 +675,90 @@ describe('taking back the last destructive map edit', () => {
     await screen.findByRole('radio', { name: HE.arrow }, WAIT)
     await press(user)
 
-    const said = await saidIn('alert', HE.undo_moved)
-    expect(said).toContain(HE.undo_moved)
+    // This one IS a refusal — something really is in the way — so it keeps
+    // the banner, and it NAMES what moved.
+    const said = await saidIn('alert', 'מדף אחד השתנה')
+    expect(said).toContain(HE.undo_moved(1, 0))
     expect(said).not.toContain(HE.undo_already)
+  })
+
+
+  it('does not throw the editor away when the undo was refused', async () => {
+    // ⚠ A refused undo wrote NOTHING, so re-deriving buys nothing and costs
+    // the owner their drawing history. Measured before this fix: the whole
+    // editor was replaced for 1.28s and the SVG node swapped, discarding this
+    // session's Ctrl+Z stack, the selection and the viewport — for a press
+    // that changed nothing.
+    const user = userEvent.setup()
+    server.refuseUndo = 409
+    server.undoReason = 'nothing_recorded'
+    open()
+    await screen.findByRole('radio', { name: HE.arrow }, WAIT)
+    const settled = derives()
+    await press(user)
+
+    await waitFor(() => expect(posted('/map/undo')).toHaveLength(1), WAIT)
+    await saidIn('status', HE.undo_nothing)
+    expect(derives()).toBe(settled)
+    // …and the editor never went through its loading state.
+    expect(screen.getByRole('radio', { name: HE.arrow })).toBeInTheDocument()
+  })
+
+  it('offers the undo at the moment something is removed', async () => {
+    // ⚠ The real defect this closes: `ביטול` sits FIRST in the same menu,
+    // becomes enabled the instant something is deleted, and re-draws the slot
+    // — minting a new empty shelf while the owner's label and books stay
+    // behind detached. It looks like it worked. No label fixes that, because
+    // the owner never compares the two rows; a sentence at the moment of the
+    // removal does.
+    const user = userEvent.setup()
+    open()
+    await screen.findByRole('radio', { name: HE.arrow }, WAIT)
+    await addFloor(user)
+    await waitFor(() => expect(posted('/map/floors')).toHaveLength(2), WAIT)
+
+    // Adding is not destructive, so nothing is offered…
+    expect([...document.querySelectorAll('[role=status]')]
+      .map((e) => e.textContent).join(' ')).not.toContain(HE.undo_offered)
+
+    // …and removing that same storey IS, so it is.
+    await user.click(screen.getByRole('button', { name: HE.floor_menu }))
+    await user.click(screen.getAllByRole('menuitem')
+      .find((m) => m.textContent?.startsWith('הסרת הקומה'))!)
+    await waitFor(() => expect(
+      server.calls.some((c) => c.startsWith('DELETE /map/floors/'))).toBe(true),
+      WAIT)
+    expect(await saidIn('status', HE.undo_offered)).toContain(HE.undo_offered)
+  })
+
+  it('re-renders a refusal in the language on screen, not the one it was raised in',
+     async () => {
+    // Its own render, with a real toggle INSIDE the real provider — the app
+    // shell's language button is not part of this screen.
+    function WithToggle() {
+      const { toggleLang } = useI18n()
+      return (
+        <>
+          <button type="button" onClick={toggleLang}>flip</button>
+          <PlanScreen library="lib-test" />
+        </>
+      )
+    }
+    // ⚠ `detail` is frozen at the moment of the notice, and the LEAD is
+    // recomputed every render — so a notice built from our own vocabulary
+    // used to split down the middle when the language changed:
+    // "The server refused: אין מחיקה לשחזר". Measured.
+    const user = userEvent.setup()
+    server.refuseUndo = 409
+    server.undoReason = 'world_moved'
+    render(<I18nProvider><WithToggle /></I18nProvider>)
+    await screen.findByRole('radio', { name: HE.arrow }, WAIT)
+    await press(user)
+    await saidIn('alert', 'מאז')
+
+    await user.click(screen.getByRole('button', { name: 'flip' }))
+    const said = await saidIn('alert', 'since')
+    expect(said).not.toMatch(/[\u0590-\u05FF]/)
   })
 
   it('never claims a reason it was not given', async () => {
@@ -687,7 +774,7 @@ describe('taking back the last destructive map edit', () => {
     await screen.findByRole('radio', { name: HE.arrow }, WAIT)
     await press(user)
 
-    const said = await saidIn('alert', HE.undo_moved)
+    const said = await saidIn('alert', 'מאז')
     expect(said).not.toContain(HE.undo_already)
     expect(said).not.toContain(HE.undo_nothing)
   })

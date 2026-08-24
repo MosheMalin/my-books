@@ -43,7 +43,7 @@ export function PlanScreen({ library }: { library: string }) {
       const [map, shelves] = await Promise.all([getMap(), listShelves()])
       return { map: map as never, shelves: shelves as never }
     },
-    undoReason: async () => (await getUndoOffer()).reason || '',
+    undoOffer: async () => await getUndoOffer(),
     api: {
       post: (path, body) => mapPost(path, body),
       patch: (path, body) => mapPatch(path, body),
@@ -123,11 +123,16 @@ export function PlanScreen({ library }: { library: string }) {
    * to is rebuilt would make the one informative message the briefest thing
    * on screen.
    */
+  // ⚠ `say` before `detail`: a notice whose words are OURS carries the
+  // function, so it re-renders in the locale on screen now rather than the
+  // one that was active when it was raised (see `Said`).
+  const detail = sync.notice
+    && (sync.notice.say ? sync.notice.say(T) : sync.notice.detail)
   const said = sync.notice && `${
     sync.notice.kind === 'refused' ? T.refused_lead
       : sync.notice.kind === 'undelivered' ? T.not_saved_yet
         : T.not_done_lead
-  } ${sync.notice.detail}`
+  } ${detail}`
   const banner = said && (
     <div className="mapbanner" role="alert">
       <span className="rtl-safe">{said}</span>
