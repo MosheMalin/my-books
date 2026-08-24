@@ -1279,12 +1279,20 @@ CREATE INDEX map_undo_by_library ON map_undo (library_id, seq DESC, id DESC);
 # P6.4c's census must both cope with a section that no longer exists, rather
 # than assuming the address resolves.
 #
-# ⚠ **`shelf_id REFERENCES shelves (id)` is the load-bearing line.** An
-# absorbed shelf's `shelves` row is DELETED (§3.11: "`shelves` keeps meaning
-# 'a shelf', so every existing query stays correct with no new WHERE"), so an
-# alias can only ever point at a LIVE shelf — which makes an alias of an alias
-# unrepresentable and the resolver one hop by construction, with no cycle
-# guard and no null check on every call. The same FK is why deleting a shelf
+# ⚠ **What `shelf_id REFERENCES shelves (id)` buys, exactly.** An absorbed
+# shelf's `shelves` row is DELETED (§3.11: "`shelves` keeps meaning 'a shelf',
+# so every existing query stays correct with no new WHERE"), so an alias
+# always names a LIVE shelf and the resolver needs no null check.
+#
+# ⚠ It does NOT buy one hop, whatever an earlier version of this comment said.
+# "Names a live row" and "names a row that is not itself an `alias_id`" are
+# different claims and the key enforces only the first — a review stored both
+# a chain and a cycle through the public API to prove it. One hop is enforced
+# by `ShelfStore.save_alias`, which refuses a survivor that is itself absorbed
+# and an id that is already a survivor, under `BEGIN IMMEDIATE` so two merges
+# cannot race past each other. Read that, not this, for the invariant; a
+# reader who believes the key gives it will see those two branches as
+# redundant and delete one. The same FK is why deleting a shelf
 # other identities resolve to has to be REFUSED rather than cascaded: the
 # refusal names the count (owner, 2026-08-23), because cascading would discard
 # exactly the answer this table exists to give, and would take the P6.4c
@@ -1315,14 +1323,22 @@ CREATE INDEX map_undo_by_library ON map_undo (library_id, seq DESC, id DESC);
 # and a plain UNIQUE over nullable columns would be satisfied by all of them.
 _V24 = """
 CREATE TABLE shelf_aliases (
-    alias_id   TEXT PRIMARY KEY,
+    alias_id   TEXT NOT NULL,
     library_id TEXT NOT NULL,
     shelf_id   TEXT NOT NULL REFERENCES shelves (id),
     section_id TEXT,
     col        INTEGER,
     level      INTEGER,
     label      TEXT NOT NULL DEFAULT '',
-    merged_at  TEXT NOT NULL
+    merged_at  TEXT NOT NULL,
+    -- ⚠ (library_id, alias_id), not `alias_id` alone. Every guard in
+    -- `save_alias` reads `WHERE library_id = ? AND …`, so a global key let
+    -- one tenant's row decide another tenant's outcome: a review stored an
+    -- alias in L2 naming a shelf that lives in L1, and L1 could then never
+    -- absorb that shelf — its own store reported no alias and the merge died
+    -- on a constraint L1 cannot see. Low exploitability (uuid4 ids), exactly
+    -- the shape H2 exists to forbid, and free only before this step ships.
+    PRIMARY KEY (library_id, alias_id)
 );
 
 -- "which identities resolve to this shelf" — the query behind the refusal to

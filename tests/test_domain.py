@@ -2980,3 +2980,73 @@ def test_two_sections_holding_the_same_cells_compare_equal_whatever_the_order():
     assert one.gaps == ((1, 1), (2, 3)), "the mask was not normalised"
     assert one == other
     assert (2, 3) in one.gaps and (2, 4) not in one.gaps
+
+
+# --- the shelf alias (P6.4a, MAP_PLAN §3.11) -------------------------------
+
+def _alias(alias_id, shelf_id, **kw):
+    from app.domain.alias import ShelfAlias
+
+    return ShelfAlias(alias_id=alias_id, library_id="lib", shelf_id=shelf_id,
+                      merged_at="2026-08-25T10:00:00+00:00", **kw)
+
+
+def test_identities_lists_the_survivor_first_and_then_what_it_absorbed():
+    """The list every question about a merged shelf must be asked under.
+
+    ⚠ §3.11 rewrites nothing, so a copy that arrived with an absorbed identity
+    still names IT — six tables name a shelf and only two have a foreign key,
+    which is why the alternative (rewrite every reference) reports a clean
+    `foreign_key_check` over a library whose locations have quietly moved. The
+    port tells every `books_on_shelf` caller to build its argument here, so
+    the ORDER and the completeness are both contract.
+    """
+    from app.domain.alias import identities
+
+    aliases = (_alias("A", "S"), _alias("B", "S"), _alias("C", "other"))
+    assert identities("S", aliases) == ("S", "A", "B"), (
+        "the survivor comes first, and every absorbed identity follows")
+    assert identities("other", aliases) == ("other", "C")
+    assert identities("never-merged", aliases) == ("never-merged",), (
+        "a shelf nothing absorbed is still one identity, not zero")
+
+
+def test_absorbed_by_answers_only_for_the_shelf_asked_about():
+    """Behind the *formerly …* line, and behind `identities`."""
+    from app.domain.alias import absorbed_by
+
+    aliases = (_alias("A", "S"), _alias("B", "other"))
+    assert [a.alias_id for a in absorbed_by("S", aliases)] == ["A"]
+    assert absorbed_by("nobody", aliases) == ()
+
+
+def test_a_shelf_may_not_be_an_alias_of_itself():
+    """Not pedantry: `resolve` would answer with the id it was handed, so
+    every caller would believe the shelf was still there — and the row would
+    make it permanently undeletable, which is the cycle hazard in miniature.
+
+    ⚠ Nothing downstream catches it. Traced through `save_alias` on both
+    implementations: the survivor is live, it is not an `alias_id`, and it has
+    no absorbees, so every branch passes and the row inserts.
+    """
+    from app.domain.alias import DomainError
+
+    try:
+        _alias("A", "A")
+    except DomainError as exc:
+        assert "itself" in str(exc), exc
+    else:
+        raise AssertionError("a shelf was stored as an alias of itself")
+
+
+def test_an_alias_belongs_to_a_library():
+    """H2, at the door — the same rule every entity in this domain carries."""
+    from app.domain.alias import DomainError, ShelfAlias
+
+    try:
+        ShelfAlias(alias_id="A", library_id="", shelf_id="S",
+                   merged_at="2026-08-25T10:00:00+00:00")
+    except DomainError:
+        pass
+    else:
+        raise AssertionError("an alias was built with no library")

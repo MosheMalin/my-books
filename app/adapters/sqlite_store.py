@@ -74,13 +74,13 @@ from app.domain.search import compile_sql_like, haystack, parse
 from app.domain.search import search as domain_search
 from app.ports.map import MapSnapshot, UnknownParent
 from app.ports.store import (
-    ShelfHasAliases,
     BookPage,
     BookSort,
     DuplicateBookKey,
     DuplicateCaptureSlot,
     DuplicateSectionOrdinal,
     DuplicateShelfSlot,
+    ShelfHasAliases,
     ShelfNotEmpty,
     UnknownShelf,
     UnreadableSection,
@@ -327,6 +327,11 @@ class SqliteBookStore(_SqliteStore):
         self, library: LibraryRef, shelf_ids: tuple[str, ...],
     ) -> tuple[Book, ...]:
         if not shelf_ids:
+            # ⚠ Not because `IN ()` is invalid — SQLite accepts it and answers
+            # no rows (measured; the first version of this comment said
+            # otherwise and its test asserted the false reason). It is here so
+            # an empty identity list costs no connection at all, on a path
+            # that draws a screen.
             return ()
         # ⚠ ONE connection, and the rows loaded on it — not `self.get()` per
         # id. `get` opens a fresh connection with two PRAGMAs each time, so
@@ -497,7 +502,15 @@ class SqliteShelfStore(_SqliteStore):
 
     def save_alias(self, library: LibraryRef, alias: ShelfAlias) -> None:
         _same_library_alias(alias, library)
-        with self._connect() as conn, conn:
+        # ⚠ `_immediate`, not a deferred transaction. Every check below is a
+        # read-then-write, and a DEFERRED one takes the write lock only at the
+        # INSERT — so two merges racing each other both read "no alias names
+        # my survivor" and both commit. Measured with the interleaving held
+        # open: A→B and B→A committed together, a CYCLE in which neither
+        # shelf can ever be deleted again, `identities()` wrong in both
+        # directions and `foreign_key_check` clean. The same shape as the undo
+        # journal's `seq`, and the same fix.
+        with self._connect() as conn, _immediate(conn):
             if not conn.execute(
                 "SELECT 1 FROM shelves WHERE id = ? AND library_id = ?",
                 (alias.shelf_id, library.id),
@@ -538,16 +551,31 @@ class SqliteShelfStore(_SqliteStore):
                     f"{alias.alias_id}; absorbing it would put them out of "
                     "reach (MAP_PLAN §3.11)")
             where = alias.address
-            conn.execute(
-                "INSERT INTO shelf_aliases (alias_id, library_id, shelf_id,"
-                " section_id, col, level, label, merged_at)"
-                " VALUES (?,?,?,?,?,?,?,?)",
-                (alias.alias_id, library.id, alias.shelf_id,
-                 where.section_id if where else None,
-                 where.col if where else None,
-                 where.level if where else None,
-                 alias.label, alias.merged_at),
-            )
+            try:
+                conn.execute(
+                    "INSERT INTO shelf_aliases (alias_id, library_id,"
+                    " shelf_id, section_id, col, level, label, merged_at)"
+                    " VALUES (?,?,?,?,?,?,?,?)",
+                    (alias.alias_id, library.id, alias.shelf_id,
+                     where.section_id if where else None,
+                     where.col if where else None,
+                     where.level if where else None,
+                     alias.label, alias.merged_at),
+                )
+            except sqlite3.IntegrityError as exc:
+                # ⚠ Translated, like every other constraint this adapter leans
+                # on rather than checks. The two guards above exist so a
+                # refusal does not arrive as a driver error — and for the two
+                # constraints left to the indexes it did exactly that, while
+                # the memory store raised `DuplicateShelfSlot`. A driver
+                # exception crossing a port boundary is a 500 where the answer
+                # is a 409.
+                raise DuplicateShelfSlot(
+                    f"{alias.alias_id} has already been absorbed"
+                    if "alias_id" in str(exc) or "PRIMARY" in str(exc).upper()
+                    else f"another identity already claims the slot "
+                         f"{alias.address}"
+                ) from exc
 
     def list_aliases(self, library: LibraryRef) -> tuple[ShelfAlias, ...]:
         with self._connect() as conn:
@@ -2440,8 +2468,15 @@ def _load_alias(row: sqlite3.Row) -> ShelfAlias:
     # All three address columns or none — the same crash guard `_load_shelf`
     # carries, and for the same reason: a half-written address is a row no
     # query can mean anything by.
+    #
+    # ⚠ All THREE tested, not just `section_id`. The first version borrowed
+    # `_load_shelf`'s comment without its condition, so a hand-edited row with
+    # a section and no column raised `TypeError` out of
+    # `ShelfAddress.__post_init__` — the exact outcome the sentence above says
+    # it prevents.
     where = (ShelfAddress(row["section_id"], row["col"], row["level"])
-             if row["section_id"] is not None else None)
+             if row["section_id"] is not None and row["col"] is not None
+             and row["level"] is not None else None)
     return ShelfAlias(alias_id=row["alias_id"], library_id=row["library_id"],
                       shelf_id=row["shelf_id"], merged_at=row["merged_at"],
                       address=where, label=row["label"])

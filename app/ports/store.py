@@ -137,7 +137,14 @@ class DuplicateShelfSlot(StoreError):
 
 
 class ShelfHasAliases(StoreError):
-    """Deleting a shelf other identities resolve to (P6.4a, §3.11).
+    """Other identities resolve to this shelf, so the operation is refused.
+
+    ⚠ THREE raise sites, and the name describes only the first — worth
+    knowing, because P6.4d codes against this class. Deleting a survivor
+    (below); absorbing a shelf that is itself a survivor; and absorbing INTO a
+    shelf that has itself been absorbed. The last two are `save_alias`
+    keeping the resolver one hop, and they are the same sentence read from
+    either end: *something already depends on this identity*.
 
     The exact sibling of :class:`ShelfNotEmpty` below — same shape, same kind
     of answer (*there is something here you have not dealt with*), so it lives
@@ -379,11 +386,15 @@ class ShelfStore(Protocol):
     def save_alias(self, library: LibraryRef, alias: ShelfAlias) -> None:
         """Record that one identity has been absorbed by another.
 
-        Raises :class:`WrongLibrary` on a mismatch, and
+        Raises :class:`WrongLibrary` on a mismatch;
         :class:`UnknownShelf` if the survivor is not a live shelf — the
         foreign key says the same thing, and saying it in the store's own
         vocabulary is what lets a caller tell "you named a shelf that is gone"
-        apart from a corrupt file.
+        apart from a corrupt file; :class:`ShelfHasAliases` if either end is
+        already part of a merge (that is the one-hop rule, and the refusal
+        P6.4d needs BEFORE it starts moving rows); and
+        :class:`DuplicateShelfSlot` for an id absorbed twice or a former
+        address two identities claim.
 
         ⚠ Insert-only by ``alias_id``. An id is absorbed ONCE; re-absorbing it
         elsewhere would silently move every book that arrived with it.

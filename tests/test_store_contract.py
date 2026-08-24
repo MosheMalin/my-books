@@ -4560,8 +4560,8 @@ def test_a_v20_database_gains_the_gaps_column_and_keeps_its_drawing():
 
 # --- shelf aliases (P6.4a, §3.11) -----------------------------------------
 
-def _absorb(shelves, *, alias_id="sh-old", into="sh-new", at=None,
-            label="", lib=None):
+def _absorb(*, alias_id="sh-old", into="sh-new", at=None, label="",
+            lib=None):
     from app.domain.alias import ShelfAlias
 
     lib = lib or LIB
@@ -4587,7 +4587,7 @@ def an_alias_answers_for_the_shelf_that_absorbed_it(shelves):
     from app.domain.alias import resolve
 
     _two_shelves(shelves)
-    shelves.save_alias(LIB, _absorb(shelves, label="ספרי בישול"))
+    shelves.save_alias(LIB, _absorb(label="ספרי בישול"))
 
     aliases = shelves.list_aliases(LIB)
     assert len(aliases) == 1
@@ -4608,7 +4608,7 @@ def an_alias_remembers_where_it_stood(shelves):
 
     _two_shelves(shelves)
     where = ShelfAddress("se-1", 2, 3)
-    shelves.save_alias(LIB, _absorb(shelves, at=where))
+    shelves.save_alias(LIB, _absorb(at=where))
 
     aliases = shelves.list_aliases(LIB)
     assert aliases[0].address == where
@@ -4624,11 +4624,15 @@ def two_identities_may_not_claim_one_former_address(shelves):
     _two_shelves(shelves)
     shelves.save_shelf(LIB, new_shelf(id="sh-third", library_id=LIB.id))
     where = ShelfAddress("se-1", 2, 3)
-    shelves.save_alias(LIB, _absorb(shelves, at=where))
+    shelves.save_alias(LIB, _absorb(at=where))
+    # ⚠ Named, not `except Exception`. The loose version passed while the
+    # SQLite store raised a raw `sqlite3.IntegrityError` and the memory store
+    # raised `DuplicateShelfSlot` — a driver exception crossing a port
+    # boundary, which is a 500 where the answer is a 409.
     try:
-        shelves.save_alias(LIB, _absorb(shelves, alias_id="sh-third", at=where))
-    except Exception as exc:            # noqa: BLE001 — both stores, one rule
-        assert "slot" in str(exc).lower() or "unique" in str(exc).lower(), exc
+        shelves.save_alias(LIB, _absorb(alias_id="sh-third", at=where))
+    except DuplicateShelfSlot:
+        pass
     else:
         raise AssertionError("two aliases claimed the same former address")
 
@@ -4639,10 +4643,10 @@ def an_id_is_absorbed_once_and_never_twice(shelves):
     silently move every book that arrived with it."""
     _two_shelves(shelves)
     shelves.save_shelf(LIB, new_shelf(id="sh-third", library_id=LIB.id))
-    shelves.save_alias(LIB, _absorb(shelves))
+    shelves.save_alias(LIB, _absorb())
     try:
-        shelves.save_alias(LIB, _absorb(shelves, into="sh-third"))
-    except Exception:                   # noqa: BLE001
+        shelves.save_alias(LIB, _absorb(into="sh-third"))
+    except DuplicateShelfSlot:
         pass
     else:
         raise AssertionError("one id was absorbed twice")
@@ -4655,7 +4659,7 @@ def an_alias_may_only_point_at_a_live_shelf(shelves):
     the resolver one hop with no cycle guard."""
     shelves.save_shelf(LIB, new_shelf(id="sh-old", library_id=LIB.id))
     try:
-        shelves.save_alias(LIB, _absorb(shelves, into="ghost"))
+        shelves.save_alias(LIB, _absorb(into="ghost"))
     except UnknownShelf:
         pass
     else:
@@ -4671,7 +4675,7 @@ def deleting_a_shelf_other_identities_resolve_to_is_refused(shelves):
     census's baseline with it.
     """
     _two_shelves(shelves)
-    shelves.save_alias(LIB, _absorb(shelves))
+    shelves.save_alias(LIB, _absorb())
     try:
         shelves.delete_shelf(LIB, "sh-new")
     except ShelfHasAliases as exc:
@@ -4686,15 +4690,43 @@ def deleting_a_shelf_other_identities_resolve_to_is_refused(shelves):
 def aliases_are_scoped_to_their_library(shelves):
     """H2, and the same 404-not-403 shape as every other aggregate."""
     _two_shelves(shelves)
-    shelves.save_alias(LIB, _absorb(shelves))
+    shelves.save_alias(LIB, _absorb())
     assert shelves.list_aliases(OTHER) == ()
     assert shelves.aliases_of(OTHER, "sh-new") == ()
     try:
-        shelves.save_alias(OTHER, _absorb(shelves))
+        shelves.save_alias(OTHER, _absorb())
     except WrongLibrary:
         pass
     else:
         raise AssertionError("an alias was filed under a library it disowns")
+
+
+@shelf_contract
+def one_library_may_not_block_another_from_absorbing_its_shelf(shelves):
+    """H2, and the reason the key is `(library_id, alias_id)` rather than
+    `alias_id` alone.
+
+    ⚠ Every guard in `save_alias` reads `WHERE library_id = ? AND …`, so a
+    global key let a row in one library decide an outcome in another: a review
+    stored an alias in L2 naming a shelf that lives in L1, and L1 could then
+    never absorb that shelf — its own store reported no alias and the write
+    died on a constraint L1 cannot see.
+    """
+    _two_shelves(shelves)
+    for i in ("far-a", "far-b"):
+        shelves.save_shelf(OTHER, new_shelf(id=i, library_id=OTHER.id))
+    # The other library absorbs one of ITS shelves under an id that also
+    # names one of ours. (Nothing forbids the collision; ids are opaque.)
+    shelves.save_alias(OTHER, _absorb(alias_id="far-a",
+                                      into="far-b", lib=OTHER))
+    shelves.save_alias(OTHER, _absorb(alias_id="sh-old",
+                                      into="far-b", lib=OTHER))
+
+    # …and we can still absorb our own shelf of that name.
+    shelves.save_alias(LIB, _absorb())
+    assert [a.alias_id for a in shelves.list_aliases(LIB)] == ["sh-old"]
+    assert {a.alias_id for a in shelves.list_aliases(OTHER)} == {
+        "far-a", "sh-old"}
 
 
 @shelf_contract
@@ -4703,8 +4735,8 @@ def aliases_of_answers_only_for_the_shelf_asked_about(shelves):
     _two_shelves(shelves)
     shelves.save_shelf(LIB, new_shelf(id="sh-b", library_id=LIB.id))
     shelves.save_shelf(LIB, new_shelf(id="sh-c", library_id=LIB.id))
-    shelves.save_alias(LIB, _absorb(shelves, alias_id="sh-old", into="sh-new"))
-    shelves.save_alias(LIB, _absorb(shelves, alias_id="sh-b", into="sh-c"))
+    shelves.save_alias(LIB, _absorb(alias_id="sh-old", into="sh-new"))
+    shelves.save_alias(LIB, _absorb(alias_id="sh-b", into="sh-c"))
 
     assert [a.alias_id for a in shelves.aliases_of(LIB, "sh-new")] == ["sh-old"]
     assert [a.alias_id for a in shelves.aliases_of(LIB, "sh-c")] == ["sh-b"]
@@ -4727,9 +4759,9 @@ def a_survivor_that_has_itself_been_absorbed_is_refused(shelves):
     # exercising that one — this check survived being deleted.
     for i in ("A", "B", "C"):
         shelves.save_shelf(LIB, new_shelf(id=i, library_id=LIB.id))
-    shelves.save_alias(LIB, _absorb(shelves, alias_id="B", into="C"))
+    shelves.save_alias(LIB, _absorb(alias_id="B", into="C"))
     try:
-        shelves.save_alias(LIB, _absorb(shelves, alias_id="A", into="B"))
+        shelves.save_alias(LIB, _absorb(alias_id="A", into="B"))
     except ShelfHasAliases as exc:
         assert "B" in str(exc), exc
     else:
@@ -4744,9 +4776,9 @@ def absorbing_a_shelf_that_others_resolve_to_is_refused(shelves):
     `FOREIGN KEY constraint failed`."""
     for i in ("A", "B", "C"):
         shelves.save_shelf(LIB, new_shelf(id=i, library_id=LIB.id))
-    shelves.save_alias(LIB, _absorb(shelves, alias_id="A", into="B"))
+    shelves.save_alias(LIB, _absorb(alias_id="A", into="B"))
     try:
-        shelves.save_alias(LIB, _absorb(shelves, alias_id="B", into="C"))
+        shelves.save_alias(LIB, _absorb(alias_id="B", into="C"))
     except ShelfHasAliases:
         pass
     else:
@@ -4759,9 +4791,9 @@ def a_cycle_between_two_identities_is_refused(shelves):
     deleted again, because each is the other's survivor."""
     for i in ("A", "B"):
         shelves.save_shelf(LIB, new_shelf(id=i, library_id=LIB.id))
-    shelves.save_alias(LIB, _absorb(shelves, alias_id="A", into="B"))
+    shelves.save_alias(LIB, _absorb(alias_id="A", into="B"))
     try:
-        shelves.save_alias(LIB, _absorb(shelves, alias_id="B", into="A"))
+        shelves.save_alias(LIB, _absorb(alias_id="B", into="A"))
     except ShelfHasAliases:
         pass
     else:
@@ -4788,7 +4820,7 @@ def books_on_shelf_answers_for_every_identity_it_is_given(store):
         "answered in title order across both identities")
     assert [b.id for b in store.books_on_shelf(LIB, ("sh-new",))] == ["b2"]
     assert store.books_on_shelf(LIB, ()) == (), (
-        "an empty tuple must answer nothing, not raise — `IN ()` is not SQL")
+        "an empty identity list must answer nothing")
     assert store.books_on_shelf(LIB, ("nobody",)) == ()
     assert store.books_on_shelf(OTHER, ("sh-new", "sh-old")) == (), (
         "another library's shelf ids answered with this library's books")
@@ -5430,27 +5462,25 @@ def test_a_v18_database_gains_the_binding_column_and_keeps_its_rows():
 # both times, so each list states how many cases it should have: adding one
 # without updating the number is a red test, which is exactly the noise a
 # silent binder failed to make.
-for _list, _expected in ((CONTRACT, 42),
-                         (SHELF_CONTRACT, 24),
-                         (READ_CONTRACT, 17),
-                         (DECISION_CONTRACT, 8),
-                         (DUPLICATE_CONTRACT, 9),
-                         (TENANCY_CONTRACT, 14),
-                         (MAP_CONTRACT, 29),
-                         (UNDO_CONTRACT, 7)):
-    assert len(_list) == _expected, (
-        f"a contract list holds {len(_list)} cases, not {_expected} — if you "
+# ⚠ ONE list, of triples. Two parallel lists — counts in one, implementations
+# in the other — let a ninth contract be added to the binder and not to the
+# counts, which is the same silent gap wearing a different hat.
+SUITES = (
+    (CONTRACT, IMPLEMENTATIONS, 42),
+    (SHELF_CONTRACT, SHELF_IMPLEMENTATIONS, 25),
+    (READ_CONTRACT, READ_IMPLEMENTATIONS, 17),
+    (DECISION_CONTRACT, DECISION_IMPLEMENTATIONS, 8),
+    (DUPLICATE_CONTRACT, DUPLICATE_IMPLEMENTATIONS, 9),
+    (TENANCY_CONTRACT, TENANCY_IMPLEMENTATIONS, 14),
+    (MAP_CONTRACT, MAP_IMPLEMENTATIONS, 29),
+    (UNDO_CONTRACT, UNDO_IMPLEMENTATIONS, 7),
+)
+
+for _cases, _impls, _expected in SUITES:
+    assert len(_cases) == _expected, (
+        f"a contract list holds {len(_cases)} cases, not {_expected} — if you "
         f"added one, say so here; if it reads 0 the decorator never ran"
     )
-
-for _cases, _impls in ((CONTRACT, IMPLEMENTATIONS),
-                       (SHELF_CONTRACT, SHELF_IMPLEMENTATIONS),
-                       (READ_CONTRACT, READ_IMPLEMENTATIONS),
-                       (DECISION_CONTRACT, DECISION_IMPLEMENTATIONS),
-                       (DUPLICATE_CONTRACT, DUPLICATE_IMPLEMENTATIONS),
-                       (TENANCY_CONTRACT, TENANCY_IMPLEMENTATIONS),
-                       (MAP_CONTRACT, MAP_IMPLEMENTATIONS),
-                       (UNDO_CONTRACT, UNDO_IMPLEMENTATIONS)):
     for _label, _factory in _impls:
         for _fn in _cases:
             _name = f"test_{_fn.__name__}__{_label}"

@@ -447,9 +447,26 @@ the library's locations. Rewriting them all:
 
 **Why A's row is DELETED rather than flagged `merged_into`:** `shelves`
 keeps meaning "a shelf", so every existing query stays correct with no new
-`WHERE` — and with `shelf_aliases.shelf_id REFERENCES shelves(id)`, an alias
-of an alias is unrepresentable, so the resolver is one hop by construction
-and needs no cycle guard.
+`WHERE` — and `shelf_aliases.shelf_id REFERENCES shelves(id)` means an alias
+always names a LIVE shelf, so the resolver needs no null check.
+
+⚠ **That foreign key does NOT give one hop**, which this paragraph claimed
+until P6.4a was reviewed. *"Names a live row"* and *"names a row that is not
+itself an alias"* are different claims and the key enforces only the first —
+a review stored both a chain and a cycle through the public API. One hop is
+enforced by `ShelfStore.save_alias`, which refuses a survivor that is itself
+absorbed and an id that is already a survivor, under `BEGIN IMMEDIATE` so two
+merges cannot race past each other.
+
+⚠ **"A shelf other identities resolve to is OCCUPIED" reads two ways, and
+P6.4a took both.** *Occupied under any of its identities* is the fold in
+`deepest_occupied_depths` — the absorbed shelf's copies still name it, so
+their depth belongs to the survivor. *A survivor is occupied by being one* is
+the second half, and it is not decoration: an absorbed identity holding
+nothing folds zero depth, so the survivor read as EMPTY, was scheduled for
+deletion, and the store's refusal escaped the middle of a destructive loop —
+three of four labelled shelves destroyed, no journal entry, the bookcase left
+undeletable. Both halves are needed and both are mutation-checked.
 
 **What a past read's provenance means afterwards:** exactly what it always
 meant — *run R sighted this copy at identity A*. The precedent is already
@@ -1220,7 +1237,7 @@ The decomposition, each landing on `main` before the next:
 | **P6.4a** | ✅ **The alias, and nothing using it** — schema **v24**, one alias row carrying the absorbed shelf's id AND its former address, the resolver, `BookStore.books_on_shelf`, and "a shelf other identities resolve to is OCCUPIED". No merge, no route. | M | `review-migration` **before**, data-integrity, quality |
 | **P6.4b** | **Undo for destructive map edits** (§3.15) — the journal, the inverse, and the invalidation rule. Covers remove column, remove section, delete bookcase, remove site, **and switching cells off** (P6.3.2, which arrived after §3.15 was written); the merge joins it in P6.4d. Fingerprint at undo time and no expiry; record all, undo the head; a minimal UI lands with it (owner, 2026-08-24). ⚠ Schema **v22** and **v23** — see the note below. | L | `review-migration` **before**, data-integrity, quality, ux | ✅ |
 | **P6.4c** | **Bind** — an unaddressed shelf gains an address, and loses one. No identities join; a taken slot is a 409 naming the occupant and offering the merge. | S | data-integrity, security, quality, ux |
-| **P6.4d** | **Merge** — two identities become one, undoable. ⚠ **carries the data-loss risk**, and P6.4a left it two named traps: removing the absorbed shelf's row CASCADES its captures away (`captures.shelf_id … ON DELETE CASCADE`, measured), and merging a shelf that has itself absorbed one is refused by the one-hop rule, so re-pointing must happen inside the same transaction. | L | data-integrity, security, quality, ux |
+| **P6.4d** | **Merge** — two identities become one, undoable. ⚠ **carries the data-loss risk**, and P6.4a left it three named traps: removing the absorbed shelf's row CASCADES its captures away (`captures.shelf_id … ON DELETE CASCADE`, measured), and merging a shelf that has itself absorbed one is refused by the one-hop rule, so re-pointing must happen inside the same transaction; and `DELETE /api/v1/shelves/{id}` catches only `ShelfNotEmpty`, so the owner's *refuse, naming the count* would arrive as a 500 on the one surface that could show the count. | L | data-integrity, security, quality, ux |
 | **P6.4e** | **History across the seam** — reads, streaks, staleness and the *formerly* line resolve through the alias. | M | data-integrity, quality, ux |
 | **P6.4f** | *Optional:* **the proposal** — candidates from typed labels only, each an explicit ✓. | S | quality, ux, security |
 
