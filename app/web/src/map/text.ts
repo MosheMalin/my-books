@@ -59,10 +59,21 @@ export interface MapText {
    * books standing on them — and there is exactly one of it, with no redo.
    */
   undo_last_edit: string
-  undo_done: string
+  /** What just happened, said at the moment it is still true.
+   *
+   *  ⚠ This exists because the WRONG control is closer to hand. `undo` sits
+   *  first in the same menu, becomes enabled the instant something is
+   *  deleted, and re-DRAWS the slot — minting a new empty shelf while the
+   *  owner's label and books stay behind on a detached row. It looks like it
+   *  worked. No label on either row fixes that, because the owner never
+   *  compares them; a sentence at the moment of the delete does. It also has
+   *  to be said NOW rather than whenever they next open a menu, because the
+   *  fingerprint gives this undo a shelf life. */
+  undo_offered: string
+  undo_done: (restored: number) => string
   undo_nothing: string
   undo_already: string
-  undo_moved: string
+  undo_moved: (shelves: number, others: number) => string
   copy: string
   paste: string
   delete: string
@@ -255,12 +266,21 @@ const HE: MapText = {
   reload: 'טעינה מחדש מהשרת',
   undo: 'ביטול',
   redo: 'ביצוע מחדש',
-  undo_last_edit: 'שחזור המחיקה האחרונה',
-  undo_done: 'המחיקה האחרונה שוחזרה',
-  undo_nothing: 'אין מחיקה לשחזר',
-  undo_already: 'המחיקה האחרונה כבר שוחזרה, ואין ביצוע מחדש',
-  undo_moved: 'מאז המחיקה השתנו דברים במדפים האלה, ושחזור עכשיו היה מוחק '
-    + 'עבודה שנעשתה אחריה. לכן לא בוצע שום שינוי.',
+  // ⚠ הוסר ולא נמחק: העורך קורא *מחיקה* לכוננית ולחדר, אבל *הסרה* לעמודה,
+  // ליחידה, לקומה ולאתר — וחמש מהפעולות שנרשמות ביומן הן הסרות. תווית
+  // שאומרת "מחיקה" לא נראית שייכת למי שהרגע לחץ "הסרת העמודה האחרונה".
+  undo_last_edit: 'שחזור מה שהוסר לאחרונה',
+  undo_offered: 'אפשר לשחזר: עריכה ▸ שחזור מה שהוסר לאחרונה',
+  undo_done: (n) => (n === 1 ? 'מדף אחד חזר למקומו'
+    : n ? `${n} מדפים חזרו למקומם` : 'מה שהוסר חזר למקומו'),
+  undo_nothing: 'אין מה לשחזר',
+  undo_already: 'הכול כבר חזר למקומו',
+  undo_moved: (shelves, others) => {
+    const what = others || !shelves
+      ? `${shelves + others} פריטים במפה השתנו`
+      : shelves === 1 ? 'מדף אחד השתנה' : `${shelves} מדפים השתנו`
+    return `${what} מאז, ושחזור עכשיו היה מוחק את מה שנעשה בהם.`
+  },
   copy: 'העתקה',
   paste: 'הדבקה',
   delete: 'מחיקה',
@@ -508,12 +528,19 @@ const EN: MapText = {
   reload: 'Reload from the server',
   undo: 'Undo',
   redo: 'Redo',
-  undo_last_edit: 'Undo the last deletion',
-  undo_done: 'The last deletion was undone',
-  undo_nothing: 'There is no deletion to undo',
-  undo_already: 'The last deletion has already been undone, and there is no redo',
-  undo_moved: 'Things on those shelves have changed since the deletion, and '
-    + 'undoing now would overwrite work done after it. Nothing was changed.',
+  undo_last_edit: 'Restore what was last removed',
+  undo_offered: 'Can be restored: Edit ▸ Restore what was last removed',
+  undo_done: (n) => (n === 1 ? 'One shelf is back in place'
+    : n ? `${n} shelves are back in place` : 'What was removed is back'),
+  undo_nothing: 'There is nothing to restore',
+  undo_already: 'Everything is already back in place',
+  undo_moved: (shelves, others) => {
+    const what = others || !shelves
+      ? `${shelves + others} things on the map have changed`
+      : shelves === 1 ? 'One shelf has changed'
+        : `${shelves} shelves have changed`
+    return `${what} since, and restoring now would overwrite that work.`
+  },
   copy: 'Copy',
   paste: 'Paste',
   delete: 'Delete',

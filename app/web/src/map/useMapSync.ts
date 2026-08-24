@@ -53,7 +53,11 @@ export type MapSource = {
    * because it is the thing that makes the next person distrust the control.
    * One extra request, on the failure path only.
    */
-  undoReason?: () => Promise<string>
+  undoOffer?: () => Promise<{
+    reason?: string
+    restores?: Record<string, number>
+    changed?: string[]
+  }>
 }
 
 /**
@@ -71,12 +75,28 @@ export type MapSource = {
  * nothing to edit — and a push that could not be delivered says so beside a
  * drawing that is still on screen.
  */
+/**
+ * ⚠ `detail` is a string FROZEN at the moment of the notice, so a notice
+ * built from our own vocabulary is frozen in the locale that was active
+ * then — and `PlanScreen` recomputes its LEAD from the live table on every
+ * render, so switching language mid-notice split the banner down the middle:
+ * *"The server refused: אין מחיקה לשחזר"*. Measured.
+ *
+ * It never showed before P6.4b because a `refused` detail was always the
+ * SERVER's own English, so each reader got one coherent language. `say` is
+ * the fix: a notice whose words come from `text.ts` carries the function, not
+ * the sentence, and re-renders in whatever locale is on screen now.
+ */
+export type Said = (words: MapText) => string
+
+type Words = { detail?: string; say?: Said }
+
 export type Notice =
   /** The server answered, and the answer was no — a rule the owner met. */
-  | { kind: 'refused'; detail: string }
+  | ({ kind: 'refused' } & Words)
   /** The request never arrived, and the edit is still in the document — the
    *  next diff carries it, because `confirmed` did not advance. */
-  | { kind: 'undelivered'; detail: string }
+  | ({ kind: 'undelivered' } & Words)
   /**
    * The request never arrived and NOTHING will retry it.
    *
@@ -85,7 +105,7 @@ export type Notice =
    * change" would be a promise this code cannot keep, which is worse than
    * saying nothing. A review found that exact sentence on this path.
    */
-  | { kind: 'dropped'; detail: string }
+  | ({ kind: 'dropped' } & Words)
 
 export type MapSync = {
   ready: boolean
@@ -186,9 +206,15 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
   const era = useRef(0)
 
   /** Say something happened, and stop saying it after a while. */
-  const announce = useCallback((text: string) => {
+  const announce = useCallback((text: string, ms = 3200) => {
     setFlash(text)
-    window.setTimeout(() => setFlash((m) => (m === text ? null : m)), 3200)
+    // ⚠ The duration is a parameter because one caller outlives a re-derive.
+    // A successful undo re-reads the map and the shelves — 41 KB on the
+    // owner's library — and on a phone that can outlast a 3.2s timer, so the
+    // owner would watch the map blank, come back, and say NOTHING about the
+    // thing they just asked for. Measured at 1.28s on localhost, which is
+    // exactly the kind of margin that does not survive mobile data.
+    window.setTimeout(() => setFlash((m) => (m === text ? null : m)), ms)
   }, [])
 
   /** Throw the session's document away and re-derive it from the server. */
@@ -391,29 +417,80 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
    * lives. `reason` is what the words are chosen from.
    */
   const undoLastEdit = useCallback(() => {
-    void afterSite((async () => {
+    void (async () => {
+      // ⚠ NOT through `afterSite`, and the difference is the whole finding.
+      // `afterSite` re-derives on BOTH paths, which is right for a site
+      // gesture (a half-failed one can still have changed the library) and
+      // wrong here: a refused undo wrote nothing, so re-deriving buys nothing
+      // and costs the owner their drawing history. Measured — the refusal
+      // path replaced the whole editor for 1.28s and swapped the SVG node,
+      // discarding this session's Ctrl+Z stack, the selection and the
+      // viewport, for a press that changed nothing.
+      //
+      // The DRAIN is kept, for `afterSite`'s own reason: a successful undo
+      // ends in a re-derive, and re-deriving over an edit that has not
+      // reached the server is how that edit disappears.
+      setNotice(null)
+      setSaved('saving')
+      await inflight.current
+
+      let offer: { restores?: Record<string, number> } | undefined
       try {
-        await source.api.post('/map/undo', undefined)
-        announce(T.undo_done)
+        offer = await source.api.post('/map/undo', undefined)
       } catch (err) {
         const e = err as { status?: number; detail?: string; message?: string }
-        let detail = e?.detail || e?.message || T.save_failed_hint
         if (e?.status === 409) {
-          // Ask WHY, and say that. `undo_moved` as a blanket answer would
-          // tell an owner who had just undone something that their shelves
-          // had changed underneath them, which is a lie about their data.
-          const reason = await source.undoReason?.().catch(() => '')
-          detail = reason === 'nothing_recorded' ? T.undo_nothing
-            : reason === 'already_undone' ? T.undo_already
-              : T.undo_moved
+          // Ask WHY, and say that — a blanket answer would tell an owner who
+          // had simply already pressed undo that their shelves had changed
+          // underneath them, which is a false claim about their data.
+          const said = await source.undoOffer?.()
+            .catch(() => ({} as Awaited<ReturnType<
+              NonNullable<MapSource['undoOffer']>>>))
+          const reason = said?.reason
+          if (reason === 'nothing_recorded' || reason === 'already_undone') {
+            // ⚠ The FLASH, not the banner. Both are statements about a
+            // healthy library — nothing was refused, because nothing was
+            // ever proposed — and `role="alert"` under a lead reading "the
+            // server refused the change" reports a fault where there is
+            // none. It is also the reply the owner meets most often, since
+            // it is what every exploratory press returns.
+            announce(reason === 'nothing_recorded'
+              ? T.undo_nothing : T.undo_already)
+          } else {
+            // The one refusal where something really is in the way — and it
+            // now NAMES what, which is what §3.15 asks of it. `changed`
+            // arrives as `table:id`; the shelves are the part an owner can
+            // go and look at.
+            const changed: string[] = said?.changed ?? []
+            const shelves = changed.filter((t) => t.startsWith('shelves:'))
+            setNotice({
+              // ⚠ The parameter SHADOWS the outer `T` on purpose: the words
+              // must come from whichever table is live when this renders,
+              // never the one captured here (see `Said`). It also keeps the
+              // key visible to the dead-key scan, which anchors on `T.`.
+              kind: 'refused',
+              say: (T) =>
+                T.undo_moved(shelves.length, changed.length - shelves.length),
+            })
+          }
+        } else {
+          setNotice({
+            kind: typeof e?.status === 'number' ? 'refused' : 'dropped',
+            detail: e?.detail || e?.message || T.save_failed_hint,
+          })
         }
-        setNotice({
-          kind: typeof e?.status === 'number' ? 'refused' : 'dropped',
-          detail,
-        })
+        // Nothing on the server moved, so nothing here is unsaved.
+        setSaved('saved')
+        return
       }
-    })())
-  }, [afterSite, announce, source, T])
+
+      // It worked. NOW the re-derive is owed: the server has changed rows
+      // this session's document knows nothing about.
+      const restored = offer?.restores?.shelves ?? 0
+      announce(T.undo_done(restored), 9000)
+      startOver()
+    })()
+  }, [announce, source, startOver, T])
 
   const record = useCallback((plan: Plan) => {
     setSaved('saving')
@@ -435,6 +512,25 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
       // running. The document this plan described is gone either way.
       if (era_ !== era.current) return
       const ops = planDiff(confirmed.current, plan)
+      // ⚠ Which of these DESTROY something, so the owner can be told the
+      // removal is reversible while that is still true. See `undo_offered`
+      // for why saying nothing was the real defect: the control one row
+      // above is closer, enabled, and looks like it worked.
+      //
+      // Not in the `confirm()` — that dialog exists to provoke a moment of
+      // doubt, and "don't worry, this can be taken back" is a reason to say
+      // yes at exactly the wrong moment.
+      // ⚠ The list must match what the SERVER journals, or the hint is a
+      // promise the undo cannot keep — or, as first written, silence where it
+      // could have kept one. `remove_record` covers site, floor, place,
+      // bookcase and section; the two section editors cover columns, levels
+      // and gaps. Removing a ROOM and removing a FLOOR were missing here and
+      // are journalled, so both are in. (A site is not in the document, so
+      // it never reaches this diff — `removeSite` announces its own.)
+      const destroyed = ops.some((o) => o.kind === 'case.remove'
+        || o.kind === 'room.remove' || o.kind === 'floor.remove'
+        || o.kind === 'section.remove' || o.kind === 'section.columns'
+        || o.kind === 'section.levels' || o.kind === 'section.gaps')
       if (ops.length === 0) {
         setSaved('saved')
         return
@@ -483,6 +579,10 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
         }
         confirmed.current = plan
         setSaved('saved')
+        // The removal landed. Say — once, neutrally, in the surface built
+        // for exactly this — that it can be taken back, and NAME the
+        // control. `undo_offered` carries the argument.
+        if (destroyed) announce(T.undo_offered, 6000)
       } catch (err) {
         // ⚠ NOT `setError`. See `Notice`: the drawing is still on screen and
         // still the truth about what the owner drew; what failed is the
