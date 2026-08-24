@@ -4104,3 +4104,118 @@ provider's email skipped `valid_email_shape`, which the magic-link door
 applies to the same column; and a rotated-away Apple key answered 500
 instead of the login screen, because the secret was built outside the
 try.
+
+
+## P6.4b — the undo journal, and what three reviews found in it
+
+**Landed 2026-08-24**, schema **v22** (the journal) and **v23** (its
+sequence). The alias moved to v24 as a consequence.
+
+### What the owner settled first
+
+MAP_PLAN §3.15 said every destructive map edit is undoable and that it lands
+before the merge. Three questions were open, and the owner answered them
+before a line was written (2026-08-24), overruling the recommendation twice:
+
+1. **How does an undo prove the world is unchanged?** A fingerprint checked at
+   undo time, **with no expiry**. §3.15's literal "invalidated the moment
+   anything else touches those rows" was rejected: it puts the journal on the
+   hot path of every product write, and the one path that forgets to consult
+   it produces a silently WRONG undo, which is worse than a refused one. The
+   recommendation carried a 24h floor to bound the table; the owner dropped it
+   — *a mis-tap noticed a week later is still a mis-tap*. Age is not evidence;
+   the digest is. The accepted price is a table that only grows.
+2. **One undo or a stack?** Record all, undo the head. No cursor, no redo,
+   and undoing does not expose the edit underneath.
+3. **A UI, or the route only?** Route plus a minimal UI — one row in the Edit
+   menu, refusal surfaced honestly.
+
+### The shape
+
+The inverse is **the rows as they stood, whole**, replayed as upserts in
+dependency order. One shape serves all five edits, and it is recorded rather
+than derived for §3.15's reason: a book the owner typed onto a shelf by hand
+has no provenance, so a guessed inverse moves books that never moved.
+`MapRestore.created` is the half a bag of old rows cannot express — `_fill`
+mints shelves while healing a removal, and those must not survive the undo.
+
+### What the reviews found — the part worth keeping
+
+Four reviews ran (one migration review before each schema commit, then
+data-integrity and quality). Between them they found one critical and five
+majors in code that had a green gate and 17 passing tests of its own.
+
+**The head was decided by a clock that ties.** `SystemClock.now_iso()` has
+second resolution and `UuidIdGen` mints uuid4, which has no lexicographic
+order. `push.ts` sends a bookcase deletion as four requests, so a tie is the
+ordinary path, not a race. Measured over 500 trials with the production clock
+and id source: 252 correct, **165 undid the wrong bookcase** (stranding the
+right one forever, because `recent(limit=1)` kept returning the same undone
+row), and **83 restored an empty bookcase** — the two halves of one removal
+failed to coalesce, so the case and its section came back with six shelves
+lost. The same probe with a microsecond clock was 500/500 correct, which
+pinned the cause to the tie rather than the ordering code. v23 is a monotonic
+per-library `seq`, assigned by the store from its own maximum inside one
+statement. Two further consequences: `record` now finds its coalescing partner
+BY TAG rather than by "is the newest entry a match" (an interleave cannot
+confuse that), and a coalesced entry takes a FRESH number, because the
+*operation* finished now and belongs at the head — the opposite was written
+first and a test caught it putting the wrong case at the front.
+
+**A container's inverse forgot its contents.** `delete_site` takes the site's
+empty storeys with it and `delete_place` nulls the `place_id` of every case in
+the room. Only the bookcase→sections cascade had been captured, so undoing a
+site deletion restored a site with **zero storeys** — a state `delete_floor`
+refuses to create on purpose — and undoing a room deletion left every case
+attached to nothing. Both reported success.
+
+**The fingerprint was taken by re-reading after the edit.** So anything
+committed between the edit's last write and that read was digested as "the
+state the edit left behind" and became invisible. Measured with the
+interleaving held open: another tab's change to a section's depth default
+reverted by an undo answering `available: true` with an empty `changed` — the
+silently-wrong undo the whole design was chosen over an invalidation table to
+avoid. The callers now hand over what they wrote. ⚠ The slot maps are still
+read, so that much of the window is open and is stated rather than hidden.
+
+**A replay that refused part-way had already written.** It raised on the first
+`ShelfNotEmpty` after earlier deletions had committed, so the entry stayed
+live with a fingerprint permanently mismatched against a world the aborted
+replay had itself changed — and the refusal named a shelf that had changed
+*because the undo deleted it*. Dead forever, blaming the wrong row, with no
+concurrency involved. The whole removal set is now judged before anything
+happens, via `deepest_occupied_depths` (two queries — the old comment's claim
+that a pre-check cost one query per shelf was simply wrong).
+
+**The scope watched rows but not the shape they land in.** A restored row's
+parent and a restored section's ordinal space were outside the fingerprint, so
+two ordinary gestures — delete a section, add another, press undo — reached a
+`DuplicateSectionOrdinal` **500** through a route that had just answered
+`available: true`, and kept doing so because `mark_undone` was never reached.
+`post_undo` was also the only mutating route in that router not wrapped in
+`_translated()`.
+
+**The codec dropped a field, and two docstrings said that was impossible.**
+`MapRestore.created` is not in `RESTORE_ORDER`, so the SQLite JSON codec never
+wrote it. Every entry carrying one became permanently un-undoable while
+refusing with the name of a shelf that had not changed. Both store docstrings
+asserted that a shared contract test turned exactly this into a red test. The
+contract did not exist. `UNDO_CONTRACT` now does, runs across both
+implementations, and fails on sqlite alone when the fix is reverted.
+
+### The lesson that generalises
+
+Every one of those defects lived behind a green gate. What let them through
+was not missing tests in the abstract — there were 17 — but tests written
+against the *memory* store for a rule the *SQLite* store implements, an
+assertion (`derives() > 1`) that was true before the code under test ran, and
+comments that described a guard nobody had opened. The three cheapest
+countermeasures, all of which paid here: run one contract across both
+implementations, count relative to a settled state rather than against an
+absolute, and treat a comment naming a guard as a claim to verify.
+
+### Still owed
+
+`review-ux` and the 375x812 walk. Port 8757 was held by another session's dev
+server for the whole item, so no pillar-6 flow has been walked on a phone
+since P6.3.3 — which is the exact gap P6.3.3 existed to close.

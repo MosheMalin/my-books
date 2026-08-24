@@ -250,6 +250,12 @@ different world — the product never reads it.
 - **§5.4 fires rarely by design**; the fire table is data (`FIRE_TABLE`),
   `fires()` raises on unknown reasons. Queue skip default = ALREADY_LISTED
   ("a missed duplicate is trivially fixed; an invented one rots").
+- **Every destructive map edit is UNDOABLE** (§3.15, P6.4b): the five that
+  destroy or detach shelves record their own INVERSE — the rows as they
+  stood, never a derived one — and an undo that cannot prove the world is
+  unchanged refuses NAMING what moved. No expiry: age is not evidence (owner,
+  2026-08-24). Record all, undo the head, no redo. An entry's grain is the
+  OPERATION, not the request, so `clear slots` + `delete` coalesce into one.
 - **Never auto-remove**: a not-seen book stays; streaks are derived from
   provenance (`not_seen_streak`), scoped to the exact (shelf, depth).
 - **Shelf = identity, not address** (place/bookcase are pillar 6). Shelf ids
@@ -427,6 +433,17 @@ different world — the product never reads it.
   never a bash heredoc — heredocs mangle `
 ` and em-dashes, and once left
   `tools/merge_library.py` unparseable behind a green board.)
+- **A journal's head cannot be ordered by a timestamp.** `SystemClock` is
+  second-resolution and `UuidIdGen` is uuid4, so same-second rows tie and the
+  tie breaks at random — measured 165/500 undoing the wrong bookcase and
+  83/500 restoring an empty one, and 500/500 correct with a finer clock. Order
+  by a monotonic per-library counter assigned BY THE STORE; a caller computing
+  "the next number" lets two processes pick the same one.
+- **A docstring asserting a test exists is worth nothing until it does.** Two
+  of them said a shared contract test caught any field the JSON codec dropped;
+  the contract did not exist and the codec was dropping one, which made the
+  feature dead in production while every test passed on the memory store. If a
+  comment names a guard, open the guard.
 - Author autocomplete returns the owner's spelling, never normalized —
   normalization is for matching only.
 - The match score is out of **130** (`60·tcov_c+25·tcov+15·acov+0.30·sim`);
