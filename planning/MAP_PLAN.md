@@ -1348,10 +1348,26 @@ created` count reports planned rather than actual additions, and `_release`
 deletes one shelf per connection (~3.4s of a 400-cell request). Neither blocks
 the journal; both live near it.
 
-**Reviewers:** `review-migration` ran before both schema commits;
-data-integrity and quality ran after the merge. **ux has NOT run, and the
-375x812 walk has not happened** — port 8757 was held by another session's
-dev server. Both are still owed on this item.
+**Reviewers:** all five ran. `review-migration` before both schema
+commits; data-integrity and quality after the merge; **ux** last, and the
+375x812 walk happened twice — once by hand (the geometry reproduces
+P6.3.3's numbers exactly: canvas 375x411, panel 252) and once by the
+reviewer.
+
+⚠ **The UX review found the thing the whole item was for still broken.**
+`ביטול` — the DRAWING undo — sits first in the same menu, is the word
+everybody knows, and becomes enabled the instant something is deleted. It
+re-draws the slot, so the server mints a NEW empty shelf while the
+owner's label and books stay behind detached, and the bookcase visibly
+reappears. It looks like it worked. The cure sat two rows below it under
+a name nobody was looking for. No label fixes that, because the owner
+never compares the rows; a destructive push now says once, in the flash,
+that it can be taken back and names the control. Four more majors came
+with it: a refused undo was re-deriving and discarding the session's
+drawing history, "nothing to undo" was delivered as an alarm under "the
+server refused the change", the one refusal §3.15 requires to say WHY was
+saying "things", and switching language mid-notice produced half a
+sentence in each.
 
 **What the reviews changed, recorded because none of it was obvious.**
 The three that lost data outright:
