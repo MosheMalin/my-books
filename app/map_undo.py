@@ -49,7 +49,12 @@ from app.domain.map_undo import (
 from app.ports import Clock, IdGen
 from app.ports.map import MapStore
 from app.ports.map_undo import MapUndoStore
-from app.ports.store import BookStore, ShelfNotEmpty, ShelfStore
+from app.ports.store import (
+    BookStore,
+    ShelfHasAliases,
+    ShelfNotEmpty,
+    ShelfStore,
+)
 
 
 class UndoRefused(Exception):
@@ -421,6 +426,15 @@ def _replay(
     for shelf_id in restore.created:
         try:
             shelves.delete_shelf(library, shelf_id)
+        except ShelfHasAliases:
+            # Something has been merged INTO a shelf this undo would remove.
+            # Skipping is right for the same reason the pre-check exists: the
+            # shelf survives with what arrived on it, and the alternative is
+            # the half-applied replay that leaves an entry dead forever
+            # blaming a row the undo itself changed. Measured before this
+            # clause: two of three created shelves gone, nothing restored,
+            # the entry still live.
+            continue
         except ShelfNotEmpty:
             # Only reachable if something landed between the check above and
             # here. Skipping is right: the shelf survives with what arrived on

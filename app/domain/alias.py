@@ -123,9 +123,11 @@ def resolve_address(
 def absorbed_by(shelf_id: str, aliases: Iterable[ShelfAlias]) -> tuple[ShelfAlias, ...]:
     """Every identity that resolves to this shelf.
 
-    The query behind three things: the refusal to delete it, the *formerly …*
-    line a screen shows, and — via ``BookStore.books_on_shelf`` — the books
-    that arrived with each absorbed identity.
+    ⚠ A helper of :func:`identities`, and nothing else calls it yet. An
+    earlier docstring named three callers — the delete refusal and the
+    *formerly …* line — which in fact go through ``ShelfStore.aliases_of``,
+    the narrow query, because they start from a shelf id and a store rather
+    than from a list. Same family as a docstring asserting a test exists.
     """
     return tuple(a for a in aliases if a.shelf_id == shelf_id)
 

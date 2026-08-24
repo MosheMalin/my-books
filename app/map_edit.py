@@ -52,7 +52,12 @@ from app.domain.map_undo import MapRestore
 from app.map_undo import Journal, record
 from app.ports import Clock, IdGen
 from app.ports.map import MapStore
-from app.ports.store import BookStore, ShelfNotEmpty, ShelfStore
+from app.ports.store import (
+    BookStore,
+    ShelfHasAliases,
+    ShelfNotEmpty,
+    ShelfStore,
+)
 
 
 def deepest_occupied_depths(
@@ -63,8 +68,18 @@ def deepest_occupied_depths(
 ) -> dict[str, int]:
     """How far back something actually stands on each of these shelves.
 
-    ⚠ **Both halves**, and the second is the one a reasonable person leaves
-    out. **Captures** are the photographic record a re-read diffs against
+    ⚠ **THREE halves since P6.4a**, and the third has no depth at all: a
+    shelf other identities resolve to is OCCUPIED because it is a SURVIVOR,
+    not because its aliases hold anything. An absorbed identity with zero
+    copies and zero captures folds zero — and after a merge its captures are
+    gone anyway — so the survivor read as empty, `plan_slot_removal` scheduled
+    it for DELETE, and `delete_shelf` then raised `ShelfHasAliases` out of the
+    middle of a destructive loop. Measured: three of four labelled shelves
+    destroyed, ZERO journal entries (recording happens after the loop), and
+    the bookcase left permanently undeletable.
+
+    ⚠ **Both other halves**, and the second is the one a reasonable person
+    leaves out. **Captures** are the photographic record a re-read diffs against
     (§5.6); **copies** are the books themselves — a shelf can hold books with
     no photograph at all (a MANUAL entry, or a photo deleted later), so asking
     only about captures calls an occupied shelf empty.
@@ -94,9 +109,23 @@ def deepest_occupied_depths(
     # prevent, one identity out of reach.
     for alias in shelves.list_aliases(library):
         for source in (from_copies, from_photos):
-            deep = source.pop(alias.alias_id, 0)
+            # ⚠ `get`, NOT `pop`. Popping MOVES the occupancy off the absorbed
+            # shelf, which is only safe once its row is gone — and nothing
+            # enforces that, since `save_alias` accepts an `alias_id` that is
+            # still live and that window is exactly what a merge passes
+            # through. Measured with the alias written and the row not yet
+            # removed: the absorbed shelf read as empty, its cell was gapped
+            # and silently detached instead of refused, and
+            # `apply_depth_default` shallowed it under a copy standing at
+            # depth 2 — the corruption its own docstring says a review already
+            # measured once. A stale entry for a row that IS gone is inert:
+            # such a shelf is never in `candidates`.
+            deep = source.get(alias.alias_id, 0)
             if deep > source.get(alias.shelf_id, 0):
                 source[alias.shelf_id] = deep
+        # Depth zero and still occupied: being a survivor is the occupancy.
+        from_copies.setdefault(alias.shelf_id, 0)
+        from_copies[alias.shelf_id] = max(from_copies[alias.shelf_id], 1)
     deepest: dict[str, int] = {}
     for shelf in candidates:
         depth = max(from_copies.get(shelf.id, 0), from_photos.get(shelf.id, 0))
@@ -631,6 +660,16 @@ def _release(
         try:
             shelves.delete_shelf(library, shelf_id)
             deleted.append(shelf_id)
+        except ShelfHasAliases:
+            # ⚠ P6.4a. Other identities resolve to this shelf, so destroying
+            # it would put every book that arrived with them out of reach —
+            # and the planner's own rule for "must not be destroyed" is
+            # DETACH. Caught here rather than allowed to escape: it is a
+            # `StoreError`, so no router translates it, and letting it out of
+            # this loop left three of four shelves destroyed with no journal
+            # entry and the bookcase permanently undeletable. Measured.
+            shelves.save_shelf(library, unbind_shelf(current))
+            detached.append(shelf_id)
         except ShelfNotEmpty:
             # It gained a photograph after the occupancy query and before the
             # delete. The store is right to refuse, and the planner's own rule

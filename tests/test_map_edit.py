@@ -889,3 +889,110 @@ def test_a_cell_whose_alias_holds_books_is_occupied_and_cannot_be_gapped():
 
     assert shelves.get_shelf_at(LIB, ShelfAddress(section.id, 2, 2)) is not None
     assert shelves.get_shelf(LIB, "sh-photo") is not None
+
+
+def test_a_survivor_with_an_EMPTY_alias_is_still_protected():
+    """The half the depth fold cannot see, and the one that crashed.
+
+    An absorbed identity holding nothing folds zero depth — and after a merge
+    its captures are gone anyway — so the survivor read as EMPTY.
+    `plan_slot_removal` scheduled it for deletion and `delete_shelf` then
+    raised `ShelfHasAliases` out of the middle of the loop. Being a survivor
+    IS the occupancy, whatever the aliases hold.
+    """
+    from app.domain import SlotsOccupied, with_gaps
+    from app.domain.alias import ShelfAlias
+    from app.map_edit import apply_gaps
+
+    maps, shelves, books = _world()
+    drawn = draw_bookcase(maps, shelves, LIB, _case(), ids=SeqIdGen(),
+                          clock=StubClock(), columns=2, levels=2, depth=1)
+    section = drawn.sections[0]
+    survivor = shelves.get_shelf_at(LIB, ShelfAddress(section.id, 2, 2))
+
+    shelves.save_shelf(LIB, new_shelf(id="sh-empty", library_id=LIB.id))
+    shelves.save_alias(LIB, ShelfAlias(
+        alias_id="sh-empty", library_id=LIB.id, shelf_id=survivor.id,
+        address=None, label="", merged_at=WHEN))
+
+    refusal = _raises(
+        SlotsOccupied, apply_gaps, maps, shelves, books, LIB,
+        with_gaps(maps.get_section(LIB, section.id), [(2, 2)], gap=True),
+        journal=_journal(), ids=SeqIdGen(), clock=StubClock())
+    assert survivor.id in {s.id for s in refusal.shelves}
+    assert shelves.get_shelf(LIB, survivor.id) is not None
+
+
+def test_clearing_a_bookcase_DETACHES_a_survivor_instead_of_dying_on_it():
+    """⚠ The measured cost of letting `ShelfHasAliases` escape the loop:
+    three of four labelled shelves destroyed, ZERO journal entries (recording
+    happens after the loop returns), and the bookcase left permanently
+    undeletable because the survivor stayed in its section.
+
+    Detaching is the planner's own answer for "must not be destroyed", and it
+    is the smaller loss — the shelf keeps its books, its aliases and its
+    label, and loses only an address the owner has just erased.
+    """
+    from app.domain.alias import ShelfAlias
+    from app.map_edit import clear_bookcase_slots
+
+    maps, shelves, books = _world()
+    drawn = draw_bookcase(maps, shelves, LIB, _case(), ids=SeqIdGen(),
+                          clock=StubClock(), columns=2, levels=2, depth=1)
+    section = drawn.sections[0]
+    standing = shelves.list_shelves_in_section(LIB, section.id)
+    survivor = standing[-1]
+
+    shelves.save_shelf(LIB, new_shelf(id="sh-empty", library_id=LIB.id))
+    shelves.save_alias(LIB, ShelfAlias(
+        alias_id="sh-empty", library_id=LIB.id, shelf_id=survivor.id,
+        address=None, label="", merged_at=WHEN))
+
+    journal = _journal()
+    removal = clear_bookcase_slots(maps, shelves, books, LIB,
+                                   drawn.bookcase.id, journal=journal)
+
+    assert survivor.id in removal.detached, (
+        "the survivor was destroyed, or the loop died on it")
+    assert survivor.id not in removal.deleted
+    back = shelves.get_shelf(LIB, survivor.id)
+    assert back is not None and back.address is None
+    assert shelves.aliases_of(LIB, survivor.id), "its aliases went with it"
+    assert len(removal.deleted) == len(standing) - 1, (
+        "the loop stopped early instead of finishing the other shelves")
+    assert journal.store.recent(LIB, limit=9), (
+        "the edit recorded no inverse — the loop never reached `_record`")
+
+
+def test_an_absorbed_shelf_that_is_still_live_keeps_its_own_occupancy():
+    """⚠ `get`, not `pop`. Moving the occupancy off the absorbed shelf is only
+    safe once its row is gone, and nothing enforces that — a merge writes the
+    alias and removes the row as two steps, and this is the window between.
+
+    Measured with `pop`: the absorbed shelf read as empty, its own cell was
+    gapped and silently detached rather than refused, and
+    `apply_depth_default` shallowed it under a copy standing at depth 2 — the
+    corruption its own docstring says a review already measured once.
+    """
+    from app.domain.alias import ShelfAlias
+    from app.map_edit import deepest_occupied_depths
+
+    maps, shelves, books = _world()
+    drawn = draw_bookcase(maps, shelves, LIB, _case(), ids=SeqIdGen(),
+                          clock=StubClock(), columns=2, levels=2, depth=2)
+    section = drawn.sections[0]
+    survivor = shelves.get_shelf_at(LIB, ShelfAddress(section.id, 2, 2))
+    absorbed = shelves.get_shelf_at(LIB, ShelfAddress(section.id, 1, 1))
+    _shelve_a_book(books, absorbed.id, depth=2)
+
+    shelves.save_alias(LIB, ShelfAlias(
+        alias_id=absorbed.id, library_id=LIB.id, shelf_id=survivor.id,
+        address=None, label="", merged_at=WHEN))
+
+    deep = deepest_occupied_depths(
+        shelves, books, LIB,
+        shelves.list_shelves_in_section(LIB, section.id))
+    assert deep.get(absorbed.id) == 2, (
+        "the absorbed shelf is still standing and still holds a book at "
+        "depth 2 — its occupancy was moved away from it")
+    assert deep.get(survivor.id, 0) >= 1, "the survivor is occupied too"
