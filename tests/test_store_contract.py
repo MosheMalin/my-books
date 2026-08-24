@@ -4665,7 +4665,18 @@ def an_entry_round_trips_every_field_it_was_given(journal):
     assert r.created == ("sh-minted", "sh-minted-2"), (
         "`created` was dropped — the entry is now permanently un-undoable, "
         "because its fingerprint watches a key the restore no longer names")
-    assert back == _entry(), "a field this spec does not name was lost"
+    assert back.seq == 1, "the store did not number the first entry"
+    # ⚠ Compared against the entry WITH the store's own `seq`, because that
+    # one field is assigned by the store and not by the caller — handing it in
+    # is what would let two processes pick the same number.
+    from dataclasses import replace as _replace
+    assert back == _replace(_entry(), seq=back.seq), (
+        "a field this spec does not name was lost")
+    from dataclasses import fields as _fields
+    from app.domain.map_undo import MapRestore as _MR
+    assert all(getattr(back.restore, f.name) for f in _fields(_MR)), (
+        "a field of MapRestore is empty, so this spec is not exercising it — "
+        "populate it in `_full_restore`, or the next dropped field is silent")
 
 
 @undo_contract
@@ -4679,17 +4690,53 @@ def recording_the_same_id_twice_replaces_rather_than_duplicates(journal):
 
 
 @undo_contract
-def recent_returns_newest_first_and_honours_its_limit(journal):
-    """The head is defined by this ordering, so the two implementations
-    disagreeing about it is the two of them disagreeing about which edit undo
-    takes back."""
-    for n, when in ((1, "2026-08-24T10:00:00+00:00"),
-                    (2, "2026-08-24T11:00:00+00:00"),
-                    (3, "2026-08-24T09:00:00+00:00")):
-        journal.record(LIB, _entry(store_id=f"u{n}", recorded_at=when))
-    assert [e.id for e in journal.recent(LIB, limit=9)] == ["u2", "u1", "u3"]
-    assert [e.id for e in journal.recent(LIB, limit=1)] == ["u2"]
+def recent_returns_them_in_the_order_they_were_recorded(journal):
+    """Newest LAST-RECORDED first, and never newest-by-timestamp.
+
+    ⚠ Every entry here shares one ``recorded_at``, which is the case that
+    matters and the one this spec used to avoid by giving each a distinct
+    time. Production cannot: ``SystemClock`` has second resolution and the
+    client sends a bookcase deletion as four requests, so a tie is the
+    ordinary shape. A review measured the timestamp ordering picking the wrong
+    head 165 times in 500 — undoing the wrong bookcase, and stranding the
+    right one forever. The store numbers each entry as it arrives, and that
+    number is what "which came last" means.
+    """
+    same = "2026-08-24T10:00:00+00:00"
+    for n in (1, 2, 3):
+        journal.record(LIB, _entry(store_id=f"u{n}", recorded_at=same))
+    assert [e.id for e in journal.recent(LIB, limit=9)] == ["u3", "u2", "u1"]
+    assert [e.id for e in journal.recent(LIB, limit=1)] == ["u3"]
     assert journal.recent(LIB, limit=0) == ()
+    assert [e.seq for e in journal.recent(LIB, limit=9)] == [3, 2, 1]
+
+
+@undo_contract
+def rewriting_an_entry_moves_it_to_the_head(journal):
+    """Coalescing takes a FRESH number, and the interleave is why.
+
+    The opposite was written first, on the reasoning that a merged entry "is
+    still the same edit in the order of things". It is not: the second half of
+    an operation arriving is that OPERATION finishing, and what the owner
+    wants back is the last thing they finished. Two removals in one flush
+    interleave — clear B, clear A, delete B — so a merged B entry that kept
+    its old number sat behind A's clearing, and undo took back A."""
+    journal.record(LIB, _entry(store_id="u1"))
+    journal.record(LIB, _entry(store_id="u2"))
+    journal.record(LIB, _entry(store_id="u1", kind="delete_bookcase"))
+    assert [e.id for e in journal.recent(LIB, limit=9)] == ["u1", "u2"]
+    assert journal.recent(LIB, limit=1)[0].kind == "delete_bookcase"
+
+
+@undo_contract
+def numbering_is_per_library(journal):
+    """Two libraries number independently — a busy collection must not push
+    a quiet one's counter forward, and neither may see the other's rows."""
+    journal.record(LIB, _entry(store_id="a1"))
+    journal.record(LIB, _entry(store_id="a2"))
+    journal.record(OTHER, _entry(store_id="b1", library_id=OTHER.id))
+    assert journal.recent(OTHER, limit=9)[0].seq == 1
+    assert [e.id for e in journal.recent(LIB, limit=9)] == ["a2", "a1"]
 
 
 @undo_contract
@@ -4719,6 +4766,139 @@ def a_journal_is_scoped_to_its_library(journal):
         pass
     else:
         raise AssertionError("an entry was filed under a library it disowns")
+
+
+def test_a_v22_database_gains_the_undo_sequence_and_keeps_its_entries():
+    """v23 on an UPGRADED file — CLAUDE.md rule 11, frame from v21→v22.
+
+    What it is FOR: a library that recorded undo entries under v22, where the
+    head was decided by `recorded_at` and a uuid4 tie-break. After the upgrade
+    those entries are still there, still readable, and the NEW ones number
+    from 1 and sort ahead of them — which is where an entry with no recorded
+    order belongs.
+    """
+    import sqlite3
+
+    from app.adapters.migrations import MIGRATIONS, SCHEMA_VERSION, current_version
+    from app.adapters.sqlite_store import SqliteMapUndoStore
+    from app.domain.map_undo import MapRestore, MapUndoEntry
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "v22.db"
+        conn = sqlite3.connect(str(path))
+        try:
+            for version, step in MIGRATIONS:
+                if version > 22:
+                    break
+                if isinstance(step, str):
+                    conn.executescript(step)
+                else:
+                    step(conn)
+            conn.execute("PRAGMA user_version = 22")
+            conn.execute("INSERT INTO users (id, display_name) VALUES"
+                         " ('u1', 'משה')")
+            conn.execute("INSERT INTO accounts (id, label) VALUES ('acc', '')")
+            conn.execute("INSERT INTO libraries (id, account_id, label)"
+                         " VALUES ('lib', 'acc', 'הבית')")
+            # ⚠ A real drawing too, not just the journal — the v19→v20 case's
+            # own ⚠ records that its `foreign_key_check` ran while every new
+            # table was empty, and this step must also be shown to leave the
+            # REST of the schema alone.
+            conn.execute("INSERT INTO sites (id, library_id, name, \"order\")"
+                         " VALUES ('st', 'lib', 'הבית', 0)")
+            conn.execute("INSERT INTO floors (id, library_id, site_id, name,"
+                         " \"order\") VALUES ('fl', 'lib', 'st', 'קרקע', 0)")
+            conn.execute(
+                "INSERT INTO bookcases (id, library_id, floor_id, place_id,"
+                " name, front, x, y, w, h, \"order\") VALUES"
+                " ('bc','lib','fl',NULL,'ספרייה','S',1,0,4,1,0)")
+            conn.execute(
+                "INSERT INTO sections (id, library_id, bookcase_id, ordinal,"
+                " column_levels, gaps, default_levels, default_depth) VALUES"
+                " ('se','lib','bc',1,'[3, 3]','[]',3,1)")
+            conn.execute(
+                "INSERT INTO shelves (id, library_id, label, depth_count,"
+                " virtual, created_at, section_id, col, level) VALUES"
+                " ('sh-old','lib','מדף עליון',1,0,'2026-02-01T00:00:00Z',"
+                "'se',1,3)")
+            # Two entries recorded under v22 — the same second, which is the
+            # shape that made this step necessary.
+            for old in ("old-a", "old-b"):
+                conn.execute(
+                    "INSERT INTO map_undo (id, library_id, kind, recorded_at,"
+                    " inverse, fingerprint, undone_at) VALUES (?,?,?,?,?,?,?)",
+                    (old, "lib", "clear_bookcase",
+                     "2026-08-24T10:00:00+00:00",
+                     '{"sites": [], "floors": [], "places": [],'
+                     ' "bookcases": [], "sections": [], "shelves": ['
+                     '{"id": "sh-' + old + '", "library_id": "lib",'
+                     ' "label": "מדף", "depth_count": 1,'
+                     ' "virtual": false, "created_at": null,'
+                     ' "address": null}],'
+                     ' "created": [], "tag": "bookcase:bc", "v": 1}',
+                     "{}", None))
+            conn.commit()
+        finally:
+            conn.close()
+
+        # ⚠ BEFORE the store opens it: at v22 the column does not exist.
+        before = sqlite3.connect(str(path))
+        try:
+            assert "seq" not in {
+                r[1] for r in before.execute("PRAGMA table_info(map_undo)")
+            }, "v23's column arrived before v23"
+        finally:
+            before.close()
+
+        journal = SqliteMapUndoStore(path)          # migrates 22 -> 23
+        lib = LibraryRef("lib")
+
+        check = sqlite3.connect(str(path))
+        try:
+            assert current_version(check) == 23
+            assert "seq" in {
+                r[1] for r in check.execute("PRAGMA table_info(map_undo)")}
+            assert [r[0] for r in check.execute(
+                "SELECT seq FROM map_undo ORDER BY id")] == [0, 0], (
+                "the upgrade invented an order the old rows never had")
+            assert check.execute("PRAGMA foreign_key_check").fetchall() == []
+            names = {r[0] for r in check.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'")}
+            assert "map_undo_by_library" in names, "the index is gone"
+            assert "seq" in check.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'index' AND"
+                " name = 'map_undo_by_library'").fetchone()[0], (
+                "the index still orders by the column that ties")
+        finally:
+            check.close()
+
+        # The v22 entries survived and are still readable whole…
+        assert {e.id for e in journal.recent(lib, limit=9)} == {"old-a", "old-b"}
+
+        # …and so did the drawing this step never claimed to touch.
+        from app.adapters.sqlite_store import SqliteMapStore, SqliteShelfStore
+
+        maps = SqliteMapStore(path)
+        assert maps.get_section(lib, "se").column_levels == (3, 3)
+        assert SqliteShelfStore(path).get_shelf_at(
+            lib, ShelfAddress("se", 1, 3)).label == "מדף עליון"
+
+        # …and the column is USED: a new entry numbers from 1 and takes the
+        # head from both of the unordered ones.
+        journal.record(lib, MapUndoEntry(
+            id="new-1", library_id="lib", kind="remove_column",
+            tag="section:se", recorded_at="2026-08-24T10:00:00+00:00",
+            restore=MapRestore(created=("sh-1",)), fingerprint={}))
+        head = journal.recent(lib, limit=9)
+        assert head[0].id == "new-1" and head[0].seq == 1
+        assert [e.id for e in head][1:] == sorted(["old-a", "old-b"],
+                                                 reverse=True)
+
+        after = sqlite3.connect(str(path))
+        try:
+            assert after.execute("PRAGMA foreign_key_check").fetchall() == []
+        finally:
+            after.close()
 
 
 def test_a_v21_database_gains_the_undo_journal_and_keeps_its_drawing():

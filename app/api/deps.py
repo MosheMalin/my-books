@@ -16,6 +16,7 @@ from __future__ import annotations
 from fastapi import Depends, HTTPException, Request, status
 
 from app.domain import Account, Library, LibraryRef, Membership
+from app.map_undo import Journal
 from app.ports import Clock, IdGen, Principal
 from app.ports.auth import AuthStore, Mailer
 from app.ports.invites import InviteStore

@@ -6778,3 +6778,155 @@ def test_a_case_already_over_the_ceiling_can_still_be_gapped_smaller():
         back = client.patch(f"/api/v1/map/sections/{section['id']}/gaps",
                             json={"gap": False, "cells": cells[:1]})
         assert back.status_code == 409, back.text
+
+
+def test_the_undo_route_answers_nothing_recorded_before_anything_happens():
+    """200 with `available: false`, never 404.
+
+    *"No map edit has been recorded"* is an ANSWER, and a client forced to
+    read 404 as data cannot tell it apart from a misspelt path.
+    """
+    with TestClient(_app()) as client:
+        _drawn_map(client, columns=2, levels=1)
+        said = client.get("/api/v1/map/undo")
+        assert said.status_code == 200, said.text
+        body = said.json()
+        assert body["available"] is False
+        assert body["reason"] == "nothing_recorded"
+        assert body["kind"] == "" and body["changed"] == []
+
+
+def test_taking_back_a_removed_column_through_the_api():
+    """The whole route pair over one real edit: the GET offers it, the POST
+    performs it, and the shelf comes back to its slot with its id."""
+    with TestClient(_app()) as client:
+        _drawn_map(client, columns=2, levels=1)
+        section = client.get("/api/v1/map").json()["sections"][0]
+        doomed = [s for s in client.get("/api/v1/shelves").json()
+                  if s["address"] and s["address"]["col"] == 2][0]
+
+        edit = client.patch(f"/api/v1/map/sections/{section['id']}",
+                            json={"columns": 1})
+        assert edit.status_code == 200, edit.text
+        assert client.get(f"/api/v1/shelves/{doomed['id']}").status_code == 404
+
+        offered = client.get("/api/v1/map/undo").json()
+        assert offered["available"] is True
+        assert offered["kind"] == "remove_column"
+        assert offered["reason"] == ""
+        assert offered["recorded_at"], "the offer does not say when"
+        assert offered["restores"], "the offer does not say what comes back"
+
+        done = client.post("/api/v1/map/undo")
+        assert done.status_code == 200, done.text
+
+        back = client.get(f"/api/v1/shelves/{doomed['id']}")
+        assert back.status_code == 200, "the shelf did not come back"
+        assert back.json()["address"]["col"] == 2
+
+
+def test_the_post_answers_the_offer_as_it_stands_AFTER_the_undo():
+    """So the control learns in the same round trip that there is nothing more
+    to take back. Answering the PRE-undo offer would leave a client believing
+    the undo is still available, and there is no redo."""
+    with TestClient(_app()) as client:
+        _drawn_map(client, columns=2, levels=1)
+        section = client.get("/api/v1/map").json()["sections"][0]
+        client.patch(f"/api/v1/map/sections/{section['id']}",
+                     json={"columns": 1})
+
+        body = client.post("/api/v1/map/undo").json()
+        assert body["available"] is False, (
+            "the POST answered the offer from before it acted")
+        assert body["reason"] == "already_undone"
+        assert client.get("/api/v1/map/undo").json()["reason"] == \
+            "already_undone"
+
+
+def test_a_second_press_is_refused_and_there_is_no_redo():
+    """409, not 200 and not 500 — the request is fine, the state conflicts."""
+    with TestClient(_app()) as client:
+        _drawn_map(client, columns=2, levels=1)
+        section = client.get("/api/v1/map").json()["sections"][0]
+        client.patch(f"/api/v1/map/sections/{section['id']}",
+                     json={"columns": 1})
+        assert client.post("/api/v1/map/undo").status_code == 200
+
+        again = client.post("/api/v1/map/undo")
+        assert again.status_code == 409, again.text
+        assert isinstance(again.json()["detail"], str), (
+            "a dict detail arrives at the client as an empty alert — the "
+            "trap CLAUDE.md records, and the reason this is a string"
+        )
+
+
+def test_a_refused_undo_says_so_as_409_with_a_string_detail():
+    """The world moved. 409 rather than 400: the request is not malformed,
+    and that is the difference between a client that offers to reload and one
+    that edits the request."""
+    with TestClient(_app()) as client:
+        _drawn_map(client, columns=2, levels=1)
+        section = client.get("/api/v1/map").json()["sections"][0]
+        doomed = [s for s in client.get("/api/v1/shelves").json()
+                  if s["address"] and s["address"]["col"] == 2][0]
+        client.post("/api/v1/captures", json={"shelf_id": doomed["id"]})
+        client.patch(f"/api/v1/map/sections/{section['id']}",
+                     json={"columns": 1})
+
+        # The detached shelf is renamed afterwards — work the undo would
+        # overwrite if it ran.
+        client.patch(f"/api/v1/shelves/{doomed['id']}",
+                     json={"label": "אחר כך"})
+
+        said = client.get("/api/v1/map/undo").json()
+        assert said["available"] is False and said["reason"] == "world_moved"
+        assert any(t.startswith("shelves:") for t in said["changed"]), said
+
+        refused = client.post("/api/v1/map/undo")
+        assert refused.status_code == 409, refused.text
+        assert isinstance(refused.json()["detail"], str)
+        assert client.get(f"/api/v1/shelves/{doomed['id']}").json()["label"] \
+            == "אחר כך", "a refused undo wrote anyway"
+
+
+def test_reading_the_undo_offer_needs_only_browse():
+    """It writes nothing, and *"what happened to my map last"* is the same
+    question everyone who can see the map may ask. The POST is EDIT_MAP —
+    `test_every_write_in_the_map_router_needs_edit_map_and_says_so` covers
+    that side, and it skips GETs by construction, so this is the other half.
+    """
+    from app.api.policy import require
+    from app.api.routers import map as map_router
+    from app.domain import Capability
+
+    routes = {(r.path, tuple(sorted(r.methods))): r
+              for r in map_router.router.routes
+              if getattr(r, "methods", None)}
+    getter = routes[("/map/undo", ("GET",))]
+    wanted = [d for d in getter.dependant.dependencies
+              if getattr(d.call, "__closure__", None)]
+    caps = [c.cell_contents for d in wanted
+            for c in (d.call.__closure__ or ())
+            if isinstance(c.cell_contents, Capability)]
+    assert caps == [Capability.BROWSE], (
+        f"GET /map/undo declares {caps}, not BROWSE — reading the map is "
+        "BROWSE by the owner's decision (§4.2 and this router's docstring)"
+    )
+    assert require  # the import is the point: same builder both routes use
+
+
+def test_a_journal_cannot_be_bound_without_an_id_source_and_a_clock():
+    """Loud, not lazy. An entry with no id cannot be found again and one with
+    no time cannot be shown — so a journal bound without them records
+    inverses nobody can use and says nothing about it."""
+    from app.adapters.memory_store import MemoryMapUndoStore
+    from app.api.app import create_app
+
+    try:
+        create_app(lambda: StubPrincipal(), docs=False,
+                   map_undo_store=MemoryMapUndoStore())
+    except ValueError as exc:
+        assert "IdGen" in str(exc) and "Clock" in str(exc), str(exc)
+    else:
+        raise AssertionError(
+            "a journal was bound with no way to number or date an entry")
