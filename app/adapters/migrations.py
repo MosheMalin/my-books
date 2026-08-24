@@ -1251,6 +1251,91 @@ CREATE INDEX map_undo_by_library ON map_undo (library_id, seq DESC, id DESC);
 """
 
 
+# P6.4a — a merged shelf becomes an ALIAS, of its id AND of its address
+# (MAP_PLAN §3.11, owner 2026-08-21: *"Image keeps its own identity. Shelf and
+# slot can be aliases"*).
+#
+# Nothing writes this table yet. P6.4d's merge does; this step lands it, its
+# resolver and its rules on their own so the migration is reviewed against a
+# diff with no merge in it.
+#
+# **`alias_id` is the absorbed shelf's OWN id**, and it is the PRIMARY KEY —
+# so an id can be absorbed once and never twice, and the row IS the answer to
+# *"what happened to shelf A?"*.
+#
+# ⚠ **The address is carried, not derived**, and it is the half §3.11 exists
+# for: *"the shelf that was at section 1, column 2, level 3"* is what a person
+# reads off a drawing and what survives in their memory when the id does not.
+# It is HISTORICAL — an alias never needs a live slot at its former address,
+# and §3.10a settled that the cell may since have become a gap. Hence no
+# foreign key to a slot, and all three columns nullable together: a photo-born
+# shelf that was never drawn has no former address at all.
+#
+# ⚠ There is no foreign key to `sections` either, and that is a SECOND
+# argument, not the same one. A section can be deleted outright once nothing
+# stands in it, so an alias may end up remembering a section that is gone —
+# which `foreign_key_check` cannot see. It is harmless (ids are uuid4, so no
+# id is ever reused) but it is not nothing: the *formerly at …* line and
+# P6.4c's census must both cope with a section that no longer exists, rather
+# than assuming the address resolves.
+#
+# ⚠ **`shelf_id REFERENCES shelves (id)` is the load-bearing line.** An
+# absorbed shelf's `shelves` row is DELETED (§3.11: "`shelves` keeps meaning
+# 'a shelf', so every existing query stays correct with no new WHERE"), so an
+# alias can only ever point at a LIVE shelf — which makes an alias of an alias
+# unrepresentable and the resolver one hop by construction, with no cycle
+# guard and no null check on every call. The same FK is why deleting a shelf
+# other identities resolve to has to be REFUSED rather than cascaded: the
+# refusal names the count (owner, 2026-08-23), because cascading would discard
+# exactly the answer this table exists to give, and would take the P6.4c
+# census's baseline with it.
+#
+# ⚠⚠ **UNRESOLVED, AND P6.4d INHERITS IT: removing the absorbed shelf's row
+# destroys its photographs.** `captures.shelf_id` is `REFERENCES shelves (id)
+# ON DELETE CASCADE` (v2), so deleting A's row takes A's captures with it —
+# measured: 1 capture before, 0 rows naming A after, `foreign_key_check`
+# clean, and the alias left pointing at a shelf that has nothing. That is
+# §3.11's own argument inverted: the alias exists so nothing has to be
+# rewritten, and the rows that make the absorbed identity mean anything are
+# swept away at the moment it is created.
+#
+# It bites nothing yet, because nothing writes this table and `delete_shelf`
+# refuses any shelf with captures — which is also why P6.4d cannot use the
+# port for this and would have to go around it with raw SQL, straight into
+# the cascade. Recorded HERE rather than discovered there. The two ways out,
+# neither chosen yet: re-point `captures.shelf_id` at the survivor (which
+# contradicts "nothing is rewritten" and has to be argued), or make removing
+# an absorbed shelf its own store operation that asserts an alias exists and
+# moves what the cascade would have eaten.
+#
+# ⚠ **Two aliases may not claim one former address** (owner, same decision) —
+# the partial unique index below. The address→survivor lookup must have
+# exactly one answer; the alternative is a query that silently picks the first
+# of several. Partial because NULL is the normal state for a photo-born shelf,
+# and a plain UNIQUE over nullable columns would be satisfied by all of them.
+_V24 = """
+CREATE TABLE shelf_aliases (
+    alias_id   TEXT PRIMARY KEY,
+    library_id TEXT NOT NULL,
+    shelf_id   TEXT NOT NULL REFERENCES shelves (id),
+    section_id TEXT,
+    col        INTEGER,
+    level      INTEGER,
+    label      TEXT NOT NULL DEFAULT '',
+    merged_at  TEXT NOT NULL
+);
+
+-- "which identities resolve to this shelf" — the query behind the refusal to
+-- delete one, behind `books_on_shelf`, and behind the *formerly …* line.
+CREATE INDEX shelf_aliases_by_shelf ON shelf_aliases (library_id, shelf_id);
+
+-- "which shelf is the one that was at this slot" — exactly one answer.
+CREATE UNIQUE INDEX shelf_aliases_by_address
+    ON shelf_aliases (library_id, section_id, col, level)
+    WHERE section_id IS NOT NULL;
+"""
+
+
 # A step is either SQL to execute or a callable to run — both inside the same
 # once-only transaction. Callables exist because a derived column whose rule
 # lives in the domain must be backfilled BY that rule, not by a re-statement
@@ -1279,6 +1364,7 @@ MIGRATIONS: tuple[tuple[int, str | Step], ...] = (
     (21, _V21),
     (22, _V22),
     (23, _V23),
+    (24, _V24),
 )
 
 

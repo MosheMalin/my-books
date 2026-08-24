@@ -103,6 +103,7 @@ from app.ports.store import (
     DuplicateCaptureSlot,
     DuplicateSectionOrdinal,
     DuplicateShelfSlot,
+    ShelfHasAliases,
     ShelfNotEmpty,
     UnknownShelf,
     WrongLibrary,
@@ -2441,44 +2442,8 @@ def _bind(fn, factory, name):
     return run
 
 
-for _label, _factory in IMPLEMENTATIONS:
-    for _fn in CONTRACT:
-        _name = f"test_{_fn.__name__}__{_label}"
-        globals()[_name] = _bind(_fn, _factory, _name)
-
-for _label, _factory in SHELF_IMPLEMENTATIONS:
-    for _fn in SHELF_CONTRACT:
-        _name = f"test_{_fn.__name__}__{_label}"
-        globals()[_name] = _bind(_fn, _factory, _name)
-
-for _label, _factory in READ_IMPLEMENTATIONS:
-    for _fn in READ_CONTRACT:
-        _name = f"test_{_fn.__name__}__{_label}"
-        globals()[_name] = _bind(_fn, _factory, _name)
-
-for _label, _factory in DECISION_IMPLEMENTATIONS:
-    for _fn in DECISION_CONTRACT:
-        _name = f"test_{_fn.__name__}__{_label}"
-        globals()[_name] = _bind(_fn, _factory, _name)
-
-for _label, _factory in DUPLICATE_IMPLEMENTATIONS:
-    for _fn in DUPLICATE_CONTRACT:
-        _name = f"test_{_fn.__name__}__{_label}"
-        globals()[_name] = _bind(_fn, _factory, _name)
-
-for _label, _factory in TENANCY_IMPLEMENTATIONS:
-    for _fn in TENANCY_CONTRACT:
-        _name = f"test_{_fn.__name__}__{_label}"
-        globals()[_name] = _bind(_fn, _factory, _name)
-
 # The map's factory yields a PAIR, which `_bind` passes through as one
 # argument — the cases unpack it. No second binder needed.
-for _label, _factory in MAP_IMPLEMENTATIONS:
-    for _fn in MAP_CONTRACT:
-        _name = f"test_{_fn.__name__}__{_label}"
-        globals()[_name] = _bind(_fn, _factory, _name)
-
-
 # --- migrations (H6), sqlite-specific ------------------------------------
 
 def test_a_fresh_database_is_at_the_current_schema_version():
@@ -4593,6 +4558,251 @@ def test_a_v20_database_gains_the_gaps_column_and_keeps_its_drawing():
             after.close()
 
 
+# --- shelf aliases (P6.4a, §3.11) -----------------------------------------
+
+def _absorb(shelves, *, alias_id="sh-old", into="sh-new", at=None,
+            label="", lib=None):
+    from app.domain.alias import ShelfAlias
+
+    lib = lib or LIB
+    return ShelfAlias(alias_id=alias_id, library_id=lib.id, shelf_id=into,
+                      address=at, label=label,
+                      merged_at="2026-08-25T10:00:00+00:00")
+
+
+def _two_shelves(shelves, lib=None):
+    lib = lib or LIB
+    for i in ("sh-old", "sh-new"):
+        shelves.save_shelf(lib, new_shelf(id=i, library_id=lib.id))
+
+
+@shelf_contract
+def an_alias_answers_for_the_shelf_that_absorbed_it(shelves):
+    """§3.11's first half: `alias_id -> shelf_id`, one hop.
+
+    ⚠ The absorbed shelf's own row is expected to be GONE by then — P6.4d's
+    merge deletes it — but this item stores the alias without touching it, so
+    the round trip is what is asserted here.
+    """
+    from app.domain.alias import resolve
+
+    _two_shelves(shelves)
+    shelves.save_alias(LIB, _absorb(shelves, label="ספרי בישול"))
+
+    aliases = shelves.list_aliases(LIB)
+    assert len(aliases) == 1
+    assert resolve("sh-old", aliases) == "sh-new"
+    assert resolve("sh-new", aliases) == "sh-new", (
+        "a shelf nothing absorbed must answer itself")
+    assert resolve("never-heard-of-it", aliases) == "never-heard-of-it"
+    assert aliases[0].label == "ספרי בישול", (
+        "the name a household calls a shelf did not survive the merge")
+
+
+@shelf_contract
+def an_alias_remembers_where_it_stood(shelves):
+    """§3.11's second half, and the one worth defending: *"the shelf that was
+    at section 1, column 2, level 3"* is what a person reads off a drawing,
+    and the half that survives in their memory when the id does not."""
+    from app.domain.alias import resolve_address
+
+    _two_shelves(shelves)
+    where = ShelfAddress("se-1", 2, 3)
+    shelves.save_alias(LIB, _absorb(shelves, at=where))
+
+    aliases = shelves.list_aliases(LIB)
+    assert aliases[0].address == where
+    assert resolve_address(where, aliases) == "sh-new"
+    assert resolve_address(ShelfAddress("se-1", 9, 9), aliases) is None
+
+
+@shelf_contract
+def two_identities_may_not_claim_one_former_address(shelves):
+    """**[DECIDED 2026-08-23 — owner]** The address→survivor lookup must have
+    exactly one answer; the alternative is a query that silently picks the
+    first of several."""
+    _two_shelves(shelves)
+    shelves.save_shelf(LIB, new_shelf(id="sh-third", library_id=LIB.id))
+    where = ShelfAddress("se-1", 2, 3)
+    shelves.save_alias(LIB, _absorb(shelves, at=where))
+    try:
+        shelves.save_alias(LIB, _absorb(shelves, alias_id="sh-third", at=where))
+    except Exception as exc:            # noqa: BLE001 — both stores, one rule
+        assert "slot" in str(exc).lower() or "unique" in str(exc).lower(), exc
+    else:
+        raise AssertionError("two aliases claimed the same former address")
+
+
+@shelf_contract
+def an_id_is_absorbed_once_and_never_twice(shelves):
+    """`alias_id` is the PRIMARY KEY. Re-absorbing an id elsewhere would
+    silently move every book that arrived with it."""
+    _two_shelves(shelves)
+    shelves.save_shelf(LIB, new_shelf(id="sh-third", library_id=LIB.id))
+    shelves.save_alias(LIB, _absorb(shelves))
+    try:
+        shelves.save_alias(LIB, _absorb(shelves, into="sh-third"))
+    except Exception:                   # noqa: BLE001
+        pass
+    else:
+        raise AssertionError("one id was absorbed twice")
+    assert shelves.list_aliases(LIB)[0].shelf_id == "sh-new"
+
+
+@shelf_contract
+def an_alias_may_only_point_at_a_live_shelf(shelves):
+    """What keeps an alias of an alias unrepresentable, and therefore keeps
+    the resolver one hop with no cycle guard."""
+    shelves.save_shelf(LIB, new_shelf(id="sh-old", library_id=LIB.id))
+    try:
+        shelves.save_alias(LIB, _absorb(shelves, into="ghost"))
+    except UnknownShelf:
+        pass
+    else:
+        raise AssertionError("an alias was stored pointing at no shelf")
+
+
+@shelf_contract
+def deleting_a_shelf_other_identities_resolve_to_is_refused(shelves):
+    """**[DECIDED 2026-08-23 — owner]**, naming the count.
+
+    Cascading would discard *"the shelf that was at section 1, column 2, level
+    3"* — the one thing the alias exists to answer — and would take the P6.4c
+    census's baseline with it.
+    """
+    _two_shelves(shelves)
+    shelves.save_alias(LIB, _absorb(shelves))
+    try:
+        shelves.delete_shelf(LIB, "sh-new")
+    except ShelfHasAliases as exc:
+        assert "1" in str(exc), f"the refusal did not say how many: {exc}"
+    else:
+        raise AssertionError("deleting a survivor discarded its aliases")
+    # …and the absorbed id is still deletable, because nothing resolves to it.
+    assert shelves.delete_shelf(LIB, "sh-old") is True
+
+
+@shelf_contract
+def aliases_are_scoped_to_their_library(shelves):
+    """H2, and the same 404-not-403 shape as every other aggregate."""
+    _two_shelves(shelves)
+    shelves.save_alias(LIB, _absorb(shelves))
+    assert shelves.list_aliases(OTHER) == ()
+    assert shelves.aliases_of(OTHER, "sh-new") == ()
+    try:
+        shelves.save_alias(OTHER, _absorb(shelves))
+    except WrongLibrary:
+        pass
+    else:
+        raise AssertionError("an alias was filed under a library it disowns")
+
+
+@shelf_contract
+def aliases_of_answers_only_for_the_shelf_asked_about(shelves):
+    """The narrow query, behind the delete refusal and the *formerly …* line."""
+    _two_shelves(shelves)
+    shelves.save_shelf(LIB, new_shelf(id="sh-b", library_id=LIB.id))
+    shelves.save_shelf(LIB, new_shelf(id="sh-c", library_id=LIB.id))
+    shelves.save_alias(LIB, _absorb(shelves, alias_id="sh-old", into="sh-new"))
+    shelves.save_alias(LIB, _absorb(shelves, alias_id="sh-b", into="sh-c"))
+
+    assert [a.alias_id for a in shelves.aliases_of(LIB, "sh-new")] == ["sh-old"]
+    assert [a.alias_id for a in shelves.aliases_of(LIB, "sh-c")] == ["sh-b"]
+    assert shelves.aliases_of(LIB, "sh-old") == ()
+
+
+@shelf_contract
+def a_survivor_that_has_itself_been_absorbed_is_refused(shelves):
+    """ONE HOP, and it is enforced here rather than by the foreign key.
+
+    ⚠ A migration review stored this chain through the public API: the FK
+    proves the survivor is a LIVE shelf, which is a different claim from
+    "is not itself an alias_id". A chain hides an identity — `identities(C)`
+    would not list A — so every book that arrived on A becomes unreachable
+    from the only shelf still standing, with `foreign_key_check` clean.
+    """
+    # ⚠ Built in THIS order on purpose: B is absorbed FIRST, so the second
+    # call names a survivor that is itself an alias. The other order trips a
+    # different guard (the case below), and a mutation showed both tests
+    # exercising that one — this check survived being deleted.
+    for i in ("A", "B", "C"):
+        shelves.save_shelf(LIB, new_shelf(id=i, library_id=LIB.id))
+    shelves.save_alias(LIB, _absorb(shelves, alias_id="B", into="C"))
+    try:
+        shelves.save_alias(LIB, _absorb(shelves, alias_id="A", into="B"))
+    except ShelfHasAliases as exc:
+        assert "B" in str(exc), exc
+    else:
+        raise AssertionError("a chain A -> B -> C was stored")
+
+
+@shelf_contract
+def absorbing_a_shelf_that_others_resolve_to_is_refused(shelves):
+    """The other end of the same rule, and the refusal P6.4d needs at the
+    right moment: merging a shelf that has already absorbed one is the same
+    conversation as deleting it, and must not arrive two statements later as
+    `FOREIGN KEY constraint failed`."""
+    for i in ("A", "B", "C"):
+        shelves.save_shelf(LIB, new_shelf(id=i, library_id=LIB.id))
+    shelves.save_alias(LIB, _absorb(shelves, alias_id="A", into="B"))
+    try:
+        shelves.save_alias(LIB, _absorb(shelves, alias_id="B", into="C"))
+    except ShelfHasAliases:
+        pass
+    else:
+        raise AssertionError("a survivor was absorbed, stranding its aliases")
+
+
+@shelf_contract
+def a_cycle_between_two_identities_is_refused(shelves):
+    """Worse than a chain: with A -> B and B -> A neither shelf can ever be
+    deleted again, because each is the other's survivor."""
+    for i in ("A", "B"):
+        shelves.save_shelf(LIB, new_shelf(id=i, library_id=LIB.id))
+    shelves.save_alias(LIB, _absorb(shelves, alias_id="A", into="B"))
+    try:
+        shelves.save_alias(LIB, _absorb(shelves, alias_id="B", into="A"))
+    except ShelfHasAliases:
+        pass
+    else:
+        raise AssertionError("a cycle A <-> B was stored")
+    assert shelves.delete_shelf(LIB, "A") is True, (
+        "A is nobody's survivor, so it must still be deletable")
+
+
+@contract
+def books_on_shelf_answers_for_every_identity_it_is_given(store):
+    """P6.4a's read. §3.11 rewrites nothing when shelves merge, so a copy
+    that arrived with an absorbed identity still names IT — which is why this
+    takes a TUPLE of ids and the caller builds it with
+    `app.domain.alias.identities`."""
+    store.save(LIB, new_book(id="b1", library_id=LIB.id, title="בית",
+                             author="א", copy_id="c1", shelf_id="sh-old"))
+    store.save(LIB, new_book(id="b2", library_id=LIB.id, title="אור",
+                             author="ב", copy_id="c2", shelf_id="sh-new"))
+    store.save(LIB, new_book(id="b3", library_id=LIB.id, title="גן",
+                             author="ג", copy_id="c3", shelf_id="sh-other"))
+
+    both = store.books_on_shelf(LIB, ("sh-new", "sh-old"))
+    assert [b.id for b in both] == ["b2", "b1"], (
+        "answered in title order across both identities")
+    assert [b.id for b in store.books_on_shelf(LIB, ("sh-new",))] == ["b2"]
+    assert store.books_on_shelf(LIB, ()) == (), (
+        "an empty tuple must answer nothing, not raise — `IN ()` is not SQL")
+    assert store.books_on_shelf(LIB, ("nobody",)) == ()
+    assert store.books_on_shelf(OTHER, ("sh-new", "sh-old")) == (), (
+        "another library's shelf ids answered with this library's books")
+
+
+@contract
+def books_on_shelf_names_a_book_once_however_many_copies_stand_there(store):
+    """Two copies of one work on one shelf are one book on the screen."""
+    book = new_book(id="b1", library_id=LIB.id, title="בית", author="א",
+                    copy_id="c1", shelf_id="sh-1")
+    store.save(LIB, add_copy(book, copy_id="c2", shelf_id="sh-1"))
+    assert [b.id for b in store.books_on_shelf(LIB, ("sh-1",))] == ["b1"]
+
+
 # --- MapUndoStore (P6.4b) --------------------------------------------------
 
 def _full_restore():
@@ -4768,6 +4978,123 @@ def a_journal_is_scoped_to_its_library(journal):
         raise AssertionError("an entry was filed under a library it disowns")
 
 
+def test_a_v23_database_gains_the_alias_table_and_keeps_its_shelves():
+    """v24 on an UPGRADED file — CLAUDE.md rule 11, frame from v22→v23.
+
+    What it is FOR: a library drawn and photographed before P6.4a arrives with
+    its map and its shelves, and after the upgrade every one of those is still
+    standing with NO aliases — an existing library has merged nothing, and the
+    upgrade must not invent an identity it never had.
+    """
+    import sqlite3
+
+    from app.adapters.migrations import MIGRATIONS, SCHEMA_VERSION, current_version
+    from app.adapters.sqlite_store import SqliteShelfStore
+    from app.domain.alias import ShelfAlias, resolve, resolve_address
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "v23.db"
+        conn = sqlite3.connect(str(path))
+        try:
+            for version, step in MIGRATIONS:
+                if version > 23:
+                    break
+                if isinstance(step, str):
+                    conn.executescript(step)
+                else:
+                    step(conn)
+            conn.execute("PRAGMA user_version = 23")
+            conn.execute("INSERT INTO users (id, display_name) VALUES"
+                         " ('u1', 'משה')")
+            conn.execute("INSERT INTO accounts (id, label) VALUES ('acc', '')")
+            conn.execute("INSERT INTO libraries (id, account_id, label)"
+                         " VALUES ('lib', 'acc', 'הבית')")
+            conn.execute("INSERT INTO sites (id, library_id, name, \"order\")"
+                         " VALUES ('st', 'lib', 'הבית', 0)")
+            conn.execute("INSERT INTO floors (id, library_id, site_id, name,"
+                         " \"order\") VALUES ('fl', 'lib', 'st', 'קרקע', 0)")
+            conn.execute(
+                "INSERT INTO bookcases (id, library_id, floor_id, place_id,"
+                " name, front, x, y, w, h, \"order\") VALUES"
+                " ('bc','lib','fl',NULL,'ספרייה','S',1,0,4,1,0)")
+            conn.execute(
+                "INSERT INTO sections (id, library_id, bookcase_id, ordinal,"
+                " column_levels, gaps, default_levels, default_depth) VALUES"
+                " ('se','lib','bc',1,'[3, 3]','[]',3,1)")
+            conn.execute(
+                "INSERT INTO shelves (id, library_id, label, depth_count,"
+                " virtual, created_at, section_id, col, level) VALUES"
+                " ('sh-drawn','lib','מדף עליון',1,0,'2026-02-01T00:00:00Z',"
+                "'se',1,3)")
+            conn.execute(
+                "INSERT INTO shelves (id, library_id, label, depth_count,"
+                " virtual, created_at) VALUES"
+                " ('sh-photo','lib','מהתמונה',1,0,'2026-02-02T00:00:00Z')")
+            conn.commit()
+        finally:
+            conn.close()
+
+        # ⚠ BEFORE the store opens it: at v23 the TABLE does not exist. These
+        # lines are what make folding the DDL into `_V23` fail.
+        before = sqlite3.connect(str(path))
+        try:
+            assert "shelf_aliases" not in {
+                r[0] for r in before.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'")
+            }, "v24's table arrived before v24"
+        finally:
+            before.close()
+
+        shelves = SqliteShelfStore(path)          # migrates 23 -> 24
+        lib = LibraryRef("lib")
+
+        check = sqlite3.connect(str(path))
+        try:
+            assert current_version(check) == SCHEMA_VERSION
+            assert "shelf_aliases" in {
+                r[0] for r in check.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'")}
+            assert check.execute(
+                "SELECT COUNT(*) FROM shelf_aliases").fetchone()[0] == 0, (
+                "the upgrade invented an identity this library never merged"
+            )
+            assert check.execute("PRAGMA foreign_key_check").fetchall() == []
+            names = {r[0] for r in check.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'")}
+            for wanted in ("shelf_aliases_by_shelf", "shelf_aliases_by_address",
+                           "shelves_by_slot"):
+                assert wanted in names, f"the {wanted} index is gone"
+        finally:
+            check.close()
+
+        # Both shelves survived, drawn and photographed alike.
+        drawn = shelves.get_shelf(lib, "sh-drawn")
+        assert drawn.label == "מדף עליון"
+        assert drawn.address == ShelfAddress("se", 1, 3), (
+            "the slot columns are the interesting ones on an upgrade "
+            "that adds an index over the same shape")
+        assert shelves.get_shelf(lib, "sh-photo").address is None
+
+        # …and the table is USED, on the real file, through the real store:
+        # the photo-born shelf is absorbed by the drawn one.
+        shelves.save_alias(lib, ShelfAlias(
+            alias_id="sh-photo", library_id="lib", shelf_id="sh-drawn",
+            address=None, label="מהתמונה",
+            merged_at="2026-08-25T10:00:00+00:00"))
+        aliases = shelves.list_aliases(lib)
+        assert resolve("sh-photo", aliases) == "sh-drawn"
+        assert aliases[0].label == "מהתמונה"
+        assert resolve_address(ShelfAddress("se", 1, 3), aliases) is None, (
+            "a LIVE slot is not the alias table's question"
+        )
+
+        after = sqlite3.connect(str(path))
+        try:
+            assert after.execute("PRAGMA foreign_key_check").fetchall() == []
+        finally:
+            after.close()
+
+
 def test_a_v22_database_gains_the_undo_sequence_and_keeps_its_entries():
     """v23 on an UPGRADED file — CLAUDE.md rule 11, frame from v21→v22.
 
@@ -4855,7 +5182,12 @@ def test_a_v22_database_gains_the_undo_sequence_and_keeps_its_entries():
 
         check = sqlite3.connect(str(path))
         try:
-            assert current_version(check) == 23
+            # ⚠ SCHEMA_VERSION, not 23. Opening the store migrates the WHOLE
+            # pending chain, so pinning this to the step's own number makes
+            # the test fail the day a later step exists — which it did, on
+            # v24's first run. What pins THIS step is the ABSENT check above
+            # and the column assertion below.
+            assert current_version(check) == SCHEMA_VERSION
             assert "seq" in {
                 r[1] for r in check.execute("PRAGMA table_info(map_undo)")}
             assert [r[0] for r in check.execute(
@@ -5082,12 +5414,44 @@ def test_a_v18_database_gains_the_binding_column_and_keeps_its_rows():
             hash_token("fresh"), now="2026-08-13T12:05:00+00:00"
         ).belongs_to("mine")
 
-# ⚠ At the END of the file, unlike its six siblings, because the
-# `@undo_contract` cases are defined below them — and a binder that runs
-# before its list is filled binds NOTHING, silently. The suite still reported
-# ok, with ten fewer cases than the run before it. Same family as the
-# `unittest.TestCase` trap CLAUDE.md records: "0/0 passed" means exactly that.
-for _label, _factory in UNDO_IMPLEMENTATIONS:
-    for _fn in UNDO_CONTRACT:
-        _name = f"test_{_fn.__name__}__{_label}"
-        globals()[_name] = _bind(_fn, _factory, _name)
+
+# --- binding the contracts to their implementations -----------------------
+#
+# ⚠ **At the END of the file, all of them, and that is load-bearing.** A
+# `@..._contract` case defined BELOW its binder is appended to a list the loop
+# has already walked, so it binds NOTHING and the suite reports ok with fewer
+# cases than the run before it. It happened twice in two items — P6.4b's
+# `UNDO_CONTRACT` bound zero of seven, and P6.4a's alias cases bound zero of
+# eight — because both were written next to the code they describe rather
+# than above line 2445. Moving every loop here means "define a case anywhere"
+# is simply true.
+#
+# The counts are the second half. A silent zero is what made this expensive
+# both times, so each list states how many cases it should have: adding one
+# without updating the number is a red test, which is exactly the noise a
+# silent binder failed to make.
+for _list, _expected in ((CONTRACT, 42),
+                         (SHELF_CONTRACT, 24),
+                         (READ_CONTRACT, 17),
+                         (DECISION_CONTRACT, 8),
+                         (DUPLICATE_CONTRACT, 9),
+                         (TENANCY_CONTRACT, 14),
+                         (MAP_CONTRACT, 29),
+                         (UNDO_CONTRACT, 7)):
+    assert len(_list) == _expected, (
+        f"a contract list holds {len(_list)} cases, not {_expected} — if you "
+        f"added one, say so here; if it reads 0 the decorator never ran"
+    )
+
+for _cases, _impls in ((CONTRACT, IMPLEMENTATIONS),
+                       (SHELF_CONTRACT, SHELF_IMPLEMENTATIONS),
+                       (READ_CONTRACT, READ_IMPLEMENTATIONS),
+                       (DECISION_CONTRACT, DECISION_IMPLEMENTATIONS),
+                       (DUPLICATE_CONTRACT, DUPLICATE_IMPLEMENTATIONS),
+                       (TENANCY_CONTRACT, TENANCY_IMPLEMENTATIONS),
+                       (MAP_CONTRACT, MAP_IMPLEMENTATIONS),
+                       (UNDO_CONTRACT, UNDO_IMPLEMENTATIONS)):
+    for _label, _factory in _impls:
+        for _fn in _cases:
+            _name = f"test_{_fn.__name__}__{_label}"
+            globals()[_name] = _bind(_fn, _factory, _name)

@@ -847,3 +847,45 @@ def test_a_slot_stranded_by_a_concurrent_edit_is_released_by_the_next_one():
         f"the drawing and the shelves disagree: {standing ^ slots} — a shelf "
         f"addressed to a cell no screen can render, which nothing heals"
     )
+
+
+def test_a_cell_whose_alias_holds_books_is_occupied_and_cannot_be_gapped():
+    """**A shelf other identities resolve to is OCCUPIED** (P6.4a, §3.11) —
+    and §3.10a named this exact hole before the alias existed: *"a cell whose
+    live shelf is empty while its alias holds books passes this check and is
+    gapped, and it does so without a single test going red."*
+
+    Nothing is rewritten when shelves merge, so a copy that arrived with the
+    absorbed identity still names IT, and both occupancy queries are keyed by
+    the id on the row. The live shelf therefore reads as empty. Switching the
+    cell off would then destroy the one identity those books are reachable
+    through.
+    """
+    from app.domain import SlotsOccupied, with_gaps
+    from app.domain.alias import ShelfAlias
+    from app.map_edit import apply_gaps
+
+    maps, shelves, books = _world()
+    drawn = draw_bookcase(maps, shelves, LIB, _case(), ids=SeqIdGen(),
+                          clock=StubClock(), columns=2, levels=2, depth=1)
+    section = drawn.sections[0]
+    survivor = shelves.get_shelf_at(LIB, ShelfAddress(section.id, 2, 2))
+
+    # A photo-born shelf, absorbed by the drawn one — its books still name it.
+    shelves.save_shelf(LIB, new_shelf(id="sh-photo", library_id=LIB.id))
+    _shelve_a_book(books, "sh-photo")
+    shelves.save_alias(LIB, ShelfAlias(
+        alias_id="sh-photo", library_id=LIB.id, shelf_id=survivor.id,
+        address=None, label="", merged_at=WHEN))
+    assert not books.copies_per_shelf(LIB).get(survivor.id), (
+        "the survivor holds no books directly — that is the whole point")
+
+    refusal = _raises(
+        SlotsOccupied, apply_gaps, maps, shelves, books, LIB,
+        with_gaps(maps.get_section(LIB, section.id), [(2, 2)], gap=True),
+        journal=_journal(), ids=SeqIdGen(), clock=StubClock())
+    assert survivor.id in {s.id for s in refusal.shelves}, (
+        "the refusal did not name the shelf the books are reachable through")
+
+    assert shelves.get_shelf_at(LIB, ShelfAddress(section.id, 2, 2)) is not None
+    assert shelves.get_shelf(LIB, "sh-photo") is not None

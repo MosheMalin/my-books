@@ -34,6 +34,7 @@ from enum import Enum
 from typing import Mapping, Protocol
 
 from app.domain import Book, Capture, LibraryRef, Read, Shelf, ShelfAddress, Status
+from app.domain.alias import ShelfAlias
 
 
 class StoreError(Exception):
@@ -132,6 +133,19 @@ class DuplicateShelfSlot(StoreError):
 
     ⚠ Merging two identities that turn out to be one physical shelf is P6.4's
     job and a deliberate operation. This is the accident.
+    """
+
+
+class ShelfHasAliases(StoreError):
+    """Deleting a shelf other identities resolve to (P6.4a, §3.11).
+
+    The exact sibling of :class:`ShelfNotEmpty` below — same shape, same kind
+    of answer (*there is something here you have not dealt with*), so it lives
+    in the same place and is raised the same way. **[DECIDED 2026-08-23 —
+    owner]**: refused, naming the count, rather than cascaded. Cascading would
+    discard *"the shelf that was at section 1, column 2, level 3"*, which is
+    the one thing the alias exists to answer, and would take the P6.4c
+    census's baseline with it.
     """
 
 
@@ -259,6 +273,26 @@ class BookStore(Protocol):
         whole library: an empty search box is the caller's business.
         """
 
+    def books_on_shelf(
+        self, library: LibraryRef, shelf_ids: tuple[str, ...],
+    ) -> tuple[Book, ...]:
+        """Every book with a copy standing at ANY of these shelf ids.
+
+        ⚠ It takes a TUPLE of ids, not one, and that is the whole point
+        (P6.4a). §3.11 rewrites nothing when shelves merge, so a copy that
+        arrived with an absorbed identity still names it — six tables name a
+        shelf and only two have a foreign key, so the alternative (rewrite
+        every reference) reports a clean ``foreign_key_check`` over a library
+        whose locations have quietly moved.
+
+        The caller passes ``app.domain.alias.identities(...)``, which is the
+        one place that list is built. This port therefore knows nothing about
+        aliases, and does not have to: *"books at any of these ids"* is a
+        question that stands on its own.
+
+        Ordered by title, like :meth:`list` — a shelf screen shows them.
+        """
+
     def copies_per_shelf(self, library: LibraryRef) -> Mapping[str, int]:
         """How many copies stand on each shelf. Absent means none.
 
@@ -339,6 +373,41 @@ class ShelfStore(Protocol):
 
     def count_shelves(self, library: LibraryRef, *, include_virtual: bool = False) -> int:
         """How many shelves. Excludes the wishlist by default, as above."""
+
+    # --- aliases (P6.4a, §3.11) ------------------------------------------
+
+    def save_alias(self, library: LibraryRef, alias: ShelfAlias) -> None:
+        """Record that one identity has been absorbed by another.
+
+        Raises :class:`WrongLibrary` on a mismatch, and
+        :class:`UnknownShelf` if the survivor is not a live shelf — the
+        foreign key says the same thing, and saying it in the store's own
+        vocabulary is what lets a caller tell "you named a shelf that is gone"
+        apart from a corrupt file.
+
+        ⚠ Insert-only by ``alias_id``. An id is absorbed ONCE; re-absorbing it
+        elsewhere would silently move every book that arrived with it.
+        """
+
+    def list_aliases(self, library: LibraryRef) -> tuple[ShelfAlias, ...]:
+        """Every alias in the library, ordered by ``alias_id``.
+
+        Not paged and deliberately whole-library: the resolver is called on
+        the path that draws a map, and a household's merges are counted in
+        tens. One read serves every question — `resolve`, `resolve_address`,
+        `absorbed_by` — and the alternative is a query per shelf on the
+        screen, which is the per-row connection cost this adapter's other
+        methods go out of their way to avoid.
+        """
+
+    def aliases_of(
+        self, library: LibraryRef, shelf_id: str,
+    ) -> tuple[ShelfAlias, ...]:
+        """The identities that resolve to ONE shelf.
+
+        The narrow question, for the two callers that only have a shelf id:
+        the refusal to delete it, and the *formerly …* line.
+        """
 
     def list_shelves_in_section(
         self, library: LibraryRef, section_id: str

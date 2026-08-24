@@ -293,6 +293,38 @@ def test_the_source_drawing_moves_and_stands_beside_the_targets():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_the_source_shelf_aliases_move_with_their_shelves():
+    """P6.4a. The opposite call from the undo journal below, and the reason is
+    the merge's own guarantee: shelves and sections re-home with their **ids
+    intact**, so *"A resolves to B, and A used to be at section X"* is as true
+    after the move as before — and it is still the only answer to where A
+    went. Dropping them would lose that with nothing able to notice, since
+    four of the six tables naming a shelf have no foreign key.
+    """
+    from app.adapters.sqlite_store import SqliteShelfStore
+    from app.domain.alias import ShelfAlias, resolve
+
+    w, tmp = _world()
+    try:
+        shelves = SqliteShelfStore(w.db)
+        shelves.save_shelf(SRC, new_shelf(id="sh-gone", library_id=SRC.id))
+        shelves.save_alias(SRC, ShelfAlias(
+            alias_id="sh-gone", library_id=SRC.id, shelf_id="sh-par",
+            address=None, label="מהתמונה",
+            merged_at="2026-08-25T10:00:00+00:00"))
+
+        _merge(w)
+
+        assert shelves.list_aliases(SRC) == (), "an alias stayed behind"
+        moved = shelves.list_aliases(DST)
+        assert [a.alias_id for a in moved] == ["sh-gone"]
+        assert moved[0].label == "מהתמונה"
+        assert resolve("sh-gone", moved) == "sh-par", (
+            "the alias moved but no longer resolves")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_the_source_undo_journal_is_dropped_rather_than_re_homed():
     """P6.4b, and the one library-scoped table the merge DELETES.
 

@@ -81,8 +81,22 @@ def deepest_occupied_depths(
     measured that window closing on a book added from the phone while the map
     was open on a laptop.
     """
-    from_copies = books.deepest_copy_depth(library)
-    from_photos = shelves.deepest_capture_depth(library)
+    # Copied, because the fold below writes into them and a port that returns
+    # a Mapping has not promised the caller may edit it.
+    from_copies = dict(books.deepest_copy_depth(library))
+    from_photos = dict(shelves.deepest_capture_depth(library))
+    # ⚠ **A shelf other identities resolve to is OCCUPIED** (P6.4a, §3.11).
+    # Nothing is rewritten when shelves merge, so a copy that arrived with an
+    # absorbed identity still names IT — and both dictionaries above are keyed
+    # by the id on the row. Without this fold, a cell whose live shelf is
+    # empty while its alias holds books reads as empty, and §3.10a's gap
+    # silently swallows it: measured as the exact hole that check exists to
+    # prevent, one identity out of reach.
+    for alias in shelves.list_aliases(library):
+        for source in (from_copies, from_photos):
+            deep = source.pop(alias.alias_id, 0)
+            if deep > source.get(alias.shelf_id, 0):
+                source[alias.shelf_id] = deep
     deepest: dict[str, int] = {}
     for shelf in candidates:
         depth = max(from_copies.get(shelf.id, 0), from_photos.get(shelf.id, 0))

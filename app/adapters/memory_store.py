@@ -41,6 +41,7 @@ from app.domain import (
     User,
     check_removable,
 )
+from app.domain.alias import ShelfAlias
 from app.domain.map_undo import MapUndoEntry
 from app.domain.place import NotEmpty, NotOnThisFloor
 from app.domain.tenancy import remove_member, set_role
@@ -54,6 +55,7 @@ from app.ports.store import (
     DuplicateCaptureSlot,
     DuplicateSectionOrdinal,
     DuplicateShelfSlot,
+    ShelfHasAliases,
     ShelfNotEmpty,
     UnknownShelf,
     WrongLibrary,
@@ -153,6 +155,15 @@ class MemoryBookStore:
         return BookPage(items=tuple(hits[offset: offset + limit]),
                         total=len(hits), offset=offset, limit=limit)
 
+    def books_on_shelf(
+        self, library: LibraryRef, shelf_ids: tuple[str, ...],
+    ) -> tuple[Book, ...]:
+        wanted = set(shelf_ids)
+        hits = [b for b in self._shelf(library).values()
+                if any(c.shelf_id in wanted for c in b.copies)]
+        hits.sort(key=lambda b: _sort_key(b, BookSort.TITLE))
+        return tuple(hits)
+
     def copies_per_shelf(self, library: LibraryRef) -> dict[str, int]:
         counts: dict[str, int] = {}
         for book in self._shelf(library).values():
@@ -187,6 +198,9 @@ class MemoryShelfStore:
     def __init__(self) -> None:
         self._shelves: dict[str, dict[str, Shelf]] = {}
         self._captures: dict[str, dict[str, Capture]] = {}
+        #: P6.4a. Keyed by `alias_id`, because an id is absorbed once — the
+        #: dict IS the PRIMARY KEY the SQLite table declares.
+        self._aliases: dict[str, dict[str, ShelfAlias]] = {}
         #: The sections this store may address a shelf to. SQLite gets the
         #: same check free — one file, one foreign key — so without it the
         #: memory store would ACCEPT an address the real database refuses,
@@ -203,6 +217,61 @@ class MemoryShelfStore:
         """Tell this store where the sections are, so an address can be
         checked against one."""
         self._sections = maps
+
+    # --- aliases (P6.4a) --------------------------------------------------
+
+    def _a(self, library: LibraryRef) -> dict[str, ShelfAlias]:
+        return self._aliases.setdefault(library.id, {})
+
+    def save_alias(self, library: LibraryRef, alias: ShelfAlias) -> None:
+        if alias.library_id != library.id:
+            raise WrongLibrary(
+                f"alias {alias.alias_id} belongs to {alias.library_id!r}, "
+                f"not {library.id!r}"
+            )
+        if alias.shelf_id not in self._s(library):
+            # SQLite gets this from the foreign key; the memory store has to
+            # be told, or it would ACCEPT an alias the real database refuses
+            # and the API ring (which runs on memory stores) would never see
+            # the rule that keeps the resolver one hop.
+            raise UnknownShelf(
+                f"no shelf {alias.shelf_id} to absorb {alias.alias_id} into")
+        # ⚠ ONE HOP — see the SQLite store's ⚠ for the chain and the cycle a
+        # review stored through this method when only the survivor's
+        # existence was checked.
+        here = self._a(library)
+        if alias.shelf_id in here:
+            raise ShelfHasAliases(
+                f"{alias.shelf_id} has itself been absorbed; absorb "
+                f"{alias.alias_id} into the shelf that answers for it "
+                "(MAP_PLAN §3.11 keeps the resolver one hop)")
+        already = [a for a in here.values() if a.shelf_id == alias.alias_id]
+        if already:
+            raise ShelfHasAliases(
+                f"{len(already)} other shelf/shelves already resolve to "
+                f"{alias.alias_id}; absorbing it would put them out of reach "
+                "(MAP_PLAN §3.11)")
+        if alias.alias_id in here:
+            raise DuplicateShelfSlot(
+                f"{alias.alias_id} has already been absorbed")
+        if alias.address is not None and any(
+            other.address == alias.address for other in here.values()
+        ):
+            # The partial unique index, in the other implementation's terms:
+            # the address -> survivor lookup must have exactly one answer.
+            raise DuplicateShelfSlot(
+                f"another identity already claims the slot {alias.address}")
+        here[alias.alias_id] = alias
+
+    def list_aliases(self, library: LibraryRef) -> tuple[ShelfAlias, ...]:
+        return tuple(sorted(self._a(library).values(),
+                            key=lambda a: a.alias_id))
+
+    def aliases_of(
+        self, library: LibraryRef, shelf_id: str,
+    ) -> tuple[ShelfAlias, ...]:
+        return tuple(a for a in self.list_aliases(library)
+                     if a.shelf_id == shelf_id)
 
     def bind_books(self, books: "MemoryBookStore") -> None:
         """Tell this store where the books are, so a shelf holding one cannot
@@ -316,6 +385,17 @@ class MemoryShelfStore:
         return None
 
     def delete_shelf(self, library: LibraryRef, shelf_id: str) -> bool:
+        # ⚠ P6.4a, first and cheapest. SQLite would refuse this at the foreign
+        # key with a sentence naming nothing; here there is no key at all, so
+        # without this the memory store would ACCEPT a delete the real
+        # database refuses — and the API ring runs on memory stores.
+        absorbed = self.aliases_of(library, shelf_id)
+        if absorbed:
+            raise ShelfHasAliases(
+                f"{len(absorbed)} other shelf/shelves resolve to {shelf_id}; "
+                "deleting it would discard where they used to stand "
+                "(MAP_PLAN §3.11)"
+            )
         if shelf_id not in self._s(library):
             return False
         if self.list_captures(library, shelf_id):
