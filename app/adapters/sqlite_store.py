@@ -66,6 +66,7 @@ from app.domain import (
     WorkFields,
     check_removable,
 )
+from app.domain.alias import ShelfAlias
 from app.domain.map_undo import RESTORE_ORDER, MapRestore, MapUndoEntry
 from app.domain.place import NotEmpty, NotOnThisFloor
 from app.domain.tenancy import remove_member, set_role
@@ -73,6 +74,7 @@ from app.domain.search import compile_sql_like, haystack, parse
 from app.domain.search import search as domain_search
 from app.ports.map import MapSnapshot, UnknownParent
 from app.ports.store import (
+    ShelfHasAliases,
     BookPage,
     BookSort,
     DuplicateBookKey,
@@ -321,6 +323,28 @@ class SqliteBookStore(_SqliteStore):
         return BookPage(items=tuple(hits[offset: offset + limit]),
                         total=len(hits), offset=offset, limit=limit)
 
+    def books_on_shelf(
+        self, library: LibraryRef, shelf_ids: tuple[str, ...],
+    ) -> tuple[Book, ...]:
+        if not shelf_ids:
+            return ()
+        # ⚠ ONE connection, and the rows loaded on it — not `self.get()` per
+        # id. `get` opens a fresh connection with two PRAGMAs each time, so
+        # the obvious version was 200 connections for a 200-book shelf:
+        # measured 399-495ms against 18ms for this one, on the path that
+        # draws a shelf screen. Same family as the `/images` correlated
+        # subquery CLAUDE.md records. `list()` two methods down is the shape
+        # this now copies.
+        marks = ",".join("?" * len(shelf_ids))
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT DISTINCT b.* FROM books b JOIN copies c"
+                f" ON c.book_id = b.id AND c.library_id = b.library_id"
+                f" WHERE b.library_id = ? AND c.shelf_id IN ({marks})"
+                f" ORDER BY b.norm_title, b.id",
+                (library.id, *shelf_ids)).fetchall()
+            return tuple(_load_book(conn, r) for r in rows)
+
     def copies_per_shelf(self, library: LibraryRef) -> dict[str, int]:
         with self._connect() as conn:
             rows = conn.execute(
@@ -469,6 +493,79 @@ class SqliteShelfStore(_SqliteStore):
                 f"SELECT COUNT(*) FROM shelves WHERE {clause}", params
             ).fetchone()[0])
 
+    # --- aliases (P6.4a) --------------------------------------------------
+
+    def save_alias(self, library: LibraryRef, alias: ShelfAlias) -> None:
+        _same_library_alias(alias, library)
+        with self._connect() as conn, conn:
+            if not conn.execute(
+                "SELECT 1 FROM shelves WHERE id = ? AND library_id = ?",
+                (alias.shelf_id, library.id),
+            ).fetchone():
+                # The FK says this too, less usefully. An alias may only
+                # point at a LIVE shelf — that is what keeps an alias of an
+                # alias unrepresentable and the resolver one hop.
+                raise UnknownShelf(
+                    f"no shelf {alias.shelf_id} to absorb {alias.alias_id} "
+                    "into")
+            # ⚠ ONE HOP, and the foreign key does not give it. It proves the
+            # survivor is a live shelf, not that the survivor is itself
+            # un-absorbed — different claims, and a review stored both a chain
+            # and a cycle through this method to prove only the first was
+            # checked. A chain hides an identity from `identities()`, so every
+            # book that arrived with it becomes unreachable while
+            # `foreign_key_check` stays clean; a cycle wedges two shelves so
+            # neither can ever be deleted.
+            if conn.execute(
+                "SELECT 1 FROM shelf_aliases WHERE library_id = ?"
+                " AND alias_id = ?", (library.id, alias.shelf_id),
+            ).fetchone():
+                raise ShelfHasAliases(
+                    f"{alias.shelf_id} has itself been absorbed; absorb "
+                    f"{alias.alias_id} into the shelf that answers for it "
+                    "(MAP_PLAN §3.11 keeps the resolver one hop)")
+            absorbed = int(conn.execute(
+                "SELECT COUNT(*) FROM shelf_aliases WHERE library_id = ?"
+                " AND shelf_id = ?", (library.id, alias.alias_id),
+            ).fetchone()[0])
+            if absorbed:
+                # P6.4d's named-count refusal, at the right moment: merging a
+                # shelf that has already absorbed others is the same
+                # conversation as deleting one, and it must not arrive as
+                # `FOREIGN KEY constraint failed` two statements later.
+                raise ShelfHasAliases(
+                    f"{absorbed} other shelf/shelves already resolve to "
+                    f"{alias.alias_id}; absorbing it would put them out of "
+                    "reach (MAP_PLAN §3.11)")
+            where = alias.address
+            conn.execute(
+                "INSERT INTO shelf_aliases (alias_id, library_id, shelf_id,"
+                " section_id, col, level, label, merged_at)"
+                " VALUES (?,?,?,?,?,?,?,?)",
+                (alias.alias_id, library.id, alias.shelf_id,
+                 where.section_id if where else None,
+                 where.col if where else None,
+                 where.level if where else None,
+                 alias.label, alias.merged_at),
+            )
+
+    def list_aliases(self, library: LibraryRef) -> tuple[ShelfAlias, ...]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM shelf_aliases WHERE library_id = ?"
+                " ORDER BY alias_id", (library.id,)).fetchall()
+        return tuple(_load_alias(r) for r in rows)
+
+    def aliases_of(
+        self, library: LibraryRef, shelf_id: str,
+    ) -> tuple[ShelfAlias, ...]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM shelf_aliases WHERE library_id = ?"
+                " AND shelf_id = ? ORDER BY alias_id",
+                (library.id, shelf_id)).fetchall()
+        return tuple(_load_alias(r) for r in rows)
+
     def list_shelves_in_section(
         self, library: LibraryRef, section_id: str
     ) -> tuple[Shelf, ...]:
@@ -525,6 +622,22 @@ class SqliteShelfStore(_SqliteStore):
                 (shelf_id, library.id),
             ).fetchone():
                 return False
+            # ⚠ P6.4a, and it comes FIRST because it is the cheapest refusal
+            # and the least recoverable mistake. The foreign key would refuse
+            # this delete anyway, with `FOREIGN KEY constraint failed` — a
+            # sentence that tells the owner nothing about what is in the way.
+            # Cascading was refused by the owner (2026-08-23): it would
+            # discard "the shelf that was at section 1, column 2, level 3",
+            # which is the one thing the alias exists to answer.
+            absorbed = int(conn.execute(
+                "SELECT COUNT(*) FROM shelf_aliases WHERE library_id = ?"
+                " AND shelf_id = ?", (library.id, shelf_id)).fetchone()[0])
+            if absorbed:
+                raise ShelfHasAliases(
+                    f"{absorbed} other shelf/shelves resolve to {shelf_id}; "
+                    "deleting it would discard where they used to stand "
+                    "(MAP_PLAN §3.11)"
+                )
             if conn.execute(
                 "SELECT 1 FROM captures WHERE shelf_id = ? AND library_id = ?",
                 (shelf_id, library.id),
@@ -2091,6 +2204,14 @@ def _load_section(row: sqlite3.Row) -> Section:
                    default_depth=row["default_depth"])
 
 
+def _same_library_alias(alias: ShelfAlias, library: LibraryRef) -> None:
+    if alias.library_id != library.id:
+        raise WrongLibrary(
+            f"alias {alias.alias_id} belongs to {alias.library_id!r}, "
+            f"not {library.id!r}"
+        )
+
+
 def _same_library(record, library: LibraryRef, what: str) -> None:
     if record.library_id != library.id:
         raise WrongLibrary(
@@ -2313,6 +2434,17 @@ def _load_book(conn: sqlite3.Connection, row: sqlite3.Row) -> Book:
         ),
         added_at=row["added_at"],
     )
+
+
+def _load_alias(row: sqlite3.Row) -> ShelfAlias:
+    # All three address columns or none — the same crash guard `_load_shelf`
+    # carries, and for the same reason: a half-written address is a row no
+    # query can mean anything by.
+    where = (ShelfAddress(row["section_id"], row["col"], row["level"])
+             if row["section_id"] is not None else None)
+    return ShelfAlias(alias_id=row["alias_id"], library_id=row["library_id"],
+                      shelf_id=row["shelf_id"], merged_at=row["merged_at"],
+                      address=where, label=row["label"])
 
 
 def _load_shelf(row: sqlite3.Row) -> Shelf:

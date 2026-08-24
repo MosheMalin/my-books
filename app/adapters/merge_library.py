@@ -70,6 +70,12 @@ _LIBRARY_TABLES = ("books", "copies", "shelves", "captures", "reads",
                    # from it commits an orphan. The leftover check exists to
                    # make forgetting either one loud.
                    "sites", "floors", "places", "bookcases", "sections",
+                   # P6.4a: the shelf aliases. MOVED, unlike the journal
+                   # below — a merge re-homes shelves and sections with their
+                   # ids intact, so "A resolves to B, and A used to be at
+                   # section X" is still true afterwards and still the only
+                   # answer to where A went.
+                   "shelf_aliases",
                    # P6.4b: the undo journal. In this tuple like the rest —
                    # the leftover check must still see zero rows naming the
                    # source — but it is the one table the merge DELETES
@@ -313,7 +319,7 @@ def merge_library(
             # afterwards is one visible action in the editor; silently
             # relocating a floor plan is not.
             for table in ("sites", "floors", "places", "bookcases",
-                          "sections"):
+                          "sections", "shelf_aliases"):
                 conn.execute(
                     f"UPDATE {table} SET library_id = ? WHERE library_id = ?",
                     (dst_id, src_id))
