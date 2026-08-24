@@ -1844,18 +1844,45 @@ class SqliteMapUndoStore(_SqliteStore):
 
     def record(self, library: LibraryRef, entry: MapUndoEntry) -> None:
         _same_library(entry, library, "undo entry")
-        with self._connect() as conn, conn:
+        with self._connect() as conn, _immediate(conn):
+            # ⚠ `seq` is assigned HERE, from the library's own maximum,
+            # and never handed in by the caller — a caller computing "the next
+            # number" would let two processes read the same maximum and write
+            # it twice, which is the tie this column exists to abolish.
+            #
+            # ⚠ What makes that safe is that this is ONE statement: SQLite
+            # evaluates the `SELECT MAX(seq)` subquery while already holding
+            # the write lock the INSERT took. `_immediate` is not what does
+            # the work — a review measured three processes × 60 records with a
+            # plain deferred connection and got 180 contiguous numbers with no
+            # duplicates. It is kept because it becomes load-bearing the day
+            # this block reads before it writes, and because an earlier
+            # version of this comment credited it with the guarantee, which is
+            # exactly the wrong reason that gets a guard deleted later.
+            #
+            # ⚠ An UPDATE takes a FRESH number, and that is the whole point
+            # rather than a detail. Coalescing rewrites an entry in place when
+            # the second half of one operation arrives, and the OPERATION
+            # finished now — so it is the last thing the owner did and belongs
+            # at the head. Keeping the old number was written first and a test
+            # caught it: with two removals interleaved (clear B, clear A,
+            # delete B) the merged B entry stayed behind A's clearing, so undo
+            # took back A instead of the removal that had just completed.
+            # `excluded.seq` is the value expression above, evaluated against
+            # the table as it stands, so it is already MAX + 1.
             conn.execute(
                 "INSERT INTO map_undo (id, library_id, kind, recorded_at,"
-                " inverse, fingerprint, undone_at) VALUES (?,?,?,?,?,?,?)"
+                " inverse, fingerprint, undone_at, seq) VALUES (?,?,?,?,?,?,?,"
+                " COALESCE((SELECT MAX(seq) FROM map_undo WHERE library_id = ?)"
+                " , 0) + 1)"
                 " ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,"
                 " inverse=excluded.inverse, fingerprint=excluded.fingerprint,"
-                " undone_at=excluded.undone_at"
+                " undone_at=excluded.undone_at, seq=excluded.seq"
                 " WHERE map_undo.library_id = excluded.library_id",
                 (entry.id, library.id, entry.kind, entry.recorded_at,
                  _dump_inverse(entry), json.dumps(entry.fingerprint,
                                                   sort_keys=True),
-                 entry.undone_at),
+                 entry.undone_at, library.id),
             )
 
     def recent(
@@ -1864,7 +1891,7 @@ class SqliteMapUndoStore(_SqliteStore):
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT * FROM map_undo WHERE library_id = ?"
-                " ORDER BY recorded_at DESC, id DESC LIMIT ?",
+                " ORDER BY seq DESC, id DESC LIMIT ?",
                 (library.id, max(0, int(limit))),
             ).fetchall()
         return tuple(_load_undo(row) for row in rows)
@@ -1989,6 +2016,7 @@ def _load_undo(row: sqlite3.Row) -> MapUndoEntry:
         ),
         fingerprint=json.loads(row["fingerprint"]),
         undone_at=row["undone_at"],
+        seq=row["seq"],
     )
 
 

@@ -37,17 +37,19 @@ from app.domain.map_undo import (
     MapUndoEntry,
     absorbed,
     changed_targets,
-    coalesces_with,
+    partner_for,
+    digest_ordinals,
     digest_row,
     digest_slots,
     merge_restores,
+    parents_of,
     sections_touched,
     target_keys,
 )
 from app.ports import Clock, IdGen
 from app.ports.map import MapStore
 from app.ports.map_undo import MapUndoStore
-from app.ports.store import ShelfNotEmpty, ShelfStore
+from app.ports.store import BookStore, ShelfNotEmpty, ShelfStore
 
 
 class UndoRefused(Exception):
@@ -107,11 +109,26 @@ def fingerprint(
     shelves: ShelfStore,
     library: LibraryRef,
     restore: MapRestore,
+    wrote: dict[str, object] | None = None,
 ) -> dict[str, str]:
     """Digest the world over exactly the rows ``restore`` would overwrite.
 
     Called twice per entry with the same restore: once just after the edit,
     once when somebody presses undo. Equality means nothing moved.
+
+    ⚠ ``wrote`` is what the EDIT ITSELF left, keyed the same way, and passing
+    it closes a window that otherwise makes the whole design a lie. Recording
+    happens after the edit and used to re-READ every row — so anything
+    committed between the edit's last write and that read was digested as "the
+    state the edit left behind" and became invisible to the undo. Measured
+    with the interleaving held open: another tab's change to a section's depth
+    default was reverted by an undo reporting ``available: true`` and an empty
+    ``changed``. That is precisely the silently-wrong undo the fingerprint was
+    chosen over an invalidation table to avoid.
+
+    A value of ``None`` means the edit made that row ABSENT. Keys not in
+    ``wrote`` still fall back to a read — the slot maps do, and their window
+    stays open, which is stated here rather than pretended away.
 
     ⚠ **Bounded queries, not one per row.** The shelf rows come from a single
     ``list_shelves`` and the slot maps from one listing per touched section,
@@ -121,19 +138,36 @@ def fingerprint(
     both exist to avoid, and it would land on the page that draws the map.
     """
     known: dict[str, str] = {}
+    wrote = wrote or {}
 
-    lookups = {
-        "sites": map_store.get_site,
-        "floors": map_store.get_floor,
-        "places": map_store.get_place,
-        "bookcases": map_store.get_bookcase,
-        "sections": map_store.get_section,
+    # ONE `load_map`, not a `get_*` per row. It is the same query count as a
+    # single lookup and it serves the row digests, the parent checks and the
+    # ordinal spaces together — which the per-row shape could not, since a
+    # parent may be a table this restore never names.
+    drawing = map_store.load_map(library)
+    live = {
+        "sites": {r.id: r for r in drawing.sites},
+        "floors": {r.id: r for r in drawing.floors},
+        "places": {r.id: r for r in drawing.places},
+        "bookcases": {r.id: r for r in drawing.bookcases},
+        "sections": {r.id: r for r in drawing.sections},
     }
-    for name, get in lookups.items():
+    for name, standing in live.items():
         for record in getattr(restore, name):
-            current = get(library, record.id)
+            current = standing.get(record.id)
             known[f"{name}:{record.id}"] = (
                 digest_row(current) if current is not None else ABSENT)
+
+    # Presence only: what matters about a parent is that it is still there to
+    # hang something on. Its own fields are somebody else's business.
+    for name, parent_id in parents_of(restore):
+        known[f"exists:{name}:{parent_id}"] = (
+            "yes" if parent_id in live[name] else ABSENT)
+
+    for section in restore.sections:
+        known[f"ordinals:{section.bookcase_id}"] = digest_ordinals(
+            r for r in drawing.sections
+            if r.bookcase_id == section.bookcase_id)
 
     if restore.shelves or restore.created:
         # include_virtual, so that "not there" always means not there. A map
@@ -157,10 +191,18 @@ def fingerprint(
         known[f"slots:{section_id}"] = digest_slots(
             shelves.list_shelves_in_section(library, section_id))
 
+    # What the edit wrote WINS over what a later read says, for the reason in
+    # the docstring: the read can already be somebody else's work.
+    for key, value in wrote.items():
+        known[key] = digest_row(value) if value is not None else ABSENT
+
     # Every key the domain says this restore covers, and no other. Computing
     # the scope in one place and the values in another is how the two drift
     # into an entry that checks one set of rows and writes a different one.
-    return {key: known[key] for key in target_keys(restore) if key in known}
+    #
+    # ⚠ No `if key in known` filter: a key the scope names and nothing
+    # produced is a bug in one of the two, and it used to be swallowed here.
+    return {key: known[key] for key in target_keys(restore)}
 
 
 # --- recording -------------------------------------------------------------
@@ -174,6 +216,7 @@ def record(
     kind: str,
     tag: str,
     restore: MapRestore,
+    wrote: dict[str, object] | None = None,
 ) -> MapUndoEntry | None:
     """Write one destructive edit's inverse. ``None`` if there was nothing to
     take back.
@@ -197,9 +240,15 @@ def record(
     if restore.is_empty():
         return None
 
-    head = journal.store.recent(library, limit=1)
-    previous = head[0] if head else None
-    if coalesces_with(previous, tag, kind):
+    # ⚠ A WINDOW, not the single newest entry, and searched by tag. Two
+    # bookcases removed in one flush interleave — the client sends four
+    # requests — so the newest entry when `delete_bookcase` records can be the
+    # other case's clearing. `partner_for` looks for what it is rather than
+    # where it sits, so coalescing survives an interleave. Eight is generous:
+    # a two-request operation's partner is at most a few entries back, and
+    # `coalesces_with` still refuses anything that is not its own half.
+    previous = partner_for(journal.store.recent(library, limit=8), tag, kind)
+    if previous is not None:
         # The fingerprint is computed over the MERGED restore — the union is
         # what the one surviving entry will put back, so it is the scope that
         # has to be proved unchanged. Digesting only the second half would
@@ -208,7 +257,7 @@ def record(
         union = merge_restores(previous.restore, restore)
         merged = absorbed(
             previous, kind, restore,
-            fingerprint(map_store, shelves, library, union),
+            fingerprint(map_store, shelves, library, union, wrote),
             journal.clock.now_iso(),
         )
         journal.store.record(library, merged)
@@ -221,7 +270,8 @@ def record(
         tag=tag,
         recorded_at=journal.clock.now_iso(),
         restore=restore,
-        fingerprint=fingerprint(map_store, shelves, library, restore),
+        fingerprint=fingerprint(map_store, shelves, library, restore,
+                                wrote),
     )
     journal.store.record(library, entry)
     return entry
@@ -265,6 +315,7 @@ def undo(
     journal: Journal,
     map_store: MapStore,
     shelves: ShelfStore,
+    books: BookStore,
     library: LibraryRef,
 ) -> MapUndoEntry:
     """Replay the head, or raise :class:`UndoRefused`.
@@ -293,7 +344,7 @@ def undo(
             changed,
         )
 
-    _replay(map_store, shelves, library, entry.restore)
+    _replay(map_store, shelves, books, library, entry.restore)
     journal.store.mark_undone(library, entry.id, journal.clock.now_iso())
     return entry
 
@@ -306,6 +357,7 @@ def _head(journal: Journal, library: LibraryRef) -> MapUndoEntry | None:
 def _replay(
     map_store: MapStore,
     shelves: ShelfStore,
+    books: BookStore,
     library: LibraryRef,
     restore: MapRestore,
 ) -> None:
@@ -335,20 +387,46 @@ def _replay(
     # remembered one is about to reclaim, and `shelves_by_slot` is unique —
     # so upserting before deleting turns a legitimate undo into an integrity
     # error at the store, which is a 500 where the operation was fine.
+    #
+    # ⚠⚠ And the whole removal set is JUDGED before any of it happens. The
+    # first version raised on the first `ShelfNotEmpty`, after earlier
+    # deletions had committed — so a refusal left the entry live, its
+    # fingerprint permanently mismatched against a world the aborted replay
+    # had itself changed, and the refusal NAMED a shelf that changed because
+    # the undo deleted it. Measured, with no concurrency at all: an entry dead
+    # forever, blaming the wrong row. It also claimed a pre-check would cost a
+    # query per shelf, which was simply wrong —
+    # `deepest_occupied_depths` answers it for an arbitrary set in two.
+    if restore.created:
+        # ⚠ Imported HERE because `map_edit` imports this module — the
+        # destructive functions take a `Journal` — so a module-level import
+        # would be a cycle. Not duplicated: `deepest_occupied_depths` is the
+        # rule that a shelf is occupied by BOOKS as well as photographs, and
+        # its own ⚠ says a second copy is how the two answers drift into one
+        # that deletes a shelf somebody's books are standing on.
+        from app.map_edit import deepest_occupied_depths
+
+        standing = tuple(
+            shelf for shelf in
+            (shelves.get_shelf(library, i) for i in restore.created)
+            if shelf is not None)
+        occupied = deepest_occupied_depths(shelves, books, library, standing)
+        if occupied:
+            raise UndoRefused(
+                f"{len(occupied)} of the shelves this would remove are no "
+                "longer empty; taking the edit back now would destroy what is "
+                "standing on them",
+                tuple(sorted(f"shelves:{i}" for i in occupied)),
+            )
     for shelf_id in restore.created:
         try:
             shelves.delete_shelf(library, shelf_id)
-        except ShelfNotEmpty as exc:
-            # It gained a book or a photograph since — the same window
-            # `_release` documents, on the other side. Refuse rather than
-            # destroy: the fingerprint watches the shelf ROW, and a copy
-            # arriving does not change that row, so this is the guard that
-            # actually catches it.
-            raise UndoRefused(
-                "a shelf this would remove is no longer empty; taking the "
-                "edit back now would destroy what is standing on it",
-                (f"shelves:{shelf_id}",),
-            ) from exc
+        except ShelfNotEmpty:
+            # Only reachable if something landed between the check above and
+            # here. Skipping is right: the shelf survives with what arrived on
+            # it, which is the smaller loss, and the alternative is the
+            # half-applied replay this pre-check exists to abolish.
+            continue
 
     writers = {
         "sites": map_store.save_site,

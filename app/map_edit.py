@@ -198,7 +198,8 @@ def apply_slot_change(
     if before:
         _record(journal, map_store, shelves, library, kind="remove_column",
                 tag=f"section:{change.section.id}", was=was,
-                shelves_before=before, created=made)
+                shelves_before=before, created=made,
+                wrote=_wrote(removal, before, made, change.section, ()))
     return removal
 
 
@@ -315,7 +316,8 @@ def apply_gaps(
     if before:
         _record(journal, map_store, shelves, library, kind="gaps",
                 tag=f"section:{change.section.id}", was=was,
-                shelves_before=before, created=made)
+                shelves_before=before, created=made,
+                wrote=_wrote(removal, before, made, change.section, ()))
     return removal
 
 
@@ -342,7 +344,8 @@ def clear_bookcase_slots(
     # Tagged by the BOOKCASE, which is what makes this and the delete that
     # follows it one undo — see `app.domain.map_undo.coalesces_with`.
     _record(journal, map_store, shelves, library, kind="clear_bookcase",
-            tag=f"bookcase:{bookcase_id}", shelves_before=before)
+            tag=f"bookcase:{bookcase_id}", shelves_before=before,
+            wrote=_wrote(removal, before, (), None, ()))
     return removal
 
 
@@ -366,7 +369,8 @@ def clear_section_slots(
         shelves, books, library,
         shelves.list_shelves_in_section(library, section_id))
     _record(journal, map_store, shelves, library, kind="clear_section",
-            tag=f"section:{section_id}", shelves_before=before)
+            tag=f"section:{section_id}", shelves_before=before,
+            wrote=_wrote(removal, before, (), None, ()))
     return removal
 
 
@@ -438,9 +442,43 @@ def remove_record(
     tag = f"{what}:{record_id}" if what in ("bookcase", "section") else ""
     tables = {field: (was,) if was is not None else ()}
     tables.update(also)
+    gone = tuple((name, r.id) for name, kept in tables.items() for r in kept)
     _record(journal, map_store, shelves, library, kind=f"delete_{what}",
-            tag=tag, **tables)
+            tag=tag, wrote=_wrote(None, (), (), None, gone), **tables)
     return True
+
+
+def _wrote(
+    removal: SlotRemoval | None,
+    before: tuple[Shelf, ...],
+    created: tuple[Shelf, ...],
+    section: Section | None,
+    gone: tuple,
+) -> dict:
+    """What this edit LEFT BEHIND, keyed as the fingerprint keys it.
+
+    Handed to the journal so the digest is taken from what we wrote rather
+    than from a read that can already contain somebody else's work — the
+    window `app.map_undo.fingerprint` documents, and the one `_release`'s own
+    ⚠ says the hoisted re-read could not close.
+
+    Every branch is what this module just did: a released shelf was either
+    deleted (ABSENT, ``None``) or unbound, a created shelf stands as minted, a
+    deleted record is gone, and an edited section is the one we saved.
+    """
+    wrote: dict = {}
+    if section is not None:
+        wrote[f"sections:{section.id}"] = section
+    if removal is not None:
+        deleted = set(removal.deleted)
+        for shelf in before:
+            wrote[f"shelves:{shelf.id}"] = (
+                None if shelf.id in deleted else unbind_shelf(shelf))
+    for shelf in created:
+        wrote[f"shelves:{shelf.id}"] = shelf
+    for name, record_id in gone:
+        wrote[f"{name}:{record_id}"] = None
+    return wrote
 
 
 def _record(
@@ -454,14 +492,23 @@ def _record(
     was: Section | None = None,
     shelves_before: tuple[Shelf, ...] = (),
     created: tuple[Shelf, ...] = (),
+    wrote: dict | None = None,
     **tables,
 ) -> None:
     """Hand one destructive edit's inverse to the journal.
 
     A thin adapter and nothing more — it exists so the five call sites read as
-    one line each, and so ``MapRestore``'s field names appear in one place
-    instead of five. ``was`` is the section as it stood, the argument the two
+    one line each. ``was`` is the section as it stood, the argument the two
     section editors have in common.
+
+    ⚠ It does NOT centralise ``MapRestore``'s field names, whatever an earlier
+    version of this docstring said. They appear in five places
+    (``RESTORE_ORDER``, ``remove_record``'s dispatch, ``fingerprint``'s
+    ``live`` map, ``_replay``'s ``writers``, ``_UNDO_DECODERS``) and four of
+    them are keyed off ``RESTORE_ORDER``, so a new table raises ``KeyError``
+    there. The fifth used to fail SILENTLY — ``fingerprint`` filtered its
+    result by ``if key in known`` — and that filter is gone, so a scope key
+    nothing produced now raises instead of quietly narrowing the check.
     """
     if was is not None:
         tables.setdefault("sections", (was,))

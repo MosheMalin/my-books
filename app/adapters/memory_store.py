@@ -505,19 +505,26 @@ class MemoryMapUndoStore:
         journal = self._j(library)
         for i, existing in enumerate(journal):
             if existing.id == entry.id:
-                journal[i] = entry
+                # A FRESH number, not the row's old one — the operation this
+                # entry now describes finished just now. See the SQLite
+                # store's ⚠ for the interleave that proves it.
+                journal[i] = replace(entry, seq=self._next(journal))
                 return
-        journal.append(entry)
+        journal.append(replace(entry, seq=self._next(journal)))
+
+    @staticmethod
+    def _next(journal: list[MapUndoEntry]) -> int:
+        return max((e.seq for e in journal), default=0) + 1
 
     def recent(
         self, library: LibraryRef, *, limit: int = 1,
     ) -> tuple[MapUndoEntry, ...]:
-        # `id` breaks the tie descending, exactly as the SQLite ORDER BY does:
-        # two entries can share a `recorded_at` when the clock is coarse, and
-        # two stores disagreeing about which one is the head would read as a
-        # contract test that fails one run in fifty.
+        # By `seq`, which the store assigns and which cannot tie — see the
+        # column's own ⚠. `id` still breaks the tie descending, exactly as the
+        # SQLite ORDER BY does, so the two implementations cannot disagree
+        # about the head even over the v22 rows that share a `seq` of 0.
         rows = sorted(self._j(library),
-                      key=lambda e: (e.recorded_at, e.id), reverse=True)
+                      key=lambda e: (e.seq, e.id), reverse=True)
         return tuple(rows[:max(0, int(limit))])
 
     def mark_undone(

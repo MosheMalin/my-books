@@ -769,7 +769,7 @@ this pillar.**
 | **P6.3.1** | **The site picker** — the one thing the lab never had (§3.9). Sites and their floors become manageable in the ported editor; a single site renders no chrome. Deliberately AFTER P6.3, so "behaves the same" is verifiable before anything new is added. ⚠ Renumbered: this item was "P6.3b", and P6.3's own wiring commit spent that identifier in the git log. | S | ✅ |
 | **P6.3.2** | **Gaps** — a cell of the elevation can be switched off (a television, a desk niche) and switched back on, with the extent untouched (§3.10a). Two items: **a** the model, schema **v21** and the route; **b** the editor's multi-cell selection and the hole it draws. Arrived mid-pillar, from the owner using the ported editor. | M | ✅ 
 | **P6.3.3** | **The plan tab on a phone** — the drawing surface measured 375x**0**: `#root` had a `min-height` where a definite height was meant, so the settings panel became the whole page and no pillar-6 flow had ever been walked on a phone. Two flex minimums and two dead thumb-size rules came with it. Arrived from P6.3.2b's UX review, and taken BEFORE P6.4 (owner) so four more items would not land unverified on the device this catalogue is used from. | S | ✅ |
-| **P6.4** | **Binding and merge** — photo-born shelves bind into drawn slots; several identities merge into one physical shelf, with aliases. ⚠ Two schema steps now, and **b runs before a**: **v22** the undo journal, **v23** the alias. P6.3.2a spent v21. | L | |
+| **P6.4** | **Binding and merge** — photo-born shelves bind into drawn slots; several identities merge into one physical shelf, with aliases. ⚠ THREE schema steps now, and **b ran before a**: **v22** the undo journal, **v23** its sequence (the head could not be decided by a clock with second resolution — see P6.4b), **v24** the alias. P6.3.2a spent v21. | L | |
 | **P6.5** | **The map as navigation** — three drill levels, "where is it" incl. depth, stale-depth surfacing, capture handoff. | L | |
 | **P6.6** | *Optional:* bookcase photo → proposed levels via `segment.py`, confirmed by hand. | S | |
 
@@ -1217,8 +1217,8 @@ The decomposition, each landing on `main` before the next:
 
 | # | Item | Size | Reviewers |
 |---|---|---|---|
-| **P6.4a** | **The alias, and nothing using it** — schema **v23**, one alias row carrying the absorbed shelf's id AND its former address, the resolver, `BookStore.books_on_shelf`, and "a shelf other identities resolve to is OCCUPIED". No merge, no route. | M | `review-migration` **before**, data-integrity, quality |
-| **P6.4b** | **Undo for destructive map edits** (§3.15) — the journal, the inverse, and the invalidation rule. Covers remove column, remove section, delete bookcase, remove site, **and switching cells off** (P6.3.2, which arrived after §3.15 was written); the merge joins it in P6.4d. Fingerprint at undo time and no expiry; record all, undo the head; a minimal UI lands with it (owner, 2026-08-24). ⚠ Schema **v22**, and it runs FIRST — see the note below. | L | `review-migration` **before**, data-integrity, quality, ux |
+| **P6.4a** | **The alias, and nothing using it** — schema **v24**, one alias row carrying the absorbed shelf's id AND its former address, the resolver, `BookStore.books_on_shelf`, and "a shelf other identities resolve to is OCCUPIED". No merge, no route. | M | `review-migration` **before**, data-integrity, quality |
+| **P6.4b** | **Undo for destructive map edits** (§3.15) — the journal, the inverse, and the invalidation rule. Covers remove column, remove section, delete bookcase, remove site, **and switching cells off** (P6.3.2, which arrived after §3.15 was written); the merge joins it in P6.4d. Fingerprint at undo time and no expiry; record all, undo the head; a minimal UI lands with it (owner, 2026-08-24). ⚠ Schema **v22** and **v23** — see the note below. | L | `review-migration` **before**, data-integrity, quality, ux | ✅ |
 | **P6.4c** | **Bind** — an unaddressed shelf gains an address, and loses one. No identities join; a taken slot is a 409 naming the occupant and offering the merge. | S | data-integrity, security, quality, ux |
 | **P6.4d** | **Merge** — two identities become one, undoable. ⚠ **carries the data-loss risk.** | L | data-integrity, security, quality, ux |
 | **P6.4e** | **History across the seam** — reads, streaks, staleness and the *formerly* line resolve through the alias. | M | data-integrity, quality, ux |
@@ -1232,6 +1232,15 @@ first means gaps, column removal, section removal and bookcase deletion all
 become reversible before anything can merge — rather than the journal being
 amended by each item that arrives after it. So the steps are **v22 for the
 undo journal** and **v23 for the alias**.
+
+⚠ **And the alias moved again, to v24** (2026-08-24). P6.4b needed a
+SECOND step of its own: the journal's head cannot be decided by
+`recorded_at`, because `SystemClock` has second resolution and `UuidIdGen`
+mints uuid4 — so two entries in one second tie and the tie breaks at
+random. A data-integrity review measured it at 165/500 undoing the wrong
+bookcase and 83/500 restoring an EMPTY one. v23 is a monotonic per-library
+`seq`; the alias is now v24. The owner's instruction was *"I don't mind
+about the order. just fix all the issues."*
 
 **Two questions §3.11 did not settle, answered before P6.4a starts** (owner,
 2026-08-23):
@@ -1267,7 +1276,7 @@ gains the table. And it must use the table afterwards: the v19→v20 test's own
 Both halves were measured again on P6.3.2a's step, by mutation: folding the
 DDL into the previous step was caught by exactly one test, its own.
 
-#### P6.4b in detail — the journal  *(next; all three questions CLOSED)*
+#### P6.4b in detail — the journal  *(✅ LANDED 2026-08-24)*
 
 **One sentence:** a destructive map edit records its own inverse, and an undo
 that cannot prove the world is unchanged refuses and says why.
@@ -1339,9 +1348,48 @@ created` count reports planned rather than actual additions, and `_release`
 deletes one shelf per connection (~3.4s of a 400-cell request). Neither blocks
 the journal; both live near it.
 
-**Reviewers:** `review-migration` **before** the v22 commit, then
-data-integrity, quality, and **ux** — a UI lands (question 3), so ux is not
-optional here. **Worktree**, per rule 1.
+**Reviewers:** `review-migration` ran before both schema commits;
+data-integrity and quality ran after the merge. **ux has NOT run, and the
+375x812 walk has not happened** — port 8757 was held by another session's
+dev server. Both are still owed on this item.
+
+**What the reviews changed, recorded because none of it was obvious.**
+The three that lost data outright:
+
+- **the head was decided by a clock that ties.** See the ⚠ above; v23.
+  The same tie also broke coalescing, so a bookcase came back with no
+  shelves — `record` now finds its partner BY TAG rather than by "is the
+  newest entry a match", which cannot be confused by an interleave;
+- **`delete_site` and `delete_place` recorded only their own row.**
+  Deleting a site takes its empty storeys and deleting a room unhooks
+  every bookcase in it, so the undo restored a container and reported
+  success while its contents stayed gone — a site with zero storeys being
+  a state `delete_floor` refuses to create on purpose;
+- **the SQLite codec dropped `MapRestore.created`**, which made every
+  entry carrying one permanently un-undoable while refusing with the name
+  of a shelf that had not changed. Two docstrings claimed a shared
+  contract test already prevented exactly that. It did not exist;
+  `UNDO_CONTRACT` now does, and fails on sqlite alone when reverted.
+
+And three where the mechanism was honest but incomplete:
+
+- **the fingerprint was taken by re-reading AFTER the edit**, so anything
+  committed in that window was digested as "the state the edit left" and
+  became invisible. Measured: another tab's change reverted by an undo
+  reporting `available: true` and an empty `changed`. The callers now hand
+  over what they wrote. ⚠ The slot maps are still read, so that much of
+  the window is open — stated rather than pretended away;
+- **its scope watched rows but not the SHAPE they land in.** A restored
+  row's parent and a restored section's ordinal space are now digested;
+  without them two ordinary gestures reached a 500 through a route that
+  had just answered `available: true`. `post_undo` also now goes through
+  `_translated()`, which every other mutating route in that router did;
+- **a replay that refused part-way had already written.** The removal set
+  is judged before anything happens, so a refusal is clean and repeatable
+  — the first version left the entry dead forever, blaming a shelf the
+  undo itself had deleted.
+
+**Worktree**, per rule 1.
 
 **P6.4b is separate so that *bind* and *merge* are never one button.** The
 safe half is a shelf gaining an address; the dangerous half is two identities

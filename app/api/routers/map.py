@@ -882,6 +882,7 @@ def post_undo(
     library: LibraryRef = Depends(require(EDIT)),
     store: MapStore = Depends(get_map_store),
     shelves: ShelfStore = Depends(get_shelf_store),
+    books: BookStore = Depends(get_book_store),
     journal: Journal = Depends(get_journal),
 ) -> UndoOfferDTO:
     """Take back the last destructive map edit.
@@ -904,7 +905,7 @@ def post_undo(
     # answer the phone client cannot classify, so it retries.
     try:
         with _translated():
-            undo(journal, store, shelves, library)
+            undo(journal, store, shelves, books, library)
     except UndoRefused as exc:
         # ⚠ A STRING detail, never the dict this first carried. The client
         # reads `e.detail || e.message` and renders it, so an object arrives

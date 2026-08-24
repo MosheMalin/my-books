@@ -75,12 +75,18 @@ class MapRestore:
 
     #: Shelf ids the edit CREATED, to be removed again by the undo.
     #:
-    #: ⚠ The half a bag of old rows cannot express, and it is not
-    #: hypothetical: switching a cell back ON mints a shelf, so an undo that
-    #: only restored the old ``gaps`` mask would leave that shelf standing in
-    #: a cell the mask now says is empty — a section whose extent and mask
-    #: disagree, which ``Section.__post_init__`` cannot catch because the
-    #: contradiction is in a different table. Removal goes through
+    #: ⚠ The half a bag of old rows cannot express, and it is reachable on an
+    #: ORDINARY removal rather than in theory. ``_fill`` is handed the
+    #: section's whole address set, so a removal also mints a shelf for any
+    #: slot a concurrent edit left empty (its own ⚠ says so). An undo that put
+    #: the old shape back and left that shelf standing would leave a section
+    #: describing fewer slots than there are shelves addressed to it.
+    #:
+    #: (An earlier draft of this note claimed the case was un-gapping a cell.
+    #: It is not: ``set_gaps`` carries one boolean, so an un-gapping edit is
+    #: purely additive and records nothing at all — there is no entry for it
+    #: to corrupt. A review caught the wrong reason, which in this codebase is
+    #: worse than none.) Removal goes through
     #: ``ShelfStore.delete_shelf``, which refuses while anything stands on it,
     #: so this can never be the thing that loses a book.
     created: tuple[str, ...] = ()
@@ -114,6 +120,16 @@ class MapUndoEntry:
     restore: MapRestore
     fingerprint: dict[str, str] = field(default_factory=dict)
     undone_at: str | None = None
+    #: Which entry came last, per library. Assigned BY THE STORE, monotonic,
+    #: and the only thing that orders this table.
+    #:
+    #: ⚠ Not `recorded_at`, and not because a timestamp is untidy: the
+    #: production clock has second resolution and the id source is uuid4, so
+    #: two entries in one second tie and the tie breaks at random. Measured at
+    #: 165/500 undoing the wrong bookcase and 83/500 restoring an empty one —
+    #: see `_V23` in `app/adapters/migrations.py` for the whole probe. "Which
+    #: came last" is a question about ORDER, so it is answered by a counter.
+    seq: int = 0
 
     def __post_init__(self) -> None:
         if not self.library_id:
@@ -187,7 +203,65 @@ def target_keys(restore: MapRestore) -> tuple[str, ...]:
     keys.extend(f"shelves:{shelf_id}" for shelf_id in restore.created)
     for section_id in sections_touched(restore):
         keys.append(f"slots:{section_id}")
+    # ⚠ The PARENTS every restored row needs, and the ordinal space every
+    # restored section lands in. Both were missing, and both were measured:
+    #
+    #   delete a bookcase, then the now-empty storey, then undo
+    #     -> `UnknownParent`, out of a route that promised `available: true`
+    #   delete a section, add another (additive, so nothing is recorded),
+    #   then undo  -> `DuplicateSectionOrdinal` against `sections_by_bookcase`
+    #
+    # A row check cannot see either: the rows being restored are unchanged in
+    # both cases. What changed is the SHAPE they are being put back into,
+    # which is the same thing `slots:` already watches one level down.
+    for name, parent in parents_of(restore):
+        keys.append(f"exists:{name}:{parent}")
+    for section in restore.sections:
+        keys.append(f"ordinals:{section.bookcase_id}")
     return tuple(sorted(set(keys)))
+
+
+def parents_of(restore: MapRestore) -> tuple[tuple[str, str], ...]:
+    """``(table, id)`` for every row a restore needs to already exist.
+
+    A floor needs its site, a place and a bookcase their floor, a section its
+    bookcase, a shelf its section — and a bookcase may also name a place. Rows
+    the restore brings back ITSELF are excluded: a deleted bookcase and its
+    cascaded sections travel together, and demanding that the bookcase already
+    exist would refuse the very undo that creates it.
+    """
+    own = {name: {record.id for record in getattr(restore, name)}
+           for name in RESTORE_ORDER}
+    needed: set[tuple[str, str]] = set()
+
+    def need(table: str, parent_id: str | None) -> None:
+        if parent_id and parent_id not in own[table]:
+            needed.add((table, parent_id))
+
+    for floor in restore.floors:
+        need("sites", floor.site_id)
+    for place in restore.places:
+        need("floors", place.floor_id)
+    for bookcase in restore.bookcases:
+        need("floors", bookcase.floor_id)
+        need("places", bookcase.place_id)
+    for section in restore.sections:
+        need("bookcases", section.bookcase_id)
+    for shelf in restore.shelves:
+        if shelf.address is not None:
+            need("sections", shelf.address.section_id)
+    return tuple(sorted(needed))
+
+
+def digest_ordinals(sections: Iterable[Section]) -> str:
+    """Digest one bookcase's ordinal space — who is number what.
+
+    The exact analogue of :func:`digest_slots` one level up, and it guards the
+    same kind of unique index (``sections_by_bookcase``). Not the whole row,
+    for the same reason: a section's DEFAULTS changing is none of this undo's
+    business, but its ordinal being taken is the thing that would break.
+    """
+    return _digest(sorted((s.ordinal, s.id) for s in sections))
 
 
 def sections_touched(restore: MapRestore) -> tuple[str, ...]:
@@ -233,6 +307,25 @@ CONTINUES = {
     "delete_bookcase": "clear_bookcase",
     "delete_section": "clear_section",
 }
+
+
+def partner_for(recent: Iterable[MapUndoEntry], tag: str,
+                kind: str) -> MapUndoEntry | None:
+    """The live entry this edit continues, or ``None``.
+
+    ⚠ Searched BY TAG rather than "is the newest entry a match", which is what
+    it used to be. Two bookcases removed in one flush interleave — the client
+    sends four requests — so the newest entry when `delete_bookcase` records
+    can easily be the OTHER case's clearing. A review measured that as 83
+    empty bookcases in 500: the two halves of one removal failed to coalesce
+    and the undo restored a case with no shelves. Looking for the partner by
+    what it is, rather than by where it happens to sit, cannot make that
+    mistake even if the ordering is wrong.
+    """
+    for entry in recent:
+        if coalesces_with(entry, tag, kind):
+            return entry
+    return None
 
 
 def coalesces_with(head: MapUndoEntry | None, tag: str, kind: str) -> bool:

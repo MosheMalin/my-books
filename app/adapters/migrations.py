@@ -1200,6 +1200,57 @@ CREATE INDEX map_undo_by_library ON map_undo (library_id, recorded_at DESC, id D
 """
 
 
+# P6.4b, second pass — the journal's head, made unambiguous.
+#
+# ⚠ **`recorded_at` cannot order this table, and a review measured what that
+# costs.** `SystemClock.now_iso()` has SECOND resolution and `UuidIdGen` mints
+# uuid4, which has no lexicographic order — so two entries recorded in one
+# second tie on `recorded_at` and break the tie on a coin flip. The client
+# sends a bookcase deletion as four requests inside one second, so this is the
+# ordinary path, not a race:
+#
+#     500 trials, production clock and id source, deleting two bookcases
+#       252  correct
+#       165  undo restored the WRONG bookcase, and the right one then became
+#            permanently unreachable (`recent(limit=1)` kept returning it)
+#        83  `record` looked at the wrong head, so the two halves of one
+#            removal did not coalesce and undo restored an EMPTY bookcase --
+#            case and section back, six shelves lost
+#
+# The same probe with a microsecond clock: 500/500 correct. So the cause is
+# the tie, not the ordering code.
+#
+# A finer clock would narrow the window without closing it, and would change
+# every other consumer of `now_iso` (a `created_at` is compared as text in
+# several places). A monotonic per-library counter cannot tie at all, which is
+# the property the head actually needs: it answers *which entry came last*,
+# which is a question about ORDER and never about time. `recorded_at` stays,
+# because it is what a screen shows.
+#
+# DEFAULT 0 for the rows already written: at most a handful exist (v22 landed
+# in the same item), they are all older than anything written after this step,
+# and `seq DESC, id DESC` puts them behind every numbered row — which is
+# exactly where they belong. Nothing is backfilled per row, because the
+# counter is per library and the existing rows have no order to recover. A new
+# entry can never collide with them: the number is always MAX + 1, so it is at
+# least 1.
+#
+# ⚠ FOR WHOEVER COMES NEXT: this means a library that recorded two entries
+# under v22 holds two rows at `seq = 0`. So a later step may NOT add
+# `UNIQUE (library_id, seq)` without first renumbering those — free on the
+# owner's database, which has none, and fatal on any dev file that carried
+# v22 entries. Better found here than at DDL time.
+_V23 = """
+ALTER TABLE map_undo ADD COLUMN seq INTEGER NOT NULL DEFAULT 0;
+
+DROP INDEX map_undo_by_library;
+
+-- Replaces v22's `(library_id, recorded_at DESC, id DESC)`. Same one query,
+-- ordered by the thing that cannot tie.
+CREATE INDEX map_undo_by_library ON map_undo (library_id, seq DESC, id DESC);
+"""
+
+
 # A step is either SQL to execute or a callable to run — both inside the same
 # once-only transaction. Callables exist because a derived column whose rule
 # lives in the domain must be backfilled BY that rule, not by a re-statement
@@ -1227,6 +1278,7 @@ MIGRATIONS: tuple[tuple[int, str | Step], ...] = (
     (20, _V20),
     (21, _V21),
     (22, _V22),
+    (23, _V23),
 )
 
 

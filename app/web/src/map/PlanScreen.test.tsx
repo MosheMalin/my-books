@@ -62,7 +62,6 @@ function fakeMapServer() {
     refuseUndo: null as number | null,
     /** …and the reason `GET /map/undo` then gives for it. */
     undoReason: 'world_moved',
-    undone: 0,
     /** Hold every POST until `release()`, so a test can make an edit arrive
      *  while an earlier one is still in flight. */
     holding: false,
@@ -130,7 +129,6 @@ function fakeMapServer() {
       if (state.refuseUndo) {
         return respond({ detail: 'the world moved' }, state.refuseUndo)
       }
-      state.undone += 1
       return respond({ available: false, reason: 'already_undone', kind:
                        'remove_column', recorded_at: '', restores: {},
                        changed: [] })
@@ -629,13 +627,21 @@ describe('taking back the last destructive map edit', () => {
     const user = userEvent.setup()
     open()
     await screen.findByRole('radio', { name: HE.arrow }, WAIT)
+    const settled = derives()
     await press(user)
 
     await waitFor(() => expect(posted('/map/undo')).toHaveLength(1), WAIT)
+    await waitFor(() => expect(derives()).toBeGreaterThan(settled), WAIT)
     expect(await saidIn('status', HE.undo_done)).toContain(HE.undo_done)
     // …and the drawing is re-derived, because the server has just changed
     // rows this session's document knows nothing about.
-    await waitFor(() => expect(derives()).toBeGreaterThan(1), WAIT)
+    //
+    // ⚠ Counted RELATIVE to a settled editor, the idiom the five sibling
+    // tests in this file already use. `> 1` was green against the bug: the
+    // mount alone issues FOUR `GET /map`, so bypassing the re-derive entirely
+    // left it passing — and with it the drain whose absence a review measured
+    // as data loss on the site gestures.
+    expect(derives()).toBeGreaterThanOrEqual(settled + 1)
   })
 
   it('says nothing changed when the refusal is that it was already undone',
