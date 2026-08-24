@@ -568,3 +568,50 @@ def test_a_journal_is_scoped_to_its_library():
     assert journal.store.recent(LIB, limit=9) == ()
     assert offer(journal, maps, shelves, LIB).reason == "nothing_recorded"
     _raises(UndoRefused, undo, journal, maps, shelves, LIB)
+
+
+def test_undoing_a_site_removal_brings_its_storeys_back():
+    """Deleting a site takes its EMPTY storeys with it — so the inverse has to
+    carry them, or the undo restores a site with no floor at all.
+
+    That state is not merely incomplete, it is one the model calls
+    impossible: ``delete_floor`` refuses to leave a site with none, so nothing
+    else in the product can produce it. Measured by a data-integrity review,
+    which found the undo reporting success with the storeys' names, order and
+    ids unrecoverable.
+    """
+    maps, shelves, books, journal = _world()
+    maps.save_site(LIB, new_site(id="st-p", library_id=LIB.id, name="ההורים"))
+    for n, name in ((1, "מרתף"), (2, "קרקע")):
+        maps.save_floor(LIB, new_floor(id=f"fl-p{n}", library_id=LIB.id,
+                                       site_id="st-p", name=name, order=n))
+
+    assert remove_record(maps, shelves, LIB, "site", "st-p", journal=journal)
+    undo(journal, maps, shelves, LIB)
+
+    assert maps.get_site(LIB, "st-p") is not None
+    back = {f.id: f for f in maps.load_map(LIB).floors if f.site_id == "st-p"}
+    assert set(back) == {"fl-p1", "fl-p2"}, "the storeys did not come back"
+    assert back["fl-p1"].name == "מרתף" and back["fl-p2"].order == 2
+
+
+def test_undoing_a_room_removal_puts_its_bookcases_back_in_it():
+    """Deleting a room NULLs the ``place_id`` of every case that stood in it —
+    *"deleting a container never destroys what it held"*. That is true of the
+    delete and was false of its inverse: the room came back empty, and every
+    case had to be dragged into it by hand before a book's location named a
+    room again.
+    """
+    maps, shelves, books, journal = _world()
+    drawn = _draw(maps, shelves)
+    assert maps.get_bookcase(LIB, drawn.bookcase.id).place_id == f"pl-{LIB.id}"
+
+    assert remove_record(maps, shelves, LIB, "place", f"pl-{LIB.id}",
+                         journal=journal)
+    assert maps.get_bookcase(LIB, drawn.bookcase.id).place_id is None
+
+    undo(journal, maps, shelves, LIB)
+
+    assert maps.get_place(LIB, f"pl-{LIB.id}") is not None
+    assert maps.get_bookcase(LIB, drawn.bookcase.id).place_id == f"pl-{LIB.id}", (
+        "the room came back without the bookcases that stood in it")

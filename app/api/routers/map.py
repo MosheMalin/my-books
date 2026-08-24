@@ -896,8 +896,15 @@ def post_undo(
     called it learns in the same round trip that there is now nothing more to
     take back. There is no redo, and no second entry underneath.
     """
+    # ⚠ `_translated()` as well, like every other mutating route here. A
+    # review reached a 500 with two ordinary gestures: delete a section, add
+    # another (additive, so it records nothing), press undo — the replay hits
+    # `sections_by_bookcase` and raises `DuplicateSectionOrdinal`, which this
+    # route was the only one in the router not translating. A 500 is the one
+    # answer the phone client cannot classify, so it retries.
     try:
-        undo(journal, store, shelves, library)
+        with _translated():
+            undo(journal, store, shelves, library)
     except UndoRefused as exc:
         # ⚠ A STRING detail, never the dict this first carried. The client
         # reads `e.detail || e.message` and renders it, so an object arrives

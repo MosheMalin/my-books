@@ -404,10 +404,28 @@ def remove_record(
     }
     get, delete, field = table[what]
     was = get(library, record_id)
-    sections = ()
-    if what == "bookcase" and was is not None:
-        sections = tuple(s for s in map_store.load_map(library).sections
-                         if s.bookcase_id == record_id)
+    # ⚠ Whatever ELSE the delete takes with it, or the undo puts back a
+    # container and reports success while its contents stay gone. Three of the
+    # five deletes reach past their own row, and two reviews measured all
+    # three: a bookcase CASCADEs its sections in the schema; deleting a site
+    # takes its empty storeys ("floors leave with their site"); deleting a
+    # place NULLs the `place_id` of every case that stood in it. Only the
+    # first was captured, so undoing a site deletion restored a site with zero
+    # storeys — a state `delete_floor` refuses to create on purpose — and
+    # undoing a room deletion left every bookcase attached to no room, with
+    # nothing said either time.
+    also: dict[str, tuple] = {}
+    if was is not None:
+        drawing = map_store.load_map(library)
+        if what == "bookcase":
+            also["sections"] = tuple(x for x in drawing.sections
+                                     if x.bookcase_id == record_id)
+        elif what == "site":
+            also["floors"] = tuple(x for x in drawing.floors
+                                   if x.site_id == record_id)
+        elif what == "place":
+            also["bookcases"] = tuple(x for x in drawing.bookcases
+                                      if x.place_id == record_id)
 
     if not delete(library, record_id):
         return False
@@ -419,8 +437,7 @@ def remove_record(
     # refuses to remove one with anything under it.
     tag = f"{what}:{record_id}" if what in ("bookcase", "section") else ""
     tables = {field: (was,) if was is not None else ()}
-    if what == "bookcase":
-        tables["sections"] = sections
+    tables.update(also)
     _record(journal, map_store, shelves, library, kind=f"delete_{what}",
             tag=tag, **tables)
     return True
