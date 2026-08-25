@@ -260,6 +260,17 @@ export interface MapText {
   dismiss: string
 }
 
+/** *22 ספרים · תמונה אחת* — the house rule for a counted Hebrew string,
+ *  which every other one in this table already follows. Written once because
+ *  two keys print it: the picker's option and the row it labels. */
+const heHolds = (books: number, photos: number) =>
+  `${books === 1 ? 'ספר אחד' : `${books} ספרים`} · ${
+    photos === 1 ? 'תמונה אחת' : `${photos} תמונות`}`
+
+const enHolds = (books: number, photos: number) =>
+  `${books === 1 ? '1 book' : `${books} books`} · ${
+    photos === 1 ? '1 photo' : `${photos} photos`}`
+
 const HE: MapText = {
   tool: 'כלי',
   arrow: 'חץ',
@@ -448,7 +459,8 @@ const HE: MapText = {
   case_details: 'שם, גודל, חדר, כיוון',
   case_summary: (name, w, h, side) => `${name} · ${w}×${h} · פונה ${side}`,
   case_facts: (units, deep, shelves) =>
-    `${units} יחידות של קיר, ${deep} לעומק כפי שצוירה · ${shelves} מדפים`,
+    `${units === 1 ? 'יחידה אחת' : `${units} יחידות`} של קיר, ${deep} לעומק כפי שצוירה · ${
+      shelves === 1 ? 'מדף אחד' : `${shelves} מדפים`}`,
   in_room: (name) => ` · ב${name}`,   // caller passes a NAMED room
 
   in_no_room: ' · לא מחוברת לחדר',
@@ -473,8 +485,10 @@ const HE: MapText = {
   split_sections: 'פיצול הכוננית ליחידות',
   split_sections_long: '＋ יחידה שנייה למעלה (יחידה שעומדת על זו)',
   remove_section: (s) => `הסרת ${s}`,
-  remove_section_title: (s, shelves) => `הסרת ${s} ו-${shelves} המדפים שבה`,
-  remove_section_confirm: (s, shelves) => `להסיר את ${s} ואת ${shelves} המדפים שבה?`,
+  remove_section_title: (s, shelves) =>
+    `הסרת ${s} ו${shelves === 1 ? 'המדף שבה' : `-${shelves} המדפים שבה`}`,
+  remove_section_confirm: (s, shelves) =>
+    `להסיר את ${s} ואת ${shelves === 1 ? 'המדף שבה' : `${shelves} המדפים שבה`}?`,
   col_head: (col) => `עמודה ${col}`,
   column: 'עמודה',
   add_column: 'הוספת עמודה',
@@ -482,24 +496,27 @@ const HE: MapText = {
   remove_column: 'הסרת העמודה האחרונה',
   remove_column_of: (s) => `הסרת העמודה האחרונה של ${s}`,
   remove_column_confirm: (shelves) =>
-    `להסיר את העמודה האחרונה ואת ${shelves} המדפים שבה?`,
+    `להסיר את העמודה האחרונה ואת ${
+      shelves === 1 ? 'המדף שבה' : `${shelves} המדפים שבה`}?`,
   depth_kept: (n, s) =>
-    `${n} מדפים קיימים ב${s} שומרים על העומק שלהם. שינוי ברירת המחדל לעולם אינו חוזר אליהם — זה היה מוחק את המיקום של כל ספר שעומד בשורה האחורית.`,
-  apply_to_all: (shelves) => `החלה על כל ${shelves} המדפים`,
+    `${n === 1 ? 'מדף קיים אחד' : `${n} מדפים קיימים`} ב${s} ${
+      n === 1 ? 'שומר' : 'שומרים'} על העומק שלהם. שינוי ברירת המחדל לעולם אינו חוזר אליהם — זה היה מוחק את המיקום של כל ספר שעומד בשורה האחורית.`,
+  apply_to_all: (shelves) =>
+    (shelves === 1 ? 'החלה על המדף היחיד' : `החלה על כל ${shelves} המדפים`),
   pick_a_cell: 'בחרו תא למעלה כדי לקבוע עומק למדף אחד.',
   shelf_legend: (where, col, level) => `מדף · ${where}עמודה ${col} · גובה ${level}`,
   shelf_is_named: (label) => `שם המדף: ${label}`,
   shelf_take_off_map: 'הורדה מהמפה',
   shelf_take_off_map_confirm: (books, photos) =>
-    `להוריד מהמפה מדף שעליו ${books} ספרים ו-${photos} תמונות? הם נשארים איתו; מה שהולך לאיבוד הוא המקום שלו בשרטוט. אפשר לשחזר.`,
+    `להוריד מהמפה מדף שעליו ${heHolds(books, photos)}? הם נשארים איתו; מה שהולך לאיבוד הוא המקום שלו בשרטוט. אפשר לשחזר.`,
   cell_has_no_shelf: 'אין כאן מדף.',
   put_a_shelf_here: 'שימו כאן מדף',
   pick_a_shelf: 'בחרו מדף שאינו על המפה:',
   no_shelves_off_the_map: 'כל המדפים כבר על המפה.',
   shelf_unnamed: 'מדף ללא שם',
-  shelf_holds: (books, photos) => `${books} ספרים · ${photos} תמונות`,
+  shelf_holds: heHolds,
   pick_shelf_option: (n, name, books, photos) =>
-    `${n}. ${name} — ${books} ספרים, ${photos} תמונות`,
+    `${n}. ${name} — ${heHolds(books, photos)}`,
   bound_here: (name) => `${name} נמצא עכשיו בתא הזה`,
   unbound_shelf: (name) => `${name} ירד מהמפה. אפשר לשחזר.`,
   slot_moved_on: 'השרטוט השתנה מאז — הנה המצב העדכני. נסו שוב.',
@@ -701,13 +718,16 @@ const EN: MapText = {
   case_details: 'Name, size, room, facing',
   case_summary: (name, w, h, side) => `${name} · ${w}×${h} · faces ${side}`,
   case_facts: (units, deep, shelves) =>
-    `${units} units of wall, ${deep} deep as drawn · ${shelves} shelves`,
+    `${units === 1 ? '1 unit' : `${units} units`} of wall, ${deep} deep as drawn · ${
+      shelves === 1 ? '1 shelf' : `${shelves} shelves`}`,
   in_room: (name) => ` · in ${name}`,
   in_no_room: ' · attached to no room',
   in_sections: (n) => (n === 1 ? ' in one section' : ` in ${n} sections`),
   free_measurement:
     'Free measurement — relative to this room’s walls, never centimetres, and nothing here infers how many books fit.',
-  counts: (rooms, cases) => `${rooms} rooms · ${cases} bookcases.`,
+  counts: (rooms, cases) =>
+    `${rooms === 1 ? '1 room' : `${rooms} rooms`} · ${
+      cases === 1 ? '1 bookcase' : `${cases} bookcases`}.`,
   step_room: '— drag a rectangle. Drag the next one near it and they attach edge to edge.',
   step_case:
     '— drag a rectangle inside a room. It snaps flush to the wall, attaches to that room, and moves with it.',
@@ -724,9 +744,11 @@ const EN: MapText = {
   split_sections_long: '＋ a second section on top (a unit standing on this one)',
   remove_section: (s) => `remove ${s.toLowerCase()}`,
   remove_section_title: (s, shelves) =>
-    `Remove ${s.toLowerCase()} and its ${shelves} shelves`,
+    `Remove ${s.toLowerCase()} and its ${
+      shelves === 1 ? 'one shelf' : `${shelves} shelves`}`,
   remove_section_confirm: (s, shelves) =>
-    `Remove ${s.toLowerCase()} and its ${shelves} shelves?`,
+    `Remove ${s.toLowerCase()} and its ${
+      shelves === 1 ? 'one shelf' : `${shelves} shelves`}?`,
   col_head: (col) => `col ${col}`,
   column: 'column',
   add_column: 'add a column',
@@ -734,24 +756,26 @@ const EN: MapText = {
   remove_column: 'remove the last column',
   remove_column_of: (s) => `remove the last column of ${s.toLowerCase()}`,
   remove_column_confirm: (shelves) =>
-    `Remove the last column and its ${shelves} shelves?`,
+    `Remove the last column and its ${
+      shelves === 1 ? 'one shelf' : `${shelves} shelves`}?`,
   depth_kept: (n, s) =>
     `${n} existing ${n === 1 ? 'shelf keeps its own depth' : 'shelves keep their own depth'} in ${s.toLowerCase()}. Changing the default never reaches back into them — that would delete the location of every book standing in a back row.`,
-  apply_to_all: (shelves) => `Apply to all ${shelves} shelves`,
+  apply_to_all: (shelves) =>
+    (shelves === 1 ? 'Apply to the one shelf' : `Apply to all ${shelves} shelves`),
   pick_a_cell: 'Pick a cell above to set one shelf’s own depth.',
   shelf_legend: (where, col, level) => `Shelf · ${where}col ${col} · level ${level}`,
   shelf_is_named: (label) => `Named: ${label}`,
   shelf_take_off_map: 'Take off the map',
   shelf_take_off_map_confirm: (books, photos) =>
-    `Take a shelf holding ${books} book(s) and ${photos} photo(s) off the map? They stay with it; what it loses is its place in the drawing. This can be restored.`,
+    `Take a shelf holding ${enHolds(books, photos)} off the map? They stay with it; what it loses is its place in the drawing. This can be restored.`,
   cell_has_no_shelf: 'No shelf stands here.',
   put_a_shelf_here: 'Put a shelf here',
   pick_a_shelf: 'Pick a shelf that is not on the map:',
   no_shelves_off_the_map: 'Every shelf is already on the map.',
   shelf_unnamed: 'Unnamed shelf',
-  shelf_holds: (books, photos) => `${books} book(s) · ${photos} photo(s)`,
+  shelf_holds: enHolds,
   pick_shelf_option: (n, name, books, photos) =>
-    `${n}. ${name} — ${books} book(s), ${photos} photo(s)`,
+    `${n}. ${name} — ${enHolds(books, photos)}`,
   bound_here: (name) => `${name} now stands in this cell`,
   unbound_shelf: (name) => `${name} came off the map. This can be restored.`,
   slot_moved_on: 'The drawing has changed since — here it is as it stands. Try again.',
