@@ -1236,7 +1236,7 @@ The decomposition, each landing on `main` before the next:
 |---|---|---|---|
 | **P6.4a** | ✅ **The alias, and nothing using it** — schema **v24**, one alias row carrying the absorbed shelf's id AND its former address, the resolver, `BookStore.books_on_shelf`, and "a shelf other identities resolve to is OCCUPIED". No merge, no route. | M | `review-migration` **before**, data-integrity, quality |
 | **P6.4b** | **Undo for destructive map edits** (§3.15) — the journal, the inverse, and the invalidation rule. Covers remove column, remove section, delete bookcase, remove site, **and switching cells off** (P6.3.2, which arrived after §3.15 was written); the merge joins it in P6.4d. Fingerprint at undo time and no expiry; record all, undo the head; a minimal UI lands with it (owner, 2026-08-24). ⚠ Schema **v22** and **v23** — see the note below. | L | `review-migration` **before**, data-integrity, quality, ux | ✅ |
-| **P6.4c** | **Bind** — an unaddressed shelf gains an address, and loses one. No identities join; a taken slot is a 409 naming the occupant and offering the merge. | S | data-integrity, security, quality, ux |
+| **P6.4c** | ✅ **Bind** — an unaddressed shelf gains an address, and loses one. No identities join; a taken slot is a 409 naming the occupant and offering the merge. Unbinding is journalled and binding is not; the panel gained a picker; two pre-existing journal bugs fell out of it. | S | data-integrity, security, quality, ux |
 | **P6.4d** | **Merge** — two identities become one, undoable. ⚠ **carries the data-loss risk**, and P6.4a left it three named traps: removing the absorbed shelf's row CASCADES its captures away (`captures.shelf_id … ON DELETE CASCADE`, measured), and merging a shelf that has itself absorbed one is refused by the one-hop rule, so re-pointing must happen inside the same transaction; and `DELETE /api/v1/shelves/{id}` catches only `ShelfNotEmpty`, so the owner's *refuse, naming the count* would arrive as a 500 on the one surface that could show the count. | L | data-integrity, security, quality, ux |
 | **P6.4e** | **History across the seam** — reads, streaks, staleness and the *formerly* line resolve through the alias. | M | data-integrity, quality, ux |
 | **P6.4f** | *Optional:* **the proposal** — candidates from typed labels only, each an explicit ✓. | S | quality, ux, security |
@@ -1424,12 +1424,102 @@ And three where the mechanism was honest but incomplete:
 
 **Worktree**, per rule 1.
 
-**P6.4b is separate so that *bind* and *merge* are never one button.** The
+#### P6.4c in detail — bind  *(✅ LANDED 2026-08-25)*
+
+**One sentence:** an unaddressed shelf gains an address, and loses one; no
+identities join, and a taken slot is where this stops rather than something it
+resolves.
+
+Two routes, addressed by SHELF rather than by cell — `PUT` and `DELETE` on
+`/api/v1/map/shelves/{id}/address`. The neighbour one screen up
+(`set_shelf_depth`) is addressed by cell, and the DELETE is why this pair is
+not: `DELETE /sections/{id}/shelves/{c}/{l}` reads as *delete the shelf in
+this cell*, and what is created and destroyed here is an ADDRESS. The shelf
+survives both, with its books, its photographs and its label.
+
+**Four refusals, four sentences the owner can act on**: the cell is a GAP
+(§3.10a — switching it back on is its own decision about the furniture); the
+shelf ALREADY stands somewhere; the slot is TAKEN, naming the occupant so the
+client can offer the merge; or it is the wishlist, which stands nowhere by
+construction (§5.7). A cell outside the extent is a 400, not a nearest-cell
+guess. `plan_bind` fixes the ORDER too, and only the last one offers a next
+step: offering a merge to somebody whose request was impossible for a simpler
+reason is how a dangerous button gets pressed by accident.
+
+**Unbinding records an undo; binding does not.** They are inverses, so it
+looks asymmetric until you ask what is lost. Binding into a free slot loses
+nothing — the same argument `set_gaps` makes for switching a cell back ON —
+and the journal is one deep, so an entry for a purely additive edit does not
+add noise, it evicts the real undo standing behind it. Unbinding loses an
+ADDRESS, which is the one thing about a shelf a person read off a drawing.
+The same reasoning is why a MOVE is refused rather than allowed: a move
+vacates the old slot, which would make bind conditionally destructive.
+
+**⚠ A shelf's identity in a slot is not in the client's document.** §3.1 says
+a drawn slot IS a shelf, so the document holds SLOTS and never identities —
+there is no diff that can carry a bind. Both gestures go to the server and
+re-derive, on success AND on failure: every refusal here means the drawing
+moved under the owner. That is the opposite of `undoLastEdit`, where a refusal
+wrote nothing and re-deriving would cost the owner their drawing history for a
+press that changed nothing.
+
+`free` is a FIELD on the client's cell, set by `toPlan` alone, and that is the
+whole reason it is not `!id`: a cell this session just drew has no id either,
+and it is not free — the push mints its shelf. Deriving it would offer *put a
+shelf here* over every column the owner had just added.
+
+**Two bugs fell out that predate this item**, both in the journal, both
+invisible until now:
+
+- **`_record` accepted `wrote` and never forwarded it.** P6.4b's review
+  measured the window — another tab's write committed between the edit's last
+  write and the journal's read, digested as *the state the edit left* and
+  therefore invisible to the undo — and the fix was to hand `record` what the
+  edit wrote. Five call sites computed it; the adapter dropped it. Nothing
+  failed, because no test held the window open and `fingerprint`'s docstring
+  said it was closed. One does now;
+- **and forwarding it turned an existing test red**, which is the second:
+  `remove_record` wrote every cascaded row down as ABSENT, but a room's
+  bookcases SURVIVE its deletion (`delete_place` NULLs `place_id`). Every room
+  deletion would have been permanently un-undoable.
+
+**⚠ The counted-string gate matched one shape of the thing it names.** The
+browser walk found `1 תמונות` on the owner's own library. `text.test.tsx` has
+enforced the singular since P6.3.2b — for keys typed `(n: number) => string`,
+so all three of P6.4c's two-argument strings walked past it. Widened to every
+numeric parameter, it found six more live in both languages: `case_facts`,
+`counts`, `remove_section_title`, `remove_section_confirm`,
+`remove_column_confirm`, `apply_to_all`, `depth_kept`. Sixth instance of this
+defect class in that file, and the same shape as the dead-key scan that let
+every key which was a PREFIX of another ride on its longer sibling.
+
+**⚠ What the phone walk could NOT establish.** The browser pane would not go
+below 484 CSS px — `resize_window` reports 375x812 and `innerWidth` stays 484.
+The ≤640px breakpoint IS active, and the panel was measured with the document
+width pinned to 375px (52px picker rows, RTL, no overflow), but viewport-unit
+rules were evaluated at a 1049px height, so the picker's `max-height: 40vh`
+was never tested at 812. Stated rather than claimed.
+
+⚠ **An empty cell looks exactly like an occupied one** in the elevation — the
+same button, the same level number — and the only way to learn it is empty is
+to tap it. A gap has its own affordance and this does not. Left as it is
+because a free slot is RARE (only an unbind, a half-failed edit or a partial
+undo makes one), and noted here so P6.4d does not have to rediscover it.
+
+**Bind is separate so that *bind* and *merge* are never one button.** The
 safe half is a shelf gaining an address; the dangerous half is two identities
 becoming one, and a UI that cannot tell them apart is how the dangerous one
 gets pressed by accident.
 
-**What proves P6.4c did not lose anything** is a census, not a constraint —
+⚠ **This paragraph and the next one count from BEFORE the reorder** — they
+were written when P6.4b was *bind* and P6.4c was *merge*, and both were left
+naming the old numbers when the journal moved to the front (2026-08-23). They
+now say what they mean: the split is bind-versus-merge, and the census below
+belongs to **P6.4d**, which is where a population of copies actually moves.
+A bind moves nothing, so there is nothing for a census to count.
+
+**What proves the MERGE (P6.4d) did not lose anything** is a census, not a
+constraint —
 four of the six tables have no foreign key to police. One pure function
 digests a library before and after: books, copies, and copies WITH a
 location, all unchanged; the multiset of `(book_key, depth)` at the survivor
