@@ -30,7 +30,7 @@ afterEach(() => {
 
 const section = (id: string): Section => ({
   id,
-  columnLevels: [2, 2], gaps: [],
+  columnLevels: [2, 2, 1], gaps: [],
   defaultLevels: 2,
   defaultDepth: 1,
   shelves: [
@@ -40,6 +40,12 @@ const section = (id: string): Section => ({
     { col: 0, level: 0, depth: 1, photos: 3, books: 0,
       id: 'sh-1', label: 'המדף העליון' },
     { col: 0, level: 1, depth: 2, photos: 0, books: 0, id: 'sh-2', label: '' },
+    // ⚠ BOOKS and no photographs. Every cell in this fixture used to hold
+    // zero of both, so the confirm's `shelf.books` half was unmeasured — a
+    // review dropped it and the whole ring stayed green, which means a shelf
+    // holding books could have left the map with no dialog at all.
+    { col: 2, level: 0, depth: 1, photos: 0, books: 4, id: 'sh-books',
+      label: 'ספרים בלבד' },
     { col: 1, level: 0, depth: 1, photos: 0, books: 0, free: true },
     // ⚠ Neither `id` nor `free`: the cell this SESSION drew, whose shelf the
     // push is about to mint. It must read as occupied, not as free.
@@ -457,7 +463,8 @@ describe('putting a shelf in a slot, and taking one out (P6.4c)', () => {
 
     await user.click(screen.getByRole('button', { name: HE.shelf_take_off_map }))
     expect(confirm).not.toHaveBeenCalled()
-    expect(acts.unbindShelf).toHaveBeenCalledWith('sh-2', HE.shelf_unnamed)
+    expect(acts.unbindShelf).toHaveBeenCalledWith(
+      'sh-2', 's1', 0, 1, HE.shelf_unnamed)
     vi.unstubAllGlobals()
   })
 
@@ -479,6 +486,62 @@ describe('putting a shelf in a slot, and taking one out (P6.4c)', () => {
     // gets an answer — and it is the question the whole item is about.
     showWith(cell(0, 0), actions())
     expect(screen.getByText(HE.shelf_is_named('המדף העליון')))
+      .toBeInTheDocument()
+  })
+})
+
+describe('the predicates the P6.4c panel rides on', () => {
+  const showWith = (selection: Selection, acts: Actions) =>
+    render(
+      <I18nProvider>
+        <Inspector
+          doc={{ plan: plan(), seq: 0 }}
+          floorId="f1"
+          selection={selection}
+          actions={acts}
+          renaming={null}
+          onRenamed={() => {}}
+        />
+      </I18nProvider>,
+    )
+
+  const cell = (col: number, level: number): Selection => ({
+    rooms: [], cases: ['c1'],
+    cells: [{ caseId: 'c1', sectionId: 's1', col, level }],
+  })
+
+  it('asks before taking off a shelf that holds BOOKS and no photographs', async () => {
+    // ⚠ The half that matters most, and the one that was unmeasured: a
+    // review changed the test to `shelf.photos === 0` and nothing failed.
+    const user = userEvent.setup()
+    const acts = actions()
+    const confirm = vi.fn(() => false)
+    vi.stubGlobal('confirm', confirm)
+    showWith(cell(2, 0), acts)
+
+    await user.click(screen.getByRole('button', { name: HE.shelf_take_off_map }))
+    expect(confirm).toHaveBeenCalledWith(HE.shelf_take_off_map_confirm(4, 0))
+    expect(acts.unbindShelf).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
+  it('offers no unbind on a cell whose shelf the server has never seen', () => {
+    // The predicate the paste bug rode on: a cell this session drew has no
+    // `id`, so there is nothing to take off the map — and a control that
+    // sends a request naming `undefined` is worse than one that is absent.
+    showWith(cell(1, 1), actions())
+    expect(screen.queryByRole('button', { name: HE.shelf_take_off_map }))
+      .toBeNull()
+  })
+
+  it('says the list is empty rather than spinning when it cannot be read', async () => {
+    const user = userEvent.setup()
+    const acts = actions()
+    acts.shelvesOffTheMap = vi.fn(async () => { throw new Error('offline') })
+    showWith(cell(1, 0), acts)
+
+    await user.click(screen.getByRole('button', { name: HE.put_a_shelf_here }))
+    expect(await screen.findByText(HE.no_shelves_off_the_map))
       .toBeInTheDocument()
   })
 })

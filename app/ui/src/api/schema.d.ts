@@ -1183,10 +1183,20 @@ export interface paths {
          *     the map is journalled, and one reached deliberately rather than as the
          *     side effect of erasing a column is not a smaller loss.
          *
-         *     ⚠ It answers with a `ShelfDTO` rather than 204, so the client can put the
-         *     detached shelf straight into its *not on the map* list without a second
-         *     round trip — and so a stale drawing is corrected by the response to the
-         *     gesture that made it stale.
+         *     ⚠ It answers with a `ShelfDTO` rather than 204, and an earlier version of
+         *     this note claimed the map client uses it to skip a round trip. It does
+         *     not: `useMapSync.slotWrite` discards the body and re-derives the whole
+         *     document, because `free` and `id` are server facts this document now has
+         *     wrong in more places than the one cell. The DTO is here because a shelf's
+         *     state after the write is what a caller of a shelf route expects to be
+         *     told, and because a 204 would make the counts unavailable to anything but
+         *     a second request.
+         *
+         *     ⚠ The three query parameters are the cell the CALLER thinks it is
+         *     emptying, and they are how a stale screen is caught: a panel that has not
+         *     seen the shelf move would otherwise detach it from the address somebody
+         *     just set, and answer 200. All three or none — two of them describe no
+         *     cell.
          */
         delete: operations["unbind_shelf_route_api_v1_map_shelves__shelf_id__address_delete"];
         options?: never;
@@ -5293,7 +5303,12 @@ export interface operations {
     };
     unbind_shelf_route_api_v1_map_shelves__shelf_id__address_delete: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The cell the caller believes this shelf stands in. Optional, and checked only when the shelf still has an address — so a retry stays a no-op. Given and wrong means the drawing moved: 409. */
+                section_id?: string | null;
+                col?: number | null;
+                level?: number | null;
+            };
             header?: never;
             path: {
                 shelf_id: string;

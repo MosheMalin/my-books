@@ -171,8 +171,16 @@ export type MapSync = {
    *  so the document holds slots, never identities). */
   bindShelf: (shelfId: string, sectionId: string, col: number,
               level: number, name: string) => void
-  /** Take a shelf off the drawing. Undoable on the server (§3.15). */
-  unbindShelf: (shelfId: string, name: string) => void
+  /**
+   * Take a shelf off the drawing. Undoable on the server (§3.15).
+   *
+   * ⚠ It NAMES the cell it is emptying. Without that, a panel that has not
+   * seen the shelf move detaches it from wherever it now stands and is
+   * answered 200 — a review measured the two-device case: the confirmation
+   * quoted a label and counts belonging to a cell nobody was acting on.
+   */
+  unbindShelf: (shelfId: string, sectionId: string, col: number, level: number,
+                name: string) => void
   /** The plan as the server last confirmed it — the editor's starting doc. */
   initial: Plan | null
   /** Hand the current document over; the hook works out what to send. */
@@ -582,9 +590,14 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
     [slotWrite, T])
 
   const unbindShelf = useCallback(
-    (shelfId: string, name: string) =>
+    (shelfId: string, sectionId: string, col: number, level: number,
+     name: string) =>
       slotWrite(
-        (api) => api.del(`/map/shelves/${encodeURIComponent(shelfId)}/address`),
+        (api) => api.del(
+          `/map/shelves/${encodeURIComponent(shelfId)}/address`
+          + `?section_id=${encodeURIComponent(sectionId)}`
+          // 1-based on the wire, as everywhere else in this pillar.
+          + `&col=${col + 1}&level=${level + 1}`),
         T.unbound_shelf(name)),
     [slotWrite, T])
 

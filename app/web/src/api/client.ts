@@ -650,7 +650,8 @@ export const mapPatch = (path: string, body: unknown, opts?: ApiOptions) =>
   send('PATCH', `/api/v1${path}`, body, opts) as Promise<any>
 
 /** P6.4c. PUT rather than PATCH because it SETS the address rather than
- *  amending it, which also makes a retried bind harmless. */
+ *  amending it — and `plan_bind` makes the promise true: binding a shelf to
+ *  the cell it already stands in answers 200 and writes nothing. */
 export const mapPut = (path: string, body: unknown, opts?: ApiOptions) =>
   send('PUT', `/api/v1${path}`, body, opts) as Promise<any>
 

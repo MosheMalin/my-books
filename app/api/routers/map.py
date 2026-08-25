@@ -45,7 +45,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import replace
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.api.deps import (
     get_book_store,
@@ -97,6 +97,7 @@ from app.domain import (
     Shelf,
     ShelfAddress,
     Site,
+    ShelfWasMerged,
     SlotTaken,
     SlotsOccupied,
     TooManySlots,
@@ -136,6 +137,7 @@ from app.ports.map import MapStore
 from app.ports.store import (
     BookStore,
     DuplicateSectionOrdinal,
+    DuplicateShelfSlot,
     ShelfStore,
     UnknownParent,
 )
@@ -211,8 +213,9 @@ def _translated():
     except UnknownParent as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
     except (NotOnThisFloor, NotEmpty, TooManySlots, SlotsOccupied,
-            SlotTaken, CellIsGap, AlreadyOnTheMap, VirtualShelfHasNoDepth,
-            DuplicateSectionOrdinal) as exc:
+            SlotTaken, CellIsGap, AlreadyOnTheMap, ShelfWasMerged,
+            VirtualShelfHasNoDepth,
+            DuplicateSectionOrdinal, DuplicateShelfSlot) as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     except DomainError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
@@ -936,13 +939,23 @@ def bind_shelf(
     section = _section(store, library, body.section_id)
     with _translated():
         address = ShelfAddress(section.id, body.col, body.level)
-        bound = bind_shelf_to_slot(shelves, library, shelf, section, address)
+        bound = bind_shelf_to_slot(store, shelves, library, shelf, section,
+                                   address)
     return _shelf_dto(shelves, books, library, bound)
 
 
 @router.delete("/shelves/{shelf_id}/address", response_model=ShelfDTO)
 def unbind_shelf_route(
     shelf_id: str,
+    section_id: str | None = Query(
+        default=None,
+        description="The cell the caller believes this shelf stands in. "
+                    "Optional, and checked only when the shelf still has an "
+                    "address — so a retry stays a no-op. Given and wrong "
+                    "means the drawing moved: 409.",
+    ),
+    col: int | None = Query(default=None, ge=1),
+    level: int | None = Query(default=None, ge=1),
     library: LibraryRef = Depends(require(EDIT)),
     store: MapStore = Depends(get_map_store),
     shelves: ShelfStore = Depends(get_shelf_store),
@@ -962,17 +975,34 @@ def unbind_shelf_route(
     the map is journalled, and one reached deliberately rather than as the
     side effect of erasing a column is not a smaller loss.
 
-    ⚠ It answers with a `ShelfDTO` rather than 204, so the client can put the
-    detached shelf straight into its *not on the map* list without a second
-    round trip — and so a stale drawing is corrected by the response to the
-    gesture that made it stale.
+    ⚠ It answers with a `ShelfDTO` rather than 204, and an earlier version of
+    this note claimed the map client uses it to skip a round trip. It does
+    not: `useMapSync.slotWrite` discards the body and re-derives the whole
+    document, because `free` and `id` are server facts this document now has
+    wrong in more places than the one cell. The DTO is here because a shelf's
+    state after the write is what a caller of a shelf route expects to be
+    told, and because a 204 would make the counts unavailable to anything but
+    a second request.
+
+    ⚠ The three query parameters are the cell the CALLER thinks it is
+    emptying, and they are how a stale screen is caught: a panel that has not
+    seen the shelf move would otherwise detach it from the address somebody
+    just set, and answer 200. All three or none — two of them describe no
+    cell.
     """
     shelf = shelves.get_shelf(library, shelf_id)
     if shelf is None:
         raise _gone("shelf")
+    given = (section_id, col, level)
+    if any(v is not None for v in given) and any(v is None for v in given):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "name the whole cell or none of it: section_id, col and level")
     with _translated():
+        expected = (ShelfAddress(section_id, col, level)
+                    if section_id is not None else None)
         detached = unbind_shelf_from_map(store, shelves, library, shelf,
-                                         journal=journal)
+                                         journal=journal, expected=expected)
     return _shelf_dto(shelves, books, library, detached)
 
 

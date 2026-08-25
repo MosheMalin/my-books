@@ -199,6 +199,24 @@ class AlreadyOnTheMap(DomainError):
     """
 
 
+class ShelfWasMerged(DomainError):
+    """The shelf being bound is an absorbed identity (§3.11, for P6.4d).
+
+    After a merge, ``alias_id -> shelf_id``: the absorbed shelf's row is
+    deleted and one alias row takes its place, so the id keeps answering. A
+    row that outlives its merge — the window between writing the alias and
+    removing the row, which is exactly what a merge passes through — has no
+    address, so it appears in ``GET /shelves`` and therefore in the picker's
+    *not on the map* list.
+
+    ⚠ Binding it would put ONE population of copies in TWO cells: the
+    survivor where the merge put it, and the absorbed identity wherever this
+    bind lands. Nothing downstream refuses it — a review reproduced it — and
+    ``ShelfHasAliases`` is the opposite question (*may this shelf be
+    destroyed*), asked of the survivor.
+    """
+
+
 class NotOnThisFloor(DomainError):
     """A room and the bookcase attaching to it are on different storeys.
 
@@ -1039,6 +1057,8 @@ def plan_bind(
     section: Section,
     address: ShelfAddress,
     occupant: Shelf | None,
+    *,
+    merged_into: str | None = None,
 ) -> Shelf:
     """The shelf as it will stand, or the reason it may not (P6.4c, §3.14).
 
@@ -1050,10 +1070,13 @@ def plan_bind(
        because a client asking for column 9 of a 4-column section is working
        from a drawing that is not this one;
     2. **the cell must not be a gap** (409) — it exists, it is switched off;
-    3. **the shelf must be unaddressed** (409) — see :class:`AlreadyOnTheMap`;
-    4. **the slot must be free** (409, naming the occupant).
+    3. **the shelf must not be an absorbed identity** (409) — see
+       :class:`ShelfWasMerged`; ``merged_into`` is the survivor it resolves
+       to, or ``None``;
+    4. **the shelf must be unaddressed** (409) — see :class:`AlreadyOnTheMap`;
+    5. **the slot must be free** (409, naming the occupant).
 
-    Three and four are in that order because only the last one offers a next
+    The last two are in that order because only the last one offers a next
     step. *This shelf is already on the map* is answerable by picking a
     different shelf; *something already stands here* is answerable by merging,
     which is P6.4d — and offering a merge to somebody whose request was
@@ -1077,6 +1100,19 @@ def plan_bind(
         raise CellIsGap(
             f"column {address.col}, level {address.level} is switched off; "
             "switch the cell back on before putting a shelf in it")
+    if merged_into is not None and merged_into != shelf.id:
+        raise ShelfWasMerged(
+            f"shelf {shelf.id} was merged into {merged_into}; it is an "
+            "identity of that shelf, not a shelf of its own")
+    if shelf.address == address:
+        # ⚠ Idempotent, and it is the reason this is a PUT. A double-tap on a
+        # picker option, or a retry after a dropped response, otherwise
+        # answered `AlreadyOnTheMap` — which `slotWrite` renders as *"the
+        # drawing has changed since"*, a false statement about the owner's own
+        # request landing. The unbind beside it already answers 200 for the
+        # same event; two halves of one pair disagreeing is how a client
+        # learns to distrust both. A review measured it.
+        return shelf
     if shelf.address is not None:
         raise AlreadyOnTheMap(
             f"shelf {shelf.id} already stands at column {shelf.address.col}, "

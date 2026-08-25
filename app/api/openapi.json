@@ -5463,7 +5463,7 @@
     },
     "/api/v1/map/shelves/{shelf_id}/address": {
       "delete": {
-        "description": "Take a shelf off the drawing. The shelf survives; only the address goes.\n\n**200 either way.** A shelf that already stands nowhere is answered with\nitself rather than a 409 — the retry a dropped response provokes must not\nlook like a new failure, and there is nothing for the caller to do\ndifferently.\n\nIt records an undo where :func:`bind_shelf` does not, because this is the\ndirection that loses something: an address is what a person read off a\ndrawing, and §3.15's list is *destroy or detach*. Every other detach in\nthe map is journalled, and one reached deliberately rather than as the\nside effect of erasing a column is not a smaller loss.\n\n⚠ It answers with a `ShelfDTO` rather than 204, so the client can put the\ndetached shelf straight into its *not on the map* list without a second\nround trip — and so a stale drawing is corrected by the response to the\ngesture that made it stale.",
+        "description": "Take a shelf off the drawing. The shelf survives; only the address goes.\n\n**200 either way.** A shelf that already stands nowhere is answered with\nitself rather than a 409 — the retry a dropped response provokes must not\nlook like a new failure, and there is nothing for the caller to do\ndifferently.\n\nIt records an undo where :func:`bind_shelf` does not, because this is the\ndirection that loses something: an address is what a person read off a\ndrawing, and §3.15's list is *destroy or detach*. Every other detach in\nthe map is journalled, and one reached deliberately rather than as the\nside effect of erasing a column is not a smaller loss.\n\n⚠ It answers with a `ShelfDTO` rather than 204, and an earlier version of\nthis note claimed the map client uses it to skip a round trip. It does\nnot: `useMapSync.slotWrite` discards the body and re-derives the whole\ndocument, because `free` and `id` are server facts this document now has\nwrong in more places than the one cell. The DTO is here because a shelf's\nstate after the write is what a caller of a shelf route expects to be\ntold, and because a 204 would make the counts unavailable to anything but\na second request.\n\n⚠ The three query parameters are the cell the CALLER thinks it is\nemptying, and they are how a stale screen is caught: a panel that has not\nseen the shelf move would otherwise detach it from the address somebody\njust set, and answer 200. All three or none — two of them describe no\ncell.",
         "operationId": "unbind_shelf_route_api_v1_map_shelves__shelf_id__address_delete",
         "parameters": [
           {
@@ -5473,6 +5473,58 @@
             "schema": {
               "title": "Shelf Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "The cell the caller believes this shelf stands in. Optional, and checked only when the shelf still has an address — so a retry stays a no-op. Given and wrong means the drawing moved: 409.",
+            "in": "query",
+            "name": "section_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The cell the caller believes this shelf stands in. Optional, and checked only when the shelf still has an address — so a retry stays a no-op. Given and wrong means the drawing moved: 409.",
+              "title": "Section Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "col",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Col"
+            }
+          },
+          {
+            "in": "query",
+            "name": "level",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Level"
             }
           }
         ],

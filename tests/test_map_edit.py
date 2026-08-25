@@ -47,6 +47,7 @@ from app.domain import (
     new_site,
     rename_shelf,
     with_column_count,
+    with_column_levels,
     with_default_depth,
     with_gaps,
 )
@@ -61,6 +62,7 @@ from app.map_edit import (
     clear_section_slots,
     deepest_occupied_depths,
     draw_bookcase,
+    remove_record,
     unbind_shelf_from_map,
 )
 
@@ -1049,7 +1051,7 @@ def test_an_unaddressed_shelf_gains_the_address_and_nothing_else_moves():
     _shelve_a_book(books, homeless.id)
 
     where = ShelfAddress(section.id, 1, 1)
-    bound = bind_shelf_to_slot(shelves, LIB, homeless, section, where)
+    bound = bind_shelf_to_slot(maps, shelves, LIB, homeless, section, where)
 
     assert bound.id == homeless.id and bound.label == homeless.label
     assert bound.address == where
@@ -1075,7 +1077,7 @@ def test_a_taken_slot_is_REFUSED_and_the_refusal_carries_the_occupant():
     shelves.save_shelf(LIB, rename_shelf(standing, "מדף א"))
     homeless = _homeless(shelves)
 
-    refusal = _raises(SlotTaken, bind_shelf_to_slot, shelves, LIB, homeless,
+    refusal = _raises(SlotTaken, bind_shelf_to_slot, maps, shelves, LIB, homeless,
                       section, ShelfAddress(section.id, 1, 1))
     assert refusal.occupant.id == standing.id
     assert "מדף א" in str(refusal), (
@@ -1095,7 +1097,7 @@ def test_a_gapped_cell_refuses_a_bind_rather_than_switching_itself_on():
                ids=SeqIdGen(), clock=StubClock())
     homeless = _homeless(shelves)
 
-    _raises(CellIsGap, bind_shelf_to_slot, shelves, LIB, homeless,
+    _raises(CellIsGap, bind_shelf_to_slot, maps, shelves, LIB, homeless,
             change.section, ShelfAddress(section.id, 1, 1))
     assert shelves.get_shelf_at(LIB, ShelfAddress(section.id, 1, 1)) is None
 
@@ -1110,7 +1112,7 @@ def test_a_shelf_that_already_stands_somewhere_is_refused_rather_than_MOVED():
     _free(maps, shelves, books, section, 1, 2)
     standing = shelves.get_shelf_at(LIB, ShelfAddress(section.id, 1, 1))
 
-    _raises(AlreadyOnTheMap, bind_shelf_to_slot, shelves, LIB, standing,
+    _raises(AlreadyOnTheMap, bind_shelf_to_slot, maps, shelves, LIB, standing,
             section, ShelfAddress(section.id, 1, 2))
     assert shelves.get_shelf(LIB, standing.id).address.level == 1, (
         "the shelf moved anyway")
@@ -1124,9 +1126,11 @@ def test_a_cell_outside_the_extent_is_refused_before_anything_is_read():
     maps, shelves, books, section = _drawn(columns=2, levels=2)
     homeless = _homeless(shelves)
 
-    _raises(DomainError, bind_shelf_to_slot, shelves, LIB, homeless, section,
+    _raises(DomainError, bind_shelf_to_slot, maps, shelves, LIB, homeless,
+            section,
             ShelfAddress(section.id, 9, 1))
-    _raises(DomainError, bind_shelf_to_slot, shelves, LIB, homeless, section,
+    _raises(DomainError, bind_shelf_to_slot, maps, shelves, LIB, homeless,
+            section,
             ShelfAddress(section.id, 1, 9))
     assert shelves.get_shelf(LIB, homeless.id).address is None
 
@@ -1151,7 +1155,7 @@ def test_binding_records_NO_undo_and_unbinding_records_one():
         "the entry remembers the shelf WITHOUT its address, so an undo would "
         "put back exactly what the unbind produced")
 
-    bind_shelf_to_slot(shelves, LIB, shelves.get_shelf(LIB, standing.id),
+    bind_shelf_to_slot(maps, shelves, LIB, shelves.get_shelf(LIB, standing.id),
                        section, ShelfAddress(section.id, 1, 1))
     assert journal.store.recent(LIB, limit=9) == after_unbind, (
         "binding wrote a journal entry and evicted the real undo")
@@ -1230,7 +1234,7 @@ def test_undoing_an_unbind_is_REFUSED_once_the_slot_is_taken_again():
     unbind_shelf_from_map(maps, shelves, LIB, standing, journal=journal)
 
     homeless = _homeless(shelves)
-    bind_shelf_to_slot(shelves, LIB, homeless, section,
+    bind_shelf_to_slot(maps, shelves, LIB, homeless, section,
                        ShelfAddress(section.id, 2, 1))
 
     said = offer(journal, maps, shelves, LIB)
@@ -1322,8 +1326,170 @@ def test_a_bind_that_LOSES_the_race_still_answers_with_the_occupant():
                 return None
             return self._inner.get_shelf_at(library, address)
 
-    refusal = _raises(SlotTaken, bind_shelf_to_slot, Blind(shelves), LIB,
+    refusal = _raises(SlotTaken, bind_shelf_to_slot, maps, Blind(shelves), LIB,
                       homeless, section, ShelfAddress(section.id, 1, 1))
     assert refusal.occupant.id == standing.id, (
         "the refusal named nobody, or named the shelf that lost")
     assert shelves.get_shelf(LIB, homeless.id).address is None
+
+
+def test_undoing_an_unbind_is_REFUSED_once_the_CELL_is_switched_off():
+    """⚠⚠ The half `digest_slots` cannot see, measured with no concurrency
+    at all.
+
+    The scope watched WHO STANDS WHERE and not WHICH CELLS EXIST. So: take a
+    shelf off the map, put a television in that cell — allowed, the cell is
+    empty now, and a gap that releases nothing records no entry of its own —
+    then press undo. The offer said `available: true` and the shelf came back
+    addressed to a cell the drawing does not have: `toPlan` renders neither a
+    gapped cell nor one outside the extent, and the picker lists only
+    unaddressed shelves, so a shelf holding books was in NEITHER list.
+    """
+    from app.map_undo import UndoRefused, offer, undo
+
+    maps, shelves, books, section = _drawn()
+    journal = _journal()
+    standing = shelves.get_shelf_at(LIB, ShelfAddress(section.id, 1, 1))
+    unbind_shelf_from_map(maps, shelves, LIB, standing, journal=journal)
+
+    apply_gaps(maps, shelves, books, LIB,
+               with_gaps(maps.get_section(LIB, section.id), [(1, 1)], gap=True),
+               journal=_journal(), ids=SeqIdGen(), clock=StubClock())
+
+    said = offer(journal, maps, shelves, LIB)
+    assert said.available is False and said.reason == "world_moved", (
+        "the undo offered to restore a shelf into a cell that is switched off")
+    assert f"shape:{section.id}" in said.changed
+    _raises(UndoRefused, undo, journal, maps, shelves, books, LIB)
+    assert shelves.get_shelf(LIB, standing.id).address is None
+
+
+def test_undoing_an_unbind_is_REFUSED_once_the_COLUMN_is_shortened_past_it():
+    """The same hole through the other gesture. A column shrink that releases
+    nothing records nothing, so the unbind stays at the head while the extent
+    moves under it."""
+    from app.map_undo import offer
+
+    maps, shelves, books, section = _drawn(columns=2, levels=2)
+    journal = _journal()
+    standing = shelves.get_shelf_at(LIB, ShelfAddress(section.id, 2, 2))
+    unbind_shelf_from_map(maps, shelves, LIB, standing, journal=journal)
+
+    apply_slot_change(
+        maps, shelves, books, LIB,
+        with_column_levels(maps.get_section(LIB, section.id), 2, 1),
+        journal=_journal(), ids=SeqIdGen(), clock=StubClock())
+
+    said = offer(journal, maps, shelves, LIB)
+    assert said.available is False, (
+        "the undo offered to restore a shelf into a level that is gone")
+    assert f"shape:{section.id}" in said.changed
+
+
+def test_a_COALESCED_entry_remembers_the_first_half_as_the_first_half_wrote_it():
+    """⚠⚠ The widest window in the journal, and the commonest entry there is.
+
+    `push.ts` sends *clear slots* then *delete* for every bookcase removal, so
+    a coalesced entry is what removing furniture always produces — and the
+    union's fingerprint was computed with only the SECOND half's `wrote`.
+    Every key belonging to the first half fell back to a live read taken a
+    full HTTP round trip later. Measured: a shelf renamed between the two
+    requests was recorded as the edit's own work, the offer said
+    `available: true` with an empty `changed`, and the undo destroyed the
+    rename.
+    """
+    from app.map_undo import offer
+
+    maps, shelves, books, section = _drawn()
+    journal = _journal()
+    drawn_case = maps.get_bookcase(LIB, "bc")
+    detaching = shelves.get_shelf_at(LIB, ShelfAddress(section.id, 1, 1))
+    _shelve_a_book(books, detaching.id)
+
+    clear_bookcase_slots(maps, shelves, books, LIB, drawn_case.id,
+                         journal=journal)
+    # Another tab, between the two requests the client always sends.
+    shelves.save_shelf(LIB, rename_shelf(
+        shelves.get_shelf(LIB, detaching.id), "שם חדש"))
+    remove_record(maps, shelves, LIB, "bookcase", drawn_case.id,
+                  journal=journal)
+
+    assert len(journal.store.recent(LIB, limit=9)) == 1, "they did not coalesce"
+    said = offer(journal, maps, shelves, LIB)
+    assert said.available is False and said.reason == "world_moved", (
+        "the undo would have destroyed a rename made after the first half")
+    assert f"shelves:{detaching.id}" in said.changed
+
+
+def test_a_bind_that_races_a_GAP_puts_the_shelf_back_rather_than_standing_in_it():
+    """⚠⚠ The index backstops one of the four checks. *The cell exists* and
+    *the cell is not a gap* are asked of a `Section` read on another
+    connection, with no lock held.
+
+    Measured with the interleave: bind into (1,1) while another tab switches
+    that cell off, and five books stand in a cell the drawing does not have —
+    in neither the elevation nor the picker, and routing around `apply_gaps`'s
+    own refusal, which declines to gap a cell holding books.
+
+    The compensation is a re-read after the write: if the slot has gone, the
+    shelf goes back where it started and the ladder decides the refusal.
+    """
+    maps, shelves, books, section = _drawn()
+    _free(maps, shelves, books, section, 1, 1)
+    homeless = _homeless(shelves)
+    _shelve_a_book(books, homeless.id)
+
+    class Interloping:
+        """Another tab, gapping the cell inside the bind's own window."""
+
+        def __init__(self, inner):
+            self._inner, self._done = inner, False
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+        def get_section(self, library, section_id):
+            if not self._done:
+                self._done = True
+                self._inner.save_section(library, with_gaps(
+                    self._inner.get_section(library, section_id),
+                    [(1, 1)], gap=True).section)
+            return self._inner.get_section(library, section_id)
+
+    _raises(CellIsGap, bind_shelf_to_slot, Interloping(maps), shelves, LIB,
+            homeless, section, ShelfAddress(section.id, 1, 1))
+    back = shelves.get_shelf(LIB, homeless.id)
+    assert back.address is None, (
+        "a book stands in a cell the drawing does not have")
+
+
+def test_a_shelf_that_was_MERGED_INTO_another_is_refused_a_slot():
+    """⚠ P6.4a left the row and P6.4d will create it: an absorbed identity
+    that outlives its merge has no address, so it appears in `GET /shelves`
+    and therefore in the picker's *not on the map* list.
+
+    Binding it puts ONE population of copies in TWO cells — the survivor where
+    the merge put it, and this identity wherever the bind lands. Nothing
+    downstream refuses it; a review reproduced exactly that.
+    """
+    from app.domain import ShelfWasMerged
+    from app.domain.alias import ShelfAlias
+
+    maps, shelves, books, section = _drawn()
+    _free(maps, shelves, books, section, 1, 2)
+    survivor = shelves.get_shelf_at(LIB, ShelfAddress(section.id, 1, 1))
+    ghost = _homeless(shelves, id="sh-ghost")
+    shelves.save_alias(LIB, ShelfAlias(
+        alias_id=ghost.id, library_id=LIB.id, shelf_id=survivor.id,
+        address=None, label="", merged_at=WHEN))
+
+    _raises(ShelfWasMerged, bind_shelf_to_slot, maps, shelves, LIB, ghost,
+            section, ShelfAddress(section.id, 1, 2))
+    assert shelves.get_shelf(LIB, ghost.id).address is None
+    # …and the SURVIVOR is bindable, which is the half a blanket refusal would
+    # have broken: it is a shelf of its own that other identities resolve to.
+    unbind_shelf_from_map(maps, shelves, LIB, survivor, journal=_journal())
+    again = bind_shelf_to_slot(maps, shelves, LIB,
+                               shelves.get_shelf(LIB, survivor.id), section,
+                               ShelfAddress(section.id, 1, 2))
+    assert again.address == ShelfAddress(section.id, 1, 2)

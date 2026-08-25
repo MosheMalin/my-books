@@ -59,7 +59,8 @@ export type Actions = {
   shelvesOffTheMap: () => Promise<OffMapShelf[]>
   bindShelf: (shelfId: string, sectionId: string, col: number, level: number,
               name: string) => void
-  unbindShelf: (shelfId: string, name: string) => void
+  unbindShelf: (shelfId: string, sectionId: string, col: number,
+                level: number, name: string) => void
   addSection: (id: string, where: 'top' | 'bottom') => void
   removeSection: (id: string, sectionId: string) => void
   deleteSelection: () => void
@@ -579,7 +580,11 @@ function ShelfPanel({
                 if (shelf.books + shelf.photos === 0
                     || confirm(T.shelf_take_off_map_confirm(shelf.books,
                                                             shelf.photos))) {
-                  actions.unbindShelf(shelf.id as string, name)
+                  // The CELL, not only the shelf — the counts in that dialog
+                  // came from this cell, and the server refuses if the shelf
+                  // has moved out of it since.
+                  actions.unbindShelf(shelf.id as string, sec.id, shelf.col,
+                                      shelf.level, name)
                 }
               }}
             >

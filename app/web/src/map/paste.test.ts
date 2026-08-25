@@ -13,7 +13,7 @@ import type { Bookcase, Plan, Room, Section } from './core/model'
 import { emptyPlan } from './core/model'
 import { PASTE_OFFSET, pasteInto } from './paste'
 import { planDiff } from './sync'
-import type { Doc } from './ui/types'
+import type { Clipboard, Doc } from './ui/types'
 
 const section = (id: string, cols: number, levels: number, depth: number): Section => ({
   id,
@@ -106,5 +106,53 @@ describe('pasting a bookcase', () => {
     expect(new Set(ids).size).toBe(ids.length)
     const sections = second.doc.plan.cases.flatMap((c) => c.sections.map((s) => s.id))
     expect(new Set(sections).size).toBe(sections.length)
+  })
+})
+
+describe('what a pasted cell must NOT carry (P6.4c)', () => {
+  it('leaves the original shelf\'s identity behind', () => {
+    // ⚠⚠ A review measured the whole chain: `{ ...shelf }` copied `id`, so
+    // pressing *take off the map* on a cell of the COPY sent
+    // `DELETE /map/shelves/<the ORIGINAL's id>/address`. Nothing refuses it —
+    // that shelf is real, in this library, with a real address — and the
+    // copy's cell still looked bound afterwards, so the only visible change
+    // was a shelf quietly leaving the drawing elsewhere on the plan.
+    //
+    // This file's own header records the SAME failure once already, through
+    // the section id. A new identity field walked back in on that line.
+    const doc: Doc = {
+      seq: 0,
+      plan: {
+        ...emptyPlan(),
+        cases: [{
+          ...newBookcase('c1', 'המקור', { x: 0, y: 0, w: 4, h: 1 }, 'S', null, 'f1', 1),
+          sections: [{
+            id: 'c1:s1', columnLevels: [2], gaps: [],
+            defaultLevels: 2, defaultDepth: 1,
+            shelves: [
+              { col: 0, level: 0, depth: 1, photos: 0, books: 0,
+                id: 'sh-real', label: 'המדף האמיתי' },
+              { col: 0, level: 1, depth: 1, photos: 0, books: 0, free: true },
+            ],
+          }],
+        }],
+      },
+    }
+    // Deep-cloned at COPY time, exactly as `MapScreen.copySelection` does it —
+    // which is how the identity fields reach the clipboard in the first place.
+    const clip = JSON.parse(JSON.stringify(
+      { rooms: [], cases: doc.plan.cases })) as NonNullable<Clipboard>
+
+    const pasted = pasteInto(doc, clip, 'f1')
+    const copy = pasted.doc.plan.cases[1]!
+    for (const cell of copy.sections[0]!.shelves) {
+      expect(cell.id, 'the copy addresses the original\'s shelf').toBeUndefined()
+      expect(cell.label).toBeUndefined()
+      expect(cell.free).toBeUndefined()
+    }
+    // …and the original is untouched, which is the other half of the same
+    // rule: a paste must not reach back into what it copied.
+    expect(pasted.doc.plan.cases[0]!.sections[0]!.shelves[0]!.id)
+      .toBe('sh-real')
   })
 })

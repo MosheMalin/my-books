@@ -51,10 +51,29 @@ export function serializePlan(plan: Plan): string {
   const file: PlanFile = {
     format: FORMAT,
     version: FORMAT_VERSION,
-    plan: { ...plan, underlay: null },
+    plan: { ...plan, underlay: null, cases: plan.cases.map(withoutIdentity) },
   }
   return JSON.stringify(file, null, 2)
 }
+
+/**
+ * A bookcase with the SERVER's per-cell fields stripped (P6.4c).
+ *
+ * `readShelf` already drops `id`, `label` and `free` on the way in, for the
+ * reason it gives about `books`: what stands on a slot is the library's fact,
+ * not the drawing's. Writing them out anyway made a file that reads
+ * identically and carries this household's shelf ids and shelf NAMES into
+ * whatever the owner shares it with — a plan file is a drawing, not an
+ * export of the catalogue.
+ */
+const withoutIdentity = (bc: Bookcase): Bookcase => ({
+  ...bc,
+  sections: bc.sections.map((s) => ({
+    ...s,
+    shelves: s.shelves.map(
+      ({ id: _id, label: _label, free: _free, ...cell }) => ({ ...cell })),
+  })),
+})
 
 export type ParseResult = { ok: true; plan: Plan } | { ok: false; error: string }
 

@@ -3085,3 +3085,72 @@ def test_a_slot_that_already_holds_a_shelf_refuses_the_bind_itself():
     # ...and the same slot, free, is exactly what it is for.
     assert plan_bind(homeless, section, ShelfAddress("se", 1, 1),
                      None).address == ShelfAddress("se", 1, 1)
+
+
+def test_the_bind_ladder_answers_about_the_SHELF_before_the_slot():
+    """⚠ The order is argued at length in `plan_bind` and was enforced by
+    nothing: a review swapped the two blocks and the whole ring stayed green,
+    because no test built the one case that tells them apart — an addressed
+    shelf aimed at an OCCUPIED slot.
+
+    Only the last rung offers a next step (*merge instead?*, P6.4d). Offering
+    it to somebody whose request was impossible for a simpler reason is how a
+    dangerous button gets pressed by accident, and that is the whole of §3.14's
+    argument for keeping bind and merge apart.
+    """
+    from app.domain import (
+        AlreadyOnTheMap, Section, ShelfAddress, new_shelf, plan_bind,
+    )
+
+    section = Section(id="se", library_id="lib", bookcase_id="bc", ordinal=1,
+                      column_levels=(2, 2))
+    standing = new_shelf(id="drawn", library_id="lib",
+                         address=ShelfAddress("se", 1, 2))
+    occupant = new_shelf(id="other", library_id="lib",
+                         address=ShelfAddress("se", 1, 1))
+
+    try:
+        plan_bind(standing, section, ShelfAddress("se", 1, 1), occupant)
+    except AlreadyOnTheMap:
+        pass
+    else:
+        raise AssertionError(
+            "an addressed shelf aimed at a taken slot was offered the merge")
+
+
+def test_binding_a_shelf_to_the_cell_it_ALREADY_stands_in_is_a_no_op():
+    """The promise `PUT` makes, and the reason the refusal above is not
+    reached by a double tap.
+
+    A retry after a dropped response, or two taps on one picker option, used
+    to answer `AlreadyOnTheMap` — which the client renders as *the drawing has
+    changed since*, a false statement about the owner's own request landing.
+    The unbind beside it has always answered 200 for the same event.
+    """
+    from app.domain import Section, ShelfAddress, new_shelf, plan_bind
+
+    section = Section(id="se", library_id="lib", bookcase_id="bc", ordinal=1,
+                      column_levels=(2, 2))
+    where = ShelfAddress("se", 1, 1)
+    standing = new_shelf(id="drawn", library_id="lib", address=where)
+
+    assert plan_bind(standing, section, where, standing) == standing
+    assert plan_bind(standing, section, where, None) == standing
+
+
+def test_an_address_naming_another_section_is_refused_by_the_rule_itself():
+    """⚠ Unreachable from the only caller today — the route builds the
+    address from the section it just loaded — and gated here anyway, because
+    `plan_bind` is exported and the next caller will not be that one. A
+    review deleted the clause and nothing failed."""
+    from app.domain import DomainError, Section, ShelfAddress, new_shelf, plan_bind
+
+    section = Section(id="se", library_id="lib", bookcase_id="bc", ordinal=1,
+                      column_levels=(2, 2))
+    homeless = new_shelf(id="photo-born", library_id="lib")
+    try:
+        plan_bind(homeless, section, ShelfAddress("elsewhere", 1, 1), None)
+    except DomainError as exc:
+        assert "elsewhere" in str(exc)
+    else:
+        raise AssertionError("a shelf was bound into another section's cell")

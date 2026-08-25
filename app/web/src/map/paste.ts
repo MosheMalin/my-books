@@ -83,12 +83,31 @@ export function pasteInto(
  *
  * The shelves are rebuilt rather than shared: pasting the same clipboard
  * twice must not hand two bookcases one array to edit.
+ *
+ * ⚠⚠ **And the SERVER's fields are dropped**, not spread. This file's own
+ * header records the same failure once already — every cell of the COPY
+ * addressed the ORIGINAL's shelves, so setting a depth on the copy edited the
+ * original — and P6.4c walked it straight back in through this one line, with
+ * worse consequences: `id` made *הורדה מהמפה* on a pasted cell send
+ * `DELETE /map/shelves/<the original's id>/address`. Nothing refuses it; that
+ * shelf is real, in this library, with a real address. The copy's cell still
+ * looks bound afterwards, so the only visible change is a shelf that quietly
+ * left the drawing somewhere else on the plan. Measured by a review.
+ *
+ * `free` is the milder half and goes for the same reason: a pasted free cell
+ * would offer *put a shelf here* against a section the server has not created
+ * yet, and answer 409 for a slot that is about to be filled.
+ *
+ * A pasted cell is a slot nobody has drawn yet. It has no identity until the
+ * push mints one — which is exactly what `withColumnCount` produces, and what
+ * `readShelf` produces on import.
  */
 const freshSection = (s: Section, id: string): Section => ({
   ...s,
   id,
   columnLevels: s.columnLevels.slice(),
-  shelves: s.shelves.map((shelf) => ({ ...shelf })),
+  shelves: s.shelves.map(
+    ({ id: _id, label: _label, free: _free, ...cell }) => ({ ...cell })),
 })
 
 const offset = <T extends { x: number; y: number }>(r: T): T => ({

@@ -101,7 +101,8 @@ export type MapScreenProps = {
     offTheMap: () => Promise<OffMapShelf[]>
     bind: (shelfId: string, sectionId: string, col: number, level: number,
            name: string) => void
-    unbind: (shelfId: string, name: string) => void
+    unbind: (shelfId: string, sectionId: string, col: number, level: number,
+             name: string) => void
   }
 }
 

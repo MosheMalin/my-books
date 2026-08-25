@@ -100,10 +100,14 @@ describe('the hook that binds a shelf to a slot', () => {
     const seen = mountHook(source)
     await screen.findByText('ready', {}, WAIT)
 
-    act(() => seen.sync!.unbindShelf('sh-9', 'מדף א'))
+    act(() => seen.sync!.unbindShelf('sh-9', 'sec-1', 1, 2, 'מדף א'))
     await waitFor(() => expect(calls).toHaveLength(1), WAIT)
     expect(calls[0]![0]).toBe('DELETE')
-    expect(calls[0]![1]).toBe('/map/shelves/sh-9/address')
+    // ⚠ The CELL travels with it, 1-based like every address on the wire: a
+    // panel that has not seen the shelf move must not detach it from
+    // wherever it now stands.
+    expect(calls[0]![1]).toBe(
+      '/map/shelves/sh-9/address?section_id=sec-1&col=2&level=3')
     await waitFor(() => expect(seen.sync!.flash)
       .toBe(HE.unbound_shelf('מדף א')), WAIT)
   })
@@ -170,5 +174,66 @@ describe('the hook that binds a shelf to a slot', () => {
 
     expect(await seen.sync!.shelvesOffTheMap()).toEqual(off)
     expect(offTheMap).toHaveBeenCalledTimes(1)
+  })
+
+  it('DRAINS the push queue before it re-derives, or the drawing is lost', async () => {
+    // ⚠⚠ The rule `slotWrite`'s docstring is emphatic about, and nothing
+    // held it: a review dropped `await inflight.current` and the whole ring
+    // stayed green. What it costs is the owner's work — `startOver()` bumps
+    // `era`, and a queued `record` task whose era is stale RETURNS WITHOUT
+    // SENDING its ops. So a room renamed a moment before pressing *take off
+    // the map* would never reach the server, and nothing would say so.
+    //
+    // Held open by making the document's push wait: if the bind goes out
+    // before that push has landed, the drain is not there.
+    let releasePush: () => void = () => {}
+    const held = new Promise<void>((go) => { releasePush = go })
+    const order: string[] = []
+    const { source } = fakeSource({
+      api: {
+        post: async (p) => { order.push(`POST ${p}`); await held; return { id: 'x' } },
+        put: async (p) => { order.push(`PUT ${p}`); return {} },
+        patch: async () => ({}),
+        del: async () => ({}),
+      },
+    })
+    const seen = mountHook(source)
+    await screen.findByText('ready', {}, WAIT)
+
+    // One document edit, still in flight...
+    act(() => seen.sync!.record({
+      ...seen.sync!.initial!,
+      rooms: [{ id: 'r1', name: 'חדר חדש', rect: { x: 0, y: 0, w: 4, h: 3 },
+                floorId: 'fl' }],
+    }))
+    await waitFor(() => expect(order).toHaveLength(1), WAIT)
+
+    // ...and a bind on top of it.
+    act(() => seen.sync!.bindShelf('sh-1', 'sec-1', 0, 0, 'מדף'))
+    await new Promise((go) => setTimeout(go, 20))
+    expect(order, 'the bind overtook an edit that had not reached the server')
+      .toEqual(['POST /map/places'])
+
+    releasePush()
+    await waitFor(() => expect(order).toEqual(
+      ['POST /map/places', 'PUT /map/shelves/sh-1/address']), WAIT)
+  })
+
+  it('escapes the shelf id it puts in the path', async () => {
+    // Ids are minted, so this is not a live injection — it is the escaping
+    // being pinned, because "the ids are safe" is a claim about a different
+    // module than the one building the URL.
+    const { source, calls } = fakeSource()
+    const seen = mountHook(source)
+    await screen.findByText('ready', {}, WAIT)
+
+    act(() => seen.sync!.bindShelf('a b/c?d', 'sec 1', 0, 0, 'מדף'))
+    await waitFor(() => expect(calls).toHaveLength(1), WAIT)
+    expect(calls[0]![1]).toBe('/map/shelves/a%20b%2Fc%3Fd/address')
+
+    act(() => seen.sync!.unbindShelf('a b/c?d', 'sec 1', 0, 0, 'מדף'))
+    await waitFor(() => expect(calls).toHaveLength(2), WAIT)
+    expect(calls[1]![1]).toBe(
+      '/map/shelves/a%20b%2Fc%3Fd/address?section_id=sec%201&col=1&level=1')
   })
 })

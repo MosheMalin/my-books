@@ -50,6 +50,7 @@ from app.domain import (
     slot_taken,
     unbind_shelf,
 )
+from app.domain.alias import resolve
 from app.domain.map_undo import MapRestore
 from app.map_undo import Journal, record
 from app.ports import Clock, IdGen
@@ -60,6 +61,7 @@ from app.ports.store import (
     ShelfHasAliases,
     ShelfNotEmpty,
     ShelfStore,
+    UnknownParent,
 )
 
 
@@ -716,6 +718,7 @@ def _release(
 
 
 def bind_shelf_to_slot(
+    map_store: MapStore,
     shelves: ShelfStore,
     library: LibraryRef,
     shelf: Shelf,
@@ -737,9 +740,29 @@ def bind_shelf_to_slot(
     turns into anything, so the owner would get a 500 for the ordinary race
     the whole feature is about. It is re-read rather than guessed at, because
     the occupant a refusal names has to be the one that is actually there.
+
+    ⚠⚠ **And the index backstops only ONE of the four checks.** *The slot is
+    free* is a unique index; *the cell exists* and *the cell is not a gap* are
+    asked of a ``Section`` read on a different connection, with no lock held,
+    and nothing in the schema can express them. A review measured the
+    interleave: bind into (1,1) while another tab switches that cell off, and
+    five books end up standing in a cell the drawing does not have — in
+    neither the elevation (``toPlan`` renders no gapped cell) nor the picker
+    (it lists unaddressed shelves), and routing around ``apply_gaps``'s own
+    refusal, which declines to gap a cell holding books.
+
+    So the section is re-read AFTER the write and the ladder re-run against
+    it; if the slot has gone, the shelf is put back where it started and the
+    refusal is raised. Compensation rather than a lock, deliberately: the
+    alternative is a ``ShelfStore.bind_shelf`` taking ``BEGIN IMMEDIATE``
+    across two tables, which is a port method and two implementations for a
+    window this closes with one read. The gap edit that lands the other way
+    round is refused by its own occupancy check, which sees the books.
     """
+    aliases = shelves.list_aliases(library)
     bound = plan_bind(shelf, section, address,
-                      shelves.get_shelf_at(library, address))
+                      shelves.get_shelf_at(library, address),
+                      merged_into=resolve(shelf.id, aliases))
     try:
         shelves.save_shelf(library, bound)
     except DuplicateShelfSlot as exc:
@@ -750,6 +773,17 @@ def bind_shelf_to_slot(
             # occupant that does not exist.
             raise
         raise slot_taken(address, occupant) from exc
+
+    fresh = map_store.get_section(library, address.section_id)
+    if fresh is None or address not in fresh.addresses:
+        shelves.save_shelf(library, shelf)
+        # Re-runs the ladder rather than choosing a message: whichever of
+        # "no such cell" or "switched off" is now true is the one the owner
+        # should read, and there is exactly one place that decides that.
+        plan_bind(shelf, fresh if fresh is not None else section, address,
+                  None, merged_into=resolve(shelf.id, aliases))
+        raise UnknownParent(
+            f"section {address.section_id} is no longer there")
     return bound
 
 
@@ -760,6 +794,7 @@ def unbind_shelf_from_map(
     shelf: Shelf,
     *,
     journal: Journal,
+    expected: ShelfAddress | None = None,
 ) -> Shelf:
     """Take a shelf off the drawing, keeping the shelf (P6.4c).
 
@@ -783,9 +818,26 @@ def unbind_shelf_from_map(
     entry whose restore is a shelf row that did not change would sit at the
     head of a one-deep journal doing nothing, which is the same as deleting
     the real undo standing behind it.
+
+    ⚠ ``expected`` is the address the CALLER believes this shelf stands at,
+    and it is what makes a stale screen safe. A review measured the gap: the
+    laptop shows cell (1,1) holding *"מדף הטלוויזיה"*; on the phone the owner
+    moves that shelf to (2,4); back on the laptop they read the old label and
+    the old counts in the confirmation and press *take off the map* — and the
+    server detaches it from (2,4), the address just deliberately set,
+    answering 200. Recoverable, because it is journalled, but the dialog
+    quoted a location and counts that were not the ones acted on.
+
+    ⚠ Checked only when the shelf HAS an address, which is what keeps the
+    retry a no-op: the second attempt of a dropped response finds it standing
+    nowhere and must not turn into a 409 for an operation that already
+    succeeded. §5.7's *declared, never detected*, applied to a gesture rather
+    than to a row.
     """
     if shelf.address is None:
         return shelf
+    if expected is not None and shelf.address != expected:
+        raise slot_taken(shelf.address, shelf)
     detached = unbind_shelf(shelf)
     shelves.save_shelf(library, detached)
     _record(journal, map_store, shelves, library, kind="unbind_shelf",
