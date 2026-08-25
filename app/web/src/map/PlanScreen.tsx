@@ -251,6 +251,8 @@ export function PlanScreen({ library }: { library: string }) {
           offTheMap: sync.shelvesOffTheMap,
           bind: sync.bindShelf,
           unbind: sync.unbindShelf,
+          previewMerge: sync.previewMerge,
+          merge: sync.mergeShelf,
         }}
       />
     </>

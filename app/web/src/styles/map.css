@@ -866,6 +866,43 @@
   text-align: start;
 }
 .mapscreen .shelf-pick li button .note { margin: 0; font-size: 11px; }
+/* Merging two identities into one (P6.4d, MAP_PLAN §3.11).
+   ⚠ It reuses `.shelf-pick` for the list — the same rows, the same bound —
+   and adds only what is different: the account of what would move, and the
+   one question §3.12 says must be ANSWERED rather than defaulted. */
+.mapscreen .merge-open {
+  margin-top: 8px;
+  width: 100%;
+  min-height: 44px;
+}
+.mapscreen .merge-preview { margin-top: 8px; }
+.mapscreen .merge-facts {
+  margin: 6px 0;
+  /* `padding-inline-start`, never `padding-left`: the bullets sit on the
+     start edge in both directions, and this panel is read in Hebrew. */
+  padding-inline-start: 18px;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.mapscreen .merge-facts .warn { color: var(--warn); }
+/* ⚠ `.note.warn` had NO rule at all, in either theme. P6.4c introduced two
+   of them — the shelf list that could not be read, and the merge preview that
+   could not — and both rendered in `--dim`, the colour this sheet uses for
+   *this is a detail you can skip*. A failure that reads as a footnote is the
+   same family as the empty list that read as "every shelf is already on the
+   map": absent is not unknown, and unreadable is not fine. */
+.mapscreen .note.warn { color: var(--warn); }
+.mapscreen .merge-strip { margin: 8px 0; }
+.mapscreen .merge-strip .field.inline { min-height: 44px; }
+/* A destructive control that is not yet allowed to fire has to LOOK unusable;
+   `disabled` alone leaves a full-strength danger button that swallows taps
+   in silence. */
+.mapscreen .merge-preview button[disabled] { opacity: 0.45; }
+.mapscreen .merge-preview .danger,
+.mapscreen .merge-preview .linkish { min-height: 44px; }
+
 /* While the document is being re-derived (P6.4c). The editor STAYS on
    screen — a blank is what a review measured at 1.42s for one tap — and is
    made inert rather than merely dim, because an edit made in that window

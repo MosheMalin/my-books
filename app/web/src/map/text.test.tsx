@@ -115,7 +115,13 @@ const openEditor = () =>
         onReload={() => {}}
         site={ONE_SITE}
         shelves={{ offTheMap: async () => [], bind: () => {},
-                   unbind: () => {} }}
+                   unbind: () => {}, merge: () => {},
+                   previewMerge: async () => ({
+                     absorbed_id: 'a', survivor_id: 'b', refused: null,
+                     already: false, depth: 1, books: 0, copies: [],
+                     photos: [], clashes: [], answers_moved: 0,
+                     identities_moved: 0,
+                   }) }}
       />
     </I18nProvider>,
   )
@@ -322,7 +328,7 @@ describe('counted strings say ONE, in both languages', () => {
       // a bound or a reached value, never 1 in practice and a value either way
       'too_many_slots.max', 'too_many_slots.asked', 'too_many_sections.max',
       // an ordinal: «1. שם המדף» is the position in the picker
-      'pick_shelf_option.n',
+      'pick_shelf_option.n', 'merge_pick_option.n',
     ])
     const bare: string[] = []
 

@@ -77,6 +77,37 @@ export type OffMapShelf = {
   book_count: number
 }
 
+/** Which shelf's photographs come first on the merged strip (§3.12). */
+export type StripOrder = 'absorbed_first' | 'survivor_first'
+
+/**
+ * What a merge would move — the answer to `POST .../merge/preview` (P6.4d).
+ *
+ * ⚠ `refused` arrives with a **200**, carrying a stable `reason` beside the
+ * sentence. A preview that answered 409 could not show the owner why, which
+ * is the only thing it is for — and reading a `detail` string would be this
+ * client parsing English, which is the finding P6.4c left on this item.
+ */
+export type MergePreview = {
+  absorbed_id: string
+  survivor_id: string
+  refused: { reason: string; say: string } | null
+  already: boolean
+  depth: number
+  books: number
+  copies: { depth: number; count: number }[]
+  photos: { depth: number; count: number }[]
+  clashes: {
+    depth: number
+    book_key: string
+    winner: string
+    absorbed_kind: string
+    survivor_kind: string
+  }[]
+  answers_moved: number
+  identities_moved: number
+}
+
 /**
  * Why a push failure is NOT the load's `error`.
  *
@@ -178,6 +209,10 @@ export type MapSync = {
   undoLastEdit: () => void
   /** P6.4c. The shelves standing nowhere, for the picker. */
   shelvesOffTheMap: () => Promise<OffMapShelf[]>
+  previewMerge: (absorbedId: string, survivorId: string,
+                 strip: StripOrder) => Promise<MergePreview>
+  mergeShelf: (absorbedId: string, survivorId: string, strip: StripOrder,
+               name: string) => void
   /** Put an unaddressed shelf into a free slot. Server-owned: the document
    *  has no way to say "this cell is THAT shelf" (§3.1 — a slot IS a shelf,
    *  so the document holds slots, never identities). */
@@ -605,6 +640,43 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
   const shelvesOffTheMap = useCallback(
     () => source.offTheMap?.() ?? Promise.resolve([]), [source])
 
+  /**
+   * What absorbing one shelf into another would move. Writes nothing.
+   *
+   * ⚠ NOT routed through `slotWrite`. That helper re-derives the whole
+   * document after every call, because every refusal a bind or an unbind can
+   * meet means the drawing moved — and a preview meets refusals that mean
+   * nothing of the sort (*a read is running*, *the wishlist stands nowhere*).
+   * Re-deriving here would also blank the panel the owner is reading the
+   * preview in.
+   */
+  const previewMerge = useCallback(
+    (absorbedId: string, survivorId: string, strip: StripOrder) =>
+      source.api.post(
+        `/map/shelves/${encodeURIComponent(absorbedId)}/merge/preview`,
+        { into: survivorId, strip }) as Promise<MergePreview>,
+    [source])
+
+  /**
+   * Absorb one shelf into another — **the dangerous half of P6.4**.
+   *
+   * A `slotWrite` like the bind and the unbind, and for the strongest version
+   * of that helper's reason: this one moves a population of copies and deletes
+   * a shelf row, so the document on screen is wrong in more places than the
+   * cell that was pressed. §3.14 keeps it a separate gesture from the bind —
+   * never one button — and §3.14 is also why the panel shows the preview
+   * first: a ✓ given without seeing what moves is not one.
+   */
+  const mergeShelf = useCallback(
+    (absorbedId: string, survivorId: string, strip: StripOrder,
+     name: string) =>
+      slotWrite(
+        (api) => api.post(
+          `/map/shelves/${encodeURIComponent(absorbedId)}/merge`,
+          { into: survivorId, strip }),
+        T.merged_into(name)),
+    [slotWrite, T])
+
   const bindShelf = useCallback(
     (shelfId: string, sectionId: string, col: number, level: number,
      name: string) =>
@@ -748,6 +820,8 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
     removeSite,
     undoLastEdit,
     shelvesOffTheMap,
+    previewMerge,
+    mergeShelf,
     bindShelf,
     unbindShelf,
     initial,

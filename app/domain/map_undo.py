@@ -267,19 +267,6 @@ def digest_slots(shelves: Iterable[Shelf]) -> str:
     ))
 
 
-def digest_placement(placement: CopyPlacement | None) -> str:
-    """Digest where one copy stands — ``(shelf, depth)`` and nothing else.
-
-    The narrow twin of :func:`digest_row`, and the narrowness is the point:
-    the fingerprint has to refuse an undo whose copy has been moved somewhere
-    else since, and must NOT refuse one whose book was renamed on the books
-    tab. A merge writes a location; a location is what it is answerable for.
-    """
-    if placement is None:
-        return ABSENT
-    return _digest((placement.shelf_id, placement.depth))
-
-
 def digest_shape(section: Section | None) -> str:
     """Digest a section's SHAPE — its extent and its mask, nothing else.
 

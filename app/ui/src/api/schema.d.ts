@@ -1217,46 +1217,25 @@ export interface paths {
          * Merge Shelves
          * @description Absorb this shelf into `into`. **The dangerous half of P6.4.**
          *
-         *
-         *
          *     Two identities become one: a population of copies moves, two capture
-         *
          *     strips join, standing answers move with the wood (§3.13), and the absorbed
-         *
          *     identity survives as an alias of its id AND its former address (§3.11).
-         *
          *     It is undoable, and the inverse is the rows as they stood — §3.15 put the
-         *
          *     journal ahead of this item precisely so this sentence could be written.
-         *
-         *
          *
          *     The answers:
          *
-         *
-         *
          *       - **404** — either shelf is gone, foreign or fictional (§4.2);
-         *
          *       - **400** — `strip` is not one of the two;
-         *
          *       - **409** — refused, with a stable `reason` in `detail.reason` and the
-         *
          *         sentence in `detail.say`. Six reasons, and each is a different thing
-         *
          *         for a screen to say;
-         *
          *       - **200** — done, or already done. A retry after a dropped response is a
-         *
          *         no-op (§3.15), never a second merge.
          *
-         *
-         *
          *     ⚠ `detail` is an OBJECT here where every other route in this file sends a
-         *
          *     string. That is the finding P6.4c left on this row: a client offered a
-         *
          *     merge by a 409 whose occupant is prose has to parse English or throw the
-         *
          *     whole thing away, and both were measured happening.
          */
         post: operations["merge_shelves_api_v1_map_shelves__shelf_id__merge_post"];
@@ -1279,36 +1258,20 @@ export interface paths {
          * Preview Merge
          * @description What absorbing this shelf into `into` would move. **Writes nothing.**
          *
-         *
-         *
          *     §3.15 keeps the preview even though undo exists: *"it is not a substitute
-         *
          *     for undo but the other half of the same courtesy"*. §3.14 is why it is a
-         *
          *     separate call rather than a field on the merge — every merge is an
-         *
          *     explicit ✓, and a ✓ given without seeing what moves is not one.
          *
-         *
-         *
          *     **200 for a refusal too**, carried in `refused` with a stable `reason`
-         *
          *     beside the sentence. A preview that answers 409 cannot show the owner why,
-         *
          *     which is the only thing it is for — and the client would be parsing
-         *
          *     English out of a `detail` string, which is the finding P6.4c left on this
-         *
          *     item's row.
          *
-         *
-         *
          *     ⚠ It is a POST because it takes a body, not because it writes: `strip`
-         *
          *     changes the answer (§3.12) and a GET with a mandatory query triple is the
-         *
          *     same request wearing a URL. `tests/test_api.py` asserts the library is
-         *
          *     byte-identical afterwards.
          */
         post: operations["preview_merge_api_v1_map_shelves__shelf_id__merge_preview_post"];

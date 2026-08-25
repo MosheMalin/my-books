@@ -236,6 +236,29 @@ export interface MapText {
   bound_here: (name: string) => string
   unbound_shelf: (name: string) => string
   slot_moved_on: string
+  // merging two identities into one (P6.4d)
+  merge_a_shelf_here: string
+  merge_pick: string
+  merge_pick_option: (n: number, name: string, books: number,
+                      photos: number) => string
+  merge_reading: string
+  merge_read_failed: string
+  merge_would_move: (name: string, here: string) => string
+  merge_books: (n: number) => string
+  merge_photos: (n: number) => string
+  merge_answers: (n: number) => string
+  merge_identities: (n: number) => string
+  merge_depth_after: (n: number) => string
+  merge_moves_nothing: string
+  merge_clashes: (n: number) => string
+  merge_strip: string
+  merge_strip_absorbed_first: (name: string) => string
+  merge_strip_survivor_first: (name: string) => string
+  merge_confirm: string
+  merge_cancel: string
+  merge_refused: string
+  merge_already: string
+  merged_into: (name: string) => string
   own_depth: string
   photos_attached: string
   photos_are_captures: string
@@ -561,6 +584,43 @@ const HE: MapText = {
   bound_here: (name) => `נמצא עכשיו בתא הזה: ${name}`,
   unbound_shelf: (name) => `ירד מהמפה, ואפשר לשחזר: ${name}`,
   slot_moved_on: 'השרטוט השתנה מאז — הנה המצב העדכני. נסו שוב.',
+  // ⚠ *מיזוג*, never *שיוך*. Binding a shelf into a free slot and merging two
+  // identities into one are different acts (§3.14), and a UI that names them
+  // alike is how the dangerous one gets pressed by accident — it moves a whole
+  // population of books and looks like success either way, because the map
+  // gets fuller.
+  merge_a_shelf_here: 'מיזוג מדף אחר לכאן…',
+  merge_pick: 'איזה מדף הוא בעצם המדף הזה?',
+  merge_pick_option: (n, name, books, photos) =>
+    `אפשרות ${n}: ${name} — ${heHolds(books, photos)}`,
+  merge_reading: 'בודקים מה יזוז…',
+  merge_read_failed: 'לא הצלחנו לבדוק מה יזוז. שום דבר לא נגע.',
+  // ⚠ Our words first, then the two names. `unicode-bidi: plaintext` resolves
+  // a paragraph from its FIRST strong character, so a Hebrew sentence opening
+  // with a Latin-initial shelf name flips whole.
+  merge_would_move: (name, here) => `מיזוג ${name} לתוך ${here} יעביר:`,
+  merge_books: (n) => (n === 1 ? 'ספר אחד' : `${n} ספרים`),
+  merge_photos: (n) => (n === 1 ? 'תמונה אחת' : `${n} תמונות`),
+  merge_answers: (n) =>
+    n === 1 ? 'תשובה אחת שנתתם (למשל "לא, זה לא הספר הזה")'
+            : `${n} תשובות שנתתם (למשל "לא, זה לא הספר הזה")`,
+  merge_identities: (n) =>
+    n === 1 ? 'זהות נוספת אחת שכבר מוזגה לכאן'
+            : `${n} זהויות נוספות שכבר מוזגו לכאן`,
+  merge_depth_after: (n) =>
+    n === 1 ? 'המדף יישאר בשורה אחת' : `למדף יהיו ${n} שורות לעומק`,
+  merge_moves_nothing: 'אין ספרים ואין תמונות לזוז — רק הזהות מתאחדת.',
+  merge_clashes: (n) =>
+    n === 1 ? 'תשובה אחת ניתנה בשני המקומות; התשובה החדשה יותר תנצח.'
+            : `${n} תשובות ניתנו בשני המקומות; החדשות יותר ינצחו.`,
+  merge_strip: 'איזה חצי של המדף שמאלי?',
+  merge_strip_absorbed_first: (name) => `התמונות של ${name} ראשונות`,
+  merge_strip_survivor_first: (name) => `התמונות של ${name} ראשונות`,
+  merge_confirm: 'מיזוג',
+  merge_cancel: 'ביטול',
+  merge_refused: 'אי אפשר למזג:',
+  merge_already: 'שני המדפים כבר מאוחדים.',
+  merged_into: (name) => `מוזג לתוך המדף הזה: ${name}`,
   own_depth: 'העומק שלו',
   photos_attached: 'תמונות מצורפות',
   photos_are_captures:
@@ -829,6 +889,35 @@ const EN: MapText = {
   bound_here: (name) => `Now standing in this cell: ${name}`,
   unbound_shelf: (name) => `Came off the map, and can be restored: ${name}`,
   slot_moved_on: 'The drawing has changed since — here it is as it stands. Try again.',
+  merge_a_shelf_here: 'Merge another shelf into this one…',
+  merge_pick: 'Which shelf is really this shelf?',
+  merge_pick_option: (n, name, books, photos) =>
+    `Option ${n}: ${name} — ${enHolds(books, photos)}`,
+  merge_reading: 'Working out what would move…',
+  merge_read_failed: 'We could not work out what would move. Nothing was touched.',
+  merge_would_move: (name, here) => `Merging ${name} into ${here} would move:`,
+  merge_books: (n) => (n === 1 ? '1 book' : `${n} books`),
+  merge_photos: (n) => (n === 1 ? '1 photo' : `${n} photos`),
+  merge_answers: (n) =>
+    n === 1 ? '1 answer you gave (such as "no, that is not the book")'
+            : `${n} answers you gave (such as "no, that is not the book")`,
+  merge_identities: (n) =>
+    n === 1 ? '1 further identity already merged into it'
+            : `${n} further identities already merged into it`,
+  merge_depth_after: (n) =>
+    n === 1 ? 'The shelf stays one row deep' : `The shelf becomes ${n} rows deep`,
+  merge_moves_nothing: 'No books and no photographs to move — only the identity joins.',
+  merge_clashes: (n) =>
+    n === 1 ? '1 answer was given in both places; the newer one wins.'
+            : `${n} answers were given in both places; the newer ones win.`,
+  merge_strip: 'Which half of the shelf is on the left?',
+  merge_strip_absorbed_first: (name) => `${name}'s photographs come first`,
+  merge_strip_survivor_first: (name) => `${name}'s photographs come first`,
+  merge_confirm: 'Merge',
+  merge_cancel: 'Cancel',
+  merge_refused: 'Cannot merge:',
+  merge_already: 'These two shelves are already one.',
+  merged_into: (name) => `Merged into this shelf: ${name}`,
   own_depth: 'Its own depth',
   photos_attached: 'Photos attached',
   photos_are_captures:

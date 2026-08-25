@@ -557,18 +557,43 @@ class SqliteShelfStore(_SqliteStore):
     ) -> None:
         """An undo's word for the alias table — see the port for why it is one
         method rather than a delete and a loop."""
-        for row in put:
-            _same_library_alias(row, library)
+        for identity in put:
+            _same_library_alias(identity, library)
         with self._connect() as conn, _immediate(conn):
+            # ⚠ **The survivor is checked HERE, not left to the foreign key**,
+            # and a migration review measured both halves of why. The key is
+            # `shelf_id REFERENCES shelves (id)` — by id ALONE, blind to
+            # `library_id` — so an alias naming another library's shelf was
+            # ACCEPTED by this store and refused by the memory one, which is
+            # the divergence the API ring cannot see because it runs on memory
+            # stores. And that shelf's own library could then never delete it:
+            # its `delete_shelf` guard reads `aliases_of` scoped to itself,
+            # finds nothing, and the FK refuses with a raw
+            # `sqlite3.IntegrityError` crossing the port boundary — a 500
+            # where a refusal was owed.
+            #
+            # The other half is the translation: a missing shelf reached
+            # `_insert_alias`'s `IntegrityError` clause, which found neither
+            # "alias_id" nor "PRIMARY" in the driver's text and fell to the
+            # ADDRESS branch — so a shelf that does not exist answered
+            # *another identity already claims the slot None*, as a 409.
+            for identity in put:
+                if not conn.execute(
+                    "SELECT 1 FROM shelves WHERE id = ? AND library_id = ?",
+                    (identity.shelf_id, library.id),
+                ).fetchone():
+                    raise UnknownShelf(
+                        f"no shelf {identity.shelf_id} to absorb "
+                        f"{identity.alias_id} into")
             for alias_id in remove:
                 conn.execute(
                     "DELETE FROM shelf_aliases WHERE library_id = ?"
                     " AND alias_id = ?", (library.id, alias_id))
-            for row in put:
+            for identity in put:
                 conn.execute(
                     "DELETE FROM shelf_aliases WHERE library_id = ?"
-                    " AND alias_id = ?", (library.id, row.alias_id))
-                self._insert_alias(conn, library, row, checked=False)
+                    " AND alias_id = ?", (library.id, identity.alias_id))
+                self._insert_alias(conn, library, identity, checked=False)
             # ⚠ One hop, checked over the RESULT and inside the same lock. A
             # per-row check cannot see it: an undo writing two rows may be
             # legal in either order and illegal together.
@@ -2175,6 +2200,12 @@ class SqliteMapUndoStore(_SqliteStore):
 # this shape, it is `UNDO_CONTRACT` round-tripping a fully populated instance
 # of all six types against the memory store.
 
+#: Which shape ``_dump_inverse`` writes. Bumped whenever the payload's key
+#: set changes — see the ⚠ on ``payload["v"]``, and assert it from a test, or
+#: the next change forgets and nothing goes red.
+UNDO_BLOB_SHAPE = 2
+
+
 def _dump_inverse(entry: MapUndoEntry) -> str:
     """The restore, plus the coalescing tag, as one blob.
 
@@ -2214,12 +2245,22 @@ def _dump_inverse(entry: MapUndoEntry) -> str:
                                    entry.restore.minted_decisions]
     payload["minted_questions"] = [list(k) for k in
                                    entry.restore.minted_questions]
-    # The shape stamp. Free now, permanently absent from existing entries
-    # afterwards — and these blobs never expire (owner, 2026-08-24), so the
-    # oldest of them has to stay decodable forever. The day a step renames a
-    # column on `Shelf` or `Section`, this is what tells a rewrite which shape
-    # it is looking at instead of making it guess.
-    payload["v"] = 1
+    #: The shape stamp. These blobs never expire (owner, 2026-08-24), so the
+    #: oldest of them has to stay decodable forever, and the day a step
+    #: renames a column on `Shelf` or `Section` this is what tells a rewrite
+    #: which shape it is looking at instead of making it guess.
+    #:
+    #: ⚠ **2 since P6.4d**, and the bump is the finding rather than a
+    #: formality: shape 1 has eight keys and shape 2 has seventeen, and both
+    #: were being stamped `1` — so a reader consulting the stamp learned
+    #: nothing, which is worse than no stamp because it looks like an answer.
+    #: Free to bump exactly once: nothing reads it yet, today's `_load_undo`
+    #: ignores it, and the owner's journal held ZERO rows when this landed.
+    #: The measurement that makes it matter: a rolled-back binary decodes a
+    #: merge entry WITHOUT raising and silently drops the whole ledger half,
+    #: leaving an entry that can never be undone and refuses naming rows
+    #: nothing touched.
+    payload["v"] = UNDO_BLOB_SHAPE
     return json.dumps(payload, ensure_ascii=False)
 
 

@@ -579,6 +579,30 @@ def test_an_undo_refuses_once_a_moved_book_has_been_moved_again():
     assert "copies:c-b1" in said.changed, said.changed
 
 
+def test_renaming_a_book_after_a_merge_does_not_refuse_the_undo():
+    """The other half of the sentence above, and the reason the copy digest is
+    NARROW.
+
+    ⚠ A merge writes `shelf_id` and `depth` on a copy and touches nothing
+    else, so that is what the fingerprint may hold it to. Digesting the whole
+    book instead makes an undo refuse because somebody fixed a title on the
+    books tab — a screen with nothing to do with the map — and the refusal
+    would name a copy that has not moved an inch.
+    """
+    ports, journal = _world()
+    survivor = _drawn(ports).shelves[0]
+    absorbed = _photo_born(ports)
+    _book(ports, id="b1", title="תמול שלשם", shelf_id=absorbed.id)
+
+    _merge(ports, journal, absorbed, survivor)
+    from app.domain import edit
+    ports.books.save(LIB, edit(ports.books.get(LIB, "b1"),
+                               title="תמול שלשום"))
+
+    said = offer(journal, ports.map_store, ports.shelves, LIB)
+    assert said.available is True, said.changed
+
+
 def test_an_undo_refuses_once_the_alias_it_wrote_has_been_re_pointed():
     ports, journal = _world()
     drawn = _drawn(ports, columns=2)
@@ -600,3 +624,81 @@ def _alias(alias_id, shelf_id):
 
     return ShelfAlias(alias_id=alias_id, library_id=LIB.id, shelf_id=shelf_id,
                       merged_at="2026-08-26T11:00:00+00:00")
+
+
+def test_a_merge_and_its_undo_survive_a_real_database_file():
+    """The same census, over SQLite rather than dictionaries.
+
+    ⚠ Every other test in this module builds `_world()` from memory stores, so
+    the journal's JSON codec — the one component that has silently dropped a
+    field twice — meets a merge's inverse ONLY in `test_store_contract.py`.
+    That contract is a strong gate and it is not this: it round-trips a
+    hand-built entry, while this writes one through `merge()` and reads it
+    back through `undo()`, on a file with foreign keys switched on.
+
+    It is one case rather than a second parameterised suite because what it
+    adds is the FILE, not more rules: everything it asserts is asserted above
+    against the memory stores, and a divergence is exactly what it exists to
+    catch.
+    """
+    import shutil
+    import sqlite3
+    import tempfile
+    from pathlib import Path
+
+    from app.adapters.sqlite_store import (
+        SqliteBookStore, SqliteDecisionStore, SqliteDuplicateQueue,
+        SqliteMapStore, SqliteMapUndoStore, SqliteReadStore, SqliteShelfStore,
+    )
+    tmp = tempfile.mkdtemp(prefix="booksnap-merge-")
+    try:
+        path = Path(tmp) / "books.db"
+        # Constructing any store migrates the file — the same path the real
+        # app takes, rather than a setup step this test could get wrong.
+        ports = Shelves(
+            map_store=SqliteMapStore(path), shelves=SqliteShelfStore(path),
+            books=SqliteBookStore(path), reads=SqliteReadStore(path),
+            decisions=SqliteDecisionStore(path),
+            duplicates=SqliteDuplicateQueue(path))
+        journal = Journal(store=SqliteMapUndoStore(path), ids=SeqIdGen("u"),
+                          clock=StubClock(), books=ports.books,
+                          decisions=ports.decisions,
+                          duplicates=ports.duplicates)
+        ports.map_store.save_site(LIB, new_site(id="st", library_id=LIB.id,
+                                                name="הבית"))
+        ports.map_store.save_floor(LIB, new_floor(
+            id="fl", library_id=LIB.id, site_id="st", name="קרקע"))
+        ports.map_store.save_place(LIB, new_place(
+            id="pl", library_id=LIB.id, floor_id="fl",
+            rect=Rect(0, 0, 12, 9), name="סלון"))
+
+        drawn = _drawn(ports, columns=2, levels=2, depth=2)
+        survivor = drawn.shelves[0]
+        absorbed = _photo_born(ports, depth_count=2, label="ספרי בישול")
+        _book(ports, id="b1", title="תמול שלשום", shelf_id=absorbed.id,
+              depth=2)
+        _photo(ports, absorbed, id="a0", order=0)
+        _photo(ports, survivor, id="s0", order=0)
+        ports.decisions.save_decision(LIB, Decision(
+            library_id=LIB.id, shelf_id=absorbed.id, depth=1,
+            book_key="עגנון|רוח רפאים", kind=DecisionKind.REJECTED,
+            decided_at="2026-02-01T00:00:00Z"))
+        before = census(ports)
+
+        _merge(ports, journal, absorbed, survivor, StripOrder.ABSORBED_FIRST)
+        assert ports.shelves.get_shelf(LIB, absorbed.id) is None
+        # ⚠ Read back through the store, so the assertion is about the BLOB
+        # and not about an object still in memory.
+        assert offer(journal, ports.map_store, ports.shelves, LIB).available, (
+            "the entry could not match itself after a round trip through the "
+            "codec — which is what a dropped field looks like from here")
+
+        undo(journal, ports.map_store, ports.shelves, ports.books, LIB)
+
+        assert census(ports) == before
+        with sqlite3.connect(path) as conn:
+            conn.execute("PRAGMA foreign_keys = ON")
+            assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+            assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)

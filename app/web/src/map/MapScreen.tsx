@@ -47,7 +47,7 @@ import {
   overCeiling,
 } from './limits'
 import { mapText, type MapText } from './text'
-import type { OffMapShelf } from './useMapSync'
+import type { MergePreview, OffMapShelf, StripOrder } from './useMapSync'
 
 /**
  * The owner's own state: panel width, current storey, background.
@@ -127,6 +127,10 @@ export type MapScreenProps = {
            name: string) => void
     unbind: (shelfId: string, sectionId: string, col: number, level: number,
              name: string) => void
+    previewMerge: (absorbedId: string, survivorId: string,
+                   strip: StripOrder) => Promise<MergePreview>
+    merge: (absorbedId: string, survivorId: string, strip: StripOrder,
+            name: string) => void
   }
 }
 
@@ -584,6 +588,8 @@ export default function MapScreen(props: MapScreenProps) {
     shelvesOffTheMap: props.shelves.offTheMap,
     bindShelf: props.shelves.bind,
     unbindShelf: props.shelves.unbind,
+    previewMerge: props.shelves.previewMerge,
+    mergeShelf: props.shelves.merge,
   }
 
   /** Double-click on the plan: select it and ask the panel to start editing. */

@@ -40,7 +40,6 @@ from app.domain.map_undo import (
     changed_targets,
     partner_for,
     digest_ordinals,
-    digest_placement,
     digest_row,
     digest_shape,
     digest_slots,
@@ -331,20 +330,26 @@ def _ledger(
 
 
 def _digest_for(key: str, record) -> str:
-    """One key, ONE digest function — whichever side of the window built it.
+    """ABSENT, or the row digested. **One function for every key.**
 
-    ⚠ Measured, not defensive. ``copies:`` is the one key digested NARROWLY
-    (``digest_placement``: shelf and depth, so renaming a book does not refuse
-    an undo), and the ``wrote`` override used ``digest_row`` for everything —
-    which for a placement includes the book id and the copy id. The two halves
-    of one entry therefore disagreed about every copy a merge moved, and the
+    ⚠ It briefly was not, and that is why this note is here rather than in a
+    commit message. ``copies:`` was digested by a second, narrower function
+    while the ``wrote`` override used ``digest_row`` for everything — so the
+    two halves of one entry disagreed about every copy a merge moved, and the
     offer answered ``available: false`` naming a copy nobody had touched: a
     merge that could never be taken back, from the moment it was made.
+
+    The narrowing that avoided was real and it is still here — it just lives
+    in :class:`app.domain.merge.CopyPlacement`, which carries a location and
+    not a book, so a title fixed on the books tab cannot refuse a map undo.
+    Narrowing the ROW rather than the digest means there is one answer to
+    *what does this key digest to*, whoever is asking.
+
+    ``key`` is kept in the signature for the same reason: a future key that
+    genuinely needs its own treatment must add a branch HERE, where both sides
+    read it, rather than at one of the two call sites.
     """
-    if record is None:
-        return ABSENT
-    return (digest_placement(record) if key.startswith("copies:")
-            else digest_row(record))
+    return ABSENT if record is None else digest_row(record)
 
 
 # --- recording -------------------------------------------------------------
