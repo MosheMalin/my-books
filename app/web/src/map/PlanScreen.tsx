@@ -22,6 +22,7 @@ import {
   mapDelete,
   mapPatch,
   mapPost,
+  mapPut,
 } from '../api/client'
 
 /**
@@ -46,9 +47,26 @@ export function PlanScreen({ library }: { library: string }) {
     undoOffer: async () => await getUndoOffer(),
     api: {
       post: (path, body) => mapPost(path, body),
+      put: (path, body) => mapPut(path, body),
       patch: (path, body) => mapPatch(path, body),
       del: (path) => mapDelete(path),
     },
+    /**
+     * The shelves standing nowhere (P6.4c) — the photo-born half of the
+     * population, which is most of it until somebody starts binding.
+     *
+     * ⚠ The wishlist is excluded by the ROUTE's own default, not by a filter
+     * here: `GET /shelves` leaves out virtual shelves unless asked, because
+     * counting them inflates the apparent size of the library. It stands
+     * nowhere by construction (§5.7) and offering it a slot would be offering
+     * a refusal.
+     */
+    offTheMap: async () => (await listShelves())
+      .filter((s) => !s.address)
+      .map((s) => ({
+        id: s.id, label: s.label,
+        capture_count: s.capture_count, book_count: s.book_count,
+      })),
     /**
      * The FIRST site, made on first use rather than at sign-up: a household
      * that never draws anything should not carry a "Home" nobody typed. Every
@@ -181,6 +199,11 @@ export function PlanScreen({ library }: { library: string }) {
           onRenameSite: sync.renameSite,
           onRemoveSite: sync.removeSite,
           onUndoLastEdit: sync.undoLastEdit,
+        }}
+        shelves={{
+          offTheMap: sync.shelvesOffTheMap,
+          bind: sync.bindShelf,
+          unbind: sync.unbindShelf,
         }}
       />
     </>

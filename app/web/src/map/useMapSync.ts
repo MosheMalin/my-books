@@ -58,6 +58,23 @@ export type MapSource = {
     restores?: Record<string, number>
     changed?: string[]
   }>
+  /**
+   * The shelves that stand NOWHERE — read when the picker opens (P6.4c).
+   *
+   * ⚠ Fetched then, not taken from the load. The list is what the owner is
+   * about to choose from, and the one in `initial` is as old as the document:
+   * a shelf photographed on the phone five minutes ago would be missing from
+   * it, which is exactly the shelf somebody opens this picker to place.
+   */
+  offTheMap?: () => Promise<OffMapShelf[]>
+}
+
+/** A shelf with no address, as the picker shows it. */
+export type OffMapShelf = {
+  id: string
+  label: string
+  capture_count: number
+  book_count: number
 }
 
 /**
@@ -147,6 +164,15 @@ export type MapSync = {
   /** P6.4b: ask the server to take back the last DESTRUCTIVE map edit.
    *  Not the drawing history — see the implementation. */
   undoLastEdit: () => void
+  /** P6.4c. The shelves standing nowhere, for the picker. */
+  shelvesOffTheMap: () => Promise<OffMapShelf[]>
+  /** Put an unaddressed shelf into a free slot. Server-owned: the document
+   *  has no way to say "this cell is THAT shelf" (§3.1 — a slot IS a shelf,
+   *  so the document holds slots, never identities). */
+  bindShelf: (shelfId: string, sectionId: string, col: number,
+              level: number, name: string) => void
+  /** Take a shelf off the drawing. Undoable on the server (§3.15). */
+  unbindShelf: (shelfId: string, name: string) => void
   /** The plan as the server last confirmed it — the editor's starting doc. */
   initial: Plan | null
   /** Hand the current document over; the hook works out what to send. */
@@ -492,6 +518,76 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
     })()
   }, [announce, source, startOver, T])
 
+  /**
+   * The two halves of P6.4c, and one implementation because they differ only
+   * in the request.
+   *
+   * Shaped after `undoLastEdit` rather than after `record`: what these change
+   * is not in the document (§3.1 — the document holds SLOTS, and which shelf
+   * stands in one is a row only the server has), so there is no diff to
+   * carry them and no optimistic state to roll back.
+   *
+   * ⚠ **The drain, then the re-derive.** The drain is `afterSite`'s reason —
+   * re-deriving over an edit that has not reached the server is how that edit
+   * disappears. The re-derive is owed on SUCCESS because `free` and `id` are
+   * server facts this document now has wrong, and on FAILURE for a different
+   * reason: every refusal these two can meet means the drawing moved under
+   * the owner, so the document is stale either way. That is the opposite of
+   * `undoLastEdit`, where a refusal wrote nothing and re-deriving would cost
+   * the owner their drawing history for a press that changed nothing.
+   */
+  const slotWrite = useCallback((
+    work: (api: Api) => Promise<unknown>, said: string,
+  ) => {
+    void (async () => {
+      setNotice(null)
+      setSaved('saving')
+      await inflight.current
+      try {
+        await work(source.api)
+      } catch (err) {
+        const e = err as { status?: number; detail?: string; message?: string }
+        // ⚠ OUR words for every refusal, not the server's. The server's
+        // sentence is English by construction, and here the client already
+        // knows what a refusal MEANS: it only offers a bind into a slot it
+        // was told was free, and only for a shelf it was told stood nowhere,
+        // so a 4xx is the drawing having moved. Passing the English through
+        // would show the owner "column 2, level 3 already holds shelf
+        // 9f3a…" — true, and not a sentence anybody can act on.
+        setNotice(typeof e?.status === 'number'
+          ? { kind: 'refused', say: (T) => T.slot_moved_on }
+          : { kind: 'dropped',
+              detail: e?.detail || e?.message || T.save_failed_hint })
+        setSaved('saved')
+        startOver()
+        return
+      }
+      announce(said)
+      startOver()
+    })()
+  }, [announce, source, startOver, T])
+
+  const shelvesOffTheMap = useCallback(
+    () => source.offTheMap?.() ?? Promise.resolve([]), [source])
+
+  const bindShelf = useCallback(
+    (shelfId: string, sectionId: string, col: number, level: number,
+     name: string) =>
+      slotWrite(
+        (api) => api.put(`/map/shelves/${encodeURIComponent(shelfId)}/address`,
+          // 1-based on the wire, 0-based in the document — the pillar's one
+          // off-by-one, applied here exactly as `toPlan` applies it back.
+          { section_id: sectionId, col: col + 1, level: level + 1 }),
+        T.bound_here(name)),
+    [slotWrite, T])
+
+  const unbindShelf = useCallback(
+    (shelfId: string, name: string) =>
+      slotWrite(
+        (api) => api.del(`/map/shelves/${encodeURIComponent(shelfId)}/address`),
+        T.unbound_shelf(name)),
+    [slotWrite, T])
+
   const record = useCallback((plan: Plan) => {
     setSaved('saving')
     // ⚠ SERIALISED, and the diff is computed INSIDE the task.
@@ -610,6 +706,9 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
     renameSite,
     removeSite,
     undoLastEdit,
+    shelvesOffTheMap,
+    bindShelf,
+    unbindShelf,
     initial,
     record,
     reload: startOver,

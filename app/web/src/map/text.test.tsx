@@ -114,6 +114,8 @@ const openEditor = () =>
         saved="saved"
         onReload={() => {}}
         site={ONE_SITE}
+        shelves={{ offTheMap: async () => [], bind: () => {},
+                   unbind: () => {} }}
       />
     </I18nProvider>,
   )

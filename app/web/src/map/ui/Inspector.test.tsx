@@ -30,12 +30,20 @@ afterEach(() => {
 
 const section = (id: string): Section => ({
   id,
-  columnLevels: [2], gaps: [],
+  columnLevels: [2, 2], gaps: [],
   defaultLevels: 2,
   defaultDepth: 1,
   shelves: [
-    { col: 0, level: 0, depth: 1, photos: 3, books: 0 },
-    { col: 0, level: 1, depth: 2, photos: 0, books: 0 },
+    // A shelf the SERVER put here, one it says holds nothing, and — since
+    // P6.4c — a slot with no shelf in it at all. The third is what an unbind
+    // leaves behind, and what the model calls `free`.
+    { col: 0, level: 0, depth: 1, photos: 3, books: 0,
+      id: 'sh-1', label: 'המדף העליון' },
+    { col: 0, level: 1, depth: 2, photos: 0, books: 0, id: 'sh-2', label: '' },
+    { col: 1, level: 0, depth: 1, photos: 0, books: 0, free: true },
+    // ⚠ Neither `id` nor `free`: the cell this SESSION drew, whose shelf the
+    // push is about to mint. It must read as occupied, not as free.
+    { col: 1, level: 1, depth: 1, photos: 0, books: 0 },
   ],
 })
 
@@ -57,6 +65,8 @@ const actions = (): Actions => ({
   applyDefaultLevels: vi.fn(), setDefaultDepth: vi.fn(), applyDefaultDepth: vi.fn(),
   setShelfDepth: vi.fn(), addSection: vi.fn(), removeSection: vi.fn(),
   deleteSelection: vi.fn(), copySelection: vi.fn(), paste: vi.fn(), select: vi.fn(),
+  shelvesOffTheMap: vi.fn(async () => []), bindShelf: vi.fn(),
+  unbindShelf: vi.fn(),
 })
 
 const onShelf: Selection = {
@@ -335,5 +345,140 @@ describe('the elevation, with cells switched off (P6.3.2b)', () => {
     const acts = actions()
     showPlan({ rooms: [], cases: ['c1'], cells: [] }, acts, holed())
     expect(screen.getByText(/לחיצה מחזירה מדף/)).toBeTruthy()
+  })
+})
+
+describe('putting a shelf in a slot, and taking one out (P6.4c)', () => {
+  const showWith = (selection: Selection, acts: Actions) =>
+    render(
+      <I18nProvider>
+        <Inspector
+          doc={{ plan: plan(), seq: 0 }}
+          floorId="f1"
+          selection={selection}
+          actions={acts}
+          renaming={null}
+          onRenamed={() => {}}
+        />
+      </I18nProvider>,
+    )
+
+  const cell = (col: number, level: number): Selection => ({
+    rooms: [], cases: ['c1'],
+    cells: [{ caseId: 'c1', sectionId: 's1', col, level }],
+  })
+
+  it('offers nothing to edit on an empty slot but the way to fill it', () => {
+    // ⚠ The depth box most of all. `PATCH .../shelves/{col}/{level}` answers
+    // 404 for a slot with no shelf, and the toolbar would have said "saved" —
+    // a control that discards what it takes, which this panel already has a
+    // rule against one field down.
+    showWith(cell(1, 0), actions())
+    expect(screen.getByText(HE.cell_has_no_shelf)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: HE.put_a_shelf_here }))
+      .toBeInTheDocument()
+    expect(screen.queryByLabelText(HE.shelf_depth)).toBeNull()
+    expect(screen.queryByRole('button', { name: HE.shelf_take_off_map }))
+      .toBeNull()
+  })
+
+  it('treats a cell this session DREW as occupied, not as free', () => {
+    // ⚠ The reason `free` is a field rather than `!id`. A cell the owner just
+    // added has no shelf id either, and the push is about to mint one — so
+    // offering *put a shelf here* would be offering a 409 for a slot that is
+    // about to be taken.
+    showWith(cell(1, 1), actions())
+    expect(screen.queryByRole('button', { name: HE.put_a_shelf_here })).toBeNull()
+    expect(screen.getByLabelText(HE.shelf_depth)).toBeInTheDocument()
+  })
+
+  it('lists the shelves that stand nowhere, and binds the one picked', async () => {
+    const user = userEvent.setup()
+    const acts = actions()
+    acts.shelvesOffTheMap = vi.fn(async () => [
+      { id: 'sh-photo', label: 'ליד החלון', capture_count: 2, book_count: 7 },
+    ])
+    showWith(cell(1, 0), acts)
+
+    await user.click(screen.getByRole('button', { name: HE.put_a_shelf_here }))
+    const option = await screen.findByRole('button', {
+      name: HE.pick_shelf_option(1, 'ליד החלון', 7, 2),
+    })
+    await user.click(option)
+
+    // 0-BASED here, 1-based on the wire — the hook does that shift, and it is
+    // gated in `bind.test.tsx`. Handing it over already shifted is how a book
+    // gets filed one cell up.
+    expect(acts.bindShelf).toHaveBeenCalledWith(
+      'sh-photo', 's1', 1, 0, 'ליד החלון')
+  })
+
+  it('gives two unnamed shelves two different names to press', async () => {
+    // The collision CLAUDE.md records, and unnamed is the COMMON case here:
+    // these are the photo-born half of the population, and a shelf is never
+    // required to be named.
+    const user = userEvent.setup()
+    const acts = actions()
+    acts.shelvesOffTheMap = vi.fn(async () => [
+      { id: 'a', label: '', capture_count: 0, book_count: 0 },
+      { id: 'b', label: '', capture_count: 0, book_count: 0 },
+    ])
+    showWith(cell(1, 0), acts)
+    await user.click(screen.getByRole('button', { name: HE.put_a_shelf_here }))
+
+    await screen.findByRole('button',
+      { name: HE.pick_shelf_option(1, HE.shelf_unnamed, 0, 0) })
+    const both = screen.getAllByRole('button', {
+      name: new RegExp(HE.shelf_unnamed),
+    })
+    expect(both).toHaveLength(2)
+    expect(both[0]!.getAttribute('aria-label'))
+      .not.toBe(both[1]!.getAttribute('aria-label'))
+  })
+
+  it('says so when every shelf is already on the map', async () => {
+    const user = userEvent.setup()
+    const acts = actions()
+    showWith(cell(1, 0), acts)
+    await user.click(screen.getByRole('button', { name: HE.put_a_shelf_here }))
+    expect(await screen.findByText(HE.no_shelves_off_the_map))
+      .toBeInTheDocument()
+  })
+
+  it('takes an EMPTY shelf off the map without asking', async () => {
+    // ⚠ The rule the section header already follows: a dialog in front of a
+    // gesture that destroys nothing is what teaches people to click through
+    // the ones that do (owner, drawing with it).
+    const user = userEvent.setup()
+    const acts = actions()
+    const confirm = vi.fn(() => true)
+    vi.stubGlobal('confirm', confirm)
+    showWith(cell(0, 1), acts)
+
+    await user.click(screen.getByRole('button', { name: HE.shelf_take_off_map }))
+    expect(confirm).not.toHaveBeenCalled()
+    expect(acts.unbindShelf).toHaveBeenCalledWith('sh-2', HE.shelf_unnamed)
+    vi.unstubAllGlobals()
+  })
+
+  it('asks before taking one that holds photographs, and says it is undoable', async () => {
+    const user = userEvent.setup()
+    const acts = actions()
+    const confirm = vi.fn(() => false)
+    vi.stubGlobal('confirm', confirm)
+    showWith(cell(0, 0), acts)
+
+    await user.click(screen.getByRole('button', { name: HE.shelf_take_off_map }))
+    expect(confirm).toHaveBeenCalledWith(HE.shelf_take_off_map_confirm(0, 3))
+    expect(acts.unbindShelf).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
+  it('names the shelf standing in the cell, which the grid cannot', () => {
+    // A cell is 44 pixels wide. The panel is where "which shelf is this"
+    // gets an answer — and it is the question the whole item is about.
+    showWith(cell(0, 0), actions())
+    expect(screen.getByText(HE.shelf_is_named('המדף העליון')))
+      .toBeInTheDocument()
   })
 })

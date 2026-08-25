@@ -17,6 +17,9 @@ import { wireAddress } from './sync'
 
 export type Api = {
   post: (path: string, body?: unknown) => Promise<any>
+  /** P6.4c. Sets a shelf's address — a PUT because it replaces the whole
+   *  thing, which is what makes a retried bind harmless. */
+  put: (path: string, body: unknown) => Promise<any>
   patch: (path: string, body: unknown) => Promise<any>
   del: (path: string) => Promise<any>
 }

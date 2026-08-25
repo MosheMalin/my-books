@@ -13,15 +13,16 @@ import { mapText } from '../text'
  * panel says how many and offers to apply — it never applies silently.
  */
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { Select } from '@booksnap/ui'
 
 import { Elevation } from './Elevation'
+import type { OffMapShelf } from '../useMapSync'
 import type { Doc, Selection } from './types'
 import { count, markCell, only, onlyCell } from './types'
 import { useSticky } from './useSticky'
-import type { Bookcase, GapCell, Plan, Room } from '../core/model'
+import type { Bookcase, GapCell, Plan, Room, Section, Shelf } from '../core/model'
 import {
   MAX_DEPTH,
   allShelves,
@@ -48,6 +49,17 @@ export type Actions = {
   setShelfDepth: (id: string, sectionId: string, col: number, level: number, n: number) => void
   /** Switch cells off, or a hole back on (MAP_PLAN §3.10a). */
   setGaps: (id: string, sectionId: string, cells: GapCell[], gap: boolean) => void
+  /**
+   * P6.4c, and the three of them are SERVER gestures — unlike everything
+   * above, which edits the document and is pushed as a diff. Which shelf
+   * stands in a slot is a row the document cannot hold (§3.1: a drawn slot IS
+   * a shelf, so the document has slots and never identities), so these ask
+   * the server and then re-derive.
+   */
+  shelvesOffTheMap: () => Promise<OffMapShelf[]>
+  bindShelf: (shelfId: string, sectionId: string, col: number, level: number,
+              name: string) => void
+  unbindShelf: (shelfId: string, name: string) => void
   addSection: (id: string, where: 'top' | 'bottom') => void
   removeSection: (id: string, sectionId: string) => void
   deleteSelection: () => void
@@ -512,34 +524,156 @@ function ShelfPanel({
   // "section 1", because saying it would imply there is a section 2.
   const where =
     bc.sections.length > 1 ? `${T.section_n(sectionIndex(bc, sec.id) + 1)} · ` : ''
+  const name = shelf.label || T.shelf_unnamed
   return (
     <fieldset className="shelf-panel">
       <legend>{T.shelf_legend(where, shelf.col + 1, shelf.level + 1)}</legend>
-      <label className="field inline">
-        <span>{T.own_depth}</span>
-        <input
-          type="number"
-          min={1}
-          max={MAX_DEPTH}
-          value={shelf.depth}
-          aria-label={T.shelf_depth}
-          onChange={(e) =>
-            actions.setShelfDepth(bc.id, sec.id, shelf.col, shelf.level, Number(e.target.value))
-          }
-        />
-      </label>
-      {/* ⚠ A FACT, not a field. In the lab the photo count was a number you
-          typed, so a case could be made to look half-catalogued while you
-          drew. Here it is `capture_count` off the shelf, and there is no op
-          behind it: as an input it accepted an edit, the toolbar said
-          "saved", and the next load showed the old number. A control that
-          discards what it takes is worse than one that is absent. */}
-      <div className="field inline">
-        <span>{T.photos_attached}</span>
-        <strong>{shelf.photos}</strong>
-      </div>
-      <p className="note">{T.photos_are_captures}</p>
+      {/* ⚠ A cell the SERVER says holds no shelf (P6.4c). Everything below
+          would be a control over a row that does not exist — the depth box
+          most sharply, since `PATCH .../shelves/{col}/{level}` answers 404 for
+          an empty slot and the toolbar would have said "saved". */}
+      {shelf.free ? (
+        <EmptyCell sec={sec} shelf={shelf} actions={actions} />
+      ) : (
+        <>
+          {/* The one fact the grid cannot show: a cell is 44 pixels wide. */}
+          {shelf.label && (
+            <p className="note rtl-safe">{T.shelf_is_named(shelf.label)}</p>
+          )}
+          <label className="field inline">
+            <span>{T.own_depth}</span>
+            <input
+              type="number"
+              min={1}
+              max={MAX_DEPTH}
+              value={shelf.depth}
+              aria-label={T.shelf_depth}
+              onChange={(e) =>
+                actions.setShelfDepth(bc.id, sec.id, shelf.col, shelf.level, Number(e.target.value))
+              }
+            />
+          </label>
+          {/* ⚠ A FACT, not a field. In the lab the photo count was a number you
+              typed, so a case could be made to look half-catalogued while you
+              drew. Here it is `capture_count` off the shelf, and there is no op
+              behind it: as an input it accepted an edit, the toolbar said
+              "saved", and the next load showed the old number. A control that
+              discards what it takes is worse than one that is absent. */}
+          <div className="field inline">
+            <span>{T.photos_attached}</span>
+            <strong>{shelf.photos}</strong>
+          </div>
+          <p className="note">{T.photos_are_captures}</p>
+          {shelf.id && (
+            <button
+              type="button"
+              className="danger"
+              onClick={() => {
+                // ⚠ Asked only when something would be LOST, which is the
+                // rule the section header already follows: a dialog in front
+                // of a gesture that destroys nothing is what teaches people
+                // to click through the ones that do. An empty drawn shelf
+                // leaving the map costs nothing; one holding books loses the
+                // address they are printed with — and the confirmation says
+                // both halves, including that it can be taken back.
+                if (shelf.books + shelf.photos === 0
+                    || confirm(T.shelf_take_off_map_confirm(shelf.books,
+                                                            shelf.photos))) {
+                  actions.unbindShelf(shelf.id as string, name)
+                }
+              }}
+            >
+              {T.shelf_take_off_map}
+            </button>
+          )}
+        </>
+      )}
     </fieldset>
+  )
+}
+
+/**
+ * A slot with nothing in it, and the way to fill it (P6.4c, MAP_PLAN §3.14).
+ *
+ * **Only what the owner TYPED decides anything here.** The list is every shelf
+ * standing nowhere, in the server's own order, and the ✓ is the owner picking
+ * one — nothing is proposed from a photograph, a timestamp or a label match.
+ *
+ * ⚠ The list is fetched when the picker OPENS, not carried in the document. A
+ * shelf photographed on the phone two minutes ago is exactly the one somebody
+ * opens this for, and it is not in a document that was derived before it
+ * existed.
+ */
+function EmptyCell({
+  sec,
+  shelf,
+  actions,
+}: {
+  sec: Section
+  shelf: Shelf
+  actions: Actions
+}) {
+  const { t, lang } = useI18n()
+  const T = mapText(lang)
+  const [open, setOpen] = useState(false)
+  const [list, setList] = useState<OffMapShelf[] | null>(null)
+
+  if (!open) {
+    return (
+      <>
+        <p className="note rtl-safe">{T.cell_has_no_shelf}</p>
+        <button
+          type="button"
+          onClick={() => {
+            setOpen(true)
+            // A failure lands as an EMPTY list rather than a spinner that
+            // never stops: "there is nothing to put here" is wrong but
+            // recoverable, and a screen that hangs is neither.
+            void actions.shelvesOffTheMap()
+              .then(setList)
+              .catch(() => setList([]))
+          }}
+        >
+          {T.put_a_shelf_here}
+        </button>
+      </>
+    )
+  }
+  return (
+    <div className="shelf-pick">
+      <p className="note rtl-safe">{T.pick_a_shelf}</p>
+      {list === null ? (
+        <p className="note">{t.loading}</p>
+      ) : list.length === 0 ? (
+        <p className="note rtl-safe">{T.no_shelves_off_the_map}</p>
+      ) : (
+        <ul>
+          {list.map((s, i) => (
+            <li key={s.id}>
+              {/* ⚠ NUMBERED in the accessible name, and it is not decoration:
+                  two unnamed shelves holding nothing announce the identical
+                  sentence otherwise, which is the collision CLAUDE.md records
+                  — and unnamed is the COMMON case here, since these are the
+                  photo-born half of the population. */}
+              <button
+                type="button"
+                aria-label={T.pick_shelf_option(
+                  i + 1, s.label || T.shelf_unnamed, s.book_count,
+                  s.capture_count)}
+                onClick={() =>
+                  actions.bindShelf(s.id, sec.id, shelf.col, shelf.level,
+                                    s.label || T.shelf_unnamed)}
+              >
+                <span className="rtl-safe">{s.label || T.shelf_unnamed}</span>
+                <span className="note rtl-safe">
+                  {T.shelf_holds(s.book_count, s.capture_count)}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   )
 }
 

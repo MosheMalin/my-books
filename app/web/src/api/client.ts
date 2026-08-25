@@ -303,7 +303,7 @@ export type BookCreate =
     : never
 
 async function send(
-  method: 'POST' | 'PATCH' | 'DELETE',
+  method: 'POST' | 'PUT' | 'PATCH' | 'DELETE',
   path: string,
   body: unknown,
   opts: ApiOptions = {},
@@ -648,6 +648,11 @@ export const mapPost = (path: string, body?: unknown, opts?: ApiOptions) =>
 
 export const mapPatch = (path: string, body: unknown, opts?: ApiOptions) =>
   send('PATCH', `/api/v1${path}`, body, opts) as Promise<any>
+
+/** P6.4c. PUT rather than PATCH because it SETS the address rather than
+ *  amending it, which also makes a retried bind harmless. */
+export const mapPut = (path: string, body: unknown, opts?: ApiOptions) =>
+  send('PUT', `/api/v1${path}`, body, opts) as Promise<any>
 
 export const mapDelete = (path: string, opts?: ApiOptions) =>
   send('DELETE', `/api/v1${path}`, undefined, opts) as Promise<any>

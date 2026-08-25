@@ -821,5 +821,33 @@
 .mapscreen .elev-depth { font-weight: 600; }
 .mapscreen .elev-photos { font-size: 10px; }
 
+
+/* The shelf picker (P6.4c). A list of buttons rather than a <select>: each
+   row carries two lines — the name and what it holds — and Chrome pins the
+   native chevron, which this project already draws around elsewhere. Full
+   width and 44px tall, because the device this is used on is a phone. */
+.mapscreen .shelf-pick { margin-top: 8px; }
+.mapscreen .shelf-pick ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  /* Bounded, and it scrolls: an owner with forty photo-born shelves would
+     otherwise push every other control in the panel off the screen. */
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.mapscreen .shelf-pick li button {
+  width: 100%;
+  min-height: 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  text-align: start;
+}
+.mapscreen .shelf-pick li button .note { margin: 0; font-size: 11px; }
 .mapscreen .elevation-cols { display: flex; gap: 6px; margin-top: 8px; }
 .mapscreen .elevation-cols button { flex: 1; }

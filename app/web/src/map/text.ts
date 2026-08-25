@@ -215,6 +215,21 @@ export interface MapText {
   apply_to_all: (shelves: number) => string
   pick_a_cell: string
   shelf_legend: (where: string, col: number, level: number) => string
+  // binding a shelf to a slot (P6.4c)
+  shelf_is_named: (label: string) => string
+  shelf_take_off_map: string
+  shelf_take_off_map_confirm: (books: number, photos: number) => string
+  cell_has_no_shelf: string
+  put_a_shelf_here: string
+  pick_a_shelf: string
+  no_shelves_off_the_map: string
+  shelf_unnamed: string
+  shelf_holds: (books: number, photos: number) => string
+  pick_shelf_option: (n: number, name: string, books: number,
+                      photos: number) => string
+  bound_here: (name: string) => string
+  unbound_shelf: (name: string) => string
+  slot_moved_on: string
   own_depth: string
   photos_attached: string
   photos_are_captures: string
@@ -473,6 +488,21 @@ const HE: MapText = {
   apply_to_all: (shelves) => `החלה על כל ${shelves} המדפים`,
   pick_a_cell: 'בחרו תא למעלה כדי לקבוע עומק למדף אחד.',
   shelf_legend: (where, col, level) => `מדף · ${where}עמודה ${col} · גובה ${level}`,
+  shelf_is_named: (label) => `שם המדף: ${label}`,
+  shelf_take_off_map: 'הורדה מהמפה',
+  shelf_take_off_map_confirm: (books, photos) =>
+    `להוריד מהמפה מדף שעליו ${books} ספרים ו-${photos} תמונות? הם נשארים איתו; מה שהולך לאיבוד הוא המקום שלו בשרטוט. אפשר לשחזר.`,
+  cell_has_no_shelf: 'אין כאן מדף.',
+  put_a_shelf_here: 'שימו כאן מדף',
+  pick_a_shelf: 'בחרו מדף שאינו על המפה:',
+  no_shelves_off_the_map: 'כל המדפים כבר על המפה.',
+  shelf_unnamed: 'מדף ללא שם',
+  shelf_holds: (books, photos) => `${books} ספרים · ${photos} תמונות`,
+  pick_shelf_option: (n, name, books, photos) =>
+    `${n}. ${name} — ${books} ספרים, ${photos} תמונות`,
+  bound_here: (name) => `${name} נמצא עכשיו בתא הזה`,
+  unbound_shelf: (name) => `${name} ירד מהמפה. אפשר לשחזר.`,
+  slot_moved_on: 'השרטוט השתנה מאז — הנה המצב העדכני. נסו שוב.',
   own_depth: 'העומק שלו',
   photos_attached: 'תמונות מצורפות',
   photos_are_captures:
@@ -710,6 +740,21 @@ const EN: MapText = {
   apply_to_all: (shelves) => `Apply to all ${shelves} shelves`,
   pick_a_cell: 'Pick a cell above to set one shelf’s own depth.',
   shelf_legend: (where, col, level) => `Shelf · ${where}col ${col} · level ${level}`,
+  shelf_is_named: (label) => `Named: ${label}`,
+  shelf_take_off_map: 'Take off the map',
+  shelf_take_off_map_confirm: (books, photos) =>
+    `Take a shelf holding ${books} book(s) and ${photos} photo(s) off the map? They stay with it; what it loses is its place in the drawing. This can be restored.`,
+  cell_has_no_shelf: 'No shelf stands here.',
+  put_a_shelf_here: 'Put a shelf here',
+  pick_a_shelf: 'Pick a shelf that is not on the map:',
+  no_shelves_off_the_map: 'Every shelf is already on the map.',
+  shelf_unnamed: 'Unnamed shelf',
+  shelf_holds: (books, photos) => `${books} book(s) · ${photos} photo(s)`,
+  pick_shelf_option: (n, name, books, photos) =>
+    `${n}. ${name} — ${books} book(s), ${photos} photo(s)`,
+  bound_here: (name) => `${name} now stands in this cell`,
+  unbound_shelf: (name) => `${name} came off the map. This can be restored.`,
+  slot_moved_on: 'The drawing has changed since — here it is as it stands. Try again.',
   own_depth: 'Its own depth',
   photos_attached: 'Photos attached',
   photos_are_captures:

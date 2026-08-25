@@ -47,6 +47,7 @@ import {
   overCeiling,
 } from './limits'
 import { mapText, type MapText } from './text'
+import type { OffMapShelf } from './useMapSync'
 
 /**
  * The owner's own state: panel width, current storey, background.
@@ -90,6 +91,17 @@ export type MapScreenProps = {
      *  site gestures do: it is not expressible in the document, because what
      *  it takes back is rows the document never held. */
     onUndoLastEdit: () => void
+  }
+  /**
+   * P6.4c. The same kind of thing as `onUndoLastEdit` and a separate group
+   * because there are now three of them: a prop called `site` holding four
+   * things that are not sites is how a name stops meaning anything.
+   */
+  shelves: {
+    offTheMap: () => Promise<OffMapShelf[]>
+    bind: (shelfId: string, sectionId: string, col: number, level: number,
+           name: string) => void
+    unbind: (shelfId: string, name: string) => void
   }
 }
 
@@ -533,6 +545,11 @@ export default function MapScreen(props: MapScreenProps) {
     copySelection,
     paste,
     select: setSelection,
+    // Straight through: these three write to the SERVER, so there is no
+    // document edit to make and nothing here to add to them.
+    shelvesOffTheMap: props.shelves.offTheMap,
+    bindShelf: props.shelves.bind,
+    unbindShelf: props.shelves.unbind,
   }
 
   /** Double-click on the plan: select it and ask the panel to start editing. */

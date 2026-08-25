@@ -45,11 +45,12 @@ const WIRE: MapWire = {
 }
 
 const SHELVES: ShelfWire[] = [
-  { id: 'sh-a', depth_count: 2, capture_count: 1, book_count: 0,
-    address: { section_id: 'base', col: 1, level: 1 } },
-  { id: 'sh-b', depth_count: 4, capture_count: 0, book_count: 0,
+  { id: 'sh-a', label: 'המדף העליון', depth_count: 2, capture_count: 1,
+    book_count: 0, address: { section_id: 'base', col: 1, level: 1 } },
+  { id: 'sh-b', label: '', depth_count: 4, capture_count: 0, book_count: 0,
     address: { section_id: 'base', col: 2, level: 3 } },
-  { id: 'sh-photo', depth_count: 1, capture_count: 3, book_count: 0, address: null },
+  { id: 'sh-photo', label: '', depth_count: 1, capture_count: 3,
+    book_count: 0, address: null },
 ]
 
 describe('the document the server hands back', () => {
@@ -343,6 +344,7 @@ describe('pushing', () => {
   const recorder = () => {
     const calls: [string, string, unknown][] = []
     const api: Api = {
+      put: async () => ({}),
       post: async (p, b) => {
         calls.push(['POST', p, b])
         if (p === '/map/sections') return { section: { id: 'server-sec' } }
@@ -394,6 +396,7 @@ describe('pushing', () => {
   it('stops at the first refusal and hands it back', async () => {
     const calls: string[] = []
     const api: Api = {
+      put: async () => ({}),
       post: async (p) => {
         calls.push(p)
         throw { status: 409, detail: 'a bookcase holds at most 400 shelves' }
@@ -578,5 +581,32 @@ describe('gaps on the wire (P6.3.2)', () => {
 
     const ops = planDiff(had, now)
     expect(ops.map((o) => o.kind)).toEqual(['section.levels'])
+  })
+})
+
+describe('what a cell says about the shelf standing in it (P6.4c)', () => {
+  it('carries the id and the label of the shelf the server put there', () => {
+    const plan = toPlan(WIRE, SHELVES, 'st')
+    const base = plan.cases[0]!.sections.find((s) => s.id === 'base')!
+    const at = (col: number, level: number) =>
+      base.shelves.find((s) => s.col === col && s.level === level)!
+    expect(at(0, 0).id).toBe('sh-a')
+    expect(at(0, 0).label).toBe('המדף העליון')
+    expect(at(0, 0).free).toBeUndefined()
+  })
+
+  it('marks a slot the server says is EMPTY as free, and nothing else', () => {
+    // ⚠ Only here. A cell the session draws has no id either, and it is not
+    // free — the push mints its shelf. Deriving `free` as `!id` would offer
+    // *put a shelf here* over every column the owner had just added.
+    const plan = toPlan(WIRE, SHELVES, 'st')
+    const base = plan.cases[0]!.sections.find((s) => s.id === 'base')!
+    const empty = base.shelves.filter((s) => s.free)
+    const filled = base.shelves.filter((s) => s.id)
+    expect(filled).toHaveLength(2)
+    expect(empty.length).toBe(base.shelves.length - 2)
+    for (const cell of empty) expect(cell.id).toBeUndefined()
+    // The photo-born shelf stands nowhere, so it is in no cell at all.
+    expect(base.shelves.some((s) => s.id === 'sh-photo')).toBe(false)
   })
 })
