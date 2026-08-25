@@ -5964,6 +5964,12 @@ def test_every_map_path_answers_404_for_another_library_with_its_own_methods():
             # ⚠ below says why an empty `{}` here would prove nothing.
             ("patch", f"/api/v1/map/sections/{section['id']}/gaps",
              {"gap": True, "cells": [{"column": 1, "level": 1}]}),
+            # P6.4c's pair. The PUT names a foreign shelf AND a foreign
+            # section, which is two lookups and two chances to answer with
+            # something other than 404.
+            ("put", "/api/v1/map/shelves/sh-nope/address",
+             {"section_id": section["id"], "col": 1, "level": 1}),
+            ("delete", "/api/v1/map/shelves/sh-nope/address"),
         ]
         for method, path, *rest in probes:
             call = getattr(theirs, method)
@@ -5996,6 +6002,49 @@ def test_every_map_path_answers_404_for_another_library_with_its_own_methods():
         # Nothing of the real library moved.
         after = mine.get("/api/v1/map").json()
         assert len(after["places"]) == 1 and len(after["sections"]) == 1
+
+    # ⚠ **The list is the whole router, not a sample.** Its EDIT_MAP sibling
+    # has carried this block since a review found an unguarded POST on an
+    # existing path; this one did not, and a security review measured what
+    # that means: a probe route added to the router was caught by the
+    # capability meta-test and sailed past THIS one. P6.4c's two routes were
+    # missing from the list for exactly that reason.
+    #
+    # GET is excluded for the same reason as there: a read that answers 404
+    # for a foreign library is gated by `current_library` itself, and every
+    # write is what can move a row.
+    from app.api.routers import map as map_router
+
+    import re
+
+    on_the_wire = {
+        (method.lower(), "/api/v1" + route.path)
+        for route in map_router.router.routes
+        for method in getattr(route, "methods", set())
+        if method.lower() != "get"
+    }
+
+    def matches(template: str, concrete: str) -> bool:
+        pattern = re.sub(r"\{[^}]+\}", "[^/]+", re.escape(template)
+                         .replace(r"\{", "{").replace(r"\}", "}"))
+        return re.fullmatch(pattern, concrete) is not None
+
+    # A create is probed by BODY rather than by path — it has no id in its
+    # URL — so both lists count towards coverage.
+    probed = [(m, p) for m, p, *_ in probes] + [("post", p) for p, _ in bodies]
+    # ⚠ Two writes NAME nothing. `POST /map/sites` and `POST /map/undo` carry
+    # no id of any object — not in the path, not in the body — so "another
+    # library's X" is not expressible in a call to either. What they act on is
+    # whatever the library header resolves, and a foreign or fictional header
+    # is refused 404 at the door by `deps.current_library`, which the tenancy
+    # ring gates. Listed one at a time rather than pattern-matched: a THIRD
+    # such route is worth a moment's thought, not a silent pass.
+    names_nothing = {("post", "/api/v1/map/sites"), ("post", "/api/v1/map/undo")}
+    unprobed = {
+        (method, template) for method, template in on_the_wire - names_nothing
+        if not any(m == method and matches(template, p) for m, p in probed)
+    }
+    assert not unprobed, f"a map write is not probed for 404: {unprobed}"
 
 
 def test_pointing_a_case_at_a_room_that_is_not_there_never_detaches_it():
@@ -6642,6 +6691,11 @@ def test_every_write_in_the_map_router_needs_edit_map_and_says_so():
             # nothing), which is why only the POST is here — and this test is
             # what noticed the route the moment it was added.
             ("post", "/api/v1/map/undo", None),
+            # P6.4c — and this test noticed both of these the moment they
+            # were added, which is what it is for.
+            ("put", "/api/v1/map/shelves/sh/address",
+             {"section_id": "se", "col": 1, "level": 1}),
+            ("delete", "/api/v1/map/shelves/sh/address", None),
         ]
         for method, path, body in writes:
             call = getattr(client, method)
@@ -6930,3 +6984,256 @@ def test_a_journal_cannot_be_bound_without_an_id_source_and_a_clock():
     else:
         raise AssertionError(
             "a journal was bound with no way to number or date an entry")
+
+
+# --- binding a shelf to a slot (P6.4c) ------------------------------------
+
+
+def _unbound(client, section_id, col, level):
+    """Empty one slot through the route this item adds, and answer with the
+    shelf that stepped out of it."""
+    at = {(s["address"]["col"], s["address"]["level"]): s
+          for s in client.get("/api/v1/shelves").json() if s["address"]
+          and s["address"]["section_id"] == section_id}
+    shelf = at[(col, level)]
+    gone = client.delete(f"/api/v1/map/shelves/{shelf['id']}/address")
+    assert gone.status_code == 200, gone.text
+    assert gone.json()["address"] is None
+    return gone.json()
+
+
+def test_a_photo_born_shelf_takes_a_free_slot_and_keeps_everything_it_had():
+    """The whole item, end to end: an unaddressed shelf gains an address.
+
+    What it must NOT do is as much of the point — the id, the label, the
+    photographs and the books all survive, because binding joins no identities
+    (§3.11). That is the merge, and the merge is P6.4d.
+
+    ⚠ The books go on through the STORE, the way the shelf list's own test
+    does it: no route puts a copy on a shelf (a read does), and a review
+    measured what the alternative costs — `book_count` hardcoded to 0 in the
+    route survived the whole python ring, a field nothing asserted, paid for
+    with a whole-library grouped query on every bind.
+    """
+    books = MemoryBookStore()
+    with TestClient(_app(store=books)) as client:
+        _drawn_map(client, columns=2, levels=2)
+        section = client.get("/api/v1/map").json()["sections"][0]
+        _unbound(client, section["id"], 1, 1)
+
+        made = client.post("/api/v1/shelves", json={"label": "המדף התחתון"})
+        homeless = made.json()
+        client.post("/api/v1/captures", json={"shelf_id": homeless["id"]})
+        books.save(TEST_LIBRARY, new_book(
+            id="bk-bound", library_id=TEST_LIBRARY.id, title="ספר",
+            author="מחבר", copy_id="cp-bound", shelf_id=homeless["id"],
+            depth=1))
+
+        bound = client.put(f"/api/v1/map/shelves/{homeless['id']}/address",
+                           json={"section_id": section["id"], "col": 1,
+                                 "level": 1})
+        assert bound.status_code == 200, bound.text
+        body = bound.json()
+        assert body["id"] == homeless["id"]
+        assert body["label"] == "המדף התחתון"
+        assert body["capture_count"] == 1
+        # ⚠ `book_count` too. A review mutated it to a hard 0 and the whole
+        # python ring stayed green — a field nothing asserts and nothing reads,
+        # paid for with a whole-library grouped query on every bind.
+        assert body["book_count"] == 1
+        assert body["address"] == {"section_id": section["id"], "col": 1,
+                                   "level": 1}
+        assert client.get(f"/api/v1/shelves/{homeless['id']}").json()[
+            "address"]["level"] == 1
+
+
+def test_a_taken_slot_answers_409_and_the_message_names_the_occupant():
+    """§3.14: bind stops here rather than resolving it. The client needs a
+    sentence it can turn into *merge instead?*, so the refusal names what is
+    standing there — a bare "cannot" is what makes the next reader delete the
+    guard."""
+    with TestClient(_app()) as client:
+        _drawn_map(client, columns=2, levels=2)
+        section = client.get("/api/v1/map").json()["sections"][0]
+        at = {(s["address"]["col"], s["address"]["level"]): s
+              for s in client.get("/api/v1/shelves").json() if s["address"]}
+        standing = at[(1, 1)]
+        client.patch(f"/api/v1/shelves/{standing['id']}",
+                     json={"label": "מדף א"})
+        homeless = client.post("/api/v1/shelves", json={}).json()
+
+        refused = client.put(f"/api/v1/map/shelves/{homeless['id']}/address",
+                             json={"section_id": section["id"], "col": 1,
+                                   "level": 1})
+        assert refused.status_code == 409, refused.text
+        assert standing["id"] in refused.json()["detail"]
+        assert "מדף א" in refused.json()["detail"]
+        assert client.get(f"/api/v1/shelves/{homeless['id']}").json()[
+            "address"] is None
+
+
+def test_the_four_refusals_answer_four_different_ways():
+    """A gap, a cell outside the extent, the wishlist, and a shelf that is
+    already on the map. Each is a different thing for the owner to do next,
+    and the 400 is the one that says *your drawing is not this drawing*.
+
+    ⚠ It asserts the STATUS for all four and the sentence for two — the name
+    used to promise four sentences, which a reader would trust. What each
+    refusal SAYS is decided in `plan_bind` and gated one per rule in
+    `test_map_edit.py` and `test_domain.py`; what this adds is that the four
+    do not collapse into one answer on the wire."""
+    with TestClient(_app()) as client:
+        _drawn_map(client, columns=2, levels=2)
+        section = client.get("/api/v1/map").json()["sections"][0]
+        client.patch(f"/api/v1/map/sections/{section['id']}/gaps",
+                     json={"gap": True, "cells": [{"column": 2, "level": 2}]})
+        homeless = client.post("/api/v1/shelves", json={}).json()
+        wishlist = client.post("/api/v1/shelves",
+                               json={"virtual": True}).json()
+        path = f"/api/v1/map/shelves/{homeless['id']}/address"
+
+        gap = client.put(path, json={"section_id": section["id"], "col": 2,
+                                     "level": 2})
+        assert gap.status_code == 409, gap.text
+        assert "switched off" in gap.json()["detail"]
+
+        outside = client.put(path, json={"section_id": section["id"],
+                                         "col": 9, "level": 1})
+        assert outside.status_code == 400, outside.text
+
+        wish = client.put(f"/api/v1/map/shelves/{wishlist['id']}/address",
+                          json={"section_id": section["id"], "col": 1,
+                                "level": 2})
+        assert wish.status_code == 409, wish.text
+
+        _unbound(client, section["id"], 1, 2)
+        placed = client.put(path, json={"section_id": section["id"], "col": 1,
+                                        "level": 2})
+        assert placed.status_code == 200, placed.text
+        _unbound(client, section["id"], 2, 1)
+        again = client.put(path, json={"section_id": section["id"], "col": 2,
+                                       "level": 1})
+        assert again.status_code == 409, again.text
+        assert "already stands" in again.json()["detail"]
+
+
+def test_a_fictional_shelf_and_a_fictional_section_are_both_404():
+    """§4.2, on both halves of the request. Foreign and fictional are the same
+    answer, and it is never a 403."""
+    with TestClient(_app()) as client:
+        _drawn_map(client, columns=1, levels=1)
+        section = client.get("/api/v1/map").json()["sections"][0]
+        homeless = client.post("/api/v1/shelves", json={}).json()
+
+        assert client.put("/api/v1/map/shelves/nope/address",
+                          json={"section_id": section["id"], "col": 1,
+                                "level": 1}).status_code == 404
+        assert client.put(f"/api/v1/map/shelves/{homeless['id']}/address",
+                          json={"section_id": "nope", "col": 1,
+                                "level": 1}).status_code == 404
+        assert client.delete(
+            "/api/v1/map/shelves/nope/address").status_code == 404
+
+
+def test_unbinding_is_undoable_and_binding_does_not_evict_that_undo():
+    """The asymmetry, at the surface that shows it. Unbinding detaches a
+    shelf, which §3.15 says is undoable; binding into a free slot destroys
+    nothing, and an entry for it would push the real undo off a one-deep
+    journal."""
+    with TestClient(_app()) as client:
+        _drawn_map(client, columns=2, levels=2)
+        section = client.get("/api/v1/map").json()["sections"][0]
+        detached = _unbound(client, section["id"], 2, 2)
+
+        said = client.get("/api/v1/map/undo").json()
+        assert said["available"] is True and said["kind"] == "unbind_shelf"
+
+        _unbound(client, section["id"], 1, 1)
+        client.put(f"/api/v1/map/shelves/{detached['id']}/address",
+                   json={"section_id": section["id"], "col": 1, "level": 1})
+        still = client.get("/api/v1/map/undo").json()
+        assert still["kind"] == "unbind_shelf", "a bind wrote a journal entry"
+        # ...though the world HAS moved under the entry by now, which is the
+        # honest answer: the newer unbind is the head, and this shelf has
+        # since been bound into the slot that entry would refill.
+        assert still["available"] is False and still["reason"] == "world_moved"
+
+
+def test_unbinding_a_shelf_that_stands_nowhere_answers_200_not_409():
+    """The retry a dropped response provokes. There is nothing for the caller
+    to do differently, so there is nothing to report."""
+    with TestClient(_app()) as client:
+        _drawn_map(client, columns=1, levels=1)
+        section = client.get("/api/v1/map").json()["sections"][0]
+        shelf = _unbound(client, section["id"], 1, 1)
+
+        again = client.delete(f"/api/v1/map/shelves/{shelf['id']}/address")
+        assert again.status_code == 200, again.text
+        assert again.json()["address"] is None
+
+
+def test_an_unbind_naming_the_WRONG_cell_is_refused_and_the_shelf_stays():
+    """The stale panel a review measured: the laptop shows cell (1,1) holding
+    a named shelf; on the phone the owner moves it to (2,2); back on the
+    laptop they read the old label and the old counts in the confirmation and
+    press *take off the map*.
+
+    Without the cell in the request the server detaches it from (2,2) — the
+    address just deliberately set — and answers 200. §5.7's *declared, never
+    detected*, applied to a gesture.
+    """
+    with TestClient(_app()) as client:
+        _drawn_map(client, columns=2, levels=2)
+        section = client.get("/api/v1/map").json()["sections"][0]
+        moving = _unbound(client, section["id"], 1, 1)
+        _unbound(client, section["id"], 2, 2)
+        client.put(f"/api/v1/map/shelves/{moving['id']}/address",
+                   json={"section_id": section["id"], "col": 2, "level": 2})
+
+        stale = client.delete(
+            f"/api/v1/map/shelves/{moving['id']}/address"
+            f"?section_id={section['id']}&col=1&level=1")
+        assert stale.status_code == 409, stale.text
+        assert client.get(f"/api/v1/shelves/{moving['id']}").json()[
+            "address"] == {"section_id": section["id"], "col": 2, "level": 2}, (
+            "the shelf was detached from the cell nobody asked about")
+
+        right = client.delete(
+            f"/api/v1/map/shelves/{moving['id']}/address"
+            f"?section_id={section['id']}&col=2&level=2")
+        assert right.status_code == 200, right.text
+        assert right.json()["address"] is None
+
+
+def test_a_RETRIED_unbind_naming_its_cell_is_still_a_no_op():
+    """The half that makes the check safe. A dropped response provokes a
+    retry with the SAME cell — and by then the shelf stands nowhere, so a
+    check that ran unconditionally would answer 409 for an operation that had
+    already succeeded."""
+    with TestClient(_app()) as client:
+        _drawn_map(client, columns=1, levels=1)
+        section = client.get("/api/v1/map").json()["sections"][0]
+        at = f"?section_id={section['id']}&col=1&level=1"
+        shelves = client.get("/api/v1/shelves").json()
+        first = client.delete(
+            f"/api/v1/map/shelves/{shelves[0]['id']}/address{at}")
+        assert first.status_code == 200, first.text
+
+        again = client.delete(
+            f"/api/v1/map/shelves/{shelves[0]['id']}/address{at}")
+        assert again.status_code == 200, again.text
+        assert again.json()["address"] is None
+
+
+def test_half_a_cell_is_a_400_rather_than_a_cell_it_guesses_at():
+    """Two of the three describe no cell. The lenient answer would be to
+    ignore what was sent, which is the destructive one here: it is the check
+    itself that would go quiet."""
+    with TestClient(_app()) as client:
+        _drawn_map(client, columns=1, levels=1)
+        section = client.get("/api/v1/map").json()["sections"][0]
+        shelf = client.get("/api/v1/shelves").json()[0]
+        got = client.delete(f"/api/v1/map/shelves/{shelf['id']}/address"
+                            f"?section_id={section['id']}&col=1")
+        assert got.status_code == 400, got.text
+        assert client.get(f"/api/v1/shelves/{shelf['id']}").json()["address"]

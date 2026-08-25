@@ -617,6 +617,15 @@ def test_unnamed_shelves_order_by_when_they_were_photographed():
 
     Named shelves still come first and alphabetically: a shelf someone
     bothered to name is one they will look for by name.
+
+    ⚠⚠ **This function said that and asserted its opposite.** The assertion
+    read `["c", "a", "named"]` — the named shelf LAST — because a key
+    beginning with the label puts the empty string first, and the sentence
+    above, `Shelf.sort_key`'s docstring, `GET /shelves`'s docstring and both
+    store implementations all agreed with each other about the intent while
+    the code did the reverse. Nothing was red for four schema versions.
+    P6.4c's picker is the first screen where the order is a decision aid, and
+    that is where a review finally read it.
     """
     order = sorted(
         [_shelf(id="c", label="", created_at="2026-08-03"),
@@ -624,7 +633,7 @@ def test_unnamed_shelves_order_by_when_they_were_photographed():
          _shelf(id="named", label="סלון", created_at="2026-08-01")],
         key=lambda s: s.sort_key,
     )
-    assert [s.id for s in order] == ["c", "a", "named"]
+    assert [s.id for s in order] == ["named", "c", "a"]
 
 
 def test_depth_is_declared_and_a_capture_cannot_invent_one():
@@ -3050,3 +3059,107 @@ def test_an_alias_belongs_to_a_library():
         pass
     else:
         raise AssertionError("an alias was built with no library")
+
+
+def test_a_slot_that_already_holds_a_shelf_refuses_the_bind_itself():
+    """MAP_PLAN §3.14, at the level that decides it.
+
+    ⚠ This gate exists because the rule survived its own mutation one level
+    up: delete the check from `plan_bind` and `bind_shelf_to_slot` still
+    refuses, because `shelves_by_slot` catches the write and the caller
+    translates it. That is redundant enforcement, which is the pattern here —
+    but a rule whose only proof runs through a unique index is a rule that
+    disappears the day somebody writes a second caller, and §3.14's whole
+    point is that binding stops at a taken slot rather than resolving it.
+    """
+    from app.domain import (
+        Section, ShelfAddress, SlotTaken, new_shelf, plan_bind,
+    )
+
+    section = Section(id="se", library_id="lib", bookcase_id="bc", ordinal=1,
+                      column_levels=(2, 2))
+    homeless = new_shelf(id="photo-born", library_id="lib")
+    occupant = new_shelf(id="drawn", library_id="lib", label="מדף א",
+                         address=ShelfAddress("se", 1, 1))
+
+    try:
+        plan_bind(homeless, section, ShelfAddress("se", 1, 1), occupant)
+    except SlotTaken as exc:
+        assert exc.occupant is occupant, (
+            "the refusal must carry the shelf the decision was made about")
+        assert "מדף א" in str(exc)
+    else:
+        raise AssertionError("a bind landed on top of another shelf")
+
+    # ...and the same slot, free, is exactly what it is for.
+    assert plan_bind(homeless, section, ShelfAddress("se", 1, 1),
+                     None).address == ShelfAddress("se", 1, 1)
+
+
+def test_the_bind_ladder_answers_about_the_SHELF_before_the_slot():
+    """⚠ The order is argued at length in `plan_bind` and was enforced by
+    nothing: a review swapped the two blocks and the whole ring stayed green,
+    because no test built the one case that tells them apart — an addressed
+    shelf aimed at an OCCUPIED slot.
+
+    Only the last rung offers a next step (*merge instead?*, P6.4d). Offering
+    it to somebody whose request was impossible for a simpler reason is how a
+    dangerous button gets pressed by accident, and that is the whole of §3.14's
+    argument for keeping bind and merge apart.
+    """
+    from app.domain import (
+        AlreadyOnTheMap, Section, ShelfAddress, new_shelf, plan_bind,
+    )
+
+    section = Section(id="se", library_id="lib", bookcase_id="bc", ordinal=1,
+                      column_levels=(2, 2))
+    standing = new_shelf(id="drawn", library_id="lib",
+                         address=ShelfAddress("se", 1, 2))
+    occupant = new_shelf(id="other", library_id="lib",
+                         address=ShelfAddress("se", 1, 1))
+
+    try:
+        plan_bind(standing, section, ShelfAddress("se", 1, 1), occupant)
+    except AlreadyOnTheMap:
+        pass
+    else:
+        raise AssertionError(
+            "an addressed shelf aimed at a taken slot was offered the merge")
+
+
+def test_binding_a_shelf_to_the_cell_it_ALREADY_stands_in_is_a_no_op():
+    """The promise `PUT` makes, and the reason the refusal above is not
+    reached by a double tap.
+
+    A retry after a dropped response, or two taps on one picker option, used
+    to answer `AlreadyOnTheMap` — which the client renders as *the drawing has
+    changed since*, a false statement about the owner's own request landing.
+    The unbind beside it has always answered 200 for the same event.
+    """
+    from app.domain import Section, ShelfAddress, new_shelf, plan_bind
+
+    section = Section(id="se", library_id="lib", bookcase_id="bc", ordinal=1,
+                      column_levels=(2, 2))
+    where = ShelfAddress("se", 1, 1)
+    standing = new_shelf(id="drawn", library_id="lib", address=where)
+
+    assert plan_bind(standing, section, where, standing) == standing
+    assert plan_bind(standing, section, where, None) == standing
+
+
+def test_an_address_naming_another_section_is_refused_by_the_rule_itself():
+    """⚠ Unreachable from the only caller today — the route builds the
+    address from the section it just loaded — and gated here anyway, because
+    `plan_bind` is exported and the next caller will not be that one. A
+    review deleted the clause and nothing failed."""
+    from app.domain import DomainError, Section, ShelfAddress, new_shelf, plan_bind
+
+    section = Section(id="se", library_id="lib", bookcase_id="bc", ordinal=1,
+                      column_levels=(2, 2))
+    homeless = new_shelf(id="photo-born", library_id="lib")
+    try:
+        plan_bind(homeless, section, ShelfAddress("elsewhere", 1, 1), None)
+    except DomainError as exc:
+        assert "elsewhere" in str(exc)
+    else:
+        raise AssertionError("a shelf was bound into another section's cell")

@@ -5461,6 +5461,152 @@
         ]
       }
     },
+    "/api/v1/map/shelves/{shelf_id}/address": {
+      "delete": {
+        "description": "Take a shelf off the drawing. The shelf survives; only the address goes.\n\n**200 either way.** A shelf that already stands nowhere is answered with\nitself rather than a 409 — the retry a dropped response provokes must not\nlook like a new failure, and there is nothing for the caller to do\ndifferently.\n\nIt records an undo where :func:`bind_shelf` does not, because this is the\ndirection that loses something: an address is what a person read off a\ndrawing, and §3.15's list is *destroy or detach*. Every other detach in\nthe map is journalled, and one reached deliberately rather than as the\nside effect of erasing a column is not a smaller loss.\n\n⚠ It answers with a `ShelfDTO` rather than 204, and an earlier version of\nthis note claimed the map client uses it to skip a round trip. It does\nnot: `useMapSync.slotWrite` discards the body and re-derives the whole\ndocument, because `free` and `id` are server facts this document now has\nwrong in more places than the one cell. The DTO is here because a shelf's\nstate after the write is what a caller of a shelf route expects to be\ntold, and because a 204 would make the counts unavailable to anything but\na second request.\n\n⚠ The three query parameters are the cell the CALLER thinks it is\nemptying, and they are how a stale screen is caught: a panel that has not\nseen the shelf move would otherwise detach it from the address somebody\njust set, and answer 200. All three or none — two of them describe no\ncell.",
+        "operationId": "unbind_shelf_route_api_v1_map_shelves__shelf_id__address_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "shelf_id",
+            "required": true,
+            "schema": {
+              "title": "Shelf Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The cell the caller believes this shelf stands in. Optional, and checked only when the shelf still has an address — so a retry stays a no-op. Given and wrong means the drawing moved: 409.",
+            "in": "query",
+            "name": "section_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The cell the caller believes this shelf stands in. Optional, and checked only when the shelf still has an address — so a retry stays a no-op. Given and wrong means the drawing moved: 409.",
+              "title": "Section Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "col",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Col"
+            }
+          },
+          {
+            "in": "query",
+            "name": "level",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Level"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShelfDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Unbind Shelf Route",
+        "tags": [
+          "map"
+        ]
+      },
+      "put": {
+        "description": "Put an unaddressed shelf into a free slot — **the safe half of P6.4**.\n\n§3.11 splits binding in two and §3.14 keeps them apart: this one gains an\naddress and joins no identities, so nothing moves and nothing is lost.\nTwo shelves becoming one is a MERGE (P6.4d), and a taken slot is where\nthis route stops rather than something it resolves.\n\nThe answers, and each is a different sentence for the owner:\n\n  - **404** — no such shelf, or no such section. Foreign and fictional are\n    the same answer (§4.2);\n  - **400** — a cell outside the section's extent. The client is drawing\n    from a shape this section does not have;\n  - **409, four ways** — the cell is a GAP (§3.10a: switched off is not a\n    slot, and switching it back on is its own decision about the\n    furniture); the shelf ALREADY stands somewhere (a move is an unbind\n    and a bind, each worth its own ✓); the slot is TAKEN, naming the\n    occupant so the client can offer the merge; or the shelf is the\n    WISHLIST, which stands nowhere by construction (§5.7).\n\n⚠ **It records no undo, and that is not an oversight.** Binding into a\nfree slot destroys nothing — the same reason `set_gaps` records nothing\nwhen it switches a cell back ON — and the journal is one deep, so an entry\nfor a purely additive edit does not merely add noise, it evicts the real\nundo standing behind it. The inverse is one press of the control beside\nit.\n\n⚠ The body is `ShelfAddressDTO`, the type the response already carries,\nrather than a request twin of it. An address is an address in both\ndirections, and three fields declared twice is the fork this project\nkeeps a rule about.",
+        "operationId": "bind_shelf_api_v1_map_shelves__shelf_id__address_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "shelf_id",
+            "required": true,
+            "schema": {
+              "title": "Shelf Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShelfAddressDTO"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShelfDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Bind Shelf",
+        "tags": [
+          "map"
+        ]
+      }
+    },
     "/api/v1/map/sites": {
       "post": {
         "operationId": "create_site_api_v1_map_sites_post",

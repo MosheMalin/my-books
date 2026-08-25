@@ -190,6 +190,34 @@ def digest_slots(shelves: Iterable[Shelf]) -> str:
     ))
 
 
+def digest_shape(section: Section | None) -> str:
+    """Digest a section's SHAPE — its extent and its mask, nothing else.
+
+    ⚠ The half ``digest_slots`` cannot see, and the one that produced an
+    undrawable shelf. ``digest_slots`` answers *who stands where*; this
+    answers *which cells exist at all*, and an unbind's restore watches only
+    the first. Measured, with no concurrency: take a shelf off the map, put a
+    television in that cell (allowed — the cell is empty now), press undo. The
+    offer says ``available: true``, and the shelf comes back addressed to a
+    cell the drawing does not have. ``toPlan`` renders neither a gapped cell
+    nor one outside the extent, and the picker lists only unaddressed
+    shelves — so a shelf holding books is in NEITHER list, reachable from no
+    screen, until the next section edit detaches it.
+
+    The same hole with a shortened column, and the same for every kind: a
+    section edit that releases no shelf records nothing (§3.15 is about
+    destructive edits), so the unbind stays at the head while the shape moves
+    underneath it.
+
+    ⚠ Not the whole row, for ``digest_slots``'s reason one line up: a
+    section's DEFAULTS changing is none of this undo's business. Its extent
+    is, because an address the undo writes has to still name a slot.
+    """
+    if section is None:
+        return ABSENT
+    return _digest((list(section.column_levels), sorted(section.gaps)))
+
+
 def target_keys(restore: MapRestore) -> tuple[str, ...]:
     """Everything the fingerprint must cover, derived from the restore itself.
 
@@ -203,6 +231,7 @@ def target_keys(restore: MapRestore) -> tuple[str, ...]:
     keys.extend(f"shelves:{shelf_id}" for shelf_id in restore.created)
     for section_id in sections_touched(restore):
         keys.append(f"slots:{section_id}")
+        keys.append(f"shape:{section_id}")
     # ⚠ The PARENTS every restored row needs, and the ordinal space every
     # restored section lands in. Both were missing, and both were measured:
     #

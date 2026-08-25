@@ -760,11 +760,20 @@ def unnamed_shelves_are_ordered_by_creation_not_by_id(store):
 
     Inserted so that id order, insertion order and the correct order all
     differ, which is the only arrangement that can catch a wrong tiebreaker.
+
+    ⚠ **Named FIRST, then the unnamed by age.** This assertion used to read
+    `["sh3", "sh1", "sh2"]` — the unnamed pair ahead of the named shelf —
+    which is what a key beginning with the label does, since an empty string
+    sorts first. `Shelf.sort_key`'s own docstring, `GET /shelves`'s docstring
+    and this one all said the opposite, and both implementations agreed with
+    each other, so nothing was ever red. P6.4c's picker is the first screen
+    where the order is a decision aid, and a review reading it counted
+    fifteen unnamed rows before the twenty-six the owner had named.
     """
     store.save_shelf(LIB, _sh(1, label="", created_at="2026-08-05"))
     store.save_shelf(LIB, _sh(2, label="אכסדרה", created_at="2026-08-01"))
     store.save_shelf(LIB, _sh(3, label="", created_at="2026-08-02"))
-    assert [s.id for s in store.list_shelves(LIB)] == ["sh3", "sh1", "sh2"]
+    assert [s.id for s in store.list_shelves(LIB)] == ["sh2", "sh3", "sh1"]
 
 
 @shelf_contract

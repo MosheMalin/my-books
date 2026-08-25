@@ -13,15 +13,16 @@ import { mapText } from '../text'
  * panel says how many and offers to apply — it never applies silently.
  */
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { Select } from '@booksnap/ui'
 
 import { Elevation } from './Elevation'
-import type { Doc, Selection } from './types'
+import type { OffMapShelf } from '../useMapSync'
+import type { Cell, Doc, Selection } from './types'
 import { count, markCell, only, onlyCell } from './types'
 import { useSticky } from './useSticky'
-import type { Bookcase, GapCell, Plan, Room } from '../core/model'
+import type { Bookcase, GapCell, Plan, Room, Section, Shelf } from '../core/model'
 import {
   MAX_DEPTH,
   allShelves,
@@ -48,6 +49,18 @@ export type Actions = {
   setShelfDepth: (id: string, sectionId: string, col: number, level: number, n: number) => void
   /** Switch cells off, or a hole back on (MAP_PLAN §3.10a). */
   setGaps: (id: string, sectionId: string, cells: GapCell[], gap: boolean) => void
+  /**
+   * P6.4c, and the three of them are SERVER gestures — unlike everything
+   * above, which edits the document and is pushed as a diff. Which shelf
+   * stands in a slot is a row the document cannot hold (§3.1: a drawn slot IS
+   * a shelf, so the document has slots and never identities), so these ask
+   * the server and then re-derive.
+   */
+  shelvesOffTheMap: () => Promise<OffMapShelf[]>
+  bindShelf: (shelfId: string, sectionId: string, col: number, level: number,
+              name: string) => void
+  unbindShelf: (shelfId: string, sectionId: string, col: number,
+                level: number, name: string) => void
   addSection: (id: string, where: 'top' | 'bottom') => void
   removeSection: (id: string, sectionId: string) => void
   deleteSelection: () => void
@@ -512,34 +525,215 @@ function ShelfPanel({
   // "section 1", because saying it would imply there is a section 2.
   const where =
     bc.sections.length > 1 ? `${T.section_n(sectionIndex(bc, sec.id) + 1)} · ` : ''
+  const name = shelf.label || T.shelf_unnamed
   return (
-    <fieldset className="shelf-panel">
-      <legend>{T.shelf_legend(where, shelf.col + 1, shelf.level + 1)}</legend>
-      <label className="field inline">
-        <span>{T.own_depth}</span>
-        <input
-          type="number"
-          min={1}
-          max={MAX_DEPTH}
-          value={shelf.depth}
-          aria-label={T.shelf_depth}
-          onChange={(e) =>
-            actions.setShelfDepth(bc.id, sec.id, shelf.col, shelf.level, Number(e.target.value))
-          }
-        />
-      </label>
-      {/* ⚠ A FACT, not a field. In the lab the photo count was a number you
-          typed, so a case could be made to look half-catalogued while you
-          drew. Here it is `capture_count` off the shelf, and there is no op
-          behind it: as an input it accepted an edit, the toolbar said
-          "saved", and the next load showed the old number. A control that
-          discards what it takes is worse than one that is absent. */}
-      <div className="field inline">
-        <span>{T.photos_attached}</span>
-        <strong>{shelf.photos}</strong>
-      </div>
-      <p className="note">{T.photos_are_captures}</p>
+    <fieldset className="shelf-panel" ref={useCellInView(sel)}>
+      <legend>
+        {shelf.free
+          ? T.empty_cell_legend(where, shelf.col + 1, shelf.level + 1)
+          : T.shelf_legend(where, shelf.col + 1, shelf.level + 1)}
+      </legend>
+      {/* ⚠ A cell the SERVER says holds no shelf (P6.4c). Everything below
+          would be a control over a row that does not exist — the depth box
+          most sharply, since `PATCH .../shelves/{col}/{level}` answers 404 for
+          an empty slot and the toolbar would have said "saved". */}
+      {shelf.free ? (
+        // ⚠ KEYED by the cell. Without it, selecting a different free cell
+        // keeps this component mounted with the previous cell's `open` and
+        // its stale list — a picker offering the answer to a question nobody
+        // asked here.
+        <EmptyCell key={`${sec.id}:${shelf.col}:${shelf.level}`}
+                   sec={sec} shelf={shelf} actions={actions} />
+      ) : (
+        <>
+          {/* The one fact the grid cannot show: a cell is 44 pixels wide. */}
+          {shelf.label && (
+            <p className="note rtl-safe">{T.shelf_is_named(shelf.label)}</p>
+          )}
+          <label className="field inline">
+            <span>{T.own_depth}</span>
+            <input
+              type="number"
+              min={1}
+              max={MAX_DEPTH}
+              value={shelf.depth}
+              aria-label={T.shelf_depth}
+              onChange={(e) =>
+                actions.setShelfDepth(bc.id, sec.id, shelf.col, shelf.level, Number(e.target.value))
+              }
+            />
+          </label>
+          {/* ⚠ A FACT, not a field. In the lab the photo count was a number you
+              typed, so a case could be made to look half-catalogued while you
+              drew. Here it is `capture_count` off the shelf, and there is no op
+              behind it: as an input it accepted an edit, the toolbar said
+              "saved", and the next load showed the old number. A control that
+              discards what it takes is worse than one that is absent. */}
+          <div className="field inline">
+            <span>{T.photos_attached}</span>
+            <strong>{shelf.photos}</strong>
+          </div>
+          <p className="note">{T.photos_are_captures}</p>
+          {shelf.id && (
+            <button
+              type="button"
+              className="danger"
+              onClick={() => {
+                // ⚠ Asked only when something would be LOST, which is the
+                // rule the section header already follows: a dialog in front
+                // of a gesture that destroys nothing is what teaches people
+                // to click through the ones that do. An empty drawn shelf
+                // leaving the map costs nothing; one holding books loses the
+                // address they are printed with — and the confirmation says
+                // both halves, including that it can be taken back.
+                if (shelf.books + shelf.photos === 0
+                    || confirm(T.shelf_take_off_map_confirm(shelf.books,
+                                                            shelf.photos))) {
+                  // The CELL, not only the shelf — the counts in that dialog
+                  // came from this cell, and the server refuses if the shelf
+                  // has moved out of it since.
+                  actions.unbindShelf(shelf.id as string, sec.id, shelf.col,
+                                      shelf.level, name)
+                }
+              }}
+            >
+              {T.shelf_take_off_map}
+            </button>
+          )}
+        </>
+      )}
     </fieldset>
+  )
+}
+
+/**
+ * Bring the shelf panel into view when the owner taps a different cell.
+ *
+ * ⚠ Not a nicety on a phone. A review measured the panel beginning **957px**
+ * inside a scroller that is **252px** tall — 31% of a 375×812 screen — with
+ * `scrollTop` at 0 before the tap and 0 after it. So *tap a cell → the panel
+ * at the bottom* read as *tap a cell, nothing happens*, and P6.4c's entire UI
+ * lives down there. `grep scrollIntoView app/web/src/map/` had no matches.
+ *
+ * Keyed on the CELL, so re-selecting the same one does not yank the view
+ * while somebody is reading it.
+ */
+function useCellInView(cell: Cell | null) {
+  const box = useRef<HTMLFieldSetElement | null>(null)
+  const at = cell ? `${cell.sectionId}:${cell.col}:${cell.level}` : ''
+  useEffect(() => {
+    // ⚠ Guarded, like `onPhone`'s `matchMedia` two folds up: jsdom has no
+    // `scrollIntoView`, and a missing one must mean "cannot scroll", not a
+    // crash that takes the whole panel down with it.
+    if (at) box.current?.scrollIntoView?.({ block: 'nearest' })
+  }, [at])
+  return box
+}
+
+/**
+ * A slot with nothing in it, and the way to fill it (P6.4c, MAP_PLAN §3.14).
+ *
+ * **Only what the owner TYPED decides anything here.** The list is every shelf
+ * standing nowhere, in the server's own order, and the ✓ is the owner picking
+ * one — nothing is proposed from a photograph, a timestamp or a label match.
+ *
+ * ⚠ The list is fetched when the picker OPENS, not carried in the document. A
+ * shelf photographed on the phone two minutes ago is exactly the one somebody
+ * opens this for, and it is not in a document that was derived before it
+ * existed.
+ */
+function EmptyCell({
+  sec,
+  shelf,
+  actions,
+}: {
+  sec: Section
+  shelf: Shelf
+  actions: Actions
+}) {
+  const { t, lang } = useI18n()
+  const T = mapText(lang)
+  const [open, setOpen] = useState(false)
+  /**
+   * ⚠ THREE states, and the third is the finding. A failure used to land as
+   * an empty list, which printed *"every shelf is already on the map"* — a
+   * confident false statement, measured with `GET /shelves` down while forty
+   * shelves stood nowhere, one of them the owner's real 22-book one. Absent
+   * is not unknown; this project has the same measurement on record about
+   * "no admin" beside a card saying two users.
+   */
+  const [list, setList] = useState<OffMapShelf[] | 'failed' | null>(null)
+
+  const read = () => {
+    setList(null)
+    void actions.shelvesOffTheMap()
+      .then(setList)
+      .catch(() => setList('failed'))
+  }
+
+  if (!open) {
+    return (
+      <>
+        <p className="note rtl-safe">{T.cell_has_no_shelf}</p>
+        <button type="button" onClick={() => { setOpen(true); read() }}>
+          {T.put_a_shelf_here}
+        </button>
+      </>
+    )
+  }
+  return (
+    <div className="shelf-pick">
+      <p className="note rtl-safe">{T.pick_a_shelf}</p>
+      {list === null ? (
+        <p className="note">{t.loading}</p>
+      ) : list === 'failed' ? (
+        // The reason, and the way out. A picker with neither is a dead end
+        // whose only escape is selecting a different cell, which nothing says.
+        <>
+          <p className="note warn rtl-safe" role="status">
+            {T.shelf_list_failed}
+          </p>
+          <button type="button" onClick={read}>{T.shelf_list_retry}</button>
+        </>
+      ) : list.length === 0 ? (
+        <p className="note rtl-safe">{T.no_shelves_off_the_map}</p>
+      ) : (
+        <ul>
+          {list.map((s, i) => (
+            <li key={s.id}>
+              {/* ⚠ NUMBERED in the accessible name, and it is not decoration:
+                  two unnamed shelves holding nothing announce the identical
+                  sentence otherwise, which is the collision CLAUDE.md records
+                  — and unnamed is the COMMON case here, since these are the
+                  photo-born half of the population. */}
+              <button
+                type="button"
+                aria-label={T.pick_shelf_option(
+                  i + 1, s.label || T.shelf_unnamed, s.book_count,
+                  s.capture_count)}
+                onClick={() =>
+                  actions.bindShelf(s.id, sec.id, shelf.col, shelf.level,
+                                    s.label || T.shelf_unnamed)}
+              >
+                <span className="rtl-safe">{s.label || T.shelf_unnamed}</span>
+                <span className="note rtl-safe">
+                  {/* Forty rows reading `0 ספרים · 0 תמונות` is noise in the
+                      one list whose job is to tell shelves apart. */}
+                  {s.book_count + s.capture_count === 0
+                    ? T.shelf_holds_nothing
+                    : T.shelf_holds(s.book_count, s.capture_count)}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {/* A way out that is not "select a different cell". */}
+      <button type="button" className="linkish"
+              onClick={() => { setOpen(false); setList(null) }}>
+        {T.pick_a_shelf_cancel}
+      </button>
+    </div>
   )
 }
 

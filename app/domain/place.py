@@ -49,7 +49,7 @@ from dataclasses import dataclass, replace
 from typing import Iterable, Mapping
 
 from app.domain.book import DomainError
-from app.domain.shelf import Shelf, ShelfAddress
+from app.domain.shelf import Shelf, ShelfAddress, bind_shelf
 
 # --- constants ------------------------------------------------------------
 
@@ -140,6 +140,81 @@ class SlotsOccupied(DomainError):
     def __init__(self, message: str, shelves: tuple[Shelf, ...] = ()) -> None:
         super().__init__(message)
         self.shelves = shelves
+
+
+class SlotTaken(DomainError):
+    """A shelf was offered a slot another shelf already stands in (P6.4c).
+
+    **The refusal that offers a next step.** MAP_PLAN §3.11 splits binding in
+    two: the safe half is an unaddressed shelf gaining an address, and the
+    dangerous half is two identities becoming ONE — which moves a population
+    of copies and merges two capture strips. §3.14 is why they are never one
+    button: *"a wrong binding looks like success, because the map gets
+    fuller."* So a taken slot is not something bind quietly resolves; it is
+    where bind stops and says who is there.
+
+    ``occupant`` is carried rather than looked up again by whoever renders the
+    refusal, for the reason :class:`SlotsOccupied` gives one line up: by then
+    the world may have moved, and a second read can answer differently from
+    the one the decision was made on.
+
+    ⚠ It is NOT the same event as :class:`DuplicateShelfSlot`, which is the
+    store's unique index catching two binds that raced. This one is the check;
+    that one is the backstop, and the caller translates it into this so the
+    owner reads one sentence either way.
+    """
+
+    def __init__(self, message: str, occupant: Shelf) -> None:
+        super().__init__(message)
+        self.occupant = occupant
+
+
+class CellIsGap(DomainError):
+    """The cell is switched off, so it is not a slot (§3.10a).
+
+    Refused rather than un-gapped on the way past. Switching a cell back on is
+    a decision about the FURNITURE — *"the television is gone"* — and the
+    owner has one control for it that says so. A bind that silently restored
+    the cell would make *put this shelf here* mean two things, one of which
+    the owner never asked for.
+    """
+
+
+class AlreadyOnTheMap(DomainError):
+    """The shelf being bound already stands somewhere (P6.4c).
+
+    So this would be a MOVE, and a move is refused here on purpose. Two
+    reasons, and the second is the load-bearing one:
+
+    - the plan's sentence for this item is *"an unaddressed shelf gains an
+      address, and loses one"*. A move is those two gestures, and each is
+      worth its own ✓ (§3.14);
+    - **it would make bind destructive.** Binding into a free slot loses
+      nothing, which is why it records no undo — the same argument
+      ``set_gaps`` makes for un-gapping a cell. A move vacates the old slot,
+      and that address is a thing somebody could want back, so it would need
+      a journal entry. Refusing keeps one gesture purely additive instead of
+      making it conditionally destructive, which is the kind of rule nobody
+      remembers at the call site.
+    """
+
+
+class ShelfWasMerged(DomainError):
+    """The shelf being bound is an absorbed identity (§3.11, for P6.4d).
+
+    After a merge, ``alias_id -> shelf_id``: the absorbed shelf's row is
+    deleted and one alias row takes its place, so the id keeps answering. A
+    row that outlives its merge — the window between writing the alias and
+    removing the row, which is exactly what a merge passes through — has no
+    address, so it appears in ``GET /shelves`` and therefore in the picker's
+    *not on the map* list.
+
+    ⚠ Binding it would put ONE population of copies in TWO cells: the
+    survivor where the merge put it, and the absorbed identity wherever this
+    bind lands. Nothing downstream refuses it — a review reproduced it — and
+    ``ShelfHasAliases`` is the opposite question (*may this shelf be
+    destroyed*), asked of the survivor.
+    """
 
 
 class NotOnThisFloor(DomainError):
@@ -975,6 +1050,93 @@ def plan_slot_removal(
     for shelf in shelves:
         (detached if shelf.id in occupied else deleted).append(shelf.id)
     return SlotRemoval(deleted=tuple(deleted), detached=tuple(detached))
+
+
+def plan_bind(
+    shelf: Shelf,
+    section: Section,
+    address: ShelfAddress,
+    occupant: Shelf | None,
+    *,
+    merged_into: str | None = None,
+) -> Shelf:
+    """The shelf as it will stand, or the reason it may not (P6.4c, §3.14).
+
+    Every refusal in one place, so the route and the client cannot disagree
+    about which of them applies — and so the ORDER is a decision rather than
+    an accident of how the code was typed:
+
+    1. **the cell must exist** — outside the extent is a `DomainError` (400),
+       because a client asking for column 9 of a 4-column section is working
+       from a drawing that is not this one;
+    2. **the cell must not be a gap** (409) — it exists, it is switched off;
+    3. **the shelf must not be an absorbed identity** (409) — see
+       :class:`ShelfWasMerged`; ``merged_into`` is the survivor it resolves
+       to, or ``None``;
+    4. **the shelf must be unaddressed** (409) — see :class:`AlreadyOnTheMap`;
+    5. **the slot must be free** (409, naming the occupant).
+
+    The last two are in that order because only the last one offers a next
+    step. *This shelf is already on the map* is answerable by picking a
+    different shelf; *something already stands here* is answerable by merging,
+    which is P6.4d — and offering a merge to somebody whose request was
+    impossible for a simpler reason is how a dangerous button gets pressed by
+    accident.
+
+    ⚠ It does not check that ``shelf`` is not the wishlist. ``Shelf`` itself
+    refuses to hold an address while ``virtual`` is set (§5.7: unowned books
+    may not stand at a location that exists), so :func:`bind_shelf` raises on
+    the last line — one rule, in the constructor, where every other path gets
+    it too.
+    """
+    if address.section_id != section.id:
+        raise DomainError(
+            f"address names section {address.section_id}, not {section.id}")
+    if address.level > section.levels_in(address.col):
+        raise DomainError(
+            f"section {section.id} has no cell at column {address.col}, "
+            f"level {address.level}")
+    if (address.col, address.level) in section.gaps:
+        raise CellIsGap(
+            f"column {address.col}, level {address.level} is switched off; "
+            "switch the cell back on before putting a shelf in it")
+    if merged_into is not None and merged_into != shelf.id:
+        raise ShelfWasMerged(
+            f"shelf {shelf.id} was merged into {merged_into}; it is an "
+            "identity of that shelf, not a shelf of its own")
+    if shelf.address == address:
+        # ⚠ Idempotent, and it is the reason this is a PUT. A double-tap on a
+        # picker option, or a retry after a dropped response, otherwise
+        # answered `AlreadyOnTheMap` — which `slotWrite` renders as *"the
+        # drawing has changed since"*, a false statement about the owner's own
+        # request landing. The unbind beside it already answers 200 for the
+        # same event; two halves of one pair disagreeing is how a client
+        # learns to distrust both. A review measured it.
+        return shelf
+    if shelf.address is not None:
+        raise AlreadyOnTheMap(
+            f"shelf {shelf.id} already stands at column {shelf.address.col}, "
+            f"level {shelf.address.level}; take it off the map first")
+    if occupant is not None:
+        raise slot_taken(address, occupant)
+    return bind_shelf(shelf, address)
+
+
+def slot_taken(address: ShelfAddress, occupant: Shelf) -> SlotTaken:
+    """The refusal, built once.
+
+    Two places discover a taken slot — this module's check, and the store's
+    unique index catching a bind that raced another one — and the owner must
+    read the same sentence either way, or the race looks like a different bug.
+
+    It names the LABEL when there is one, because that is what the owner
+    called the shelf; the id follows for whoever is reading a log. An unnamed
+    shelf is named by its id alone rather than by an empty pair of quotes.
+    """
+    named = f' "{occupant.label}"' if occupant.label else ""
+    return SlotTaken(
+        f"column {address.col}, level {address.level} already holds shelf "
+        f"{occupant.id}{named}", occupant)
 
 
 @dataclass(frozen=True)

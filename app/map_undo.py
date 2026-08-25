@@ -40,6 +40,7 @@ from app.domain.map_undo import (
     partner_for,
     digest_ordinals,
     digest_row,
+    digest_shape,
     digest_slots,
     merge_restores,
     parents_of,
@@ -179,8 +180,12 @@ def fingerprint(
         # edit cannot touch the wishlist (§5.7 forbids it an address), but a
         # filter deciding what the word ABSENT means is a filter that can be
         # wrong about it.
-        live = {s.id: s for s in shelves.list_shelves(library,
-                                                      include_virtual=True)}
+        #
+        # ⚠ Its own name. This used to REBIND `live`, which was the map's
+        # five tables — harmless while nothing read them again, and a
+        # `KeyError` the moment the shape keys below did.
+        standing_shelves = {s.id: s for s in shelves.list_shelves(
+            library, include_virtual=True)}
         watched = [shelf.id for shelf in restore.shelves]
         # The created ids are watched the same way and for the same reason
         # read backwards: the undo will DELETE these, so a row that has
@@ -188,18 +193,28 @@ def fingerprint(
         # it is exactly what a refusal is for.
         watched.extend(restore.created)
         for shelf_id in watched:
-            current = live.get(shelf_id)
+            current = standing_shelves.get(shelf_id)
             known[f"shelves:{shelf_id}"] = (
                 digest_row(current) if current is not None else ABSENT)
 
     for section_id in sections_touched(restore):
         known[f"slots:{section_id}"] = digest_slots(
             shelves.list_shelves_in_section(library, section_id))
+        known[f"shape:{section_id}"] = digest_shape(
+            live["sections"].get(section_id))
 
     # What the edit wrote WINS over what a later read says, for the reason in
     # the docstring: the read can already be somebody else's work.
     for key, value in wrote.items():
         known[key] = digest_row(value) if value is not None else ABSENT
+        # ⚠ A section the edit wrote decides its own SHAPE key too. Without
+        # this the row digest comes from `wrote` and the shape digest comes
+        # from a read taken after it — two answers about one section, from two
+        # moments, inside one entry. `apply_slot_change` is the whole reason:
+        # it is the edit that CHANGES a shape, so it is the one whose shape
+        # key must not be re-read.
+        if key.startswith("sections:"):
+            known[f"shape:{key.split(':', 1)[1]}"] = digest_shape(value)
 
     # Every key the domain says this restore covers, and no other. Computing
     # the scope in one place and the values in another is how the two drift
@@ -262,7 +277,8 @@ def record(
         union = merge_restores(previous.restore, restore)
         merged = absorbed(
             previous, kind, restore,
-            fingerprint(map_store, shelves, library, union, wrote),
+            _coalesced_fingerprint(map_store, shelves, library, previous,
+                                   union, restore, wrote),
             journal.clock.now_iso(),
         )
         journal.store.record(library, merged)
@@ -280,6 +296,48 @@ def record(
     )
     journal.store.record(library, entry)
     return entry
+
+
+def _coalesced_fingerprint(
+    map_store: MapStore,
+    shelves: ShelfStore,
+    library: LibraryRef,
+    previous: MapUndoEntry,
+    union: MapRestore,
+    restore: MapRestore,
+    wrote: dict[str, object] | None,
+) -> dict[str, str]:
+    """The union's digest, with the first half's keys taken from the first
+    half's own entry rather than re-read.
+
+    ⚠⚠ **The widest window in this module, and it was the last one open.**
+    ``wrote`` closes the gap between an edit's write and the journal's read —
+    two store calls. The coalescing branch computed the union's fingerprint
+    with only the SECOND half's ``wrote``, so every key belonging to the
+    first half fell back to a live read taken a full HTTP round trip later.
+    Measured: clear a bookcase's slots, rename a detached shelf from another
+    tab, delete the bookcase; the entry recorded the NEW label as its own
+    work, answered ``available: true`` with an empty ``changed``, and the undo
+    destroyed the rename.
+
+    That is the commonest entry in the journal, not a corner: ``push.ts``
+    sends *clear slots* and *delete* as a pair for every bookcase and every
+    section removal, so a coalesced entry is what removing furniture always
+    produces.
+
+    ``previous.fingerprint`` is already the right answer for those keys — it
+    was computed from the first half's own ``wrote``, at the moment that half
+    wrote. A key the SECOND half touches must come from the fresh digest, and
+    ``target_keys(restore)`` is exactly that set; everything else the union
+    adds is the first half's, and the entry beside it remembers it correctly.
+    """
+    fresh = fingerprint(map_store, shelves, library, union, wrote)
+    owned = set(target_keys(restore))
+    return {
+        key: (fresh[key] if key in owned or key not in previous.fingerprint
+              else previous.fingerprint[key])
+        for key in fresh
+    }
 
 
 # --- reading and replaying -------------------------------------------------

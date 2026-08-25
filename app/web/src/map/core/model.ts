@@ -44,6 +44,24 @@ export type Shelf = {
    * *"if it's not connected to any image — no need to raise a dialog"*).
    */
   books: number
+  /** The `Shelf` row standing here, when the SERVER put one in this document
+   *  (P6.4c). Absent in a cell this session drew, which has no row yet. */
+  id?: string
+  /** Its name, for the panel — the elevation shows a grid, and "which shelf
+   *  is this" is a question the grid cannot answer. */
+  label?: string
+  /**
+   * The slot exists and holds NO shelf — the state P6.4c's bind fills.
+   *
+   * ⚠ Set by `toPlan` alone, and that is the whole reason it exists rather
+   * than being derived as `!id`. A cell this session just drew also has no
+   * `id`, and it is not free: the push mints a shelf for it. Deriving would
+   * offer *put a shelf here* over every column the owner had just added, and
+   * the server would answer 409 for a slot that is about to be occupied. So
+   * "free" means *the server told us this slot was empty*, and it is refreshed
+   * by the re-derive that follows every bind and unbind.
+   */
+  free?: boolean
 }
 
 /**

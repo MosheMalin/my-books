@@ -64,6 +64,9 @@ export type MapWire = {
 
 export type ShelfWire = {
   id: string
+  /** P6.4c: the panel names the shelf standing in a cell, which a 44-pixel
+   *  grid cannot. */
+  label: string
   depth_count: number
   capture_count: number
   book_count: number
@@ -119,6 +122,12 @@ export function toPlan(map: MapWire, shelves: ShelfWire[], siteId: string): Plan
                   depth: shelf?.depth_count ?? s.default_depth,
                   photos: shelf?.capture_count ?? 0,
                   books: shelf?.book_count ?? 0,
+                  // P6.4c. `free` is stated HERE and nowhere else — see the
+                  // field's own note: a cell the session drew has no id
+                  // either, and it is not free.
+                  ...(shelf
+                    ? { id: shelf.id, label: shelf.label }
+                    : { free: true }),
                 }
               }),
           ),

@@ -58,6 +58,23 @@ export type MapSource = {
     restores?: Record<string, number>
     changed?: string[]
   }>
+  /**
+   * The shelves that stand NOWHERE — read when the picker opens (P6.4c).
+   *
+   * ⚠ Fetched then, not taken from the load. The list is what the owner is
+   * about to choose from, and the one in `initial` is as old as the document:
+   * a shelf photographed on the phone five minutes ago would be missing from
+   * it, which is exactly the shelf somebody opens this picker to place.
+   */
+  offTheMap?: () => Promise<OffMapShelf[]>
+}
+
+/** A shelf with no address, as the picker shows it. */
+export type OffMapShelf = {
+  id: string
+  label: string
+  capture_count: number
+  book_count: number
 }
 
 /**
@@ -112,6 +129,18 @@ export type MapSync = {
   /** Bumps on every reload, so the editor remounts with the new document
    *  instead of adopting it. */
   generation: number
+  /**
+   * A re-derive that must NOT blank the screen (P6.4c).
+   *
+   * ⚠ True only for the per-cell gestures. A site switch or a *reload from
+   * the server* replaces WHICH document this is, and showing the previous
+   * one meanwhile would be showing another site's rooms; binding a shelf
+   * changes one cell of the document already on screen, and a review measured
+   * 1.42 seconds of blank for it — after which the owner must find an 11×88
+   * pixel bookcase on a 375px plan again. Same mechanism, opposite right
+   * answer, so it is a flag rather than a rule.
+   */
+  refreshing: boolean
   /** The LOAD failed: there is no document, so there is nothing to edit. */
   error: string | null
   saved: Saved
@@ -147,6 +176,23 @@ export type MapSync = {
   /** P6.4b: ask the server to take back the last DESTRUCTIVE map edit.
    *  Not the drawing history — see the implementation. */
   undoLastEdit: () => void
+  /** P6.4c. The shelves standing nowhere, for the picker. */
+  shelvesOffTheMap: () => Promise<OffMapShelf[]>
+  /** Put an unaddressed shelf into a free slot. Server-owned: the document
+   *  has no way to say "this cell is THAT shelf" (§3.1 — a slot IS a shelf,
+   *  so the document holds slots, never identities). */
+  bindShelf: (shelfId: string, sectionId: string, col: number,
+              level: number, name: string) => void
+  /**
+   * Take a shelf off the drawing. Undoable on the server (§3.15).
+   *
+   * ⚠ It NAMES the cell it is emptying. Without that, a panel that has not
+   * seen the shelf move detaches it from wherever it now stands and is
+   * answered 200 — a review measured the two-device case: the confirmation
+   * quoted a label and counts belonging to a cell nobody was acting on.
+   */
+  unbindShelf: (shelfId: string, sectionId: string, col: number, level: number,
+                name: string) => void
   /** The plan as the server last confirmed it — the editor's starting doc. */
   initial: Plan | null
   /** Hand the current document over; the hook works out what to send. */
@@ -164,6 +210,7 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
   const [sites, setSites] = useState<{ id: string; name: string }[]>([])
   const [siteId, setSiteId] = useState<string>('')
   const [generation, setGeneration] = useState(0)
+  const [refreshing, setRefreshing] = useState(false)
 
   /** The last state the SERVER confirmed. Every diff is against this, never
    *  against the previous render — a dropped call must not be forgotten. */
@@ -217,9 +264,13 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
     window.setTimeout(() => setFlash((m) => (m === text ? null : m)), ms)
   }, [])
 
-  /** Throw the session's document away and re-derive it from the server. */
-  const startOver = useCallback(() => {
+  /** Throw the session's document away and re-derive it from the server.
+   *
+   *  ``keepPlace`` says the screen must not go blank while it happens — see
+   *  :data:`MapSync.refreshing`. */
+  const startOver = useCallback((keepPlace = false) => {
     era.current += 1
+    setRefreshing(keepPlace)
     setReady(false)
     setGeneration((g) => g + 1)
   }, [])
@@ -275,6 +326,7 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
         ids.current = new Ids()
         setInitial(plan)
         setReady(true)
+      setRefreshing(false)
       } catch (err) {
         if (alive) setError(messageOf(err, T))
       }
@@ -492,6 +544,90 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
     })()
   }, [announce, source, startOver, T])
 
+  /**
+   * The two halves of P6.4c, and one implementation because they differ only
+   * in the request.
+   *
+   * Shaped after `undoLastEdit` rather than after `record`: what these change
+   * is not in the document (§3.1 — the document holds SLOTS, and which shelf
+   * stands in one is a row only the server has), so there is no diff to
+   * carry them and no optimistic state to roll back.
+   *
+   * ⚠ **The drain, then the re-derive.** The drain is `afterSite`'s reason —
+   * re-deriving over an edit that has not reached the server is how that edit
+   * disappears. The re-derive is owed on SUCCESS because `free` and `id` are
+   * server facts this document now has wrong, and on FAILURE for a different
+   * reason: every refusal these two can meet means the drawing moved under
+   * the owner, so the document is stale either way. That is the opposite of
+   * `undoLastEdit`, where a refusal wrote nothing and re-deriving would cost
+   * the owner their drawing history for a press that changed nothing.
+   */
+  const slotWrite = useCallback((
+    work: (api: Api) => Promise<unknown>, said: string,
+  ) => {
+    void (async () => {
+      setNotice(null)
+      setSaved('saving')
+      await inflight.current
+      try {
+        await work(source.api)
+      } catch (err) {
+        const e = err as { status?: number; detail?: string; message?: string }
+        // ⚠ OUR words for the refusals that MEAN the drawing moved, and the
+        // server's for everything else. The client only offers a bind into a
+        // slot it was told was free, for a shelf it was told stood nowhere,
+        // so 400 / 404 / 409 are all *somebody edited this since you looked*
+        // — and the English underneath ("column 2, level 3 already holds
+        // shelf 9f3a…") is true and unusable.
+        //
+        // ⚠⚠ The first version said that of EVERY status. A review measured a
+        // 403 answering "the drawing has changed since — try again", and the
+        // same sentence covered 401 (a session that expired while the tab was
+        // backgrounded, which is the ordinary phone flow), 429 and every 5xx.
+        // Every one of those is a lie, and "try again" is an instruction that
+        // will fail identically forever. A wrong stated reason is worse than
+        // none.
+        const moved = e?.status === 400 || e?.status === 404
+          || e?.status === 409
+        setNotice(moved
+          ? { kind: 'refused', say: (T) => T.slot_moved_on }
+          : { kind: typeof e?.status === 'number' ? 'refused' : 'dropped',
+              detail: e?.detail || e?.message || T.save_failed_hint })
+        setSaved('saved')
+        startOver(true)
+        return
+      }
+      announce(said)
+      startOver(true)
+    })()
+  }, [announce, source, startOver, T])
+
+  const shelvesOffTheMap = useCallback(
+    () => source.offTheMap?.() ?? Promise.resolve([]), [source])
+
+  const bindShelf = useCallback(
+    (shelfId: string, sectionId: string, col: number, level: number,
+     name: string) =>
+      slotWrite(
+        (api) => api.put(`/map/shelves/${encodeURIComponent(shelfId)}/address`,
+          // 1-based on the wire, 0-based in the document — the pillar's one
+          // off-by-one, applied here exactly as `toPlan` applies it back.
+          { section_id: sectionId, col: col + 1, level: level + 1 }),
+        T.bound_here(name)),
+    [slotWrite, T])
+
+  const unbindShelf = useCallback(
+    (shelfId: string, sectionId: string, col: number, level: number,
+     name: string) =>
+      slotWrite(
+        (api) => api.del(
+          `/map/shelves/${encodeURIComponent(shelfId)}/address`
+          + `?section_id=${encodeURIComponent(sectionId)}`
+          // 1-based on the wire, as everywhere else in this pillar.
+          + `&col=${col + 1}&level=${level + 1}`),
+        T.unbound_shelf(name)),
+    [slotWrite, T])
+
   const record = useCallback((plan: Plan) => {
     setSaved('saving')
     // ⚠ SERIALISED, and the diff is computed INSIDE the task.
@@ -597,6 +733,7 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
 
   return {
     generation,
+    refreshing,
     ready,
     error,
     saved,
@@ -610,6 +747,9 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
     renameSite,
     removeSite,
     undoLastEdit,
+    shelvesOffTheMap,
+    bindShelf,
+    unbindShelf,
     initial,
     record,
     reload: startOver,

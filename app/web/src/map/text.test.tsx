@@ -114,6 +114,8 @@ const openEditor = () =>
         saved="saved"
         onReload={() => {}}
         site={ONE_SITE}
+        shelves={{ offTheMap: async () => [], bind: () => {},
+                   unbind: () => {} }}
       />
     </I18nProvider>,
   )
@@ -279,29 +281,102 @@ describe('counted strings say ONE, in both languages', () => {
     // `key: (n) => …` with none. So the typed form is unambiguous without
     // having to slice the file, and slicing it on a literal newline is what
     // broke this test's first cut.
-    const counted = new Set(
-      [...declared.matchAll(/^ {2}(\w+): \(n: number\) => string$/gm)].map((m) => m[1]!))
+    //
+    // ⚠⚠ **EVERY numeric parameter, not just a lone `n`.** The first cut
+    // matched `(n: number) => string` exactly, and P6.4c walked three counted
+    // strings straight past it — `shelf_holds(books, photos)` printed
+    // `1 תמונות` in a real browser on the owner's own library, which is a
+    // SIXTH instance of the defect this test exists to end. A guard that
+    // covers one shape of the thing it names is the prefix-matching dead-key
+    // scan all over again: it passes, and it is not looking.
+    const counted = new Map<string, { types: string[]; names: string[]; at: number[] }>()
+    for (const m of declared.matchAll(/^ {2}(\w+): \(([^)]*)\) => string$/gm)) {
+      const parts = m[2]!.split(',')
+      const types = parts.map((p) => p.split(':')[1]?.trim() ?? '')
+      const names = parts.map((p) => p.split(':')[0]!.trim())
+      const at = types.flatMap((t, i) => (t === 'number' ? [i] : []))
+      if (at.length > 0) counted.set(m[1]!, { types, names, at })
+    }
     expect(counted.size, 'no counted keys found — the interface shape moved')
       .toBeGreaterThan(5)
 
-    const nounless = new Set(['selected_n'])
+    // Opt-OUT, keyed `key` or `key.parameter`. A count with NO NOUN after it
+    // has nothing to agree with, so it is right in every language at every
+    // number: English «1 selected» is correct and «1 cells marked» is not,
+    // and the difference is the noun.
+    //
+    // ⚠ Entries below are numbers that NAME A VALUE — an address, a
+    // dimension, a bound, an ordinal — not numbers that count things. They
+    // are excused one at a time and by name, because the default is CHECKED:
+    // this list going stale can only ever skip a check that would have
+    // passed, which is the opposite of the discriminator-by-list the comment
+    // above rejects.
+    const nounless = new Set([
+      'selected_n',
+      // an address: «column 1, level 3» names the cell, it counts nothing
+      'shelf_at.col', 'shelf_legend.col', 'restore_cell.col',
+      'empty_cell.col', 'empty_cell_legend.col',
+      // a dimension: «room 1×7», «at least 1 × 1 squares»
+      'unnamed_room.w', 'unnamed_case.w', 'case_summary.w', 'case_summary.h',
+      'too_small.squares', 'case_facts.deep',
+      // a bound or a reached value, never 1 in practice and a value either way
+      'too_many_slots.max', 'too_many_slots.asked', 'too_many_sections.max',
+      // an ordinal: «1. שם המדף» is the position in the picker
+      'pick_shelf_option.n',
+    ])
+    const bare: string[] = []
 
     for (const [lang, table] of Object.entries(TABLES)) {
-      for (const key of counted) {
-        const fn = (table as unknown as Record<string, unknown>)[key] as (n: number) => string
-        const one = fn(1)
-        const two = fn(2)
-        // A count with NO NOUN after it has nothing to agree with, so it is
-        // right in every language at every number. English «1 selected» is
-        // correct; «1 cells marked» is not, and the difference is the noun.
-        // Opt-OUT rather than opt-in, deliberately: a new counted string is
-        // checked by default, and only a deliberate edit here excuses one.
+      for (const [key, { types, names, at }] of counted) {
         if (nounless.has(key)) continue
-        // A phrase that ENDS with its number is naming a value, not counting
-        // anything («עמודה 1», "level 1") — no noun after it to agree with.
-        if (one.trim().endsWith('1')) continue
-        expect(one, `${lang}.${key} reads "${one}" — the plural with a 1 in it`)
-          .not.toBe(two.replace(/2/g, '1'))
+        const fn = (table as unknown as Record<string, unknown>)[key] as
+          (...a: unknown[]) => string
+        // ⚠ The OTHER arguments are held at 7, and 7 is load-bearing: the
+        // comparison below rewrites every 2 into a 1, so a second count
+        // sitting at 2 would be rewritten too and the two strings would match
+        // whatever the singular does. Strings get a digitless placeholder for
+        // the same reason.
+        const args = (n: number, target: number) =>
+          types.map((t, i) =>
+            t === 'number' ? (i === target ? n : 7) : 'X')
+        for (const target of at) {
+          const one = fn(...args(1, target))
+          const two = fn(...args(2, target))
+          // A phrase that ENDS with its number is naming a value too
+          // («עמודה 1», "level 1") — no noun after it to agree with.
+          if (one.trim().endsWith('1')) continue
+          if (nounless.has(`${key}.${names[target]}`)) continue
+          if (one === two.replace(/2/g, '1'))
+            bare.push(`${lang}.${key}(${names[target]}) = "${one}"`)
+        }
+      }
+    }
+    // Collected rather than asserted one at a time, so one run names every
+    // offender: widening this test from `(n: number)` to every numeric
+    // parameter found six more, and finding them one failure per run would
+    // have been six runs.
+    expect(bare, 'a plural with a 1 in it').toEqual([])
+  })
+})
+
+
+describe('a sentence carrying a NAME the owner typed', () => {
+  it('never begins with it, in either language', () => {
+    // ⚠ `unicode-bidi: plaintext` resolves a paragraph from its first strong
+    // character, so a label starting with a Latin letter — `A1`, `IKEA
+    // Billy`, free text and plausible — flips the whole announcement to LTR:
+    // the Hebrew runs backwards relative to the sentence and its full stop
+    // lands at the visual start. Measured on the real flash box at 375x812.
+    //
+    // The same rule `<LibraryName>` carries as two elements. Here there is
+    // one string, so the UI's own words have to come first.
+    const NAME = 'ZZlatin shelf'
+    for (const [lang, table] of Object.entries(TABLES)) {
+      for (const key of ['bound_here', 'unbound_shelf'] as const) {
+        const said = (table as unknown as Record<string, (n: string) => string>)[key]!(NAME)
+        expect(said.startsWith(NAME), `${lang}.${key} starts with the name`)
+          .toBe(false)
+        expect(said, `${lang}.${key} dropped the name`).toContain(NAME)
       }
     }
   })
