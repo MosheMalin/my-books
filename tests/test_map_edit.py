@@ -28,11 +28,15 @@ from app.adapters.memory_store import (
     MemoryShelfStore,
 )
 from app.domain import (
+    AlreadyOnTheMap,
+    CellIsGap,
+    DomainError,
     LibraryRef,
     NotEmpty,
     Rect,
     Section,
     ShelfAddress,
+    SlotTaken,
     new_bookcase,
     new_book,
     new_capture,
@@ -41,18 +45,23 @@ from app.domain import (
     new_section,
     new_shelf,
     new_site,
+    rename_shelf,
     with_column_count,
     with_default_depth,
+    with_gaps,
 )
-from app.map_undo import Journal
+from app.map_undo import Journal, offer
 from app.map_edit import (
     apply_depth_default,
+    apply_gaps,
     apply_slot_change,
     attach_case_to_room,
+    bind_shelf_to_slot,
     clear_bookcase_slots,
     clear_section_slots,
     deepest_occupied_depths,
     draw_bookcase,
+    unbind_shelf_from_map,
 )
 
 LIB = LibraryRef("lib-1", "הבית")
@@ -996,3 +1005,325 @@ def test_an_absorbed_shelf_that_is_still_live_keeps_its_own_occupancy():
         "the absorbed shelf is still standing and still holds a book at "
         "depth 2 — its occupancy was moved away from it")
     assert deep.get(survivor.id, 0) >= 1, "the survivor is occupied too"
+
+
+# --- binding a shelf to a slot (P6.4c, MAP_PLAN §3.14) --------------------
+
+
+def _drawn(columns=2, levels=2, depth=1):
+    """A room with one bookcase in it, and the pieces a bind test needs."""
+    maps, shelves, books = _world()
+    drawn = draw_bookcase(maps, shelves, LIB, _case(), ids=SeqIdGen(),
+                          clock=StubClock(), columns=columns, levels=levels,
+                          depth=depth)
+    return maps, shelves, books, drawn.sections[0]
+
+
+def _homeless(shelves, id="sh-photo", label="המדף התחתון"):
+    """A photo-born shelf: real, holding things, standing nowhere."""
+    shelf = new_shelf(id=id, library_id=LIB.id, label=label, created_at=WHEN)
+    shelves.save_shelf(LIB, shelf)
+    return shelf
+
+
+def _free(maps, shelves, books, section, col, level):
+    """Empty one slot the honest way — through the unbind this item adds."""
+    standing = shelves.get_shelf_at(LIB, ShelfAddress(section.id, col, level))
+    unbind_shelf_from_map(maps, shelves, LIB, standing, journal=_journal())
+    return standing
+
+
+def test_an_unaddressed_shelf_gains_the_address_and_nothing_else_moves():
+    """P6.4c's whole sentence, and the reason it is the SAFE half of §3.11.
+
+    Binding joins no identities: the shelf keeps its id, its label, its
+    photographs and its books, and gains one field. Nothing is deleted,
+    nothing is renumbered, and no other shelf is touched — which is what
+    makes it the half that needs no undo entry.
+    """
+    maps, shelves, books, section = _drawn()
+    _free(maps, shelves, books, section, 1, 1)
+    homeless = _homeless(shelves)
+    shelves.save_capture(LIB, new_capture(homeless, id="cap",
+                                          image_id="im", order=0))
+    _shelve_a_book(books, homeless.id)
+
+    where = ShelfAddress(section.id, 1, 1)
+    bound = bind_shelf_to_slot(shelves, LIB, homeless, section, where)
+
+    assert bound.id == homeless.id and bound.label == homeless.label
+    assert bound.address == where
+    back = shelves.get_shelf(LIB, homeless.id)
+    assert back.address == where, "the address was not persisted"
+    assert shelves.get_shelf_at(LIB, where).id == homeless.id
+    assert len(shelves.list_captures(LIB, homeless.id)) == 1
+    assert books.copies_per_shelf(LIB).get(homeless.id) == 1
+
+
+def test_a_taken_slot_is_REFUSED_and_the_refusal_carries_the_occupant():
+    """§3.14: *a wrong binding moves a POPULATION of copies and looks like
+    success, because the map gets fuller.* So bind stops at a taken slot
+    rather than resolving it — resolving it is the merge, and the merge is a
+    separate ✓ in P6.4d.
+
+    The occupant travels ON the exception because the screen that offers the
+    merge must name the shelf the decision was made about; a second read can
+    already answer differently.
+    """
+    maps, shelves, books, section = _drawn()
+    standing = shelves.get_shelf_at(LIB, ShelfAddress(section.id, 1, 1))
+    shelves.save_shelf(LIB, rename_shelf(standing, "מדף א"))
+    homeless = _homeless(shelves)
+
+    refusal = _raises(SlotTaken, bind_shelf_to_slot, shelves, LIB, homeless,
+                      section, ShelfAddress(section.id, 1, 1))
+    assert refusal.occupant.id == standing.id
+    assert "מדף א" in str(refusal), (
+        "the refusal must name what the owner called the shelf")
+    assert shelves.get_shelf(LIB, homeless.id).address is None, (
+        "a refused bind wrote anyway")
+
+
+def test_a_gapped_cell_refuses_a_bind_rather_than_switching_itself_on():
+    """§3.10a: a gapped cell is NOT a slot. Un-gapping is a decision about the
+    furniture (*the television is gone*) with its own control, and a bind that
+    silently restored the cell would make one gesture mean two things — one of
+    which the owner never asked for."""
+    maps, shelves, books, section = _drawn()
+    change = with_gaps(section, [(1, 1)], gap=True)
+    apply_gaps(maps, shelves, books, LIB, change, journal=_journal(),
+               ids=SeqIdGen(), clock=StubClock())
+    homeless = _homeless(shelves)
+
+    _raises(CellIsGap, bind_shelf_to_slot, shelves, LIB, homeless,
+            change.section, ShelfAddress(section.id, 1, 1))
+    assert shelves.get_shelf_at(LIB, ShelfAddress(section.id, 1, 1)) is None
+
+
+def test_a_shelf_that_already_stands_somewhere_is_refused_rather_than_MOVED():
+    """A move is an unbind and a bind, each worth its own ✓ (§3.14) — and the
+    real reason is one level down: binding into a free slot loses nothing, so
+    it records no undo. A move vacates the old slot, which is an address
+    somebody could want back, so it would make this gesture conditionally
+    destructive."""
+    maps, shelves, books, section = _drawn()
+    _free(maps, shelves, books, section, 1, 2)
+    standing = shelves.get_shelf_at(LIB, ShelfAddress(section.id, 1, 1))
+
+    _raises(AlreadyOnTheMap, bind_shelf_to_slot, shelves, LIB, standing,
+            section, ShelfAddress(section.id, 1, 2))
+    assert shelves.get_shelf(LIB, standing.id).address.level == 1, (
+        "the shelf moved anyway")
+    assert shelves.get_shelf_at(LIB, ShelfAddress(section.id, 1, 2)) is None
+
+
+def test_a_cell_outside_the_extent_is_refused_before_anything_is_read():
+    """The client is drawing from a shape this section does not have. Not a
+    409 and not a nearest-cell guess: `with_column_count` records why the
+    lenient answer is the destructive one."""
+    maps, shelves, books, section = _drawn(columns=2, levels=2)
+    homeless = _homeless(shelves)
+
+    _raises(DomainError, bind_shelf_to_slot, shelves, LIB, homeless, section,
+            ShelfAddress(section.id, 9, 1))
+    _raises(DomainError, bind_shelf_to_slot, shelves, LIB, homeless, section,
+            ShelfAddress(section.id, 1, 9))
+    assert shelves.get_shelf(LIB, homeless.id).address is None
+
+
+def test_binding_records_NO_undo_and_unbinding_records_one():
+    """The asymmetry, stated where it can be checked.
+
+    Binding into a free slot destroys nothing, and the journal is one deep —
+    an entry for a purely additive edit does not merely add noise, it evicts
+    the real undo standing behind it (the same argument `set_gaps` makes for
+    switching a cell back ON). Unbinding loses an ADDRESS, which is the one
+    thing about a shelf a person read off a drawing.
+    """
+    maps, shelves, books, section = _drawn()
+    journal = _journal()
+    standing = shelves.get_shelf_at(LIB, ShelfAddress(section.id, 1, 1))
+
+    unbind_shelf_from_map(maps, shelves, LIB, standing, journal=journal)
+    after_unbind = journal.store.recent(LIB, limit=9)
+    assert len(after_unbind) == 1 and after_unbind[0].kind == "unbind_shelf"
+    assert after_unbind[0].restore.shelves[0].address is not None, (
+        "the entry remembers the shelf WITHOUT its address, so an undo would "
+        "put back exactly what the unbind produced")
+
+    bind_shelf_to_slot(shelves, LIB, shelves.get_shelf(LIB, standing.id),
+                       section, ShelfAddress(section.id, 1, 1))
+    assert journal.store.recent(LIB, limit=9) == after_unbind, (
+        "binding wrote a journal entry and evicted the real undo")
+
+
+def test_unbinding_keeps_the_shelf_its_books_and_its_photographs():
+    """`unbind_shelf`'s own clamp, exercised through the route's path: the one
+    thing that happens to an occupied shelf whose slot is erased. Deleting it
+    instead would destroy the record a re-read diffs against (§5.6)."""
+    maps, shelves, books, section = _drawn()
+    standing = shelves.get_shelf_at(LIB, ShelfAddress(section.id, 2, 2))
+    shelves.save_shelf(LIB, rename_shelf(standing, "שירה"))
+    shelves.save_capture(LIB, new_capture(standing, id="cap",
+                                          image_id="im", order=0))
+    _shelve_a_book(books, standing.id)
+
+    detached = unbind_shelf_from_map(
+        maps, shelves, LIB, shelves.get_shelf(LIB, standing.id),
+        journal=_journal())
+
+    assert detached.address is None and detached.label == "שירה"
+    assert shelves.get_shelf(LIB, standing.id) is not None
+    assert len(shelves.list_captures(LIB, standing.id)) == 1
+    assert books.copies_per_shelf(LIB).get(standing.id) == 1
+    assert shelves.get_shelf_at(LIB, ShelfAddress(section.id, 2, 2)) is None
+
+
+def test_unbinding_a_shelf_that_stands_nowhere_records_NOTHING():
+    """The retry a dropped response provokes. It must not answer differently,
+    and — sharper — an entry restoring a row that did not change would sit at
+    the head of a one-deep journal doing nothing, which is the same as
+    deleting the real undo behind it."""
+    maps, shelves, books, section = _drawn()
+    journal = _journal()
+    standing = shelves.get_shelf_at(LIB, ShelfAddress(section.id, 1, 1))
+    unbind_shelf_from_map(maps, shelves, LIB, standing, journal=journal)
+    head = journal.store.recent(LIB, limit=9)
+
+    again = unbind_shelf_from_map(
+        maps, shelves, LIB, shelves.get_shelf(LIB, standing.id),
+        journal=journal)
+
+    assert again.address is None
+    assert journal.store.recent(LIB, limit=9) == head, (
+        "a no-op unbind pushed an entry onto the journal")
+
+
+def test_undoing_an_unbind_puts_the_shelf_back_in_its_slot():
+    """End to end through the real journal, because the entry is only worth
+    what a replay makes of it."""
+    from app.map_undo import offer, undo
+
+    maps, shelves, books, section = _drawn()
+    journal = _journal()
+    standing = shelves.get_shelf_at(LIB, ShelfAddress(section.id, 2, 1))
+    unbind_shelf_from_map(maps, shelves, LIB, standing, journal=journal)
+
+    assert offer(journal, maps, shelves, LIB).available is True
+    undo(journal, maps, shelves, books, LIB)
+
+    back = shelves.get_shelf(LIB, standing.id)
+    assert back.address == ShelfAddress(section.id, 2, 1)
+    assert shelves.get_shelf_at(LIB, ShelfAddress(section.id, 2, 1)).id == back.id
+
+
+def test_undoing_an_unbind_is_REFUSED_once_the_slot_is_taken_again():
+    """The slot map is the load-bearing half of the fingerprint: restoring a
+    shelf into a cell somebody has since bound into passes every row check and
+    then violates `shelves_by_slot` at the store — a 500 where a refusal was
+    owed."""
+    from app.map_undo import UndoRefused, offer, undo
+
+    maps, shelves, books, section = _drawn()
+    journal = _journal()
+    standing = shelves.get_shelf_at(LIB, ShelfAddress(section.id, 2, 1))
+    unbind_shelf_from_map(maps, shelves, LIB, standing, journal=journal)
+
+    homeless = _homeless(shelves)
+    bind_shelf_to_slot(shelves, LIB, homeless, section,
+                       ShelfAddress(section.id, 2, 1))
+
+    said = offer(journal, maps, shelves, LIB)
+    assert said.available is False and said.reason == "world_moved"
+    assert f"slots:{section.id}" in said.changed
+    refusal = _raises(UndoRefused, undo, journal, maps, shelves, books, LIB)
+    assert refusal.changed
+    assert shelves.get_shelf_at(LIB, ShelfAddress(section.id, 2, 1)).id == \
+        homeless.id, "the undo overwrote the new binding"
+
+
+def test_the_fingerprint_is_digested_from_what_the_edit_WROTE():
+    """⚠⚠ The window `app.map_undo.fingerprint` documents, and the gate it did
+    not have.
+
+    Recording happens AFTER the edit, so anything committed between the edit's
+    last write and the journal's read is digested as *the state the edit left
+    behind* — and becomes invisible to the undo, which then reverts it while
+    reporting `available: true` and an empty `changed`. P6.4b's review measured
+    exactly that and the fix was to hand `record` what the edit wrote.
+
+    ⚠ **The fix was inert for two items.** `_record` accepted `wrote` and
+    never forwarded it, so all five call sites computed it into nothing and
+    every fingerprint came from a re-read. Nothing failed: the docstring in
+    `fingerprint` said the window was closed, and no test held it open. This
+    one does — the interloper writes inside the one `load_map` the journal
+    makes, which IS that window.
+    """
+    maps, shelves, books, section = _drawn()
+    journal = _journal()
+
+    class Interloping:
+        """Another tab, committing between the edit's write and ours."""
+
+        def __init__(self, inner):
+            self._inner, self._done = inner, False
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+        def load_map(self, library):
+            if not self._done:
+                self._done = True
+                live = self._inner.get_section(library, section.id)
+                self._inner.save_section(library,
+                                         with_default_depth(live, 3))
+            return self._inner.load_map(library)
+
+    apply_slot_change(Interloping(maps), shelves, books, LIB,
+                      with_column_count(section, 1), journal=journal,
+                      ids=SeqIdGen(), clock=StubClock())
+
+    said = offer(journal, maps, shelves, LIB)
+    assert said.available is False, (
+        "the journal digested the interloper's row as its own work, so an "
+        "undo would silently revert it")
+    assert f"sections:{section.id}" in said.changed
+
+
+def test_a_bind_that_LOSES_the_race_still_answers_with_the_occupant():
+    """⚠ The window between `plan_bind`'s question and the store's write.
+
+    Another tab binds into the slot in between; the unique index is what makes
+    the rule true, and it refuses with `DuplicateShelfSlot` — a `StoreError`,
+    which no router translates. Untranslated, the ordinary race this whole
+    feature is about would answer **500** to the one client that could offer
+    the merge instead.
+
+    Simulated by blinding the check rather than by threading, because the
+    interleaving is the point and a thread would only make it occasional: the
+    store answers *nothing stands here* once, and then refuses the write.
+    """
+    maps, shelves, books, section = _drawn()
+    standing = shelves.get_shelf_at(LIB, ShelfAddress(section.id, 1, 1))
+    homeless = _homeless(shelves)
+
+    class Blind:
+        """A shelf store whose first look at that slot is already stale."""
+
+        def __init__(self, inner):
+            self._inner, self._looked = inner, False
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+        def get_shelf_at(self, library, address):
+            if not self._looked:
+                self._looked = True
+                return None
+            return self._inner.get_shelf_at(library, address)
+
+    refusal = _raises(SlotTaken, bind_shelf_to_slot, Blind(shelves), LIB,
+                      homeless, section, ShelfAddress(section.id, 1, 1))
+    assert refusal.occupant.id == standing.id, (
+        "the refusal named nobody, or named the shelf that lost")
+    assert shelves.get_shelf(LIB, homeless.id).address is None

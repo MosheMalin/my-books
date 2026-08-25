@@ -73,6 +73,7 @@ from app.api.dto import (
     SectionEditDTO,
     SectionGapPatch,
     SectionPatch,
+    ShelfAddressDTO,
     ShelfDTO,
     SiteCreate,
     SiteDTO,
@@ -83,18 +84,23 @@ from app.api.dto import (
 )
 from app.api.policy import require
 from app.domain import (
+    AlreadyOnTheMap,
     Bookcase,
     Capability,
+    CellIsGap,
     DomainError,
     Floor,
     LibraryRef,
     NotEmpty,
     Place,
     Section,
+    Shelf,
     ShelfAddress,
     Site,
+    SlotTaken,
     SlotsOccupied,
     TooManySlots,
+    VirtualShelfHasNoDepth,
     apply_default_levels,
     check_bookcase_size,
     new_bookcase,
@@ -117,10 +123,12 @@ from app.map_edit import (
     apply_gaps,
     apply_slot_change,
     attach_case_to_room,
+    bind_shelf_to_slot,
     clear_bookcase_slots,
     clear_section_slots,
     draw_bookcase,
     remove_record,
+    unbind_shelf_from_map,
 )
 from app.map_undo import Journal, UndoRefused, offer, undo
 from app.ports import Clock, IdGen
@@ -203,6 +211,7 @@ def _translated():
     except UnknownParent as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
     except (NotOnThisFloor, NotEmpty, TooManySlots, SlotsOccupied,
+            SlotTaken, CellIsGap, AlreadyOnTheMap, VirtualShelfHasNoDepth,
             DuplicateSectionOrdinal) as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     except DomainError as exc:
@@ -855,6 +864,117 @@ def delete_section(
 
 
 # --- undo (P6.4b, MAP_PLAN §3.15) -----------------------------------------
+
+# --- binding a shelf to a slot (P6.4c, MAP_PLAN §3.14) --------------------
+#
+# ⚠ **Addressed by SHELF, not by cell**, unlike `set_shelf_depth` one screen
+# up — and the DELETE is the reason. `DELETE /sections/{id}/shelves/{c}/{l}`
+# is the same URL shape the elevation uses for a depth override, and it would
+# read as *delete the shelf in this cell* to anybody scanning a log or a
+# client. What is created and destroyed here is an ADDRESS; the shelf itself
+# survives both, with its books, its photographs and its label. The path says
+# exactly that, and the pair is symmetric, which is worth more than matching
+# the neighbour.
+
+
+def _shelf_dto(shelves: ShelfStore, books: BookStore, library: LibraryRef,
+               shelf: Shelf) -> ShelfDTO:
+    """One shelf, counted. The same two queries `set_shelf_depth` pays on the
+    slot next door: `copies_per_shelf` is the whole library in one grouped
+    pass, which is what the shelf list already costs."""
+    return ShelfDTO.of(
+        shelf,
+        capture_count=len(shelves.list_captures(library, shelf.id)),
+        book_count=books.copies_per_shelf(library).get(shelf.id, 0),
+    )
+
+
+@router.put("/shelves/{shelf_id}/address", response_model=ShelfDTO)
+def bind_shelf(
+    shelf_id: str,
+    body: ShelfAddressDTO,
+    library: LibraryRef = Depends(require(EDIT)),
+    store: MapStore = Depends(get_map_store),
+    shelves: ShelfStore = Depends(get_shelf_store),
+    books: BookStore = Depends(get_book_store),
+) -> ShelfDTO:
+    """Put an unaddressed shelf into a free slot — **the safe half of P6.4**.
+
+    §3.11 splits binding in two and §3.14 keeps them apart: this one gains an
+    address and joins no identities, so nothing moves and nothing is lost.
+    Two shelves becoming one is a MERGE (P6.4d), and a taken slot is where
+    this route stops rather than something it resolves.
+
+    The answers, and each is a different sentence for the owner:
+
+      - **404** — no such shelf, or no such section. Foreign and fictional are
+        the same answer (§4.2);
+      - **400** — a cell outside the section's extent. The client is drawing
+        from a shape this section does not have;
+      - **409, four ways** — the cell is a GAP (§3.10a: switched off is not a
+        slot, and switching it back on is its own decision about the
+        furniture); the shelf ALREADY stands somewhere (a move is an unbind
+        and a bind, each worth its own ✓); the slot is TAKEN, naming the
+        occupant so the client can offer the merge; or the shelf is the
+        WISHLIST, which stands nowhere by construction (§5.7).
+
+    ⚠ **It records no undo, and that is not an oversight.** Binding into a
+    free slot destroys nothing — the same reason `set_gaps` records nothing
+    when it switches a cell back ON — and the journal is one deep, so an entry
+    for a purely additive edit does not merely add noise, it evicts the real
+    undo standing behind it. The inverse is one press of the control beside
+    it.
+
+    ⚠ The body is `ShelfAddressDTO`, the type the response already carries,
+    rather than a request twin of it. An address is an address in both
+    directions, and three fields declared twice is the fork this project
+    keeps a rule about.
+    """
+    shelf = shelves.get_shelf(library, shelf_id)
+    if shelf is None:
+        raise _gone("shelf")
+    section = _section(store, library, body.section_id)
+    with _translated():
+        address = ShelfAddress(section.id, body.col, body.level)
+        bound = bind_shelf_to_slot(shelves, library, shelf, section, address)
+    return _shelf_dto(shelves, books, library, bound)
+
+
+@router.delete("/shelves/{shelf_id}/address", response_model=ShelfDTO)
+def unbind_shelf_route(
+    shelf_id: str,
+    library: LibraryRef = Depends(require(EDIT)),
+    store: MapStore = Depends(get_map_store),
+    shelves: ShelfStore = Depends(get_shelf_store),
+    books: BookStore = Depends(get_book_store),
+    journal: Journal = Depends(get_journal),
+) -> ShelfDTO:
+    """Take a shelf off the drawing. The shelf survives; only the address goes.
+
+    **200 either way.** A shelf that already stands nowhere is answered with
+    itself rather than a 409 — the retry a dropped response provokes must not
+    look like a new failure, and there is nothing for the caller to do
+    differently.
+
+    It records an undo where :func:`bind_shelf` does not, because this is the
+    direction that loses something: an address is what a person read off a
+    drawing, and §3.15's list is *destroy or detach*. Every other detach in
+    the map is journalled, and one reached deliberately rather than as the
+    side effect of erasing a column is not a smaller loss.
+
+    ⚠ It answers with a `ShelfDTO` rather than 204, so the client can put the
+    detached shelf straight into its *not on the map* list without a second
+    round trip — and so a stale drawing is corrected by the response to the
+    gesture that made it stale.
+    """
+    shelf = shelves.get_shelf(library, shelf_id)
+    if shelf is None:
+        raise _gone("shelf")
+    with _translated():
+        detached = unbind_shelf_from_map(store, shelves, library, shelf,
+                                         journal=journal)
+    return _shelf_dto(shelves, books, library, detached)
+
 
 @router.get("/undo", response_model=UndoOfferDTO)
 def get_undo(

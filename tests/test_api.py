@@ -6642,6 +6642,11 @@ def test_every_write_in_the_map_router_needs_edit_map_and_says_so():
             # nothing), which is why only the POST is here — and this test is
             # what noticed the route the moment it was added.
             ("post", "/api/v1/map/undo", None),
+            # P6.4c — and this test noticed both of these the moment they
+            # were added, which is what it is for.
+            ("put", "/api/v1/map/shelves/sh/address",
+             {"section_id": "se", "col": 1, "level": 1}),
+            ("delete", "/api/v1/map/shelves/sh/address", None),
         ]
         for method, path, body in writes:
             call = getattr(client, method)
@@ -6930,3 +6935,168 @@ def test_a_journal_cannot_be_bound_without_an_id_source_and_a_clock():
     else:
         raise AssertionError(
             "a journal was bound with no way to number or date an entry")
+
+
+# --- binding a shelf to a slot (P6.4c) ------------------------------------
+
+
+def _unbound(client, section_id, col, level):
+    """Empty one slot through the route this item adds, and answer with the
+    shelf that stepped out of it."""
+    at = {(s["address"]["col"], s["address"]["level"]): s
+          for s in client.get("/api/v1/shelves").json() if s["address"]
+          and s["address"]["section_id"] == section_id}
+    shelf = at[(col, level)]
+    gone = client.delete(f"/api/v1/map/shelves/{shelf['id']}/address")
+    assert gone.status_code == 200, gone.text
+    assert gone.json()["address"] is None
+    return gone.json()
+
+
+def test_a_photo_born_shelf_takes_a_free_slot_and_keeps_everything_it_had():
+    """The whole item, end to end: an unaddressed shelf gains an address.
+
+    What it must NOT do is as much of the point — the id, the label, the
+    photographs and the books all survive, because binding joins no identities
+    (§3.11). That is the merge, and the merge is P6.4d.
+    """
+    with TestClient(_app()) as client:
+        _drawn_map(client, columns=2, levels=2)
+        section = client.get("/api/v1/map").json()["sections"][0]
+        _unbound(client, section["id"], 1, 1)
+
+        made = client.post("/api/v1/shelves", json={"label": "המדף התחתון"})
+        homeless = made.json()
+        client.post("/api/v1/captures", json={"shelf_id": homeless["id"]})
+
+        bound = client.put(f"/api/v1/map/shelves/{homeless['id']}/address",
+                           json={"section_id": section["id"], "col": 1,
+                                 "level": 1})
+        assert bound.status_code == 200, bound.text
+        body = bound.json()
+        assert body["id"] == homeless["id"]
+        assert body["label"] == "המדף התחתון"
+        assert body["capture_count"] == 1
+        assert body["address"] == {"section_id": section["id"], "col": 1,
+                                   "level": 1}
+        assert client.get(f"/api/v1/shelves/{homeless['id']}").json()[
+            "address"]["level"] == 1
+
+
+def test_a_taken_slot_answers_409_and_the_message_names_the_occupant():
+    """§3.14: bind stops here rather than resolving it. The client needs a
+    sentence it can turn into *merge instead?*, so the refusal names what is
+    standing there — a bare "cannot" is what makes the next reader delete the
+    guard."""
+    with TestClient(_app()) as client:
+        _drawn_map(client, columns=2, levels=2)
+        section = client.get("/api/v1/map").json()["sections"][0]
+        at = {(s["address"]["col"], s["address"]["level"]): s
+              for s in client.get("/api/v1/shelves").json() if s["address"]}
+        standing = at[(1, 1)]
+        client.patch(f"/api/v1/shelves/{standing['id']}",
+                     json={"label": "מדף א"})
+        homeless = client.post("/api/v1/shelves", json={}).json()
+
+        refused = client.put(f"/api/v1/map/shelves/{homeless['id']}/address",
+                             json={"section_id": section["id"], "col": 1,
+                                   "level": 1})
+        assert refused.status_code == 409, refused.text
+        assert standing["id"] in refused.json()["detail"]
+        assert "מדף א" in refused.json()["detail"]
+        assert client.get(f"/api/v1/shelves/{homeless['id']}").json()[
+            "address"] is None
+
+
+def test_the_four_refusals_are_four_different_sentences_not_one():
+    """A gap, a cell outside the extent, the wishlist, and a shelf that is
+    already on the map. Each is a different thing for the owner to do next,
+    and the 400 is the one that says *your drawing is not this drawing*."""
+    with TestClient(_app()) as client:
+        _drawn_map(client, columns=2, levels=2)
+        section = client.get("/api/v1/map").json()["sections"][0]
+        client.patch(f"/api/v1/map/sections/{section['id']}/gaps",
+                     json={"gap": True, "cells": [{"column": 2, "level": 2}]})
+        homeless = client.post("/api/v1/shelves", json={}).json()
+        wishlist = client.post("/api/v1/shelves",
+                               json={"virtual": True}).json()
+        path = f"/api/v1/map/shelves/{homeless['id']}/address"
+
+        gap = client.put(path, json={"section_id": section["id"], "col": 2,
+                                     "level": 2})
+        assert gap.status_code == 409, gap.text
+        assert "switched off" in gap.json()["detail"]
+
+        outside = client.put(path, json={"section_id": section["id"],
+                                         "col": 9, "level": 1})
+        assert outside.status_code == 400, outside.text
+
+        wish = client.put(f"/api/v1/map/shelves/{wishlist['id']}/address",
+                          json={"section_id": section["id"], "col": 1,
+                                "level": 2})
+        assert wish.status_code == 409, wish.text
+
+        _unbound(client, section["id"], 1, 2)
+        placed = client.put(path, json={"section_id": section["id"], "col": 1,
+                                        "level": 2})
+        assert placed.status_code == 200, placed.text
+        _unbound(client, section["id"], 2, 1)
+        again = client.put(path, json={"section_id": section["id"], "col": 2,
+                                       "level": 1})
+        assert again.status_code == 409, again.text
+        assert "already stands" in again.json()["detail"]
+
+
+def test_a_fictional_shelf_and_a_fictional_section_are_both_404():
+    """§4.2, on both halves of the request. Foreign and fictional are the same
+    answer, and it is never a 403."""
+    with TestClient(_app()) as client:
+        _drawn_map(client, columns=1, levels=1)
+        section = client.get("/api/v1/map").json()["sections"][0]
+        homeless = client.post("/api/v1/shelves", json={}).json()
+
+        assert client.put("/api/v1/map/shelves/nope/address",
+                          json={"section_id": section["id"], "col": 1,
+                                "level": 1}).status_code == 404
+        assert client.put(f"/api/v1/map/shelves/{homeless['id']}/address",
+                          json={"section_id": "nope", "col": 1,
+                                "level": 1}).status_code == 404
+        assert client.delete(
+            "/api/v1/map/shelves/nope/address").status_code == 404
+
+
+def test_unbinding_is_undoable_and_binding_does_not_evict_that_undo():
+    """The asymmetry, at the surface that shows it. Unbinding detaches a
+    shelf, which §3.15 says is undoable; binding into a free slot destroys
+    nothing, and an entry for it would push the real undo off a one-deep
+    journal."""
+    with TestClient(_app()) as client:
+        _drawn_map(client, columns=2, levels=2)
+        section = client.get("/api/v1/map").json()["sections"][0]
+        detached = _unbound(client, section["id"], 2, 2)
+
+        said = client.get("/api/v1/map/undo").json()
+        assert said["available"] is True and said["kind"] == "unbind_shelf"
+
+        _unbound(client, section["id"], 1, 1)
+        client.put(f"/api/v1/map/shelves/{detached['id']}/address",
+                   json={"section_id": section["id"], "col": 1, "level": 1})
+        still = client.get("/api/v1/map/undo").json()
+        assert still["kind"] == "unbind_shelf", "a bind wrote a journal entry"
+        # ...though the world HAS moved under the entry by now, which is the
+        # honest answer: the newer unbind is the head, and this shelf has
+        # since been bound into the slot that entry would refill.
+        assert still["available"] is False and still["reason"] == "world_moved"
+
+
+def test_unbinding_a_shelf_that_stands_nowhere_answers_200_not_409():
+    """The retry a dropped response provokes. There is nothing for the caller
+    to do differently, so there is nothing to report."""
+    with TestClient(_app()) as client:
+        _drawn_map(client, columns=1, levels=1)
+        section = client.get("/api/v1/map").json()["sections"][0]
+        shelf = _unbound(client, section["id"], 1, 1)
+
+        again = client.delete(f"/api/v1/map/shelves/{shelf['id']}/address")
+        assert again.status_code == 200, again.text
+        assert again.json()["address"] is None

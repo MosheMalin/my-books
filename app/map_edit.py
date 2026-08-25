@@ -45,7 +45,9 @@ from app.domain import (
     detach_bookcase,
     new_section,
     new_shelf,
+    plan_bind,
     plan_slot_removal,
+    slot_taken,
     unbind_shelf,
 )
 from app.domain.map_undo import MapRestore
@@ -54,6 +56,7 @@ from app.ports import Clock, IdGen
 from app.ports.map import MapStore
 from app.ports.store import (
     BookStore,
+    DuplicateShelfSlot,
     ShelfHasAliases,
     ShelfNotEmpty,
     ShelfStore,
@@ -485,9 +488,28 @@ def remove_record(
     tag = f"{what}:{record_id}" if what in ("bookcase", "section") else ""
     tables = {field: (was,) if was is not None else ()}
     tables.update(also)
-    gone = tuple((name, r.id) for name, kept in tables.items() for r in kept)
+    # ⚠ **The three cascades are not the same kind of event, and what this
+    # edit LEFT BEHIND has to tell them apart.** A site's floors and a
+    # bookcase's sections are DELETED with their parent — absent. A room's
+    # bookcases SURVIVE it: `delete_place` NULLs `place_id`, it does not
+    # destroy furniture ("deleting a container never destroys what it held").
+    #
+    # Writing all three down as gone is what the first version did, and it was
+    # invisible for two items because `_record` was dropping `wrote` on the
+    # floor. The moment P6.4c forwarded it, `test_undoing_a_room_removal_puts_
+    # its_bookcases_back_in_it` went red: the entry remembered a bookcase that
+    # had been destroyed, the world had one that was merely detached, and the
+    # fingerprint refused every room deletion for the rest of its life. That
+    # test is the gate; it needed no change to become one.
+    surviving = also.get("bookcases", ()) if what == "place" else ()
+    kept_ids = {(f"bookcases:{case.id}") for case in surviving}
+    gone = tuple((name, r.id) for name, kept in tables.items() for r in kept
+                 if f"{name}:{r.id}" not in kept_ids)
+    left = _wrote(None, (), (), None, gone)
+    left.update({f"bookcases:{case.id}": detach_bookcase(case)
+                 for case in surviving})
     _record(journal, map_store, shelves, library, kind=f"delete_{what}",
-            tag=tag, wrote=_wrote(None, (), (), None, gone), **tables)
+            tag=tag, wrote=left, **tables)
     return True
 
 
@@ -562,6 +584,19 @@ def _record(
             created=tuple(shelf.id for shelf in created),
             **{name: tuple(value) for name, value in tables.items()},
         ),
+        # ⚠ **This argument was accepted and dropped**, from P6.4b until
+        # P6.4c found it. Five call sites computed `_wrote(...)` and handed it
+        # over; this adapter took it into a parameter it never forwarded, so
+        # `record` always got `None` and `fingerprint` always fell back to
+        # re-reading. The whole fix a data-integrity review measured — another
+        # tab's change committed between the edit's last write and the
+        # journal's read, digested as "the state the edit left" and therefore
+        # invisible to the undo — was inert the entire time, behind a
+        # docstring in `fingerprint` saying it was closed. There is now a test
+        # that holds that window open (`test_map_edit.py`,
+        # `..._is_digested_from_what_the_edit_WROTE`); it fails without this
+        # line, which is the only thing that makes the sentence true.
+        wrote=wrote,
     )
 
 
@@ -678,6 +713,85 @@ def _release(
             shelves.save_shelf(library, unbind_shelf(current))
             detached.append(shelf_id)
     return SlotRemoval(deleted=tuple(deleted), detached=tuple(detached)), before
+
+
+def bind_shelf_to_slot(
+    shelves: ShelfStore,
+    library: LibraryRef,
+    shelf: Shelf,
+    section: Section,
+    address: ShelfAddress,
+) -> Shelf:
+    """Put an unaddressed shelf into a free slot (P6.4c, MAP_PLAN §3.14).
+
+    **The safe half of §3.11**, and it is safe by what it refuses rather than
+    by what it does: nothing is destroyed, nothing is moved, no two identities
+    join. A shelf that stood nowhere now stands somewhere, and the inverse is
+    :func:`unbind_shelf_from_map` — which is why this records no undo, the
+    same argument ``set_gaps`` makes for switching a cell back ON.
+
+    ⚠ **The refusal is checked AND caught.** ``plan_bind`` asks whether the
+    slot is free; ``shelves_by_slot`` is what makes it true. Between the two
+    there is a window a second tab fits into, and without the translation
+    below it answers ``DuplicateShelfSlot`` — a `StoreError`, which no router
+    turns into anything, so the owner would get a 500 for the ordinary race
+    the whole feature is about. It is re-read rather than guessed at, because
+    the occupant a refusal names has to be the one that is actually there.
+    """
+    bound = plan_bind(shelf, section, address,
+                      shelves.get_shelf_at(library, address))
+    try:
+        shelves.save_shelf(library, bound)
+    except DuplicateShelfSlot as exc:
+        occupant = shelves.get_shelf_at(library, address)
+        if occupant is None:
+            # The index refused and nothing is there: not this race. Let the
+            # store error travel, rather than inventing a refusal about an
+            # occupant that does not exist.
+            raise
+        raise slot_taken(address, occupant) from exc
+    return bound
+
+
+def unbind_shelf_from_map(
+    map_store: MapStore,
+    shelves: ShelfStore,
+    library: LibraryRef,
+    shelf: Shelf,
+    *,
+    journal: Journal,
+) -> Shelf:
+    """Take a shelf off the drawing, keeping the shelf (P6.4c).
+
+    The address goes; the books, the photographs, the label and the id all
+    stay — ``unbind_shelf``'s own docstring, and the same clamp
+    ``plan_slot_removal`` applies when a column is erased under an occupied
+    shelf. What is left behind is a slot the section still describes with
+    nothing in it, which is the state ``apply_slot_change`` already documents
+    as *"an unphotographed bookcase"*.
+
+    **It records an undo, and bind does not.** They are inverses, so this
+    looks asymmetric until you ask what is lost: binding loses nothing, and
+    unbinding loses an ADDRESS — the one thing about this shelf that a person
+    read off a drawing and might not remember. §3.15's list is *destroy or
+    detach*, and every other detach in this module is journalled; the same
+    outcome reached by a deliberate gesture rather than as a side effect of
+    erasing a column is not a smaller loss.
+
+    **A shelf that stands nowhere is a no-op, not a refusal.** The retry a
+    dropped response provokes must not answer 409 — and, more sharply, an
+    entry whose restore is a shelf row that did not change would sit at the
+    head of a one-deep journal doing nothing, which is the same as deleting
+    the real undo standing behind it.
+    """
+    if shelf.address is None:
+        return shelf
+    detached = unbind_shelf(shelf)
+    shelves.save_shelf(library, detached)
+    _record(journal, map_store, shelves, library, kind="unbind_shelf",
+            tag=f"shelf:{shelf.id}", shelves_before=(shelf,),
+            wrote={f"shelves:{shelf.id}": detached})
+    return detached
 
 
 def apply_depth_default(

@@ -3050,3 +3050,38 @@ def test_an_alias_belongs_to_a_library():
         pass
     else:
         raise AssertionError("an alias was built with no library")
+
+
+def test_a_slot_that_already_holds_a_shelf_refuses_the_bind_itself():
+    """MAP_PLAN §3.14, at the level that decides it.
+
+    ⚠ This gate exists because the rule survived its own mutation one level
+    up: delete the check from `plan_bind` and `bind_shelf_to_slot` still
+    refuses, because `shelves_by_slot` catches the write and the caller
+    translates it. That is redundant enforcement, which is the pattern here —
+    but a rule whose only proof runs through a unique index is a rule that
+    disappears the day somebody writes a second caller, and §3.14's whole
+    point is that binding stops at a taken slot rather than resolving it.
+    """
+    from app.domain import (
+        Section, ShelfAddress, SlotTaken, new_shelf, plan_bind,
+    )
+
+    section = Section(id="se", library_id="lib", bookcase_id="bc", ordinal=1,
+                      column_levels=(2, 2))
+    homeless = new_shelf(id="photo-born", library_id="lib")
+    occupant = new_shelf(id="drawn", library_id="lib", label="מדף א",
+                         address=ShelfAddress("se", 1, 1))
+
+    try:
+        plan_bind(homeless, section, ShelfAddress("se", 1, 1), occupant)
+    except SlotTaken as exc:
+        assert exc.occupant is occupant, (
+            "the refusal must carry the shelf the decision was made about")
+        assert "מדף א" in str(exc)
+    else:
+        raise AssertionError("a bind landed on top of another shelf")
+
+    # ...and the same slot, free, is exactly what it is for.
+    assert plan_bind(homeless, section, ShelfAddress("se", 1, 1),
+                     None).address == ShelfAddress("se", 1, 1)
