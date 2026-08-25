@@ -439,6 +439,42 @@ different world — the product never reads it.
   83/500 restoring an empty one, and 500/500 correct with a finer clock. Order
   by a monotonic per-library counter assigned BY THE STORE; a caller computing
   "the next number" lets two processes pick the same one.
+- **An argument accepted and not forwarded is a fix that reports success.**
+  `_record` took `wrote` and never passed it on, so P6.4b's measured fix —
+  digest what the edit WROTE, not a re-read that may already hold another
+  tab's work — was inert for two items behind a docstring saying the window
+  was closed. Forwarding it turned an *existing* test red, which was a second
+  bug: a room's bookcases SURVIVE its deletion and were being written down as
+  gone. Same family as the docstring below: check the wire, not the intent.
+- **A guard that covers one SHAPE of the thing it names passes, and is not
+  looking.** The counted-string test matched `(n: number) => string` exactly,
+  so three two-argument strings shipped `1 תמונות` to a real browser — and
+  widening it found six more, live in both languages. Identical to the
+  dead-key scan that let every key which was a prefix of another ride on its
+  longer sibling, and to a 404 meta-test whose EDIT_MAP sibling had a
+  completeness check it did not. When a guard names a class, enumerate the
+  class from the TYPE or the ROUTER, never from a list or one syntactic form.
+- **When a client model gains a server-owned field, every clone and every
+  serializer must drop it.** `paste.ts`'s `{ ...shelf }` copied a new `id`, so
+  a pasted bookcase's cells addressed the ORIGINAL's shelves — and P6.4c had
+  just put *take off the map* on that identity, which then detached a shelf
+  elsewhere on the plan while the pressed cell looked unchanged. That file's
+  own header records the same failure through the section id one item
+  earlier. `serializePlan` was carrying shelf ids and NAMES into the owner's
+  exported drawing for the same reason.
+- **A fingerprint over rows must also watch the SHAPE they land in.** The undo
+  journal digested who stands in a section's slots and not which cells the
+  section has, so *unbind → gap that cell → undo* restored a shelf into a cell
+  the drawing does not have: rendered by no screen, listed by no picker. And a
+  COALESCED entry must take its first half's keys from the first half's own
+  entry — recomputing the union from a live read reopens the widest window in
+  the module, inside the commonest entry there is.
+- **Reviewers get DETACHED worktrees, never a shared branch.**
+  `git worktree add -f <dir> <branch>` four times puts one ref in four trees,
+  so a commit in the primary moves it under all of them — three reviews
+  reported phantom staged reversions and one abandoned its tree mid-run.
+  `git worktree add --detach <dir> <sha>` is the shape: they are reading a
+  commit, not sharing a branch.
 - **A docstring asserting a test exists is worth nothing until it does.** Two
   of them said a shared contract test caught any field the JSON codec dropped;
   the contract did not exist and the codec was dropping one, which made the
