@@ -534,14 +534,105 @@ describe('the predicates the P6.4c panel rides on', () => {
       .toBeNull()
   })
 
-  it('says the list is empty rather than spinning when it cannot be read', async () => {
+  it('says the list could not be READ, never that it is empty', async () => {
+    // ⚠⚠ Absent is not unknown. With `GET /shelves` down, the picker
+    // announced "every shelf is already on the map" while FORTY stood
+    // nowhere — including the owner's real 22-book one. Measured in a
+    // browser; the same shape this project already has on record about "no
+    // admin" beside a card saying two users.
     const user = userEvent.setup()
     const acts = actions()
     acts.shelvesOffTheMap = vi.fn(async () => { throw new Error('offline') })
     showWith(cell(1, 0), acts)
 
     await user.click(screen.getByRole('button', { name: HE.put_a_shelf_here }))
+    expect(await screen.findByText(HE.shelf_list_failed)).toBeInTheDocument()
+    expect(screen.queryByText(HE.no_shelves_off_the_map)).toBeNull()
+
+    // ...and a way out that is not "select a different cell".
+    acts.shelvesOffTheMap = vi.fn(async () => [])
+    await user.click(screen.getByRole('button', { name: HE.shelf_list_retry }))
     expect(await screen.findByText(HE.no_shelves_off_the_map))
       .toBeInTheDocument()
+  })
+})
+
+describe('what the phone walk found (P6.4c)', () => {
+  const showWith = (selection: Selection, acts: Actions) =>
+    render(
+      <I18nProvider>
+        <Inspector
+          doc={{ plan: plan(), seq: 0 }}
+          floorId="f1"
+          selection={selection}
+          actions={acts}
+          renaming={null}
+          onRenamed={() => {}}
+        />
+      </I18nProvider>,
+    )
+
+  const cell = (col: number, level: number): Selection => ({
+    rooms: [], cases: ['c1'],
+    cells: [{ caseId: 'c1', sectionId: 's1', col, level }],
+  })
+
+  it('calls an empty cell an empty cell, in its own legend', () => {
+    // One fieldset made two contradictory claims: `מדף · עמודה 1 · גובה 1`
+    // directly above `אין כאן מדף.`
+    showWith(cell(1, 0), actions())
+    expect(screen.getByText(HE.empty_cell_legend('', 2, 1)))
+      .toBeInTheDocument()
+    expect(screen.queryByText(HE.shelf_legend('', 2, 1))).toBeNull()
+  })
+
+  it('brings the panel into view, because on a phone it is 957px down', () => {
+    // ⚠ Measured: the panel begins 957px inside a scroller 252px tall — 31%
+    // of a 375x812 screen — with `scrollTop` 0 before the tap and 0 after.
+    // *Tap a cell → the panel at the bottom* read as *nothing happens*.
+    const into = vi.fn()
+    // jsdom has none, which is why the call site is optional-chained.
+    ;(Element.prototype as unknown as { scrollIntoView: unknown })
+      .scrollIntoView = into
+    showWith(cell(0, 0), actions())
+    expect(into).toHaveBeenCalled()
+    delete (Element.prototype as unknown as { scrollIntoView?: unknown })
+      .scrollIntoView
+  })
+
+  it('gives a different free cell a picker of its own', () => {
+    // Without a key the component stays mounted across cells, so the second
+    // free cell opens holding the first one's list and its `open` flag.
+    const acts = actions()
+    const { rerender } = showWith(cell(1, 0), acts)
+    const first = screen.getByRole('button', { name: HE.put_a_shelf_here })
+    rerender(
+      <I18nProvider>
+        <Inspector
+          doc={{ plan: plan(), seq: 0 }}
+          floorId="f1"
+          selection={cell(1, 1)}
+          actions={acts}
+          renaming={null}
+          onRenamed={() => {}}
+        />
+      </I18nProvider>,
+    )
+    // (1,1) has a shelf, so the control is gone entirely — the point is that
+    // nothing of the previous cell's picker survived the change.
+    expect(screen.queryByRole('button', { name: HE.put_a_shelf_here }))
+      .not.toBe(first)
+  })
+
+  it('says a shelf holds nothing rather than counting two zeroes', async () => {
+    const user = userEvent.setup()
+    const acts = actions()
+    acts.shelvesOffTheMap = vi.fn(async () => [
+      { id: 'a', label: 'ריקה', capture_count: 0, book_count: 0 },
+    ])
+    showWith(cell(1, 0), acts)
+    await user.click(screen.getByRole('button', { name: HE.put_a_shelf_here }))
+    expect(await screen.findByText(HE.shelf_holds_nothing)).toBeInTheDocument()
+    expect(screen.queryByText(HE.shelf_holds(0, 0))).toBeNull()
   })
 })

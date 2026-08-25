@@ -19,7 +19,7 @@ import { Select } from '@booksnap/ui'
 
 import { Elevation } from './Elevation'
 import type { OffMapShelf } from '../useMapSync'
-import type { Doc, Selection } from './types'
+import type { Cell, Doc, Selection } from './types'
 import { count, markCell, only, onlyCell } from './types'
 import { useSticky } from './useSticky'
 import type { Bookcase, GapCell, Plan, Room, Section, Shelf } from '../core/model'
@@ -527,14 +527,23 @@ function ShelfPanel({
     bc.sections.length > 1 ? `${T.section_n(sectionIndex(bc, sec.id) + 1)} · ` : ''
   const name = shelf.label || T.shelf_unnamed
   return (
-    <fieldset className="shelf-panel">
-      <legend>{T.shelf_legend(where, shelf.col + 1, shelf.level + 1)}</legend>
+    <fieldset className="shelf-panel" ref={useCellInView(sel)}>
+      <legend>
+        {shelf.free
+          ? T.empty_cell_legend(where, shelf.col + 1, shelf.level + 1)
+          : T.shelf_legend(where, shelf.col + 1, shelf.level + 1)}
+      </legend>
       {/* ⚠ A cell the SERVER says holds no shelf (P6.4c). Everything below
           would be a control over a row that does not exist — the depth box
           most sharply, since `PATCH .../shelves/{col}/{level}` answers 404 for
           an empty slot and the toolbar would have said "saved". */}
       {shelf.free ? (
-        <EmptyCell sec={sec} shelf={shelf} actions={actions} />
+        // ⚠ KEYED by the cell. Without it, selecting a different free cell
+        // keeps this component mounted with the previous cell's `open` and
+        // its stale list — a picker offering the answer to a question nobody
+        // asked here.
+        <EmptyCell key={`${sec.id}:${shelf.col}:${shelf.level}`}
+                   sec={sec} shelf={shelf} actions={actions} />
       ) : (
         <>
           {/* The one fact the grid cannot show: a cell is 44 pixels wide. */}
@@ -598,6 +607,30 @@ function ShelfPanel({
 }
 
 /**
+ * Bring the shelf panel into view when the owner taps a different cell.
+ *
+ * ⚠ Not a nicety on a phone. A review measured the panel beginning **957px**
+ * inside a scroller that is **252px** tall — 31% of a 375×812 screen — with
+ * `scrollTop` at 0 before the tap and 0 after it. So *tap a cell → the panel
+ * at the bottom* read as *tap a cell, nothing happens*, and P6.4c's entire UI
+ * lives down there. `grep scrollIntoView app/web/src/map/` had no matches.
+ *
+ * Keyed on the CELL, so re-selecting the same one does not yank the view
+ * while somebody is reading it.
+ */
+function useCellInView(cell: Cell | null) {
+  const box = useRef<HTMLFieldSetElement | null>(null)
+  const at = cell ? `${cell.sectionId}:${cell.col}:${cell.level}` : ''
+  useEffect(() => {
+    // ⚠ Guarded, like `onPhone`'s `matchMedia` two folds up: jsdom has no
+    // `scrollIntoView`, and a missing one must mean "cannot scroll", not a
+    // crash that takes the whole panel down with it.
+    if (at) box.current?.scrollIntoView?.({ block: 'nearest' })
+  }, [at])
+  return box
+}
+
+/**
  * A slot with nothing in it, and the way to fill it (P6.4c, MAP_PLAN §3.14).
  *
  * **Only what the owner TYPED decides anything here.** The list is every shelf
@@ -621,24 +654,28 @@ function EmptyCell({
   const { t, lang } = useI18n()
   const T = mapText(lang)
   const [open, setOpen] = useState(false)
-  const [list, setList] = useState<OffMapShelf[] | null>(null)
+  /**
+   * ⚠ THREE states, and the third is the finding. A failure used to land as
+   * an empty list, which printed *"every shelf is already on the map"* — a
+   * confident false statement, measured with `GET /shelves` down while forty
+   * shelves stood nowhere, one of them the owner's real 22-book one. Absent
+   * is not unknown; this project has the same measurement on record about
+   * "no admin" beside a card saying two users.
+   */
+  const [list, setList] = useState<OffMapShelf[] | 'failed' | null>(null)
+
+  const read = () => {
+    setList(null)
+    void actions.shelvesOffTheMap()
+      .then(setList)
+      .catch(() => setList('failed'))
+  }
 
   if (!open) {
     return (
       <>
         <p className="note rtl-safe">{T.cell_has_no_shelf}</p>
-        <button
-          type="button"
-          onClick={() => {
-            setOpen(true)
-            // A failure lands as an EMPTY list rather than a spinner that
-            // never stops: "there is nothing to put here" is wrong but
-            // recoverable, and a screen that hangs is neither.
-            void actions.shelvesOffTheMap()
-              .then(setList)
-              .catch(() => setList([]))
-          }}
-        >
+        <button type="button" onClick={() => { setOpen(true); read() }}>
           {T.put_a_shelf_here}
         </button>
       </>
@@ -649,6 +686,15 @@ function EmptyCell({
       <p className="note rtl-safe">{T.pick_a_shelf}</p>
       {list === null ? (
         <p className="note">{t.loading}</p>
+      ) : list === 'failed' ? (
+        // The reason, and the way out. A picker with neither is a dead end
+        // whose only escape is selecting a different cell, which nothing says.
+        <>
+          <p className="note warn rtl-safe" role="status">
+            {T.shelf_list_failed}
+          </p>
+          <button type="button" onClick={read}>{T.shelf_list_retry}</button>
+        </>
       ) : list.length === 0 ? (
         <p className="note rtl-safe">{T.no_shelves_off_the_map}</p>
       ) : (
@@ -671,13 +717,22 @@ function EmptyCell({
               >
                 <span className="rtl-safe">{s.label || T.shelf_unnamed}</span>
                 <span className="note rtl-safe">
-                  {T.shelf_holds(s.book_count, s.capture_count)}
+                  {/* Forty rows reading `0 ספרים · 0 תמונות` is noise in the
+                      one list whose job is to tell shelves apart. */}
+                  {s.book_count + s.capture_count === 0
+                    ? T.shelf_holds_nothing
+                    : T.shelf_holds(s.book_count, s.capture_count)}
                 </span>
               </button>
             </li>
           ))}
         </ul>
       )}
+      {/* A way out that is not "select a different cell". */}
+      <button type="button" className="linkish"
+              onClick={() => { setOpen(false); setList(null) }}>
+        {T.pick_a_shelf_cancel}
+      </button>
     </div>
   )
 }

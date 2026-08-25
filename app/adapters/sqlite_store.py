@@ -484,7 +484,13 @@ class SqliteShelfStore(_SqliteStore):
             # with the empty ones rather than by SQLite's NULL rules.
             rows = conn.execute(
                 f"SELECT * FROM shelves WHERE {clause}"
-                " ORDER BY label, COALESCE(created_at, ''), id",
+                # ⚠ `TRIM(label) = ''` LAST, so a named shelf sorts before an
+                # unnamed one — `Shelf.sort_key`'s leading flag, in SQL. Plain
+                # `ORDER BY label` puts the blanks at the top, which is what
+                # both implementations agreed on while every docstring said
+                # the opposite.
+                " ORDER BY CASE WHEN TRIM(label) = '' THEN 1 ELSE 0 END,"
+                " label, COALESCE(created_at, ''), id",
                 params,
             ).fetchall()
         return tuple(_load_shelf(r) for r in rows)

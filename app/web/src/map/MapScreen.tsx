@@ -97,6 +97,30 @@ export type MapScreenProps = {
    * because there are now three of them: a prop called `site` holding four
    * things that are not sites is how a name stops meaning anything.
    */
+  /**
+   * What was selected when the last document was replaced (P6.4c).
+   *
+   * ⚠ Every server gesture RE-DERIVES, which re-keys this component, and a
+   * remount starts with nothing selected. A review measured what that costs
+   * on a phone: take a shelf off the map and the bookcase you were working in
+   * is deselected, so you must find it again on the plan — an 11×88 pixel
+   * sliver at 375px. The ids survive a re-derive (they are the server's), so
+   * the selection is still meaningful; it just has to be handed back.
+   */
+  initialSelection?: Selection
+  onSelectionChange?: (selection: Selection) => void
+  /**
+   * The document on screen is about to be replaced (P6.4c).
+   *
+   * ⚠⚠ It dresses THIS component's own root rather than a wrapper around it,
+   * and that is not a preference. The first cut put an `inert` div in
+   * between, the whole gate stayed green, and the drawing canvas measured
+   * **375×0** in a real browser: `.mapscreen` fills its board through a chain
+   * of percentage heights, and a bare `<div>` in the middle of that chain has
+   * no height to inherit. CLAUDE.md's own rule — jsdom sees no CSS, so a UI
+   * claim is verified in a browser.
+   */
+  refreshing?: boolean
   shelves: {
     offTheMap: () => Promise<OffMapShelf[]>
     bind: (shelfId: string, sectionId: string, col: number, level: number,
@@ -116,7 +140,8 @@ export default function MapScreen(props: MapScreenProps) {
     () => initHistory({ plan: props.initialPlan, seq: 0 }))
   const [tool, setTool] = useState<Tool>('auto')
   const [theme, setTheme] = useState<Theme>(loadTheme)
-  const [selection, setSelection] = useState<Selection>(EMPTY)
+  const [selection, setSelection] = useState<Selection>(
+    props.initialSelection ?? EMPTY)
   const [floorPick, setFloorPick] = useState<string>(
     () => loadFloor(props.site.siteId))
   const [clipboard, setClipboard] = useState<Clipboard>(null)
@@ -130,6 +155,14 @@ export default function MapScreen(props: MapScreenProps) {
   const [sideWidth, setSideWidth] = useState<number>(loadSideWidth)
 
   const wrapRef = useRef<HTMLDivElement | null>(null)
+
+  // Reported upwards so a re-derive can hand it back. A ref rather than an
+  // effect on `selection`: what the parent needs is the LAST value before it
+  // replaces the document, not a render-by-render stream.
+  const report = props.onSelectionChange
+  useEffect(() => {
+    report?.(selection)
+  }, [report, selection])
 
   const doc = hist.present
 
@@ -744,7 +777,16 @@ export default function MapScreen(props: MapScreenProps) {
   })
 
   return (
-    <div className="app mapscreen" data-map-theme={theme}>
+    // ⚠ INERT while re-deriving, not merely dimmed. Keeping the old editor
+    // visible trades a blank screen for a window in which the owner could
+    // edit a document that is about to be replaced — and `useMapSync`'s `era`
+    // guard DISCARDS a queued push from a stale era, silently. A blank was
+    // the wrong answer; an editable stale one would be worse. `inert` takes
+    // it out of the tab order and swallows pointer events in one attribute.
+    <div className={`app mapscreen${props.refreshing ? ' refreshing' : ''}`}
+         data-map-theme={theme}
+         {...(props.refreshing ? { inert: '' as unknown as boolean } : {})}
+         aria-busy={props.refreshing}>
       <Toolbar
         tool={tool}
         theme={theme}

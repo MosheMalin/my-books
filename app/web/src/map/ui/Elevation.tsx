@@ -247,12 +247,25 @@ function SectionBlock({
                   </button>
                 )
               }
+              // ⚠ A cell the SERVER says holds no shelf is drawn and named
+              // differently. A review measured the two at 375×812 immediately
+              // after a real unbind: identical markup, identical computed
+              // background, border, colour and opacity — and on the owner's
+              // library every addressed shelf holds zero books and zero
+              // photographs, so the badges that might have differed do not
+              // exist. The grid changed by ZERO pixels for the gesture the
+              // owner had just made, and the accessible name still said
+              // *shelf*. The gap branch above does the opposite for the same
+              // reason, and this is that treatment, one state along.
+              const free = shelf?.free === true
               return (
                 <button
                   key={level}
                   type="button"
-                  className={`elev-cell${isSel ? ' selected' : ''}${override ? ' override' : ''}`}
-                  aria-label={T.shelf_at(addr, col + 1, level + 1)}
+                  className={`elev-cell${isSel ? ' selected' : ''}${override ? ' override' : ''}${free ? ' empty' : ''}`}
+                  aria-label={free
+                    ? T.empty_cell(addr, col + 1, level + 1)
+                    : T.shelf_at(addr, col + 1, level + 1)}
                   aria-pressed={isSel}
                   // Ctrl/Shift adds to the marked set — the same modifier the
                   // plan already uses to select several rooms, so the gesture
@@ -262,6 +275,7 @@ function SectionBlock({
                       adding || e.ctrlKey || e.metaKey || e.shiftKey)}
                 >
                   <span className="elev-level">{level + 1}</span>
+                  {free && <span className="empty-mark" aria-hidden="true">·</span>}
                   {shelf && shelf.depth > 1 && (
                     <span className="elev-depth" title={T.rows_deep(shelf.depth)}>
                       ×{shelf.depth}

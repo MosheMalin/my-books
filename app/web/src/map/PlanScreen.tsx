@@ -7,11 +7,14 @@
  * that an editor over `localStorage` did not — loading, a failed load, and a
  * refusal the server gave.
  */
-import { useMemo } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { useI18n } from '../lib/i18n'
 
 import MapScreen from './MapScreen'
+import type { Plan } from './core/model'
+import type { Selection } from './ui/types'
+import { EMPTY } from './ui/types'
 import { mapText, type MapText } from './text'
 import type { MapSource } from './useMapSync'
 import { useMapSync } from './useMapSync'
@@ -112,6 +115,32 @@ export function PlanScreen({ library }: { library: string }) {
 
   const sync = useMapSync(source, T)
 
+  /**
+   * The document currently ON SCREEN, and the generation it was mounted with.
+   *
+   * ⚠⚠ **A refresh is not a first load** — CLAUDE.md's own trap, and P6.4c
+   * attached it to a PER-CELL gesture. `startOver` lowers `ready`, this
+   * screen answered it with `טוען…`, and a review measured 1.42 seconds of
+   * BLANK on localhost for one tap on a picker row: plan, bookcase,
+   * elevation and panel all gone, then back with nothing selected. On mobile
+   * data that is seconds, and an owner taking three shelves off one bookcase
+   * pays it three times.
+   *
+   * So the previous editor stays on screen until the new document arrives,
+   * and it is held at the generation it was MOUNTED with — never at
+   * `sync.generation`, which has already been bumped. Re-keying it now would
+   * remount over the stale `initial` and push it, which is the whole reason
+   * the blank was there.
+   */
+  const [shown, setShown] = useState<{ gen: number; plan: Plan } | null>(null)
+  useEffect(() => {
+    if (sync.ready && sync.initial)
+      setShown({ gen: sync.generation, plan: sync.initial })
+  }, [sync.ready, sync.initial, sync.generation])
+
+  /** What the owner had selected when the document was last replaced. */
+  const selection = useRef<Selection>(EMPTY)
+
   if (sync.error) {
     return (
       <main className="mapstate">
@@ -164,19 +193,37 @@ export function PlanScreen({ library }: { library: string }) {
   const flash = sync.flash && (
     <p className="mapflash rtl-safe" role="status">{sync.flash}</p>
   )
-  if (!sync.ready || !sync.initial) {
+  // ⚠ The loading screen is still the answer for a FIRST load and for every
+  // re-derive that changes which document this is. What it stopped being the
+  // answer to is a per-cell gesture — see `MapSync.refreshing`.
+  // ⚠ When the document is READY it is read from `sync`, never from `shown`.
+  // `shown` is set in an effect, so it lags by one render — and that render
+  // MOUNTS the editor with the previous document, which then pushes its own
+  // reverse. Measured: `DELETE /map/floors/...` after a plain reload, which
+  // is the exact failure `PlanScreen`'s module note exists about. `shown` is
+  // only ever the answer while re-deriving, when it is what is on screen
+  // already and re-keying it is precisely what must not happen.
+  const live = sync.ready && sync.initial
+    ? { gen: sync.generation, plan: sync.initial }
+    : shown
+  if (!live || (!sync.ready && !sync.refreshing)) {
     return <main className="mapstate">{banner}{flash}<p>{t.loading}</p></main>
   }
+  const refreshing = !sync.ready
   return (
     <>
       {banner}
       {flash}
+      {refreshing && <p className="mapflash rtl-safe" role="status">{t.loading}</p>}
       {/* ⚠ MOUNTED with its document. The editor must never exist before its
           data does — see `useMapSync`'s note and the storey this cost. `key`
           makes a reload a fresh mount rather than an adoption. */}
       <MapScreen
-        key={sync.generation}
-        initialPlan={sync.initial}
+        key={live.gen}
+        initialPlan={live.plan}
+        refreshing={refreshing}
+        initialSelection={selection.current}
+        onSelectionChange={(s) => { selection.current = s }}
         onChange={sync.record}
         saved={sync.saved}
         onReload={sync.reload}

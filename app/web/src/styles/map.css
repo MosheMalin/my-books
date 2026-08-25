@@ -817,6 +817,19 @@
   margin: 4px 0;
 }
 .mapscreen .elev-marked .note { margin: 0; }
+/* A cell the server says holds no shelf (P6.4c). Drawn as DIFFERENT ink
+   rather than less, the same argument the gap's `+` carries one rule up: a
+   dashed edge says "there is a slot here and nothing in it", which is what
+   the owner has just made happen and is looking for confirmation of. */
+.mapscreen .elev-cell.empty {
+  border-style: dashed;
+  background: transparent;
+}
+.mapscreen .elev-cell.empty .empty-mark {
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.75;
+}
 .mapscreen .elev-level { opacity: 0.7; }
 .mapscreen .elev-depth { font-weight: 600; }
 .mapscreen .elev-photos { font-size: 10px; }
@@ -835,8 +848,12 @@
   flex-direction: column;
   gap: 4px;
   /* Bounded, and it scrolls: an owner with forty photo-born shelves would
-     otherwise push every other control in the panel off the screen. */
-  max-height: 40vh;
+     otherwise push every other control in the panel off the screen.
+     ⚠ Relative to the PANEL, not the viewport. A review measured 40vh at
+     324.8px inside a `.map-side` that is 252px tall on a phone — a bound
+     129% of its own container, which bounds nothing and nests two
+     scrollers. */
+  max-height: min(40vh, 45%);
   overflow-y: auto;
 }
 .mapscreen .shelf-pick li button {
@@ -849,5 +866,11 @@
   text-align: start;
 }
 .mapscreen .shelf-pick li button .note { margin: 0; font-size: 11px; }
+/* While the document is being re-derived (P6.4c). The editor STAYS on
+   screen — a blank is what a review measured at 1.42s for one tap — and is
+   made inert rather than merely dim, because an edit made in that window
+   would be discarded by `era` without a word. */
+.mapscreen.refreshing { opacity: 0.55; filter: saturate(0.6); }
+
 .mapscreen .elevation-cols { display: flex; gap: 6px; margin-top: 8px; }
 .mapscreen .elevation-cols button { flex: 1; }

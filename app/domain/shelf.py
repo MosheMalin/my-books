@@ -163,7 +163,7 @@ class Shelf:
         return bool(self.label.strip())
 
     @property
-    def sort_key(self) -> tuple[str, str, str]:
+    def sort_key(self) -> tuple[int, str, str, str]:
         """Named shelves alphabetically, then unnamed ones oldest-first.
 
         Ordering unnamed shelves by ``created_at`` rather than letting them
@@ -172,8 +172,18 @@ class Shelf:
         of visually identical rows in id order — which is arbitrary to the
         person reading it. Creation order at least matches the sequence they
         photographed them in. ``id`` last, so the order is total.
+
+        ⚠ **The leading flag is what makes the sentence above true.** Without
+        it the key starts with the label, and an EMPTY label sorts FIRST — so
+        this property, the route's docstring and both stores all said *named
+        first* while every unnamed shelf came first. Measured in P6.4c's
+        picker: fifteen rows reading "מדף ללא שם", then the twenty-six the
+        owner had bothered to name. That picker is the first screen where the
+        order is a decision aid, which is what made a four-item-old
+        contradiction visible.
         """
-        return (self.label.strip(), self.created_at or "", self.id)
+        return (0 if self.label.strip() else 1,
+                self.label.strip(), self.created_at or "", self.id)
 
     @property
     def depths(self) -> tuple[int, ...]:

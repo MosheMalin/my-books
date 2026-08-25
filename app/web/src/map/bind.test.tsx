@@ -236,4 +236,56 @@ describe('the hook that binds a shelf to a slot', () => {
     expect(calls[1]![1]).toBe(
       '/map/shelves/a%20b%2Fc%3Fd/address?section_id=sec%201&col=1&level=1')
   })
+
+  it('says the SERVER\'s words for a refusal that is not about the drawing', async () => {
+    // ⚠ A review measured a 403 answering "the drawing has changed since —
+    // try again". The same sentence covered 401 (a session that expired
+    // while the tab was backgrounded, which is the ordinary phone flow), 429
+    // and every 5xx. Every one is a lie, and "try again" is an instruction
+    // that will fail identically forever.
+    const { source } = fakeSource({
+      api: {
+        post: async () => ({}),
+        put: async () => { throw { status: 403, detail: 'you are a viewer' } },
+        patch: async () => ({}),
+        del: async () => ({}),
+      },
+    })
+    const seen = mountHook(source)
+    await screen.findByText('ready', {}, WAIT)
+
+    act(() => seen.sync!.bindShelf('sh-1', 'sec-1', 0, 0, 'מדף'))
+    await waitFor(() => expect(seen.sync!.notice).not.toBeNull(), WAIT)
+    expect(seen.sync!.notice!.say?.(HE)).toBeUndefined()
+    expect(seen.sync!.notice!.detail).toBe('you are a viewer')
+  })
+
+  it('does NOT blank the editor for a bind, and does for a site switch', async () => {
+    // ⚠⚠ CLAUDE.md's own trap — *a refresh is not a first load* — attached to
+    // a per-cell gesture. A review measured 1.42s of blank on localhost for
+    // one tap: plan, bookcase, elevation and panel all gone, then back with
+    // nothing selected. A site switch is the opposite answer on purpose: it
+    // changes WHICH document this is, and showing the previous one meanwhile
+    // would be showing another site's rooms.
+    let release: () => void = () => {}
+    const held = new Promise<void>((go) => { release = go })
+    let loads = 0
+    const { source } = fakeSource({
+      load: async () => {
+        loads += 1
+        if (loads > 1) await held
+        return { map: EMPTY_MAP as never, shelves: [] as never }
+      },
+    })
+    const seen = mountHook(source)
+    await screen.findByText('ready', {}, WAIT)
+
+    act(() => seen.sync!.bindShelf('sh-1', 'sec-1', 0, 0, 'מדף'))
+    await waitFor(() => expect(seen.sync!.ready).toBe(false), WAIT)
+    expect(seen.sync!.refreshing, 'the screen would go blank for a bind')
+      .toBe(true)
+    release()
+    await waitFor(() => expect(seen.sync!.ready).toBe(true), WAIT)
+    expect(seen.sync!.refreshing).toBe(false)
+  })
 })

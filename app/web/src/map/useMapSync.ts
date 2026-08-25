@@ -129,6 +129,18 @@ export type MapSync = {
   /** Bumps on every reload, so the editor remounts with the new document
    *  instead of adopting it. */
   generation: number
+  /**
+   * A re-derive that must NOT blank the screen (P6.4c).
+   *
+   * ⚠ True only for the per-cell gestures. A site switch or a *reload from
+   * the server* replaces WHICH document this is, and showing the previous
+   * one meanwhile would be showing another site's rooms; binding a shelf
+   * changes one cell of the document already on screen, and a review measured
+   * 1.42 seconds of blank for it — after which the owner must find an 11×88
+   * pixel bookcase on a 375px plan again. Same mechanism, opposite right
+   * answer, so it is a flag rather than a rule.
+   */
+  refreshing: boolean
   /** The LOAD failed: there is no document, so there is nothing to edit. */
   error: string | null
   saved: Saved
@@ -198,6 +210,7 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
   const [sites, setSites] = useState<{ id: string; name: string }[]>([])
   const [siteId, setSiteId] = useState<string>('')
   const [generation, setGeneration] = useState(0)
+  const [refreshing, setRefreshing] = useState(false)
 
   /** The last state the SERVER confirmed. Every diff is against this, never
    *  against the previous render — a dropped call must not be forgotten. */
@@ -251,9 +264,13 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
     window.setTimeout(() => setFlash((m) => (m === text ? null : m)), ms)
   }, [])
 
-  /** Throw the session's document away and re-derive it from the server. */
-  const startOver = useCallback(() => {
+  /** Throw the session's document away and re-derive it from the server.
+   *
+   *  ``keepPlace`` says the screen must not go blank while it happens — see
+   *  :data:`MapSync.refreshing`. */
+  const startOver = useCallback((keepPlace = false) => {
     era.current += 1
+    setRefreshing(keepPlace)
     setReady(false)
     setGeneration((g) => g + 1)
   }, [])
@@ -309,6 +326,7 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
         ids.current = new Ids()
         setInitial(plan)
         setReady(true)
+      setRefreshing(false)
       } catch (err) {
         if (alive) setError(messageOf(err, T))
       }
@@ -555,23 +573,32 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
         await work(source.api)
       } catch (err) {
         const e = err as { status?: number; detail?: string; message?: string }
-        // ⚠ OUR words for every refusal, not the server's. The server's
-        // sentence is English by construction, and here the client already
-        // knows what a refusal MEANS: it only offers a bind into a slot it
-        // was told was free, and only for a shelf it was told stood nowhere,
-        // so a 4xx is the drawing having moved. Passing the English through
-        // would show the owner "column 2, level 3 already holds shelf
-        // 9f3a…" — true, and not a sentence anybody can act on.
-        setNotice(typeof e?.status === 'number'
+        // ⚠ OUR words for the refusals that MEAN the drawing moved, and the
+        // server's for everything else. The client only offers a bind into a
+        // slot it was told was free, for a shelf it was told stood nowhere,
+        // so 400 / 404 / 409 are all *somebody edited this since you looked*
+        // — and the English underneath ("column 2, level 3 already holds
+        // shelf 9f3a…") is true and unusable.
+        //
+        // ⚠⚠ The first version said that of EVERY status. A review measured a
+        // 403 answering "the drawing has changed since — try again", and the
+        // same sentence covered 401 (a session that expired while the tab was
+        // backgrounded, which is the ordinary phone flow), 429 and every 5xx.
+        // Every one of those is a lie, and "try again" is an instruction that
+        // will fail identically forever. A wrong stated reason is worse than
+        // none.
+        const moved = e?.status === 400 || e?.status === 404
+          || e?.status === 409
+        setNotice(moved
           ? { kind: 'refused', say: (T) => T.slot_moved_on }
-          : { kind: 'dropped',
+          : { kind: typeof e?.status === 'number' ? 'refused' : 'dropped',
               detail: e?.detail || e?.message || T.save_failed_hint })
         setSaved('saved')
-        startOver()
+        startOver(true)
         return
       }
       announce(said)
-      startOver()
+      startOver(true)
     })()
   }, [announce, source, startOver, T])
 
@@ -706,6 +733,7 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
 
   return {
     generation,
+    refreshing,
     ready,
     error,
     saved,

@@ -315,6 +315,7 @@ describe('counted strings say ONE, in both languages', () => {
       'selected_n',
       // an address: «column 1, level 3» names the cell, it counts nothing
       'shelf_at.col', 'shelf_legend.col', 'restore_cell.col',
+      'empty_cell.col', 'empty_cell_legend.col',
       // a dimension: «room 1×7», «at least 1 × 1 squares»
       'unnamed_room.w', 'unnamed_case.w', 'case_summary.w', 'case_summary.h',
       'too_small.squares', 'case_facts.deep',
@@ -355,5 +356,28 @@ describe('counted strings say ONE, in both languages', () => {
     // parameter found six more, and finding them one failure per run would
     // have been six runs.
     expect(bare, 'a plural with a 1 in it').toEqual([])
+  })
+})
+
+
+describe('a sentence carrying a NAME the owner typed', () => {
+  it('never begins with it, in either language', () => {
+    // ⚠ `unicode-bidi: plaintext` resolves a paragraph from its first strong
+    // character, so a label starting with a Latin letter — `A1`, `IKEA
+    // Billy`, free text and plausible — flips the whole announcement to LTR:
+    // the Hebrew runs backwards relative to the sentence and its full stop
+    // lands at the visual start. Measured on the real flash box at 375x812.
+    //
+    // The same rule `<LibraryName>` carries as two elements. Here there is
+    // one string, so the UI's own words have to come first.
+    const NAME = 'ZZlatin shelf'
+    for (const [lang, table] of Object.entries(TABLES)) {
+      for (const key of ['bound_here', 'unbound_shelf'] as const) {
+        const said = (table as unknown as Record<string, (n: string) => string>)[key]!(NAME)
+        expect(said.startsWith(NAME), `${lang}.${key} starts with the name`)
+          .toBe(false)
+        expect(said, `${lang}.${key} dropped the name`).toContain(NAME)
+      }
+    }
   })
 })

@@ -220,9 +220,15 @@ export interface MapText {
   shelf_take_off_map: string
   shelf_take_off_map_confirm: (books: number, photos: number) => string
   cell_has_no_shelf: string
+  empty_cell_legend: (where: string, col: number, level: number) => string
   put_a_shelf_here: string
   pick_a_shelf: string
+  pick_a_shelf_cancel: string
   no_shelves_off_the_map: string
+  shelf_list_failed: string
+  shelf_list_retry: string
+  shelf_holds_nothing: string
+  empty_cell: (where: string, col: number, level: number) => string
   shelf_unnamed: string
   shelf_holds: (books: number, photos: number) => string
   pick_shelf_option: (n: number, name: string, books: number,
@@ -507,18 +513,53 @@ const HE: MapText = {
   shelf_legend: (where, col, level) => `מדף · ${where}עמודה ${col} · גובה ${level}`,
   shelf_is_named: (label) => `שם המדף: ${label}`,
   shelf_take_off_map: 'הורדה מהמפה',
+  // ⚠ `ו-`, not `heHolds`'s middot. That helper is the picker's two-COLUMN
+  // separator; routing a sentence through it produced "מדף שעליו 22 ספרים ·
+  // תמונה אחת?", which is a list where a conjunction belongs — in the one
+  // string that guards a destructive act. A review caught it in the commit
+  // that fixed the plural.
   shelf_take_off_map_confirm: (books, photos) =>
-    `להוריד מהמפה מדף שעליו ${heHolds(books, photos)}? הם נשארים איתו; מה שהולך לאיבוד הוא המקום שלו בשרטוט. אפשר לשחזר.`,
+    `להוריד מהמפה מדף שעליו ${
+      books === 1 ? 'ספר אחד' : `${books} ספרים`} ו${
+      photos === 1 ? 'תמונה אחת' : `-${photos} תמונות`}? הם נשארים איתו; מה שהולך לאיבוד הוא המקום שלו בשרטוט. אפשר לשחזר.`,
   cell_has_no_shelf: 'אין כאן מדף.',
+  // ⚠ A legend of its own. The fieldset printed "מדף · עמודה 1 · גובה 1"
+  // directly above "אין כאן מדף." — one box making two contradictory claims.
+  empty_cell_legend: (where, col, level) =>
+    `תא ריק · ${where}עמודה ${col} · גובה ${level}`,
   put_a_shelf_here: 'שימו כאן מדף',
   pick_a_shelf: 'בחרו מדף שאינו על המפה:',
+  pick_a_shelf_cancel: 'ביטול הבחירה',
   no_shelves_off_the_map: 'כל המדפים כבר על המפה.',
+  // ⚠ NOT "כל המדפים כבר על המפה". Absent is not unknown: a review held
+  // `GET /shelves` down and the picker announced that every shelf was placed
+  // while forty stood nowhere — the same measurement CLAUDE.md records about
+  // "no admin" beside a card saying two users, in a new surface. On a phone a
+  // dropped request is the ordinary case.
+  shelf_list_failed: 'לא הצלחנו לקרוא את רשימת המדפים.',
+  shelf_list_retry: 'ניסיון נוסף',
+  shelf_holds_nothing: 'ריק',
+  // ⚠ Names the CELL's state, not "מדף". A screen reader announced *shelf*
+  // for a cell holding none — the same rule the gap's own label follows one
+  // branch above (`restore_cell` names the action, never the state).
+  empty_cell: (where, col, level) =>
+    `תא ריק · ${where}עמודה ${col} · גובה ${level}`,
   shelf_unnamed: 'מדף ללא שם',
   shelf_holds: heHolds,
+  // ⚠ The same words the row SHOWS. A screen reader reading "0 ספרים · 0
+  // תמונות" off a row whose visible text says "ריק" is two descriptions of
+  // one shelf, and only one of them is the one on screen.
   pick_shelf_option: (n, name, books, photos) =>
-    `${n}. ${name} — ${heHolds(books, photos)}`,
-  bound_here: (name) => `${name} נמצא עכשיו בתא הזה`,
-  unbound_shelf: (name) => `${name} ירד מהמפה. אפשר לשחזר.`,
+    `${n}. ${name} — ${books + photos === 0 ? 'ריק' : heHolds(books, photos)}`,
+  // ⚠ The UI's own words FIRST, and the name after. `unicode-bidi: plaintext`
+  // resolves a paragraph from its first strong character, so a label starting
+  // with a Latin letter (`A1`, `IKEA Billy` — free text, and plausible)
+  // flipped the whole announcement to LTR: the Hebrew ran backwards relative
+  // to the sentence and the full stop landed at its visual start. Measured on
+  // the real flash box. The same rule `<LibraryName>` carries, applied to a
+  // sentence instead of a pair of elements.
+  bound_here: (name) => `נמצא עכשיו בתא הזה: ${name}`,
+  unbound_shelf: (name) => `ירד מהמפה, ואפשר לשחזר: ${name}`,
   slot_moved_on: 'השרטוט השתנה מאז — הנה המצב העדכני. נסו שוב.',
   own_depth: 'העומק שלו',
   photos_attached: 'תמונות מצורפות',
@@ -767,17 +808,26 @@ const EN: MapText = {
   shelf_is_named: (label) => `Named: ${label}`,
   shelf_take_off_map: 'Take off the map',
   shelf_take_off_map_confirm: (books, photos) =>
-    `Take a shelf holding ${enHolds(books, photos)} off the map? They stay with it; what it loses is its place in the drawing. This can be restored.`,
+    `Take a shelf holding ${books === 1 ? '1 book' : `${books} books`} and ${
+      photos === 1 ? '1 photo' : `${photos} photos`} off the map? They stay with it; what it loses is its place in the drawing. This can be restored.`,
   cell_has_no_shelf: 'No shelf stands here.',
+  empty_cell_legend: (where, col, level) =>
+    `Empty cell · ${where}col ${col} · level ${level}`,
   put_a_shelf_here: 'Put a shelf here',
   pick_a_shelf: 'Pick a shelf that is not on the map:',
+  pick_a_shelf_cancel: 'Cancel',
   no_shelves_off_the_map: 'Every shelf is already on the map.',
+  shelf_list_failed: 'The shelf list could not be read.',
+  shelf_list_retry: 'Try again',
+  shelf_holds_nothing: 'empty',
+  empty_cell: (where, col, level) =>
+    `empty cell · ${where}col ${col} · level ${level}`,
   shelf_unnamed: 'Unnamed shelf',
   shelf_holds: enHolds,
   pick_shelf_option: (n, name, books, photos) =>
-    `${n}. ${name} — ${enHolds(books, photos)}`,
-  bound_here: (name) => `${name} now stands in this cell`,
-  unbound_shelf: (name) => `${name} came off the map. This can be restored.`,
+    `${n}. ${name} — ${books + photos === 0 ? 'empty' : enHolds(books, photos)}`,
+  bound_here: (name) => `Now standing in this cell: ${name}`,
+  unbound_shelf: (name) => `Came off the map, and can be restored: ${name}`,
   slot_moved_on: 'The drawing has changed since — here it is as it stands. Try again.',
   own_depth: 'Its own depth',
   photos_attached: 'Photos attached',

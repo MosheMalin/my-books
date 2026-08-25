@@ -617,6 +617,15 @@ def test_unnamed_shelves_order_by_when_they_were_photographed():
 
     Named shelves still come first and alphabetically: a shelf someone
     bothered to name is one they will look for by name.
+
+    ⚠⚠ **This function said that and asserted its opposite.** The assertion
+    read `["c", "a", "named"]` — the named shelf LAST — because a key
+    beginning with the label puts the empty string first, and the sentence
+    above, `Shelf.sort_key`'s docstring, `GET /shelves`'s docstring and both
+    store implementations all agreed with each other about the intent while
+    the code did the reverse. Nothing was red for four schema versions.
+    P6.4c's picker is the first screen where the order is a decision aid, and
+    that is where a review finally read it.
     """
     order = sorted(
         [_shelf(id="c", label="", created_at="2026-08-03"),
@@ -624,7 +633,7 @@ def test_unnamed_shelves_order_by_when_they_were_photographed():
          _shelf(id="named", label="סלון", created_at="2026-08-01")],
         key=lambda s: s.sort_key,
     )
-    assert [s.id for s in order] == ["c", "a", "named"]
+    assert [s.id for s in order] == ["named", "c", "a"]
 
 
 def test_depth_is_declared_and_a_capture_cannot_invent_one():
