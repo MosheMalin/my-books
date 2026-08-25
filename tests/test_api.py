@@ -5970,6 +5970,15 @@ def test_every_map_path_answers_404_for_another_library_with_its_own_methods():
             ("put", "/api/v1/map/shelves/sh-nope/address",
              {"section_id": section["id"], "col": 1, "level": 1}),
             ("delete", "/api/v1/map/shelves/sh-nope/address"),
+            # P6.4d's pair, and both name TWO shelves — the one in the path
+            # and the one in `into` — so each is two lookups and two chances
+            # to answer with something other than 404. The preview is here
+            # even though it writes nothing: a preview of another library's
+            # shelves is a read of them.
+            ("post", "/api/v1/map/shelves/sh-nope/merge",
+             {"into": "sh-also-nope", "strip": "survivor_first"}),
+            ("post", "/api/v1/map/shelves/sh-nope/merge/preview",
+             {"into": "sh-also-nope", "strip": "survivor_first"}),
         ]
         for method, path, *rest in probes:
             call = getattr(theirs, method)
@@ -6696,6 +6705,15 @@ def test_every_write_in_the_map_router_needs_edit_map_and_says_so():
             ("put", "/api/v1/map/shelves/sh/address",
              {"section_id": "se", "col": 1, "level": 1}),
             ("delete", "/api/v1/map/shelves/sh/address", None),
+            # P6.4d. The PREVIEW writes nothing and still needs EDIT_MAP: it
+            # is the itemised account of what a merge would move — books,
+            # copies per depth, photographs per depth, whose standing answers
+            # lose — and a reader who may not merge has no business being told
+            # it.
+            ("post", "/api/v1/map/shelves/sh/merge",
+             {"into": "sh2", "strip": "survivor_first"}),
+            ("post", "/api/v1/map/shelves/sh/merge/preview",
+             {"into": "sh2", "strip": "survivor_first"}),
         ]
         for method, path, body in writes:
             call = getattr(client, method)
@@ -7237,3 +7255,188 @@ def test_half_a_cell_is_a_400_rather_than_a_cell_it_guesses_at():
                             f"?section_id={section['id']}&col=1")
         assert got.status_code == 400, got.text
         assert client.get(f"/api/v1/shelves/{shelf['id']}").json()["address"]
+
+
+# --- P6.4d: the merge -----------------------------------------------------
+
+def test_the_preview_writes_nothing_and_says_what_the_merge_would_move():
+    """§3.15: *"a call that writes nothing and returns what will move"*.
+
+    ⚠ The *writes nothing* half is asserted by comparing the whole map and the
+    whole shelf list before and after, not by reading the response. A preview
+    that quietly merged would answer exactly the same body.
+    """
+    books = MemoryBookStore()
+    with TestClient(_app(store=books)) as client:
+        _drawn_map(client, columns=2, levels=1)
+        section = client.get("/api/v1/map").json()["sections"][0]
+        survivor = [s for s in client.get("/api/v1/shelves").json()
+                    if s["address"]][0]
+        absorbed = client.post("/api/v1/shelves",
+                               json={"label": "ספרי בישול"}).json()
+        client.post("/api/v1/captures", json={"shelf_id": absorbed["id"]})
+        books.save(TEST_LIBRARY, new_book(
+            id="bk-m", library_id=TEST_LIBRARY.id, title="ספר", author="מחבר",
+            copy_id="cp-m", shelf_id=absorbed["id"], depth=1))
+
+        before = (client.get("/api/v1/map").json(),
+                  client.get("/api/v1/shelves").json())
+        seen = client.post(
+            f"/api/v1/map/shelves/{absorbed['id']}/merge/preview",
+            json={"into": survivor["id"], "strip": "survivor_first"})
+
+        assert seen.status_code == 200, seen.text
+        body = seen.json()
+        assert body["refused"] is None and body["already"] is False
+        assert body["books"] == 1
+        assert body["copies"] == [{"depth": 1, "count": 1}]
+        assert body["photos"] == [{"depth": 1, "count": 1}]
+        assert (client.get("/api/v1/map").json(),
+                client.get("/api/v1/shelves").json()) == before, (
+            "the preview moved something")
+        assert section["id"]
+
+
+def test_a_preview_answers_200_with_the_reason_rather_than_refusing():
+    """A preview that 409s cannot show the owner WHY, which is the only thing
+    it is for — and a client reading `detail` would be parsing English."""
+    with TestClient(_app()) as client:
+        _drawn_map(client, columns=2, levels=1)
+        survivor = [s for s in client.get("/api/v1/shelves").json()
+                    if s["address"]][0]
+        wishlist = client.post("/api/v1/shelves",
+                               json={"label": "רשימת משאלות",
+                                     "virtual": True}).json()
+
+        seen = client.post(
+            f"/api/v1/map/shelves/{wishlist['id']}/merge/preview",
+            json={"into": survivor["id"], "strip": "survivor_first"})
+
+        assert seen.status_code == 200, seen.text
+        assert seen.json()["refused"]["reason"] == "wishlist"
+        assert seen.json()["refused"]["say"]
+
+
+def test_a_merge_moves_the_books_and_the_absorbed_identity_still_answers():
+    """The item, end to end, through the routes the client will use."""
+    books = MemoryBookStore()
+    with TestClient(_app(store=books)) as client:
+        _drawn_map(client, columns=2, levels=1)
+        survivor = [s for s in client.get("/api/v1/shelves").json()
+                    if s["address"]][0]
+        absorbed = client.post("/api/v1/shelves",
+                               json={"label": "ספרי בישול"}).json()
+        client.post("/api/v1/captures", json={"shelf_id": absorbed["id"]})
+        books.save(TEST_LIBRARY, new_book(
+            id="bk-m", library_id=TEST_LIBRARY.id, title="ספר", author="מחבר",
+            copy_id="cp-m", shelf_id=absorbed["id"], depth=1))
+
+        done = client.post(f"/api/v1/map/shelves/{absorbed['id']}/merge",
+                           json={"into": survivor["id"],
+                                 "strip": "survivor_first"})
+
+        assert done.status_code == 200, done.text
+        body = done.json()
+        assert body["survivor"]["id"] == survivor["id"]
+        assert body["survivor"]["book_count"] == 1
+        assert body["survivor"]["capture_count"] == 1
+        assert body["moved"]["books"] == 1
+        assert client.get(f"/api/v1/shelves/{absorbed['id']}"
+                          ).status_code == 404, (
+            "the absorbed row outlived the merge")
+        listed = {s["id"] for s in client.get("/api/v1/shelves").json()}
+        assert absorbed["id"] not in listed
+
+
+def test_a_merge_is_undoable_through_the_route_that_takes_edits_back():
+    """§3.15 put the journal ahead of this item so this sentence could exist.
+
+    ⚠ Through the ROUTES, not the module: `GET /map/undo` has to say the
+    merge is available, and `POST /map/undo` has to replay it. The journal's
+    own ring proves the rows; this proves they arrive.
+    """
+    books = MemoryBookStore()
+    with TestClient(_app(store=books)) as client:
+        _drawn_map(client, columns=2, levels=1)
+        survivor = [s for s in client.get("/api/v1/shelves").json()
+                    if s["address"]][0]
+        absorbed = client.post("/api/v1/shelves",
+                               json={"label": "ספרי בישול"}).json()
+        books.save(TEST_LIBRARY, new_book(
+            id="bk-u", library_id=TEST_LIBRARY.id, title="ספר", author="מחבר",
+            copy_id="cp-u", shelf_id=absorbed["id"], depth=1))
+        client.post(f"/api/v1/map/shelves/{absorbed['id']}/merge",
+                    json={"into": survivor["id"], "strip": "survivor_first"})
+
+        said = client.get("/api/v1/map/undo").json()
+        assert said["available"] is True, said
+        assert said["kind"] == "merge_shelves"
+        back = client.post("/api/v1/map/undo")
+        assert back.status_code == 200, back.text
+
+        again = client.get(f"/api/v1/shelves/{absorbed['id']}")
+        assert again.status_code == 200, "the absorbed shelf did not come back"
+        assert again.json()["label"] == "ספרי בישול"
+        # ⚠ `book_count` on the SINGLE-shelf GET, which answered 0 for every
+        # shelf in the library until this item — see the route.
+        assert again.json()["book_count"] == 1, (
+            "the shelf came back empty — the books stayed at the survivor")
+        assert client.get(f"/api/v1/shelves/{survivor['id']}"
+                          ).json()["book_count"] == 0
+
+
+def test_merging_answers_409_with_a_reason_a_client_can_act_on():
+    """⚠ `detail` is an OBJECT here where every other route in the map router
+    sends a string, and that is P6.4c's finding acted on: a client offered a
+    merge by a refusal it can only read as prose either parses English or
+    throws the whole thing away, and both were measured."""
+    with TestClient(_app()) as client:
+        _drawn_map(client, columns=2, levels=1)
+        survivor = [s for s in client.get("/api/v1/shelves").json()
+                    if s["address"]][0]
+
+        refused = client.post(f"/api/v1/map/shelves/{survivor['id']}/merge",
+                              json={"into": survivor["id"],
+                                    "strip": "survivor_first"})
+
+        assert refused.status_code == 409, refused.text
+        assert refused.json()["detail"]["reason"] == "same_shelf"
+        assert refused.json()["detail"]["say"]
+
+
+def test_the_strip_order_has_no_default_and_a_bad_one_is_400():
+    """§3.12: which half of the merged shelf is to the left is DECLARED. A
+    default here would be the system detecting it, silently, every time."""
+    with TestClient(_app()) as client:
+        _drawn_map(client, columns=2, levels=1)
+        survivor = [s for s in client.get("/api/v1/shelves").json()
+                    if s["address"]][0]
+        absorbed = client.post("/api/v1/shelves", json={}).json()
+        path = f"/api/v1/map/shelves/{absorbed['id']}/merge"
+
+        assert client.post(path, json={"into": survivor["id"]}
+                           ).status_code == 422, "strip was optional"
+        assert client.post(path, json={"into": survivor["id"],
+                                       "strip": "whichever"}
+                           ).status_code == 400
+
+
+def test_a_retry_of_a_merge_answers_200_rather_than_a_second_merge():
+    """§3.15: the retry a dropped response provokes must not half-merge, and
+    must not look like a new failure."""
+    with TestClient(_app()) as client:
+        _drawn_map(client, columns=2, levels=1)
+        survivor = [s for s in client.get("/api/v1/shelves").json()
+                    if s["address"]][0]
+        absorbed = client.post("/api/v1/shelves", json={}).json()
+        path = f"/api/v1/map/shelves/{absorbed['id']}/merge"
+        body = {"into": survivor["id"], "strip": "survivor_first"}
+
+        assert client.post(path, json=body).status_code == 200
+        # The absorbed row is gone, so its own path 404s — which is what the
+        # client will retry against, and why the second call is by id and not
+        # by row.
+        again = client.post(path, json=body)
+        assert again.status_code == 404, (
+            "a retry after the row is gone must read as *there is no such "
+            "shelf*, not as a fresh refusal to merge")

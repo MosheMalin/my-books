@@ -1204,6 +1204,120 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/map/shelves/{shelf_id}/merge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Merge Shelves
+         * @description Absorb this shelf into `into`. **The dangerous half of P6.4.**
+         *
+         *
+         *
+         *     Two identities become one: a population of copies moves, two capture
+         *
+         *     strips join, standing answers move with the wood (§3.13), and the absorbed
+         *
+         *     identity survives as an alias of its id AND its former address (§3.11).
+         *
+         *     It is undoable, and the inverse is the rows as they stood — §3.15 put the
+         *
+         *     journal ahead of this item precisely so this sentence could be written.
+         *
+         *
+         *
+         *     The answers:
+         *
+         *
+         *
+         *       - **404** — either shelf is gone, foreign or fictional (§4.2);
+         *
+         *       - **400** — `strip` is not one of the two;
+         *
+         *       - **409** — refused, with a stable `reason` in `detail.reason` and the
+         *
+         *         sentence in `detail.say`. Six reasons, and each is a different thing
+         *
+         *         for a screen to say;
+         *
+         *       - **200** — done, or already done. A retry after a dropped response is a
+         *
+         *         no-op (§3.15), never a second merge.
+         *
+         *
+         *
+         *     ⚠ `detail` is an OBJECT here where every other route in this file sends a
+         *
+         *     string. That is the finding P6.4c left on this row: a client offered a
+         *
+         *     merge by a 409 whose occupant is prose has to parse English or throw the
+         *
+         *     whole thing away, and both were measured happening.
+         */
+        post: operations["merge_shelves_api_v1_map_shelves__shelf_id__merge_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/map/shelves/{shelf_id}/merge/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview Merge
+         * @description What absorbing this shelf into `into` would move. **Writes nothing.**
+         *
+         *
+         *
+         *     §3.15 keeps the preview even though undo exists: *"it is not a substitute
+         *
+         *     for undo but the other half of the same courtesy"*. §3.14 is why it is a
+         *
+         *     separate call rather than a field on the merge — every merge is an
+         *
+         *     explicit ✓, and a ✓ given without seeing what moves is not one.
+         *
+         *
+         *
+         *     **200 for a refusal too**, carried in `refused` with a stable `reason`
+         *
+         *     beside the sentence. A preview that answers 409 cannot show the owner why,
+         *
+         *     which is the only thing it is for — and the client would be parsing
+         *
+         *     English out of a `detail` string, which is the finding P6.4c left on this
+         *
+         *     item's row.
+         *
+         *
+         *
+         *     ⚠ It is a POST because it takes a body, not because it writes: `strip`
+         *
+         *     changes the answer (§3.12) and a GET with a mandatory query triple is the
+         *
+         *     same request wearing a URL. `tests/test_api.py` asserts the library is
+         *
+         *     byte-identical afterwards.
+         */
+        post: operations["preview_merge_api_v1_map_shelves__shelf_id__merge_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/map/sites": {
         parameters: {
             query?: never;
@@ -1462,7 +1576,18 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Shelf */
+        /**
+         * Get Shelf
+         * @description One shelf, counted.
+         *
+         *     ⚠ The counts were MISSING here, found in P6.4d: `_dto`'s ``books``
+         *     argument defaults to an empty mapping, so this route — the one a client
+         *     calls when it wants one shelf rather than the list — answered
+         *     ``book_count: 0`` for every shelf in the library. The field's own
+         *     description calls it *what a destructive gesture has to be able to say out
+         *     loud before it happens*, and the deletion confirm reads exactly this
+         *     route. One grouped query, the same one the list pays.
+         */
         get: operations["get_shelf_api_v1_shelves__shelf_id__get"];
         put?: never;
         post?: never;
@@ -2436,6 +2561,30 @@ export interface components {
             tags?: string[] | null;
         };
         /**
+         * DecisionClashDTO
+         * @description One `(depth, book_key)` a human answered on BOTH shelves.
+         *
+         *     §3.13 settles it by the newer ``decided_at`` — the rule the table's own
+         *     upsert already applies to a person changing their mind — but what is being
+         *     overwritten here is a different answer given at a different place, so
+         *     every one is NAMED rather than chosen in silence.
+         */
+        DecisionClashDTO: {
+            /** Absorbed Kind */
+            absorbed_kind: string;
+            /** Book Key */
+            book_key: string;
+            /** Depth */
+            depth: number;
+            /** Survivor Kind */
+            survivor_kind: string;
+            /**
+             * Winner
+             * @description `absorbed` or `survivor`.
+             */
+            winner: string;
+        };
+        /**
          * DepthApplyDTO
          * @description The explicit application of a section's depth default.
          *
@@ -2449,6 +2598,20 @@ export interface components {
              * @default []
              */
             kept: string[];
+        };
+        /**
+         * DepthCountDTO
+         * @description ``{depth, count}`` — a per-depth tally.
+         *
+         *     A list rather than an object keyed by depth, because JSON has only string
+         *     keys and a client would then be parsing `"2"` back into a number to
+         *     compare it with a shelf's own depth.
+         */
+        DepthCountDTO: {
+            /** Count */
+            count: number;
+            /** Depth */
+            depth: number;
         };
         /**
          * DepthStatusDTO
@@ -2966,6 +3129,104 @@ export interface components {
             role: string;
             /** User Id */
             user_id: string;
+        };
+        /**
+         * MergePreviewDTO
+         * @description What the merge would move. §3.15's other half of the same courtesy.
+         *
+         *     Answers **200 for a refusal too**, carrying it in ``refused`` — a preview
+         *     that 409s cannot show the owner why, which is the only thing it is for.
+         */
+        MergePreviewDTO: {
+            /** Absorbed Id */
+            absorbed_id: string;
+            /**
+             * Already
+             * @description The two identities already answer as one. A no-op, so a retry after a dropped response cannot half-merge.
+             * @default false
+             */
+            already: boolean;
+            /**
+             * Answers Moved
+             * @description Standing §5.6 answers that move with the wood — the load-bearing table (§3.13). Left behind, the next read re-adds every phantom the owner ever rejected there.
+             * @default 0
+             */
+            answers_moved: number;
+            /**
+             * Books
+             * @description Distinct books that move.
+             * @default 0
+             */
+            books: number;
+            /** Clashes */
+            clashes?: components["schemas"]["DecisionClashDTO"][];
+            /** Copies */
+            copies?: components["schemas"]["DepthCountDTO"][];
+            /**
+             * Depth
+             * @description The survivor's depth AFTER (§3.12's ladder). Never smaller than it is now; depth NUMBERS are never remapped.
+             * @default 1
+             */
+            depth: number;
+            /**
+             * Identities Moved
+             * @description Identities that already answered to the absorbed shelf and are re-pointed at the survivor, to keep the resolver one hop.
+             * @default 0
+             */
+            identities_moved: number;
+            /** Photos */
+            photos?: components["schemas"]["DepthCountDTO"][];
+            refused?: components["schemas"]["MergeRefusalDTO"] | null;
+            /** Survivor Id */
+            survivor_id: string;
+        };
+        /**
+         * MergeRefusalDTO
+         * @description Why not, in a form a client can act on.
+         *
+         *     ⚠ ``reason`` is a STABLE CODE beside the sentence, and it exists because
+         *     P6.4c ended with the opposite mistake filed against it: the 409 that
+         *     offers the merge carries its occupant as prose inside `detail`, so the
+         *     client throws the whole string away and prints one Hebrew sentence of its
+         *     own. A screen that must say something different for *a read is running*
+         *     than for *the wishlist stands nowhere* cannot get there by parsing
+         *     English.
+         */
+        MergeRefusalDTO: {
+            /** Reason */
+            reason: string;
+            /** Say */
+            say: string;
+        };
+        /**
+         * MergeRequest
+         * @description *Absorb this shelf into that one.*
+         *
+         *     ⚠ ``strip`` has **no default**, and that is §3.12 rather than strictness:
+         *     appending the absorbed shelf's photographs after the survivor's encodes a
+         *     claim — *its half is to the right* — that nothing measured. §5.7's rule is
+         *     *declared, never detected*, and a default here would be the system
+         *     detecting it on the owner's behalf, silently, every time.
+         */
+        MergeRequest: {
+            /**
+             * Into
+             * @description The surviving shelf's id.
+             */
+            into: string;
+            /**
+             * Strip
+             * @description Which shelf's photographs come first on the merged strip: `absorbed_first` or `survivor_first`. One radio button; no default.
+             */
+            strip: string;
+        };
+        /**
+         * MergeResultDTO
+         * @description The survivor as it now stands, and what the merge actually moved.
+         */
+        MergeResultDTO: {
+            moved: components["schemas"]["MergePreviewDTO"];
+            survivor: components["schemas"]["ShelfDTO"];
         };
         /**
          * MetaResponse
@@ -5324,6 +5585,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ShelfDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    merge_shelves_api_v1_map_shelves__shelf_id__merge_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shelf_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MergeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MergeResultDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_merge_api_v1_map_shelves__shelf_id__merge_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shelf_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MergeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MergePreviewDTO"];
                 };
             };
             /** @description Validation Error */

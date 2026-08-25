@@ -47,14 +47,30 @@ import json
 from dataclasses import asdict, dataclass, field, replace
 from typing import Iterable
 
+from app.domain.alias import ShelfAlias
 from app.domain.book import DomainError
+from app.domain.copy_resolution import DuplicateQuestion
+from app.domain.merge import CopyPlacement
 from app.domain.place import Bookcase, Floor, Place, Section, Site
-from app.domain.shelf import Shelf
+from app.domain.reconcile import Decision
+from app.domain.shelf import Capture, Shelf
 
 #: What an undo puts back, per table, in the order it must be written:
 #: a floor needs its site, a section needs its bookcase, a shelf needs its
 #: section. The undo replays this tuple in order and the foreign keys hold.
 RESTORE_ORDER = ("sites", "floors", "places", "bookcases", "sections", "shelves")
+
+#: The rows a MERGE moves (P6.4d, §3.13), in the order they must be put back.
+#: Every one of them hangs off a shelf, so they all come AFTER
+#: ``RESTORE_ORDER`` — the shelf that was absorbed is a row this same restore
+#: brings back, and a capture written before it would have nowhere to hang.
+#:
+#: ⚠ ``aliases`` last of the five, and not for a foreign key: it is the one
+#: whose write can be REFUSED. ``save_alias`` keeps the resolver one hop, so
+#: re-pointing an identity back at a shelf must happen once that shelf exists
+#: and once nothing else claims it — which is only true after the other four
+#: have gone home.
+LEDGER_ORDER = ("copies", "captures", "decisions", "questions", "aliases")
 
 
 @dataclass(frozen=True)
@@ -63,7 +79,8 @@ class MapRestore:
 
     Every field is entities, not ids and not diffs — see the module docstring.
     A field left empty is the normal case: removing a column fills ``shelves``
-    and ``sections`` and nothing else.
+    and ``sections`` and nothing else, and a merge fills none of the first
+    five while filling most of the rest.
     """
 
     sites: tuple[Site, ...] = ()
@@ -72,6 +89,34 @@ class MapRestore:
     bookcases: tuple[Bookcase, ...] = ()
     sections: tuple[Section, ...] = ()
     shelves: tuple[Shelf, ...] = ()
+
+    # --- what a MERGE moves (P6.4d, §3.13) ------------------------------
+    #
+    # ⚠ These five are here rather than in a second dataclass beside them
+    # because everything downstream — the scope, the fingerprint, the
+    # coalescing, the codec, the one-deep head — is written against ONE bag of
+    # remembered rows, and a merge is one destructive edit like the other six.
+    # A parallel `MergeRestore` would need every one of those mechanisms
+    # again, and the second copy is where they would disagree.
+
+    #: Copies to put back where they stood. Placements, never whole books —
+    #: see :class:`app.domain.merge.CopyPlacement` for why remembering the
+    #: title would make an undo revert somebody's typing.
+    copies: tuple[CopyPlacement, ...] = ()
+    #: Photographs, whole rows, INCLUDING the survivor's own when the merged
+    #: strip pushed them along. Ordered for replay by
+    #: ``app.domain.merge._restrip`` — ``(shelf, depth, order)`` is unique, so
+    #: the sequence is part of the inverse, not a detail of writing it.
+    captures: tuple[Capture, ...] = ()
+    #: Standing answers, from BOTH sides: the absorbed shelf's rows, and any
+    #: row of the survivor's that a collision overwrote (§3.13).
+    decisions: tuple[Decision, ...] = ()
+    #: Open §5.4 questions, same two sources, plus any the merge CLOSED
+    #: because a decision landed on their key.
+    questions: tuple[DuplicateQuestion, ...] = ()
+    #: Identities that already resolved to the absorbed shelf and were
+    #: re-pointed at the survivor to keep the resolver one hop.
+    aliases: tuple[ShelfAlias, ...] = ()
 
     #: Shelf ids the edit CREATED, to be removed again by the undo.
     #:
@@ -91,16 +136,48 @@ class MapRestore:
     #: so this can never be the thing that loses a book.
     created: tuple[str, ...] = ()
 
+    #: Alias rows the edit MINTED, to be removed again by the undo — the
+    #: merge's half of what ``created`` is for a shelf. One entry, normally:
+    #: the ``alias_id`` of the shelf that was absorbed.
+    #:
+    #: ⚠ Removing it is what makes the absorbed identity a SHELF again, and it
+    #: has to happen before that shelf's row is written back, or ``save_alias``
+    #: and the restored row disagree about whether the id is live.
+    minted_aliases: tuple[str, ...] = ()
+
+    #: ``(shelf_id, depth, book_key)`` the merge answered at the survivor
+    #: where nothing was answered before — removed again by the undo.
+    #:
+    #: ⚠ The half a bag of old rows cannot express, and the exact sibling of
+    #: ``created`` one table over. A standing answer that MOVED is remembered
+    #: as it stood at the shelf it came from, and putting that row back is the
+    #: whole inverse; an answer that landed on a key nobody had answered has no
+    #: "as it stood" to restore. Leave these and the undo returns the absorbed
+    #: shelf's rejections to it AND leaves copies of them at the survivor — so
+    #: the next read of the survivor suppresses books on the strength of a
+    #: merge that has been taken back.
+    minted_decisions: tuple[tuple[str, int, str], ...] = ()
+    #: The same, for §5.4's open questions.
+    minted_questions: tuple[tuple[str, int, str], ...] = ()
+
     def is_empty(self) -> bool:
-        return not (any(getattr(self, name) for name in RESTORE_ORDER)
-                    or self.created)
+        return not (any(getattr(self, name)
+                        for name in RESTORE_ORDER + LEDGER_ORDER)
+                    or self.created or self.minted_aliases
+                    or self.minted_decisions or self.minted_questions)
 
     def counts(self) -> dict[str, int]:
         """What this would put back, for a screen to say before it is pressed."""
-        counts = {name: len(getattr(self, name)) for name in RESTORE_ORDER
+        counts = {name: len(getattr(self, name))
+                  for name in RESTORE_ORDER + LEDGER_ORDER
                   if getattr(self, name)}
         if self.created:
             counts["removed"] = len(self.created)
+        if self.minted_aliases:
+            counts["unmerged"] = len(self.minted_aliases)
+        if self.minted_decisions or self.minted_questions:
+            counts["answers"] = (len(self.minted_decisions)
+                                 + len(self.minted_questions))
         return counts
 
 
@@ -190,6 +267,19 @@ def digest_slots(shelves: Iterable[Shelf]) -> str:
     ))
 
 
+def digest_placement(placement: CopyPlacement | None) -> str:
+    """Digest where one copy stands — ``(shelf, depth)`` and nothing else.
+
+    The narrow twin of :func:`digest_row`, and the narrowness is the point:
+    the fingerprint has to refuse an undo whose copy has been moved somewhere
+    else since, and must NOT refuse one whose book was renamed on the books
+    tab. A merge writes a location; a location is what it is answerable for.
+    """
+    if placement is None:
+        return ABSENT
+    return _digest((placement.shelf_id, placement.depth))
+
+
 def digest_shape(section: Section | None) -> str:
     """Digest a section's SHAPE — its extent and its mask, nothing else.
 
@@ -229,6 +319,21 @@ def target_keys(restore: MapRestore) -> tuple[str, ...]:
     for name in RESTORE_ORDER:
         keys.extend(f"{name}:{record.id}" for record in getattr(restore, name))
     keys.extend(f"shelves:{shelf_id}" for shelf_id in restore.created)
+    # ⚠ The five ledger tables, keyed by the same natural key the store uses,
+    # so a row that moved, changed or vanished all read the same way. The
+    # minted aliases are watched like `created` is and for the mirrored
+    # reason: the undo DELETES them, so one that has changed since is one
+    # somebody has worked on.
+    keys.extend(f"copies:{c.copy_id}" for c in restore.copies)
+    keys.extend(f"captures:{c.id}" for c in restore.captures)
+    keys.extend(f"decisions:{d.shelf_id}:{d.depth}:{d.book_key}"
+                for d in restore.decisions)
+    keys.extend(f"questions:{q.shelf_id}:{q.depth}:{q.book_key}"
+                for q in restore.questions)
+    keys.extend(f"aliases:{a.alias_id}" for a in restore.aliases)
+    keys.extend(f"aliases:{alias_id}" for alias_id in restore.minted_aliases)
+    keys.extend(f"decisions:{s}:{d}:{k}" for s, d, k in restore.minted_decisions)
+    keys.extend(f"questions:{s}:{d}:{k}" for s, d, k in restore.minted_questions)
     for section_id in sections_touched(restore):
         keys.append(f"slots:{section_id}")
         keys.append(f"shape:{section_id}")
@@ -382,18 +487,70 @@ def coalesces_with(head: MapUndoEntry | None, tag: str, kind: str) -> bool:
             and head.tag == tag and CONTINUES.get(kind) == head.kind)
 
 
+def shelves_touched(restore: MapRestore) -> tuple[str, ...]:
+    """Every shelf id the ledger half of this restore hangs off.
+
+    What :mod:`app.map_undo` has to read to digest the rows above: the copies
+    and photographs of these shelves, and the answers standing at them. Taken
+    from BOTH the remembered rows and the shelves being restored, because a
+    merge's rows have since moved from one of those shelves to the other —
+    reading only where they used to be would digest every one of them as gone.
+    """
+    ids = {shelf.id for shelf in restore.shelves}
+    ids.update(c.shelf_id for c in restore.copies)
+    ids.update(c.shelf_id for c in restore.captures)
+    ids.update(d.shelf_id for d in restore.decisions)
+    ids.update(q.shelf_id for q in restore.questions)
+    ids.update(a.shelf_id for a in restore.aliases)
+    ids.update(a.alias_id for a in restore.aliases)
+    ids.update(s for s, _, _ in restore.minted_decisions)
+    ids.update(s for s, _, _ in restore.minted_questions)
+    return tuple(sorted(ids))
+
+
+#: The natural key of each ledger table — what "the same row" means when two
+#: restores are unioned. Not ``.id``: a decision and a question are keyed by
+#: where they were asked, and a placement by the copy it is about.
+LEDGER_KEY = {
+    "copies": lambda r: r.copy_id,
+    "captures": lambda r: r.id,
+    "decisions": lambda r: (r.shelf_id, r.depth, r.book_key),
+    "questions": lambda r: (r.shelf_id, r.depth, r.book_key),
+    "aliases": lambda r: r.alias_id,
+}
+
+
 def merge_restores(older: MapRestore, newer: MapRestore) -> MapRestore:
     """Union two restores, **older wins** on a collision.
 
     Older wins because it is the earlier state, and the earlier state is the
     one an undo is trying to reach: the shelf row captured before it was
     detached still has its address, and the row captured after does not.
+
+    ⚠ The ledger half is unioned here too, even though nothing in
+    ``CONTINUES`` currently coalesces a merge with anything. That is a fact
+    about today's table, not a property of this function — and a union that
+    silently DROPS five of a restore's fields is the exact failure this
+    codebase has now paid for three times (``created`` in the codec, a client
+    model's new field in ``paste.ts``, a serializer carrying shelf ids). The
+    keys are natural, not ``.id``, because two of these tables have no id.
     """
     merged = {}
     for name in RESTORE_ORDER:
         by_id = {record.id: record for record in getattr(newer, name)}
         by_id.update({record.id: record for record in getattr(older, name)})
         merged[name] = tuple(by_id.values())
+    for name in LEDGER_ORDER:
+        key = LEDGER_KEY[name]
+        by_key = {key(record): record for record in getattr(newer, name)}
+        by_key.update({key(record): record for record in getattr(older, name)})
+        merged[name] = tuple(by_key.values())
+    merged["minted_aliases"] = tuple(
+        dict.fromkeys(older.minted_aliases + newer.minted_aliases))
+    merged["minted_decisions"] = tuple(
+        dict.fromkeys(older.minted_decisions + newer.minted_decisions))
+    merged["minted_questions"] = tuple(
+        dict.fromkeys(older.minted_questions + newer.minted_questions))
     # A shelf the FIRST half created and the second half destroyed is in both
     # bags, and it must end up in neither: it did not exist before the
     # operation, so an undo neither restores nor deletes it. Dropping it from

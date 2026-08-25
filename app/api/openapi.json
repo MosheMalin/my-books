@@ -1064,6 +1064,41 @@
         "title": "CopyPatch",
         "type": "object"
       },
+      "DecisionClashDTO": {
+        "description": "One `(depth, book_key)` a human answered on BOTH shelves.\n\n§3.13 settles it by the newer ``decided_at`` — the rule the table's own\nupsert already applies to a person changing their mind — but what is being\noverwritten here is a different answer given at a different place, so\nevery one is NAMED rather than chosen in silence.",
+        "properties": {
+          "absorbed_kind": {
+            "title": "Absorbed Kind",
+            "type": "string"
+          },
+          "book_key": {
+            "title": "Book Key",
+            "type": "string"
+          },
+          "depth": {
+            "title": "Depth",
+            "type": "integer"
+          },
+          "survivor_kind": {
+            "title": "Survivor Kind",
+            "type": "string"
+          },
+          "winner": {
+            "description": "`absorbed` or `survivor`.",
+            "title": "Winner",
+            "type": "string"
+          }
+        },
+        "required": [
+          "depth",
+          "book_key",
+          "winner",
+          "absorbed_kind",
+          "survivor_kind"
+        ],
+        "title": "DecisionClashDTO",
+        "type": "object"
+      },
       "DepthApplyDTO": {
         "description": "The explicit application of a section's depth default.\n\n``kept`` names the shelves that could NOT be shallowed because books\nstand behind — reported rather than silently skipped, so the screen says\nwhat it did instead of claiming it did everything.",
         "properties": {
@@ -1077,6 +1112,25 @@
           }
         },
         "title": "DepthApplyDTO",
+        "type": "object"
+      },
+      "DepthCountDTO": {
+        "description": "``{depth, count}`` — a per-depth tally.\n\nA list rather than an object keyed by depth, because JSON has only string\nkeys and a client would then be parsing `\"2\"` back into a number to\ncompare it with a shelf's own depth.",
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "depth": {
+            "title": "Depth",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "depth",
+          "count"
+        ],
+        "title": "DepthCountDTO",
         "type": "object"
       },
       "DepthStatusDTO": {
@@ -1900,6 +1954,143 @@
           "role"
         ],
         "title": "MemberDTO",
+        "type": "object"
+      },
+      "MergePreviewDTO": {
+        "description": "What the merge would move. §3.15's other half of the same courtesy.\n\nAnswers **200 for a refusal too**, carrying it in ``refused`` — a preview\nthat 409s cannot show the owner why, which is the only thing it is for.",
+        "properties": {
+          "absorbed_id": {
+            "title": "Absorbed Id",
+            "type": "string"
+          },
+          "already": {
+            "default": false,
+            "description": "The two identities already answer as one. A no-op, so a retry after a dropped response cannot half-merge.",
+            "title": "Already",
+            "type": "boolean"
+          },
+          "answers_moved": {
+            "default": 0,
+            "description": "Standing §5.6 answers that move with the wood — the load-bearing table (§3.13). Left behind, the next read re-adds every phantom the owner ever rejected there.",
+            "title": "Answers Moved",
+            "type": "integer"
+          },
+          "books": {
+            "default": 0,
+            "description": "Distinct books that move.",
+            "title": "Books",
+            "type": "integer"
+          },
+          "clashes": {
+            "items": {
+              "$ref": "#/components/schemas/DecisionClashDTO"
+            },
+            "title": "Clashes",
+            "type": "array"
+          },
+          "copies": {
+            "items": {
+              "$ref": "#/components/schemas/DepthCountDTO"
+            },
+            "title": "Copies",
+            "type": "array"
+          },
+          "depth": {
+            "default": 1,
+            "description": "The survivor's depth AFTER (§3.12's ladder). Never smaller than it is now; depth NUMBERS are never remapped.",
+            "title": "Depth",
+            "type": "integer"
+          },
+          "identities_moved": {
+            "default": 0,
+            "description": "Identities that already answered to the absorbed shelf and are re-pointed at the survivor, to keep the resolver one hop.",
+            "title": "Identities Moved",
+            "type": "integer"
+          },
+          "photos": {
+            "items": {
+              "$ref": "#/components/schemas/DepthCountDTO"
+            },
+            "title": "Photos",
+            "type": "array"
+          },
+          "refused": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MergeRefusalDTO"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "survivor_id": {
+            "title": "Survivor Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "absorbed_id",
+          "survivor_id"
+        ],
+        "title": "MergePreviewDTO",
+        "type": "object"
+      },
+      "MergeRefusalDTO": {
+        "description": "Why not, in a form a client can act on.\n\n⚠ ``reason`` is a STABLE CODE beside the sentence, and it exists because\nP6.4c ended with the opposite mistake filed against it: the 409 that\noffers the merge carries its occupant as prose inside `detail`, so the\nclient throws the whole string away and prints one Hebrew sentence of its\nown. A screen that must say something different for *a read is running*\nthan for *the wishlist stands nowhere* cannot get there by parsing\nEnglish.",
+        "properties": {
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "say": {
+            "title": "Say",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason",
+          "say"
+        ],
+        "title": "MergeRefusalDTO",
+        "type": "object"
+      },
+      "MergeRequest": {
+        "description": "*Absorb this shelf into that one.*\n\n⚠ ``strip`` has **no default**, and that is §3.12 rather than strictness:\nappending the absorbed shelf's photographs after the survivor's encodes a\nclaim — *its half is to the right* — that nothing measured. §5.7's rule is\n*declared, never detected*, and a default here would be the system\ndetecting it on the owner's behalf, silently, every time.",
+        "properties": {
+          "into": {
+            "description": "The surviving shelf's id.",
+            "title": "Into",
+            "type": "string"
+          },
+          "strip": {
+            "description": "Which shelf's photographs come first on the merged strip: `absorbed_first` or `survivor_first`. One radio button; no default.",
+            "title": "Strip",
+            "type": "string"
+          }
+        },
+        "required": [
+          "into",
+          "strip"
+        ],
+        "title": "MergeRequest",
+        "type": "object"
+      },
+      "MergeResultDTO": {
+        "description": "The survivor as it now stands, and what the merge actually moved.",
+        "properties": {
+          "moved": {
+            "$ref": "#/components/schemas/MergePreviewDTO"
+          },
+          "survivor": {
+            "$ref": "#/components/schemas/ShelfDTO"
+          }
+        },
+        "required": [
+          "survivor",
+          "moved"
+        ],
+        "title": "MergeResultDTO",
         "type": "object"
       },
       "MetaResponse": {
@@ -5607,6 +5798,112 @@
         ]
       }
     },
+    "/api/v1/map/shelves/{shelf_id}/merge": {
+      "post": {
+        "description": "Absorb this shelf into `into`. **The dangerous half of P6.4.**\n\n\n\nTwo identities become one: a population of copies moves, two capture\n\nstrips join, standing answers move with the wood (§3.13), and the absorbed\n\nidentity survives as an alias of its id AND its former address (§3.11).\n\nIt is undoable, and the inverse is the rows as they stood — §3.15 put the\n\njournal ahead of this item precisely so this sentence could be written.\n\n\n\nThe answers:\n\n\n\n  - **404** — either shelf is gone, foreign or fictional (§4.2);\n\n  - **400** — `strip` is not one of the two;\n\n  - **409** — refused, with a stable `reason` in `detail.reason` and the\n\n    sentence in `detail.say`. Six reasons, and each is a different thing\n\n    for a screen to say;\n\n  - **200** — done, or already done. A retry after a dropped response is a\n\n    no-op (§3.15), never a second merge.\n\n\n\n⚠ `detail` is an OBJECT here where every other route in this file sends a\n\nstring. That is the finding P6.4c left on this row: a client offered a\n\nmerge by a 409 whose occupant is prose has to parse English or throw the\n\nwhole thing away, and both were measured happening.",
+        "operationId": "merge_shelves_api_v1_map_shelves__shelf_id__merge_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "shelf_id",
+            "required": true,
+            "schema": {
+              "title": "Shelf Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MergeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MergeResultDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Merge Shelves",
+        "tags": [
+          "map"
+        ]
+      }
+    },
+    "/api/v1/map/shelves/{shelf_id}/merge/preview": {
+      "post": {
+        "description": "What absorbing this shelf into `into` would move. **Writes nothing.**\n\n\n\n§3.15 keeps the preview even though undo exists: *\"it is not a substitute\n\nfor undo but the other half of the same courtesy\"*. §3.14 is why it is a\n\nseparate call rather than a field on the merge — every merge is an\n\nexplicit ✓, and a ✓ given without seeing what moves is not one.\n\n\n\n**200 for a refusal too**, carried in `refused` with a stable `reason`\n\nbeside the sentence. A preview that answers 409 cannot show the owner why,\n\nwhich is the only thing it is for — and the client would be parsing\n\nEnglish out of a `detail` string, which is the finding P6.4c left on this\n\nitem's row.\n\n\n\n⚠ It is a POST because it takes a body, not because it writes: `strip`\n\nchanges the answer (§3.12) and a GET with a mandatory query triple is the\n\nsame request wearing a URL. `tests/test_api.py` asserts the library is\n\nbyte-identical afterwards.",
+        "operationId": "preview_merge_api_v1_map_shelves__shelf_id__merge_preview_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "shelf_id",
+            "required": true,
+            "schema": {
+              "title": "Shelf Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MergeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MergePreviewDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview Merge",
+        "tags": [
+          "map"
+        ]
+      }
+    },
     "/api/v1/map/sites": {
       "post": {
         "operationId": "create_site_api_v1_map_sites_post",
@@ -6187,6 +6484,7 @@
         ]
       },
       "get": {
+        "description": "One shelf, counted.\n\n⚠ The counts were MISSING here, found in P6.4d: `_dto`'s ``books``\nargument defaults to an empty mapping, so this route — the one a client\ncalls when it wants one shelf rather than the list — answered\n``book_count: 0`` for every shelf in the library. The field's own\ndescription calls it *what a destructive gesture has to be able to say out\nloud before it happens*, and the deletion confirm reads exactly this\nroute. One grouped query, the same one the list pays.",
         "operationId": "get_shelf_api_v1_shelves__shelf_id__get",
         "parameters": [
           {

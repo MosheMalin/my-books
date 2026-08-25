@@ -67,7 +67,13 @@ from app.domain import (
     check_removable,
 )
 from app.domain.alias import ShelfAlias
-from app.domain.map_undo import RESTORE_ORDER, MapRestore, MapUndoEntry
+from app.domain.merge import CopyPlacement
+from app.domain.map_undo import (
+    LEDGER_ORDER,
+    RESTORE_ORDER,
+    MapRestore,
+    MapUndoEntry,
+)
 from app.domain.place import NotEmpty, NotOnThisFloor
 from app.domain.tenancy import remove_member, set_role
 from app.domain.search import compile_sql_like, haystack, parse
@@ -506,43 +512,123 @@ class SqliteShelfStore(_SqliteStore):
 
     # --- aliases (P6.4a) --------------------------------------------------
 
-    def save_alias(self, library: LibraryRef, alias: ShelfAlias) -> None:
+    def absorb_shelf(
+        self, library: LibraryRef, alias: ShelfAlias,
+    ) -> tuple[ShelfAlias, ...]:
+        """The one-hop re-point and the insert, under one write lock.
+
+        ⚠ Two statements that must not be seen apart. Between them the file
+        holds identities resolving to a shelf the merge is about to delete —
+        and a crash there strands every book that arrived with those
+        identities while ``PRAGMA foreign_key_check`` stays clean, which is
+        §3.11's whole argument for why nothing is rewritten in the first
+        place.
+        """
         _same_library_alias(alias, library)
-        # ⚠ `_immediate`, not a deferred transaction. Every check below is a
-        # read-then-write, and a DEFERRED one takes the write lock only at the
-        # INSERT — so two merges racing each other both read "no alias names
-        # my survivor" and both commit. Measured with the interleaving held
-        # open: A→B and B→A committed together, a CYCLE in which neither
-        # shelf can ever be deleted again, `identities()` wrong in both
-        # directions and `foreign_key_check` clean. The same shape as the undo
-        # journal's `seq`, and the same fix.
         with self._connect() as conn, _immediate(conn):
-            if not conn.execute(
-                "SELECT 1 FROM shelves WHERE id = ? AND library_id = ?",
-                (alias.shelf_id, library.id),
-            ).fetchone():
-                # The FK says this too, less usefully. An alias may only
-                # point at a LIVE shelf — that is what keeps an alias of an
-                # alias unrepresentable and the resolver one hop.
-                raise UnknownShelf(
-                    f"no shelf {alias.shelf_id} to absorb {alias.alias_id} "
-                    "into")
-            # ⚠ ONE HOP, and the foreign key does not give it. It proves the
-            # survivor is a live shelf, not that the survivor is itself
-            # un-absorbed — different claims, and a review stored both a chain
-            # and a cycle through this method to prove only the first was
-            # checked. A chain hides an identity from `identities()`, so every
-            # book that arrived with it becomes unreachable while
-            # `foreign_key_check` stays clean; a cycle wedges two shelves so
-            # neither can ever be deleted.
-            if conn.execute(
-                "SELECT 1 FROM shelf_aliases WHERE library_id = ?"
-                " AND alias_id = ?", (library.id, alias.shelf_id),
-            ).fetchone():
+            # ⚠ EVERY refusal before the first write, and that ordering is a
+            # measured bug rather than tidiness. Re-pointing first sends the
+            # standing rows at a survivor nothing has checked, so a merge into
+            # a shelf that does not exist arrives as `FOREIGN KEY constraint
+            # failed` from the UPDATE — a 500, out of a method whose whole
+            # subject is refusing clearly.
+            self._survivor_guards(conn, library, alias)
+            standing = tuple(_load_alias(r) for r in conn.execute(
+                "SELECT * FROM shelf_aliases WHERE library_id = ?"
+                " AND shelf_id = ? ORDER BY alias_id",
+                (library.id, alias.alias_id)).fetchall())
+            if standing:
+                conn.execute(
+                    "UPDATE shelf_aliases SET shelf_id = ?"
+                    " WHERE library_id = ? AND shelf_id = ?",
+                    (alias.shelf_id, library.id, alias.alias_id))
+            # `checked=False`: the survivor is already proved above, and the
+            # third guard — "this shelf has absorbed others" — is precisely
+            # what the UPDATE just cleared.
+            self._insert_alias(conn, library, alias, checked=False)
+        return standing
+
+    def rewrite_aliases(
+        self,
+        library: LibraryRef,
+        *,
+        remove: tuple[str, ...] = (),
+        put: tuple[ShelfAlias, ...] = (),
+    ) -> None:
+        """An undo's word for the alias table — see the port for why it is one
+        method rather than a delete and a loop."""
+        for row in put:
+            _same_library_alias(row, library)
+        with self._connect() as conn, _immediate(conn):
+            for alias_id in remove:
+                conn.execute(
+                    "DELETE FROM shelf_aliases WHERE library_id = ?"
+                    " AND alias_id = ?", (library.id, alias_id))
+            for row in put:
+                conn.execute(
+                    "DELETE FROM shelf_aliases WHERE library_id = ?"
+                    " AND alias_id = ?", (library.id, row.alias_id))
+                self._insert_alias(conn, library, row, checked=False)
+            # ⚠ One hop, checked over the RESULT and inside the same lock. A
+            # per-row check cannot see it: an undo writing two rows may be
+            # legal in either order and illegal together.
+            chained = int(conn.execute(
+                "SELECT COUNT(*) FROM shelf_aliases a JOIN shelf_aliases b"
+                " ON a.shelf_id = b.alias_id AND a.library_id = b.library_id"
+                " WHERE a.library_id = ?", (library.id,)).fetchone()[0])
+            if chained:
                 raise ShelfHasAliases(
-                    f"{alias.shelf_id} has itself been absorbed; absorb "
-                    f"{alias.alias_id} into the shelf that answers for it "
-                    "(MAP_PLAN §3.11 keeps the resolver one hop)")
+                    f"{chained} of these would resolve to a shelf that has "
+                    "itself been absorbed (MAP_PLAN §3.11 keeps the resolver "
+                    "one hop)")
+
+    @staticmethod
+    def _survivor_guards(conn, library: LibraryRef,
+                         alias: ShelfAlias) -> None:
+        """The two refusals that are about the SURVIVOR, and hold either way.
+
+        Split out of :meth:`_insert_alias` so ``absorb_shelf`` can raise them
+        before it re-points anything. The third guard — *this shelf has
+        absorbed others* — is not here, because clearing it is what
+        ``absorb_shelf`` is for.
+        """
+        if not conn.execute(
+            "SELECT 1 FROM shelves WHERE id = ? AND library_id = ?",
+            (alias.shelf_id, library.id),
+        ).fetchone():
+            # The FK says this too, less usefully. An alias may only
+            # point at a LIVE shelf — that is what keeps an alias of an
+            # alias unrepresentable and the resolver one hop.
+            raise UnknownShelf(
+                f"no shelf {alias.shelf_id} to absorb {alias.alias_id} into")
+        # ⚠ ONE HOP, and the foreign key does not give it. It proves the
+        # survivor is a live shelf, not that the survivor is itself
+        # un-absorbed — different claims, and a review stored both a chain
+        # and a cycle through this method to prove only the first was
+        # checked. A chain hides an identity from `identities()`, so every
+        # book that arrived with it becomes unreachable while
+        # `foreign_key_check` stays clean; a cycle wedges two shelves so
+        # neither can ever be deleted.
+        if conn.execute(
+            "SELECT 1 FROM shelf_aliases WHERE library_id = ?"
+            " AND alias_id = ?", (library.id, alias.shelf_id),
+        ).fetchone():
+            raise ShelfHasAliases(
+                f"{alias.shelf_id} has itself been absorbed; absorb "
+                f"{alias.alias_id} into the shelf that answers for it "
+                "(MAP_PLAN §3.11 keeps the resolver one hop)")
+
+    @staticmethod
+    def _insert_alias(conn, library: LibraryRef, alias: ShelfAlias,
+                      *, checked: bool = True) -> None:
+        """The body of :meth:`save_alias`, on a connection somebody else owns.
+
+        Extracted rather than copied because the three guards below ARE the
+        one-hop rule, and a second copy of them is where the two callers would
+        drift into an adapter that enforces it on one path and not the other.
+        """
+        if checked:
+            SqliteShelfStore._survivor_guards(conn, library, alias)
             absorbed = int(conn.execute(
                 "SELECT COUNT(*) FROM shelf_aliases WHERE library_id = ?"
                 " AND shelf_id = ?", (library.id, alias.alias_id),
@@ -552,36 +638,54 @@ class SqliteShelfStore(_SqliteStore):
                 # shelf that has already absorbed others is the same
                 # conversation as deleting one, and it must not arrive as
                 # `FOREIGN KEY constraint failed` two statements later.
+                #
+                # ⚠ `absorb_shelf` clears this by re-pointing them FIRST,
+                # inside its own transaction, which is the only shape that
+                # does not leave the file holding identities that name a
+                # shelf about to be deleted.
                 raise ShelfHasAliases(
                     f"{absorbed} other shelf/shelves already resolve to "
                     f"{alias.alias_id}; absorbing it would put them out of "
                     "reach (MAP_PLAN §3.11)")
-            where = alias.address
-            try:
-                conn.execute(
-                    "INSERT INTO shelf_aliases (alias_id, library_id,"
-                    " shelf_id, section_id, col, level, label, merged_at)"
-                    " VALUES (?,?,?,?,?,?,?,?)",
-                    (alias.alias_id, library.id, alias.shelf_id,
-                     where.section_id if where else None,
-                     where.col if where else None,
-                     where.level if where else None,
-                     alias.label, alias.merged_at),
-                )
-            except sqlite3.IntegrityError as exc:
-                # ⚠ Translated, like every other constraint this adapter leans
-                # on rather than checks. The two guards above exist so a
-                # refusal does not arrive as a driver error — and for the two
-                # constraints left to the indexes it did exactly that, while
-                # the memory store raised `DuplicateShelfSlot`. A driver
-                # exception crossing a port boundary is a 500 where the answer
-                # is a 409.
-                raise DuplicateShelfSlot(
-                    f"{alias.alias_id} has already been absorbed"
-                    if "alias_id" in str(exc) or "PRIMARY" in str(exc).upper()
-                    else f"another identity already claims the slot "
-                         f"{alias.address}"
-                ) from exc
+        where = alias.address
+        try:
+            conn.execute(
+                "INSERT INTO shelf_aliases (alias_id, library_id,"
+                " shelf_id, section_id, col, level, label, merged_at)"
+                " VALUES (?,?,?,?,?,?,?,?)",
+                (alias.alias_id, library.id, alias.shelf_id,
+                 where.section_id if where else None,
+                 where.col if where else None,
+                 where.level if where else None,
+                 alias.label, alias.merged_at),
+            )
+        except sqlite3.IntegrityError as exc:
+            # ⚠ Translated, like every other constraint this adapter leans
+            # on rather than checks. The two guards above exist so a
+            # refusal does not arrive as a driver error — and for the two
+            # constraints left to the indexes it did exactly that, while
+            # the memory store raised `DuplicateShelfSlot`. A driver
+            # exception crossing a port boundary is a 500 where the answer
+            # is a 409.
+            raise DuplicateShelfSlot(
+                f"{alias.alias_id} has already been absorbed"
+                if "alias_id" in str(exc) or "PRIMARY" in str(exc).upper()
+                else f"another identity already claims the slot "
+                     f"{alias.address}"
+            ) from exc
+
+    def save_alias(self, library: LibraryRef, alias: ShelfAlias) -> None:
+        _same_library_alias(alias, library)
+        # ⚠ `_immediate`, not a deferred transaction. Every check inside
+        # `_insert_alias` is a read-then-write, and a DEFERRED one takes the
+        # write lock only at the INSERT — so two merges racing each other
+        # both read "no alias names my survivor" and both commit. Measured
+        # with the interleaving held open: A→B and B→A committed together, a
+        # CYCLE in which neither shelf can ever be deleted again,
+        # `identities()` wrong in both directions and `foreign_key_check`
+        # clean. The same shape as the undo journal's `seq`, and the same fix.
+        with self._connect() as conn, _immediate(conn):
+            self._insert_alias(conn, library, alias)
 
     def list_aliases(self, library: LibraryRef) -> tuple[ShelfAlias, ...]:
         with self._connect() as conn:
@@ -2084,7 +2188,7 @@ def _dump_inverse(entry: MapUndoEntry) -> str:
     module, so it earns no column.
     """
     payload = {name: [asdict(record) for record in getattr(entry.restore, name)]
-               for name in RESTORE_ORDER}
+               for name in RESTORE_ORDER + LEDGER_ORDER}
     payload["tag"] = entry.tag
     # ⚠ `created` is the SEVENTH field of `MapRestore` and NOT in
     # `RESTORE_ORDER`, which holds the six entity tuples. Dropping it here is
@@ -2095,6 +2199,21 @@ def _dump_inverse(entry: MapUndoEntry) -> str:
     # not change. A migration review caught it; `UNDO_CONTRACT` is what keeps
     # it caught.
     payload["created"] = list(entry.restore.created)
+    # ⚠ And `minted_aliases` is the EIGHTH, for exactly the same reason — the
+    # merge's half of what `created` is for a shelf. An entry written with one
+    # and read back without it watches a key its restore no longer names, so
+    # the fingerprint can never match: permanently un-undoable, blaming a row
+    # nothing touched. That is not a hypothesis; it is what happened to
+    # `created`, and `UNDO_CONTRACT` is what keeps both caught.
+    payload["minted_aliases"] = list(entry.restore.minted_aliases)
+    # Lists, not tuples, and read back as tuples of tuples below: JSON has one
+    # sequence type, so a key triple that went in as `("sh", 2, "k")` comes
+    # back as a LIST and would compare unequal against every other copy of
+    # itself — including the one `target_keys` builds.
+    payload["minted_decisions"] = [list(k) for k in
+                                   entry.restore.minted_decisions]
+    payload["minted_questions"] = [list(k) for k in
+                                   entry.restore.minted_questions]
     # The shape stamp. Free now, permanently absent from existing entries
     # afterwards — and these blobs never expire (owner, 2026-08-24), so the
     # oldest of them has to stay decodable forever. The day a step renames a
@@ -2137,6 +2256,18 @@ def _undo_shelf(d: dict) -> Shelf:
     return Shelf(address=ShelfAddress(**address) if address else None, **d)
 
 
+def _undo_shelf_alias(d: dict) -> ShelfAlias:
+    d = dict(d)
+    address = d.pop("address")
+    return ShelfAlias(address=ShelfAddress(**address) if address else None,
+                      **d)
+
+
+def _undo_decision(d: dict) -> Decision:
+    d = dict(d)
+    return Decision(kind=DecisionKind(d.pop("kind")), **d)
+
+
 _UNDO_DECODERS = {
     "sites": _undo_site,
     "floors": _undo_floor,
@@ -2144,6 +2275,15 @@ _UNDO_DECODERS = {
     "bookcases": _undo_bookcase,
     "sections": _undo_section,
     "shelves": _undo_shelf,
+    # The ledger half (P6.4d). Four of the five are flat dataclasses, so
+    # `**d` is both the decoder and the guard the module note above
+    # describes: a field added tomorrow flows through, and a decoder that has
+    # fallen behind its dataclass raises rather than dropping it in silence.
+    "copies": lambda d: CopyPlacement(**d),
+    "captures": lambda d: Capture(**d),
+    "decisions": _undo_decision,
+    "questions": lambda d: DuplicateQuestion(**d),
+    "aliases": _undo_shelf_alias,
 }
 
 
@@ -2157,9 +2297,14 @@ def _load_undo(row: sqlite3.Row) -> MapUndoEntry:
         recorded_at=row["recorded_at"],
         restore=MapRestore(
             created=tuple(payload.get("created", ())),
+            minted_aliases=tuple(payload.get("minted_aliases", ())),
+            minted_decisions=tuple(
+                (s, d, k) for s, d, k in payload.get("minted_decisions", ())),
+            minted_questions=tuple(
+                (s, d, k) for s, d, k in payload.get("minted_questions", ())),
             **{name: tuple(_UNDO_DECODERS[name](d)
                            for d in payload.get(name, ()))
-               for name in RESTORE_ORDER}
+               for name in RESTORE_ORDER + LEDGER_ORDER}
         ),
         fingerprint=json.loads(row["fingerprint"]),
         undone_at=row["undone_at"],

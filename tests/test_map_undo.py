@@ -17,12 +17,15 @@ Each is mutation-checked: reverse the rule, watch the named test fail.
 from __future__ import annotations
 
 import sys
+from dataclasses import replace as _replace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.adapters.memory_store import (  # noqa: E402
     MemoryBookStore,
+    MemoryDecisionStore,
+    MemoryDuplicateQueue,
     MemoryMapStore,
     MemoryMapUndoStore,
     MemoryShelfStore,
@@ -95,9 +98,25 @@ def _world():
         maps.save_place(lib, new_place(id=f"pl-{lib.id}", library_id=lib.id,
                                        floor_id=f"fl-{lib.id}",
                                        rect=Rect(0, 0, 12, 9), name="סלון"))
-    journal = Journal(store=MemoryMapUndoStore(), ids=SeqIdGen("u"),
-                      clock=StubClock())
+    journal = _journal(ids=SeqIdGen("u"), books=books)
     return maps, shelves, books, journal
+
+
+def _journal(*, store=None, ids=None, clock=None, books=None) -> Journal:
+    """A journal with the six things one needs.
+
+    ⚠ ``books``/``decisions``/``duplicates`` became REQUIRED in P6.4d, because
+    a merge's inverse moves copies, photographs and standing answers — and the
+    ``books`` one is passed THROUGH here rather than freshly minted: a journal
+    digesting a different library's books than the edit touched would find
+    every remembered copy absent and refuse its own entry.
+    """
+    return Journal(store=store if store is not None else MemoryMapUndoStore(),
+                   ids=ids if ids is not None else SeqIdGen("u"),
+                   clock=clock if clock is not None else StubClock(),
+                   books=books if books is not None else MemoryBookStore(),
+                   decisions=MemoryDecisionStore(),
+                   duplicates=MemoryDuplicateQueue())
 
 
 def _draw(maps, shelves, *, lib=LIB, case_id="bc", columns=2, levels=3):
@@ -369,8 +388,7 @@ def test_an_undo_refuses_when_the_world_moved_and_names_what_moved():
         **{**survivor.__dict__, "label": "אחר כך"}))
     later = maps.get_section(LIB, section.id)
     apply_gaps(maps, shelves, books, LIB, with_gaps(later, [(1, 3)], gap=True),
-               journal=Journal(store=MemoryMapUndoStore(), ids=SeqIdGen("z"),
-                               clock=StubClock()),
+               journal=_journal(ids=SeqIdGen("z")),
                ids=SeqIdGen("y"), clock=StubClock())
 
     refusal = _raises(UndoRefused, undo, journal, maps, shelves, books, LIB)
@@ -398,8 +416,7 @@ def test_a_slot_taken_by_another_shelf_refuses_rather_than_colliding():
     # feature, so this is not a contrived state.
     widened = with_column_count(maps.get_section(LIB, section.id), 2)
     apply_slot_change(maps, shelves, books, LIB, widened,
-                      journal=Journal(store=MemoryMapUndoStore(),
-                                      ids=SeqIdGen("z"), clock=StubClock()),
+                      journal=_journal(ids=SeqIdGen("z")),
                       ids=SeqIdGen("other"), clock=StubClock())
     intruder = _at(shelves, section.id, 2, 1)
     assert intruder is not None and intruder.id != doomed.id
@@ -643,8 +660,7 @@ def test_two_operations_in_one_second_still_undo_the_later_one():
     with a clock that never moves at all.
     """
     maps, shelves, books, journal = _world()
-    journal = Journal(store=journal.store, ids=SeqIdGen("u"),
-                      clock=FrozenClock())
+    journal = _replace(journal, ids=SeqIdGen("u"), clock=FrozenClock())
     first = _draw(maps, shelves, case_id="bc1")
     second = _draw(maps, shelves, case_id="bc2")
 
@@ -671,8 +687,7 @@ def test_an_interleaved_removal_still_coalesces_into_one_undo():
     it.
     """
     maps, shelves, books, journal = _world()
-    journal = Journal(store=journal.store, ids=SeqIdGen("u"),
-                      clock=FrozenClock())
+    journal = _replace(journal, ids=SeqIdGen("u"), clock=FrozenClock())
     first = _draw(maps, shelves, case_id="bc1")
     second = _draw(maps, shelves, case_id="bc2")
     standing = {s.id for s in
@@ -766,8 +781,7 @@ def test_a_cleared_bookcase_refuses_when_one_of_its_slots_is_taken():
     # Something else fills the emptied slots again.
     shrunk = maps.get_section(LIB, section_id)
     apply_slot_change(maps, shelves, books, LIB, with_column_count(shrunk, 2),
-                      journal=Journal(store=MemoryMapUndoStore(),
-                                      ids=SeqIdGen("z"), clock=StubClock()),
+                      journal=_journal(ids=SeqIdGen("z")),
                       ids=SeqIdGen("other"), clock=StubClock())
 
     refusal = _raises(UndoRefused, undo, journal, maps, shelves, books, LIB)
@@ -792,8 +806,7 @@ def test_an_undo_refuses_when_the_parent_it_needs_has_gone():
     remove_record(maps, shelves, LIB, "bookcase", "bc-attic", journal=journal)
 
     # The now-empty storey is tidied away afterwards, through its own route.
-    other = Journal(store=MemoryMapUndoStore(), ids=SeqIdGen("z"),
-                    clock=StubClock())
+    other = _journal(ids=SeqIdGen("z"))
     assert remove_record(maps, shelves, LIB, "floor", "fl-attic",
                          journal=other)
 

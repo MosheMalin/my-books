@@ -21,6 +21,7 @@ from typing import Mapping
 from pydantic import BaseModel, Field
 
 from app.domain import (
+    MergePlan,
     DEFAULT_COLUMNS,
     DEFAULT_DEPTH,
     DEFAULT_LEVELS,
@@ -1463,6 +1464,132 @@ class SlotRemovalDTO(BaseModel):
     def of(cls, removal: SlotRemoval) -> "SlotRemovalDTO":
         return cls(deleted=list(removal.deleted),
                    detached=list(removal.detached))
+
+
+class MergeRequest(BaseModel):
+    """*Absorb this shelf into that one.*
+
+    ⚠ ``strip`` has **no default**, and that is §3.12 rather than strictness:
+    appending the absorbed shelf's photographs after the survivor's encodes a
+    claim — *its half is to the right* — that nothing measured. §5.7's rule is
+    *declared, never detected*, and a default here would be the system
+    detecting it on the owner's behalf, silently, every time.
+    """
+
+    into: str = Field(description="The surviving shelf's id.")
+    strip: str = Field(
+        description="Which shelf's photographs come first on the merged "
+                    "strip: `absorbed_first` or `survivor_first`. One radio "
+                    "button; no default.",
+    )
+
+
+class DepthCountDTO(BaseModel):
+    """``{depth, count}`` — a per-depth tally.
+
+    A list rather than an object keyed by depth, because JSON has only string
+    keys and a client would then be parsing `"2"` back into a number to
+    compare it with a shelf's own depth.
+    """
+
+    depth: int
+    count: int
+
+
+class DecisionClashDTO(BaseModel):
+    """One `(depth, book_key)` a human answered on BOTH shelves.
+
+    §3.13 settles it by the newer ``decided_at`` — the rule the table's own
+    upsert already applies to a person changing their mind — but what is being
+    overwritten here is a different answer given at a different place, so
+    every one is NAMED rather than chosen in silence.
+    """
+
+    depth: int
+    book_key: str
+    winner: str = Field(description="`absorbed` or `survivor`.")
+    absorbed_kind: str
+    survivor_kind: str
+
+
+class MergeRefusalDTO(BaseModel):
+    """Why not, in a form a client can act on.
+
+    ⚠ ``reason`` is a STABLE CODE beside the sentence, and it exists because
+    P6.4c ended with the opposite mistake filed against it: the 409 that
+    offers the merge carries its occupant as prose inside `detail`, so the
+    client throws the whole string away and prints one Hebrew sentence of its
+    own. A screen that must say something different for *a read is running*
+    than for *the wishlist stands nowhere* cannot get there by parsing
+    English.
+    """
+
+    reason: str
+    say: str
+
+
+class MergePreviewDTO(BaseModel):
+    """What the merge would move. §3.15's other half of the same courtesy.
+
+    Answers **200 for a refusal too**, carrying it in ``refused`` — a preview
+    that 409s cannot show the owner why, which is the only thing it is for.
+    """
+
+    absorbed_id: str
+    survivor_id: str
+    refused: MergeRefusalDTO | None = None
+    already: bool = Field(
+        default=False,
+        description="The two identities already answer as one. A no-op, so a "
+                    "retry after a dropped response cannot half-merge.",
+    )
+    depth: int = Field(
+        default=1,
+        description="The survivor's depth AFTER (§3.12's ladder). Never "
+                    "smaller than it is now; depth NUMBERS are never remapped.",
+    )
+    books: int = Field(default=0, description="Distinct books that move.")
+    copies: list[DepthCountDTO] = Field(default_factory=list)
+    photos: list[DepthCountDTO] = Field(default_factory=list)
+    clashes: list[DecisionClashDTO] = Field(default_factory=list)
+    answers_moved: int = Field(
+        default=0,
+        description="Standing §5.6 answers that move with the wood — the "
+                    "load-bearing table (§3.13). Left behind, the next read "
+                    "re-adds every phantom the owner ever rejected there.",
+    )
+    identities_moved: int = Field(
+        default=0,
+        description="Identities that already answered to the absorbed shelf "
+                    "and are re-pointed at the survivor, to keep the resolver "
+                    "one hop.",
+    )
+
+    @classmethod
+    def of(cls, absorbed_id: str, survivor_id: str,
+           plan: MergePlan) -> "MergePreviewDTO":
+        return cls(
+            absorbed_id=absorbed_id, survivor_id=survivor_id,
+            depth=plan.depth, books=plan.books,
+            copies=[DepthCountDTO(depth=d, count=n)
+                    for d, n in plan.copies_per_depth.items()],
+            photos=[DepthCountDTO(depth=d, count=n)
+                    for d, n in plan.photos_per_depth.items()],
+            clashes=[DecisionClashDTO(depth=c.depth, book_key=c.book_key,
+                                      winner=c.winner,
+                                      absorbed_kind=c.absorbed_kind,
+                                      survivor_kind=c.survivor_kind)
+                     for c in plan.clashes],
+            answers_moved=len(plan.decisions),
+            identities_moved=len(plan.was_aliases),
+        )
+
+
+class MergeResultDTO(BaseModel):
+    """The survivor as it now stands, and what the merge actually moved."""
+
+    survivor: ShelfDTO
+    moved: MergePreviewDTO
 
 
 class UndoOfferDTO(BaseModel):

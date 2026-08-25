@@ -194,8 +194,20 @@ def get_shelf(
     shelf_id: str,
     library: LibraryRef = Depends(require(Capability.BROWSE)),
     store: ShelfStore = Depends(get_shelf_store),
+    books: BookStore = Depends(get_book_store),
 ) -> ShelfDTO:
-    return _dto(store, library, _load(store, library, shelf_id))
+    """One shelf, counted.
+
+    ⚠ The counts were MISSING here, found in P6.4d: `_dto`'s ``books``
+    argument defaults to an empty mapping, so this route — the one a client
+    calls when it wants one shelf rather than the list — answered
+    ``book_count: 0`` for every shelf in the library. The field's own
+    description calls it *what a destructive gesture has to be able to say out
+    loud before it happens*, and the deletion confirm reads exactly this
+    route. One grouped query, the same one the list pays.
+    """
+    return _dto(store, library, _load(store, library, shelf_id),
+                books.copies_per_shelf(library))
 
 
 @router.patch("/{shelf_id}", response_model=ShelfDTO)

@@ -400,6 +400,54 @@ class ShelfStore(Protocol):
         elsewhere would silently move every book that arrived with it.
         """
 
+    def absorb_shelf(
+        self, library: LibraryRef, alias: ShelfAlias,
+    ) -> tuple[ShelfAlias, ...]:
+        """:meth:`save_alias`, plus re-pointing whatever already answered to
+        the shelf being absorbed — in ONE transaction. Returns those rows AS
+        THEY STOOD, for the journal.
+
+        ⚠ **Why this is not two calls.** ``save_alias`` keeps the resolver one
+        hop, so absorbing a shelf that has itself absorbed others is refused
+        (:class:`ShelfHasAliases`) — the correct answer, and the trap P6.4a
+        wrote down for this item. The only way through is to re-point those
+        identities at the new survivor FIRST, and doing that in a separate
+        call opens a window where the library holds identities pointing at a
+        shelf that is about to stop existing: a crash there strands every book
+        that arrived with them, with ``foreign_key_check`` clean throughout.
+        One transaction is the whole reason this method exists.
+
+        Raises exactly what ``save_alias`` raises, for the same reasons — a
+        survivor that is itself absorbed is still refused, because re-pointing
+        the OTHER direction would rewrite a merge somebody already made.
+        """
+
+    def rewrite_aliases(
+        self,
+        library: LibraryRef,
+        *,
+        remove: tuple[str, ...] = (),
+        put: tuple[ShelfAlias, ...] = (),
+    ) -> None:
+        """Take an undo's word for what the alias table said — one transaction.
+
+        The inverse of :meth:`absorb_shelf`, and it is a separate method
+        rather than a loop over ``save_alias`` because the two halves are one
+        fact. Removing the minted row makes an absorbed identity a shelf
+        again; putting the re-pointed rows back sends them to it. Between
+        those two statements the library holds identities that resolve to a
+        shelf whose row the undo is about to overwrite — a state no reader
+        should ever see and, on a crash, one nothing would repair.
+
+        Still one hop at the end: this refuses if the result would contain an
+        alias whose survivor is itself absorbed. An undo may not be the way
+        to build the chain ``save_alias`` exists to forbid.
+
+        ``put`` REPLACES the row for each ``alias_id``; ``remove`` names ids
+        whose row goes, and an id that has none is not an error (an undo is
+        allowed to be a no-op about a row somebody else already removed).
+        """
+
     def list_aliases(self, library: LibraryRef) -> tuple[ShelfAlias, ...]:
         """Every alias in the library, ordered by ``alias_id``.
 

@@ -580,8 +580,14 @@ def test_depth_is_never_called_row_or_band_in_the_shelf_module():
     # SIX since P6.4b: the undo journal is written in terms of the grid it
     # puts back, so it reaches for the same wrong word — and it caught one on
     # the day it was written (a local named `rows`, holding tables).
+    # EIGHT since P6.4d, and the two new ones are the likeliest yet: a merge
+    # is written in terms of TABLES, so "row" arrives meaning a database row
+    # and lands two lines from a `depth` that means a shelf's row of books.
+    # The undo journal caught one the day it was written and the merge caught
+    # three the day this list grew.
     for module in ("app/domain/shelf.py", "app/domain/place.py",
-                   "app/domain/map_undo.py", "app/map_edit.py",
+                   "app/domain/map_undo.py", "app/domain/merge.py",
+                   "app/map_edit.py", "app/map_merge.py",
                    "app/map_undo.py", "app/ports/map.py"):
         src = (REPO_ROOT / module).read_text(encoding="utf-8")
         offenders = _banned_names(src, banned)

@@ -512,6 +512,30 @@ def remove_from_shelf(book: Book, copy_id: str) -> Book:
     return _with_copy(book, replace(book.copy(copy_id), shelf_id=None, depth=None))
 
 
+def refile_copy(book: Book, copy_id: str, *, shelf_id: str,
+                depth: int) -> Book:
+    """Re-file one copy at a different ``(shelf, depth)``, recording NOTHING.
+
+    The merge's function (P6.4d, MAP_PLAN §3.13), and its undo's. The wood was
+    re-identified; the book did not move, was not seen, and nothing new is
+    known about it.
+
+    ⚠ **Deliberately not :func:`relink_copy`**, which is the other relocation
+    in this module and takes a `Provenance` because it answers §5.4's *"the
+    same copy, seen on a new shelf"* — a human saying they saw it. A merge has
+    seen nothing. Appending a sighting here would put a run id and a spine id
+    on a row no run produced, which is §3.16's *"a merge may not manufacture
+    evidence of absence"* read from the other side: it manufactures evidence
+    of PRESENCE, and the not-seen streak, the staleness badge and every
+    §5.6 answer are computed from exactly that evidence.
+
+    ⚠ And it does not touch ``status``. Two identities turning out to be one
+    piece of wood is not a claim about whether a book is what its spine says.
+    """
+    copy = book.copy(copy_id)
+    return _with_copy(book, replace(copy, shelf_id=shelf_id, depth=depth))
+
+
 def edit_copy(
     book: Book,
     copy_id: str,
