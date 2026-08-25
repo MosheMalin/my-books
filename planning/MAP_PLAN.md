@@ -787,7 +787,7 @@ this pillar.**
 | **P6.3.2** | **Gaps** — a cell of the elevation can be switched off (a television, a desk niche) and switched back on, with the extent untouched (§3.10a). Two items: **a** the model, schema **v21** and the route; **b** the editor's multi-cell selection and the hole it draws. Arrived mid-pillar, from the owner using the ported editor. | M | ✅ 
 | **P6.3.3** | **The plan tab on a phone** — the drawing surface measured 375x**0**: `#root` had a `min-height` where a definite height was meant, so the settings panel became the whole page and no pillar-6 flow had ever been walked on a phone. Two flex minimums and two dead thumb-size rules came with it. Arrived from P6.3.2b's UX review, and taken BEFORE P6.4 (owner) so four more items would not land unverified on the device this catalogue is used from. | S | ✅ |
 | **P6.4** | **Binding and merge** — photo-born shelves bind into drawn slots; several identities merge into one physical shelf, with aliases. ⚠ THREE schema steps now, and **b ran before a**: **v22** the undo journal, **v23** its sequence (the head could not be decided by a clock with second resolution — see P6.4b), **v24** the alias. P6.3.2a spent v21. | L | |
-| **P6.5** | **The map as navigation** — three drill levels, "where is it" incl. depth, stale-depth surfacing, capture handoff. | L | |
+| **P6.5** | **The map as navigation** — three drill levels, "where is it" incl. depth, stale-depth surfacing, capture handoff. ⚠ Carries two measured phone defects from P6.4c's ux review: the app bar **overflows 375px by 109px**, putting the language toggle and the account menu entirely off-screen (`books.css`'s note about the bottom bar was written when the bar had two tabs; it now has three plus a library switcher), and **37 of 96 controls** in the bookcase panel are under the 44px touch floor, the smallest being a 26×29px *destructive* one. | L | |
 | **P6.6** | *Optional:* bookcase photo → proposed levels via `segment.py`, confirmed by hand. | S | |
 
 **Standing per-epic requirements** (owner, 2026-08-16 — *"use all reviewers to
@@ -1500,11 +1500,59 @@ width pinned to 375px (52px picker rows, RTL, no overflow), but viewport-unit
 rules were evaluated at a 1049px height, so the picker's `max-height: 40vh`
 was never tested at 812. Stated rather than claimed.
 
-⚠ **An empty cell looks exactly like an occupied one** in the elevation — the
-same button, the same level number — and the only way to learn it is empty is
-to tap it. A gap has its own affordance and this does not. Left as it is
-because a free slot is RARE (only an unbind, a half-failed edit or a partial
-undo makes one), and noted here so P6.4d does not have to rediscover it.
+**What four reviews found**, and every one was reproduced before it was
+fixed. One CRITICAL from quality: `paste.ts` shallow-copies each cell, so the
+new `id` rode along and every cell of a PASTED bookcase addressed the
+ORIGINAL's shelves — with a *take off the map* button now sitting on that
+identity, which detached a shelf elsewhere on the plan while the pressed cell
+looked unchanged. That file's own header records the same failure through the
+section id, one item earlier.
+
+Two CRITICALs from ux, both on a true 375×812 phone: every bind and unbind
+blanked the editor for **1.42 seconds** and came back with nothing selected
+(CLAUDE.md's *a refresh is not a first load*, attached to a per-cell gesture);
+and a failed shelf list printed *"every shelf is already on the map"* while
+forty stood nowhere. ⚠ The fix for the first one wrapped the editor in a
+`<div>`, the whole gate stayed green, and the canvas measured **375×0** —
+`.mapscreen` fills its board through percentage heights and a bare div in that
+chain has none.
+
+Three MAJORs from data-integrity: the fingerprint watched *who stands where*
+and not *which cells exist*, so **unbind → gap that cell → undo** restored a
+shelf into a cell the drawing does not have; a COALESCED entry recomputed the
+union from a live read, reopening the widest window in the module inside the
+commonest entry there is; and the unique index backstops only ONE of bind's
+four checks, so a bind racing a gap put five books in a cell the drawing does
+not have.
+
+⚠ **Two guards covered one shape of the class they name** — the counted-string
+test matched `(n: number) => string` exactly, and the 404 meta-test had no
+completeness check where its EDIT_MAP sibling did. Both widened; between them
+they found seven live defects, some four schema versions old (including
+`Shelf.sort_key` putting UNNAMED shelves first while its own docstring, the
+route's docstring, both stores and a test that asserted the opposite of its
+own sentence all said named first).
+
+⚠ **An empty cell looked exactly like an occupied one** in the elevation — the
+same button, the same level number, the same computed ink, and an accessible
+name saying *מדף*. It is now dashed and named `תא ריק`, the treatment the gap
+branch one `if` above already has. Rarity was the wrong argument for leaving
+it: a free cell is not rare, it is *always the answer to a question the owner
+has just asked*.
+
+**What P6.4d inherits from this item**, beyond the three traps already on its
+row:
+
+- **an absorbed identity is already refused a slot** (`ShelfWasMerged`). A row
+  that outlives its merge has no address, so it appears in `GET /shelves` and
+  therefore in the picker — and binding it would put one population of copies
+  in two cells. Refused now because it was cheaper than retrofitting;
+- **the 409 that offers the merge carries the occupant as PROSE**, inside
+  `detail`. `SlotTaken.occupant` exists and the client throws the whole string
+  away for one Hebrew sentence, so P6.4d needs a structured field or it will
+  be parsing English out of a message;
+- **`slot_moved_on` is whitelisted to 400/404/409.** A merge's refusals must
+  land in that set or say their own words.
 
 **Bind is separate so that *bind* and *merge* are never one button.** The
 safe half is a shelf gaining an address; the dangerous half is two identities
