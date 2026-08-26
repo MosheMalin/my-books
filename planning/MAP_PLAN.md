@@ -868,11 +868,15 @@ every one of them is a guard that was not looking:
 navigation with a mouse-sized map panel. The target device is 375 and 760 was
 chosen because `books.css` already spelled it, not from a measurement.
 
-⚠ **Filed, not fixed — a load-bearing 700ms.** `CaptureTab.test.tsx`'s
-*"a poll landing comfortably inside the interval can only be the
-visibilitychange handler"* fails under a loaded board (two reviewer worktrees
-plus the gate). Its own comment already anticipates the margin; the honest fix
-is an event gate rather than a time budget, and it belongs to the capture item.
+✅ **Fixed after it cost two gate runs — a load-bearing 700ms.**
+`CaptureTab.test.tsx`'s *"a poll landing comfortably inside the interval can
+only be the visibilitychange handler"* was a TIME budget, and it lost twice on
+a 4-core machine running two reviewer worktrees beside the gate. It is an
+event gate now: `setInterval` is stubbed, so no timer is armed and any poll
+observed can only be the handler's. Two mutants — and the first cut of the
+"a timer really was armed" half asserted `armed.length > 0`, which any timer
+anywhere in the tree satisfies, so removing the poll's own `setInterval` left
+it green. It fires what was armed and watches a request come out instead.
 
 ⚠ **Tab ORDER**, for the owner: the bottom bar carries Books / Capture / Map,
 inherited from the app bar. `UI_PLAN.md` §1 lists Books / **Map** / Capture. On

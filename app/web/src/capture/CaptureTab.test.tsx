@@ -514,24 +514,41 @@ describe('Capture tab — hydration on mount (P2.9)', () => {
     server.reads.push(readSummary({ id: 'rd1', shelf_id: 'sh1', depth: 1, status: 'running' }))
     server.nextReadStatus = 'running' // stays running until this test says otherwise
 
+    // ⚠ The timer is REMOVED, not out-raced. This assertion used to be
+    // *"a poll inside 700ms can only be the handler, because the interval is
+    // 1000"* — a time budget, which is the shape CLAUDE.md says to replace
+    // with an event gate, and it lost twice on a 4-core machine running two
+    // reviewer worktrees beside the gate. Stubbing `setInterval` makes the
+    // claim structural: with no timer armed at all, ANY poll observed is the
+    // visibilitychange handler's, and the test can take as long as it likes.
+    const armed: (() => void)[] = []
+    vi.stubGlobal('setInterval', (fn: () => void) => {
+      armed.push(fn)
+      return 0 as unknown as ReturnType<typeof setInterval>
+    })
+
     renderCapture()
     await screen.findByText('img1')
-    const before = server.calls.filter((c) => c.includes('/reads/rd1')).length
+
+    // ⚠ …and a POLLING timer really was armed — proved by firing what was
+    // armed and watching a request come out, not by counting `setInterval`
+    // calls. The first version asserted `armed.length > 0`, which any timer
+    // anywhere in the tree satisfies: removing the poll's own `setInterval`
+    // left it green. A guard that counts is not a guard that looks.
+    const polls = () => server.calls.filter((c) => c.includes('/reads/rd1')).length
+    const armedAt = polls()
+    armed.forEach((tick) => tick())
+    await waitFor(() =>
+      expect(polls(), 'nothing armed here polls').toBeGreaterThan(armedAt))
+
+    const before = polls()
 
     Object.defineProperty(document, 'visibilityState', {
       value: 'visible', configurable: true,
     })
     document.dispatchEvent(new Event('visibilitychange'))
 
-    // The polling interval is 1000ms — a poll landing comfortably inside
-    // that window can only be the visibilitychange handler, not the timer.
-    // (700ms, not a tighter margin: under a loaded test run the assertion
-    // itself can be scheduled late, and this only needs to beat the OTHER
-    // side's 1000ms, not race it to the millisecond.)
-    await waitFor(() => {
-      expect(server.calls.filter((c) => c.includes('/reads/rd1')).length)
-        .toBeGreaterThan(before)
-    }, { timeout: 700 })
+    await waitFor(() => expect(polls()).toBeGreaterThan(before))
   })
 })
 
