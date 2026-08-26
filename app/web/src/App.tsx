@@ -19,6 +19,7 @@ import { InviteGate } from './lib/InviteGate'
 import { MembersPanel } from './lib/MembersPanel'
 import { useI18n } from './lib/i18n'
 import { useLibrary } from './lib/library'
+import { useNarrow } from './lib/narrow'
 import { LibrarySwitcher } from './lib/LibrarySwitcher'
 import { bookHash, CAPTURE_HASH, LIBRARY_HASH, PLAN_HASH, useRoute } from './lib/route'
 
@@ -28,6 +29,7 @@ export function App() {
   const { libraries, loading, failed, current } = useLibrary()
   const books = useBooks()
   const { route, navigate, back } = useRoute()
+  const narrow = useNarrow()
   const [drawerId, setDrawerId] = useState<string | null>(null)
   const [membersOpen, setMembersOpen] = useState(false)
   const [acctOpen, setAcctOpen] = useState(false)
@@ -57,6 +59,27 @@ export function App() {
   const onBooks = route.name === 'library' || route.name === 'book'
   const onCapture = route.name === 'capture'
   const onPlan = route.name === 'plan'
+  // ⚠ ONE list, rendered by ONE of two navs (P6.5a). The app bar's row and
+  // the phone's bottom bar are the same three destinations in the same order
+  // with the same pressed state; two hand-written copies would drift, and the
+  // drift is invisible until somebody adds a fourth tab to one of them.
+  const tabs = [
+    { hash: LIBRARY_HASH, label: t.books, on: onBooks },
+    { hash: CAPTURE_HASH, label: t.capture_tab, on: onCapture },
+    { hash: PLAN_HASH, label: t.plan_tab, on: onPlan },
+  ]
+  const tabButtons = tabs.map((tab) => (
+    <button
+      key={tab.hash}
+      type="button"
+      className={tab.on ? 'on' : ''}
+      aria-pressed={tab.on}
+      aria-current={tab.on ? 'page' : undefined}
+      onClick={() => navigate(tab.hash)}
+    >
+      {tab.label}
+    </button>
+  ))
   // P4.1c: no library yet — the tabs' screens can only 404, so the nav is
   // ABSENT during onboarding, not disabled (the house rule).
   const onboarding = !loading && !failed && libraries.length === 0
@@ -72,33 +95,13 @@ export function App() {
             there); its library is the RESOLVED one, which is what the
             switcher's own list is checked against server-side. */}
         <LibrarySwitcher />
-        {!onboarding && (
-          <nav className="nav" aria-label={t.app}>
-            <button
-              type="button"
-              className={onBooks ? 'on' : ''}
-              aria-pressed={onBooks}
-              onClick={() => navigate(LIBRARY_HASH)}
-            >
-              {t.books}
-            </button>
-            <button
-              type="button"
-              className={onCapture ? 'on' : ''}
-              aria-pressed={onCapture}
-              onClick={() => navigate(CAPTURE_HASH)}
-            >
-              {t.capture_tab}
-            </button>
-            <button
-              type="button"
-              className={onPlan ? 'on' : ''}
-              aria-pressed={onPlan}
-              onClick={() => navigate(PLAN_HASH)}
-            >
-              {t.plan_tab}
-            </button>
-          </nav>
+        {/* ⚠ Below 760px this is ABSENT, not hidden — `useNarrow` decides,
+            not the sheet. The bottom bar renders the identical three labels,
+            so a CSS-only hide would leave two buttons named "ספרים" in the
+            accessibility tree, and `display: none` is invisible to
+            `getByRole`, so no client test could have caught it. */}
+        {!onboarding && !narrow && (
+          <nav className="nav" aria-label={t.app}>{tabButtons}</nav>
         )}
         <span className="spacer" />
         <button
@@ -179,6 +182,17 @@ export function App() {
           <BooksTab onOpen={setDrawerId} />
         )}
       </main>
+      )}
+
+      {/* The phone's navigation, which the app bar cannot hold: six controls
+          in a 375px bar measured 484px of content and scrolled the whole
+          DOCUMENT sideways, taking 109px of the plan canvas and the bookcase
+          panel's own controls off-screen with it. Fixed to the bottom, where
+          a thumb is — the mock has carried this as `.botnav` since before the
+          rebuild, and `books.css` has carried a rule written for it since
+          P1.0. */}
+      {!onboarding && narrow && (
+        <nav className="botnav" aria-label={t.app}>{tabButtons}</nav>
       )}
 
       <InviteGate />

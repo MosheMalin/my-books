@@ -34,12 +34,16 @@
 .appbar .spacer {
   flex: 1;
 }
-/* Two tabs today (Books, Capture, P2.7) — ported from the mock's `.nav`,
-   which also carries Map/Settings the product hasn't grown yet (absent, not
-   disabled: CLAUDE.md). The mock hides this at mobile width in favour of a
-   `.botnav` bottom bar — not built here (out of this item's scope), so the
-   nav stays visible and just tightens instead of disappearing, or a phone
-   would have no way to reach the Capture tab at all. */
+/* Three tabs today (Books, Capture, Plan) — ported from the mock's `.nav`.
+   ⚠ The comment that stood here said the mock's `.botnav` bottom bar was
+   "not built here (out of this item's scope), so the nav stays visible and
+   just tightens". P6.5a built it. The prose mattered because a rule further
+   down this sheet — `.toolbar { top: 0 }` inside the same breakpoint — was
+   written as though the bar already existed: with the nav still in the bar,
+   the Books tab's sticky toolbar docked at 0 UNDERNEATH a sticky app bar,
+   measured 52 of its 153px hidden while scrolled. Below 760px the app bar's
+   nav is now ABSENT from the DOM (`lib/narrow.ts`, not this sheet), so that
+   rule is true rather than aspirational. */
 .nav {
   display: flex;
   gap: 4px;
@@ -60,20 +64,66 @@
   color: var(--accent);
   font-weight: 600;
 }
-@media (max-width: 760px) {
-  .nav button {
-    padding: 6px 9px;
-    font-size: 13px;
-  }
+
+/* The phone's navigation (P6.5a, UI_PLAN §1, ported from the mock's
+ * `.botnav`). Fixed to the bottom, where a thumb is, and rendered ONLY below
+ * the breakpoint — `useNarrow` mounts one nav or the other, so this sheet
+ * never has to hide a duplicate.
+ *
+ * ⚠ It is not a style choice. Six controls in a 375px app bar measured 472px
+ * of content: `documentElement.scrollWidth` 484 against a `clientWidth` of
+ * 375, so the whole DOCUMENT scrolled sideways and every percentage-sized
+ * surface laid itself out in a 484px page. On the owner's real library that
+ * put 109px of the plan canvas off-screen at rest and the bookcase panel's
+ * own *select this bookcase* button at x=412 — a control no finger could
+ * reach on the device this catalogue is used from.
+ *
+ * ⚠ `min-height: 48px` is the touch floor, not padding that happens to reach
+ * it: a bar whose targets shrink with a translated label is a bar that fails
+ * in one language only. */
+.botnav {
+  display: flex;
+  position: fixed;
+  inset-inline: 0;
+  bottom: 0;
+  z-index: 45;
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.botnav button {
+  flex: 1;
+  min-height: 48px;
+  padding: 6px 4px;
+  font-size: 12.5px;
+  color: var(--muted);
+  border-radius: 0;
+}
+.botnav button.on {
+  color: var(--accent);
+  font-weight: 600;
+  box-shadow: inset 0 2px 0 var(--accent);
 }
 /* Contract name differs from the mock's `.langtog` — same idiom, ported
    under the new name. */
 .langswitch {
   display: flex;
+  align-items: center;
+  justify-content: center;
   border: 1px solid var(--line);
   border-radius: 9px;
   overflow: hidden;
   flex: none;
+  /* ⚠ The class is on the BUTTON, not on a wrapper around one — so
+     `.langswitch button` below never applied to it and these two carried no
+     padding at all. Measured at 375x812: the language toggle 21x25 and the
+     account menu 40x25, the two smallest controls in the product, both under
+     the 44px floor by a factor of two. */
+  padding: 6px 10px;
+  font-size: 12.5px;
+  color: var(--muted);
+  min-height: 44px;
+  min-width: 44px;
 }
 .langswitch button {
   font-size: 12.5px;
@@ -265,13 +315,73 @@
   .appbar {
     gap: 8px;
     padding: 9px 12px;
+    /* ⚠ NOT sticky here, and it is the other half of the bottom bar. Once
+       the tabs move to the bottom, nothing in this bar answers a question you
+       ask mid-scroll — it is a brand, the collection's name, a language
+       toggle and an account menu. Sticky it costs a phone 63px of the little
+       height it has AND puts an opaque strip over the one control that does
+       follow the scroll, the Books tab's search-and-filter row. The
+       persistent chrome is the bottom bar; this is a page header. */
+    position: static;
   }
   .appbar .brand {
     font-size: 15px;
     white-space: nowrap;
   }
+  /* The switcher is the one bar item that carries an owner-typed name, so it
+     takes what is left rather than a fixed share — and it ellipsises instead
+     of pushing the bar wide. The mock hides the name outright at this width;
+     it is kept, because "which collection am I looking at" is the question
+     the control exists to answer. */
+  .appbar .libswitch {
+    min-width: 0;
+  }
+  .libswitch-btn,
+  .libswitch-label {
+    max-width: 14ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* ⚠ The touch floor, on the screen this product opens on. Measured at
+     375x812 with the bar overflow already fixed: **13 of 48 controls under
+     44px**, and the list is the Books toolbar almost exactly — the five
+     filter chips at 24px tall, the two view toggles at 34, the search field,
+     the sort select, *add a book*, the library switcher and the drawer's own
+     close button between 33 and 39. Nothing here was ever measured on a
+     phone; every one of them clears a mouse.
+
+     Scoped to the CONTROL CLASSES rather than to `button`, deliberately: a
+     blanket `.page button` would also stretch every inline chip inside a book
+     row — badges and copy tags that are not pressed — and a list whose rows
+     are 60% whitespace is its own kind of unusable. */
+  .filterbar .chip,
+  .seg button,
+  .toolbar .btn,
+  .toolbar input,
+  .toolbar select,
+  .libswitch-btn,
+  .dhead .btn {
+    min-height: 44px;
+    /* Both axes: the drawer's close is a 39px-wide glyph button, and a target
+       that clears the floor in one direction only is not a target. */
+    min-width: 44px;
+  }
+  /* The chips sit in a wrapping row; without this they grow tall and stay
+     narrow, which reads as a column of stripes rather than a filter row. */
+  .filterbar .chip {
+    padding-inline: 14px;
+  }
+  /* Room for the bottom bar under the last row of a page. */
   .page {
-    padding: 14px 12px 84px;
+    padding: 14px 12px calc(28px + var(--botnav-h) + env(safe-area-inset-bottom));
+  }
+  /* ⚠ …and under the WORKSPACE, which is a definite `height: 100%` of a box
+     the fixed bar sits inside (see the `page-plan` note above). Without this
+     the bar is opaque over the bottom 56px of the inspector — including the
+     scroll-to-the-end controls P6.4d put at the foot of the merge flow. */
+  :root:has(.page-plan) #root {
+    height: calc(100% - var(--botnav-h) - env(safe-area-inset-bottom));
   }
 }
 
@@ -293,9 +403,17 @@
   z-index: 20;
 }
 @media (max-width: 760px) {
-  /* on narrow viewports the appbar's own nav collapses (the bottom nav
-     takes over), so the toolbar docks flush with the viewport top instead
-     of leaving a gap the size of the (now nav-less) appbar */
+  /* The toolbar docks flush with the viewport top, which is true only
+     because the app bar above it stops being sticky at this width (see the
+     `.appbar` rule in the breakpoint further up).
+
+     ⚠ This rule and its comment predate the bottom bar by five pillars,
+     and were both wrong the whole time: the app bar stayed sticky at 55px
+     with a z-index above this one, so `top: 0` docked the Books tab's search
+     and filter row UNDERNEATH it. Measured at 375x812 while scrolled: 52 of
+     the toolbar's 153px hidden — the search field and half the sort control.
+     Written as though a mechanism that did not exist already did, which is
+     the failure CLAUDE.md records for a doc promising a behaviour in words. */
   .toolbar {
     top: 0;
   }

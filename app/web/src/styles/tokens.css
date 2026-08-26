@@ -72,6 +72,18 @@
      future appbar change (e.g. a wrapped brand row on narrow desktop) only
      needs to update one variable. */
   --appbar-h: 55px;
+  /* The phone's bottom navigation (P6.5a). Named because THREE rules need to
+     agree on it: the bar's own height, the reading padding that keeps a page's
+     last row above it, and the plan workspace's definite height — which is
+     `100%` of a box the bar sits inside, so a workspace that did not subtract
+     it would put its bottom 56px under an opaque bar. */
+  --botnav-h: 56px;
+  /* The phone's bottom navigation (P6.5a). Named because THREE rules need to
+     agree on it: the bar's own height, the reading padding that keeps a page's
+     last row above it, and the plan workspace's definite height — which is
+     `100%` of a box the bar sits inside, so a workspace that did not subtract
+     it would put its bottom 56px under an opaque bar. */
+  --botnav-h: 56px;
   --toolbar-h: 57px;
 }
 
