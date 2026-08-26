@@ -18,6 +18,10 @@ import { useEffect, useRef, useState } from 'react'
 import { Select } from '@booksnap/ui'
 
 import { Elevation } from './Elevation'
+import type { ShelfOverviewDTO } from '../../api/client'
+import { formatDate } from '@booksnap/ui'
+
+import { shelfHash } from '../../lib/route'
 import type { MergePreview, OffMapShelf, StripOrder } from '../useMapSync'
 import type { Cell, Doc, Selection } from './types'
 import { count, markCell, only, onlyCell } from './types'
@@ -57,6 +61,8 @@ export type Actions = {
    * the server and then re-derive.
    */
   shelvesOffTheMap: () => Promise<OffMapShelf[]>
+  /** When this shelf was last read, and whether a row is stale (P6.5c). */
+  shelfOverview: (shelfId: string) => Promise<ShelfOverviewDTO>
   bindShelf: (shelfId: string, sectionId: string, col: number, level: number,
               name: string) => void
   unbindShelf: (shelfId: string, sectionId: string, col: number,
@@ -594,6 +600,21 @@ function ShelfPanel({
             <strong>{shelf.photos}</strong>
           </div>
           <p className="note">{T.photos_are_captures}</p>
+          {shelf.id && <ReadState shelfId={shelf.id} actions={actions} />}
+          {/* ⚠ The drill DOWN, and until P6.5c the map had no way to it at
+              all: `#/map/<shelfId>` has been level 3 since P2.8 and the only
+              things that ever linked to it were the Capture tab (removed by
+              the owner in 2026-08) and a typed URL. UI_PLAN §3's three drill
+              levels were built as EDITING — the plan selects a bookcase, the
+              elevation selects a cell — and this is the step that makes them
+              navigation. An `<a>`, not a button: it is a place, so it opens
+              in a new tab, copies as a link, and reads as one. */}
+          {shelf.id && (
+            <a className="linkish open-shelf"
+               href={shelfHash(shelf.id as string)}>
+              {T.open_this_shelf}
+            </a>
+          )}
           {shelf.id && (
             // ⚠ KEYED by the cell, like `EmptyCell` — otherwise selecting a
             // different occupied cell keeps this mounted with the previous
@@ -633,6 +654,69 @@ function ShelfPanel({
         </>
       )}
     </fieldset>
+  )
+}
+
+/**
+ * When this cell's shelf was last read, and whether a row is stale.
+ *
+ * ⚠ VISION §7: *"a shelf on the map carries its declared depth, so '3 rows,
+ * back two not read since March' is answerable from the map"*. The declared
+ * depth is the field above; this is the other half — but only its FIRST
+ * clause. The sentence naming WHICH rows lives on the shelf screen, and
+ * rendering it here too would be one rule built out of two string tables,
+ * which is how a rule becomes two that disagree. So the map says *there is
+ * something stale here*, and the link beside it goes to the screen that says
+ * what.
+ *
+ * ⚠ Silent while it loads, and silent if it fails. This is a fact ABOUT the
+ * cell, not the cell itself; an editor that grows a grey apology every time a
+ * request loses is worse than one that shows what it has.
+ */
+function ReadState({ shelfId, actions }: { shelfId: string; actions: Actions }) {
+  const { t, lang } = useI18n()
+  const T = mapText(lang)
+  const [state, setState] = useState<ShelfOverviewDTO | 'failed' | null>(null)
+  // ⚠ Held in a REF, so the effect depends on the cell and on nothing else.
+  // Measured at 375x812 before this: **four** requests for one selected cell,
+  // from two unstable identities one per layer — `MapScreen` rebuilds
+  // `actions` as an object literal every render, and `PlanScreen` wrapped the
+  // fetch in a fresh arrow. Depending on either is depending on a render
+  // count. The rule belongs HERE rather than on both callers being careful:
+  // *what to fetch* is the cell, and the function is only how. Same shape as
+  // `@booksnap/ui`'s `useAsync`, which holds its `fn` the same way.
+  const ask = useRef(actions.shelfOverview)
+  ask.current = actions.shelfOverview
+  useEffect(() => {
+    let alive = true
+    setState(null)
+    void ask.current(shelfId)
+      .then((got) => { if (alive) setState(got) })
+      .catch(() => { if (alive) setState('failed') })
+    return () => { alive = false }
+  }, [shelfId])
+  if (state === null || state === 'failed') return null
+  const stale = state.depths.filter((d) => d.is_stale).length
+  // ⚠ Absent when there is nothing to say. A drawn shelf that has never been
+  // read is the NORMAL state — 152 of the owner's 153 shelves — so a row
+  // reading «נקרא לאחרונה: המדף הזה עדיין לא נקרא» would print on
+  // almost every cell anyone taps, and a label whose value negates it is not a
+  // fact, it is furniture. Measured on the owner's library.
+  if (!state.last_read_at && stale === 0) return null
+  return (
+    <div className="field inline read-state">
+      <span>{T.last_read}</span>
+      <strong>
+        {state.last_read_at
+          ? formatDate(state.last_read_at, lang)
+          : t.shelf_never_read}
+        {stale > 0 && (
+          <span className="stale-dot" title={T.rows_stale(stale)}>
+            {' ●'}
+          </span>
+        )}
+      </strong>
+    </div>
   )
 }
 

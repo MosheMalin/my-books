@@ -121,6 +121,13 @@ const openEditor = () =>
                      already: false, depth: 1, books: 0, copies: [],
                      photos: [], clashes: [], answers_moved: 0,
                      identities_moved: 0,
+                   }),
+                   overview: async () => ({
+                     shelf: { id: 'sh', label: '', depth_count: 1,
+                              virtual: false, created_at: null,
+                              capture_count: 0, book_count: 0, address: null,
+                              formerly: [] },
+                     depths: [], last_read_at: null,
                    }) }}
       />
     </I18nProvider>,
