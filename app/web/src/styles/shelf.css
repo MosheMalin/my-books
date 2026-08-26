@@ -47,6 +47,13 @@
   color: var(--review);
 }
 
+/* The shelf's own address, under its name. Muted: it is context for the
+   screen, not its subject — the books are. */
+.shelfwhere .whereline {
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .depthbar {
   display: flex;
   gap: 6px;

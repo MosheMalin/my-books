@@ -11,6 +11,7 @@
  * auto-pruned) · read history as diffs. This IS the history UI; there is no
  * run list anywhere else (§5.5).
  */
+import { Address, useShelfWhere } from '../lib/Address'
 import { useI18n } from '../lib/i18n'
 import { formatDate, type Lang } from '@booksnap/ui'
 import { CopyBadges, StatusBadge } from '../books/Feed'
@@ -70,6 +71,11 @@ function BookRow({ book, onOpen }: { book: Book; onOpen: (id: string) => void })
 export function ShelfPage({ shelfId, onBack, onOpen }: ShelfPageProps) {
   const { t, lang } = useI18n()
   const shelfDetail = useShelfDetail(shelfId)
+  // ⚠ Asked for the SHELF, with no depth: the depth bar below is how this
+  // screen chooses a row, and printing the selected one up here would make
+  // the heading change under a person who was only browsing rows. A copy's
+  // row is named on the BOOK surface, which is where one copy is the subject.
+  const where = useShelfWhere(shelfId)
   const { state } = shelfDetail
   const stale = state.kind === 'ready' ? stalenessLine(state.depths, t, lang) : null
 
@@ -98,6 +104,19 @@ export function ShelfPage({ shelfId, onBack, onOpen }: ShelfPageProps) {
                 )}
                 <div className="shelfheroMeta">
                   <h2 className="rtl-safe">{state.shelf.label || t.unassigned}</h2>
+                  {/* Where it stands — the half of "level 3" that had no
+                      answer until the map could give one (P6.5b). Silent
+                      while it loads and silent if the lookup fails: an
+                      address is not this screen's subject, and a grey
+                      apology where a line of furniture should be is worse
+                      than nothing. A shelf that stands NOWHERE does get a
+                      sentence, because that is a fact about the shelf and
+                      the thing a person would go and fix. */}
+                  {where.data && (
+                    <div className="shelfwhere">
+                      <Address where={where.data} note={false} />
+                    </div>
+                  )}
                   <p className="muted">
                     {state.lastReadAt
                       ? t.shelf_last_read(formatDate(state.lastReadAt, lang))

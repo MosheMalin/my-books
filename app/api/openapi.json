@@ -1,6 +1,67 @@
 {
   "components": {
     "schemas": {
+      "AddressPartsDTO": {
+        "description": "A shelf's address as PARTS, never as a sentence.\n\nThe sentence is Hebrew in the product and English in the console, so\nassembling it here would be a second i18n table nobody maintains. What is\nNOT the client's is which parts appear at all — that rule has one copy, in\n``app.domain.place.address_parts``, and this DTO is its wire shape.\n\n``section``, ``column`` and ``depth`` are null when naming them would\nimply a choice that does not exist: a one-section case never says\n*section 1*, a one-column case never says *column 1*, and the front row\nis never called a row (§3.6, UI_PLAN §1.1, §5.7).",
+        "properties": {
+          "bookcase": {
+            "description": "The furniture's name. May be empty: naming a case is optional, exactly as naming a shelf is.",
+            "title": "Bookcase",
+            "type": "string"
+          },
+          "column": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Column"
+          },
+          "depth": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Row front-to-back, and only when it is not the front one. Asked for by query, because the shelf has a depth COUNT and a copy has a depth.",
+            "title": "Depth"
+          },
+          "level": {
+            "description": "1-based, counted from the TOP.",
+            "title": "Level",
+            "type": "integer"
+          },
+          "place": {
+            "description": "The ROOM. Empty when the bookcase stands on no room — legal, and not the same as unknown (§3.7).",
+            "title": "Place",
+            "type": "string"
+          },
+          "section": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section"
+          }
+        },
+        "required": [
+          "place",
+          "bookcase",
+          "level"
+        ],
+        "title": "AddressPartsDTO",
+        "type": "object"
+      },
       "AlternativeDTO": {
         "description": "One ranked runner-up `booksnap.match.explain()` considered for a\nclaim's OCR text (P2.7) — what the review UI's \"why?\" panel renders.\n``reason`` is empty for a candidate that passed the matcher's own gates\n(a real runner-up) and names the gate that refused one that didn't.",
         "properties": {
@@ -2990,6 +3051,55 @@
           }
         },
         "title": "ShelfPatch",
+        "type": "object"
+      },
+      "ShelfWhereDTO": {
+        "description": "Where one shelf stands — VISION §7's *\"given a book, answer where is\nit\"*, which is the sentence P6.5 exists to make answerable.\n\n⚠ ``site`` is beside the address and never inside it. §3.7 settles that a\nSite and a Floor are groupings and *\"never part of an address\"*, because\nputting either in would re-address every shelf in the house the day\nsomebody renames a building. But two sites may each have a *living room*,\nso the site is carried as CONTEXT — and only when there is more than one\nof them, which is §3.9's rule for the map's own site segment, applied\nwhere the same ambiguity turns up.",
+        "properties": {
+          "address": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AddressPartsDTO"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Null for a shelf that stands nowhere, which is MOST of them and stays legal forever: the drawn and the photographed are one population (§3.1). A screen must read this as *not on the map yet*, never as an error."
+          },
+          "depth_count": {
+            "description": "Rows front-to-back the owner declared. 1 for almost every shelf; what makes *row 2 of 3* sayable.",
+            "title": "Depth Count",
+            "type": "integer"
+          },
+          "label": {
+            "default": "",
+            "title": "Label",
+            "type": "string"
+          },
+          "shelf_id": {
+            "description": "RESOLVED through the alias (§3.11), so a bookmarked or queued id from before a merge answers with the shelf that stands there now rather than 404.",
+            "title": "Shelf Id",
+            "type": "string"
+          },
+          "site": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Null when this library has one site — naming it would be chrome for a household that has never met the concept.",
+            "title": "Site"
+          }
+        },
+        "required": [
+          "shelf_id",
+          "depth_count"
+        ],
+        "title": "ShelfWhereDTO",
         "type": "object"
       },
       "SightingDTO": {
@@ -6120,6 +6230,68 @@
           }
         },
         "summary": "Post Undo",
+        "tags": [
+          "map"
+        ]
+      }
+    },
+    "/api/v1/map/where/{shelf_id}": {
+      "get": {
+        "description": "Where this shelf stands, in the words a person would use.\n\nVISION §7's requirement, and the sentence this router's own docstring\nsays the map exists for: *\"given a book, the UI can answer 'where is it'\n... including which row front-to-back\"*. The Books tab reaches it through\na copy's ``shelf_id``; the shelf screen reaches it for its own id.\n\n**A shelf that stands nowhere answers 200 with a null address**, not 404.\nMost shelves stand nowhere — they were born from a photograph and §3.1\nkeeps the drawn and the photographed one population — so *not on the map\nyet* is the normal state, and a 404 would tell a screen that a shelf it is\nlooking at does not exist.\n\n⚠ The id resolves through the alias FIRST (§3.11). A copy's\n``shelf_id`` is a stored value: after a merge it names an identity that is\nanswered for rather than live, and a book whose location silently became\n*nowhere* is exactly the phantom this catalogue is built not to produce.\n\n⚠ It reads the whole drawing rather than asking the store for one\nsection's ancestry, for the reason ``GET /map`` gives one route up: a house\nis tens of rows. A dedicated query per level would be four round trips to\nsave a few hundred bytes, and a fifth the day a level is added.",
+        "operationId": "where_is_api_v1_map_where__shelf_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "shelf_id",
+            "required": true,
+            "schema": {
+              "title": "Shelf Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The row front-to-back this answer is about — a COPY's depth, which the shelf itself does not have. Omitted, the answer names no row.",
+            "in": "query",
+            "name": "depth",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The row front-to-back this answer is about — a COPY's depth, which the shelf itself does not have. Omitted, the answer names no row.",
+              "title": "Depth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShelfWhereDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Where Is",
         "tags": [
           "map"
         ]

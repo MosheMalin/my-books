@@ -206,10 +206,20 @@ describe('the destructive actions', () => {
     // UI_PLAN §5 keeps the two destructive actions deliberately separate.
     // Until P2.1 there is no shelf to remove from, so the control is ABSENT —
     // a greyed-out button that never becomes clickable reads as a bug.
+    //
+    // ⚠ This asserted `queryByText(/מדף/)` — ANY text containing the word
+    // "shelf" — which was only ever true because the drawer had nothing to say
+    // about shelves at all. P6.5b gives it something: *"where it is"* prints
+    // «לא על מדף» for an unshelved copy, and the test failed on the sentence
+    // whose whole point is that the book is on no shelf. The rule was always
+    // about a CONTROL, so it asks about controls: no button offers to remove
+    // this book from a shelf, in either language's wording.
     fakeServer([DURRELL])
     renderApp(<App />)
     const drawer = await openDrawer()
-    expect(within(drawer).queryByText(/מדף/)).not.toBeInTheDocument()
+    const buttons = within(drawer).getAllByRole('button')
+      .map((b) => b.getAttribute('aria-label') || b.textContent || '')
+    expect(buttons.filter((name) => /מדף|shelf/i.test(name))).toEqual([])
   })
 })
 

@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 
 from app.domain.alias import ShelfAlias
 from app.domain import (
+    AddressParts,
     MergePlan,
     DEFAULT_COLUMNS,
     DEFAULT_DEPTH,
@@ -1580,6 +1581,83 @@ class MergeRefusalDTO(BaseModel):
 
     reason: str
     say: str
+
+
+class AddressPartsDTO(BaseModel):
+    """A shelf's address as PARTS, never as a sentence.
+
+    The sentence is Hebrew in the product and English in the console, so
+    assembling it here would be a second i18n table nobody maintains. What is
+    NOT the client's is which parts appear at all — that rule has one copy, in
+    ``app.domain.place.address_parts``, and this DTO is its wire shape.
+
+    ``section``, ``column`` and ``depth`` are null when naming them would
+    imply a choice that does not exist: a one-section case never says
+    *section 1*, a one-column case never says *column 1*, and the front row
+    is never called a row (§3.6, UI_PLAN §1.1, §5.7).
+    """
+
+    place: str = Field(
+        description="The ROOM. Empty when the bookcase stands on no room — "
+                    "legal, and not the same as unknown (§3.7).",
+    )
+    bookcase: str = Field(
+        description="The furniture's name. May be empty: naming a case is "
+                    "optional, exactly as naming a shelf is.",
+    )
+    section: int | None = None
+    column: int | None = None
+    level: int = Field(description="1-based, counted from the TOP.")
+    depth: int | None = Field(
+        default=None,
+        description="Row front-to-back, and only when it is not the front "
+                    "one. Asked for by query, because the shelf has a depth "
+                    "COUNT and a copy has a depth.",
+    )
+
+    @classmethod
+    def of(cls, parts: AddressParts) -> "AddressPartsDTO":
+        return cls(place=parts.place, bookcase=parts.bookcase,
+                   section=parts.section, column=parts.column,
+                   level=parts.level, depth=parts.depth)
+
+
+class ShelfWhereDTO(BaseModel):
+    """Where one shelf stands — VISION §7's *"given a book, answer where is
+    it"*, which is the sentence P6.5 exists to make answerable.
+
+    ⚠ ``site`` is beside the address and never inside it. §3.7 settles that a
+    Site and a Floor are groupings and *"never part of an address"*, because
+    putting either in would re-address every shelf in the house the day
+    somebody renames a building. But two sites may each have a *living room*,
+    so the site is carried as CONTEXT — and only when there is more than one
+    of them, which is §3.9's rule for the map's own site segment, applied
+    where the same ambiguity turns up.
+    """
+
+    shelf_id: str = Field(
+        description="RESOLVED through the alias (§3.11), so a bookmarked or "
+                    "queued id from before a merge answers with the shelf "
+                    "that stands there now rather than 404.",
+    )
+    label: str = ""
+    depth_count: int = Field(
+        description="Rows front-to-back the owner declared. 1 for almost "
+                    "every shelf; what makes *row 2 of 3* sayable.",
+    )
+    site: str | None = Field(
+        default=None,
+        description="Null when this library has one site — naming it would "
+                    "be chrome for a household that has never met the "
+                    "concept.",
+    )
+    address: AddressPartsDTO | None = Field(
+        default=None,
+        description="Null for a shelf that stands nowhere, which is MOST of "
+                    "them and stays legal forever: the drawn and the "
+                    "photographed are one population (§3.1). A screen must "
+                    "read this as *not on the map yet*, never as an error.",
+    )
 
 
 class MergePreviewDTO(BaseModel):

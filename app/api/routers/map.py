@@ -59,6 +59,7 @@ from app.api.deps import (
     get_shelf_store,
 )
 from app.api.dto import (
+    AddressPartsDTO,
     BookcaseCreate,
     BookcaseDrawnDTO,
     BookcaseDTO,
@@ -86,6 +87,7 @@ from app.api.dto import (
     SiteDTO,
     SitePatch,
     SlotDepthPatch,
+    ShelfWhereDTO,
     SlotRemovalDTO,
     UndoOfferDTO,
 )
@@ -111,6 +113,7 @@ from app.domain import (
     SlotsOccupied,
     TooManySlots,
     VirtualShelfHasNoDepth,
+    address_parts,
     apply_default_levels,
     check_bookcase_size,
     new_bookcase,
@@ -288,6 +291,89 @@ def get_map(
     normal state and not an error.
     """
     return MapDTO.of(store.load_map(library))
+
+
+@router.get("/where/{shelf_id}", response_model=ShelfWhereDTO)
+def where_is(
+    shelf_id: str,
+    depth: int | None = Query(
+        default=None, ge=1,
+        description="The row front-to-back this answer is about \u2014 a COPY's "
+                    "depth, which the shelf itself does not have. Omitted, "
+                    "the answer names no row.",
+    ),
+    library: LibraryRef = Depends(require(READ)),
+    store: MapStore = Depends(get_map_store),
+    shelves: ShelfStore = Depends(get_shelf_store),
+) -> ShelfWhereDTO:
+    """Where this shelf stands, in the words a person would use.
+
+    VISION \u00a77's requirement, and the sentence this router's own docstring
+    says the map exists for: *"given a book, the UI can answer 'where is it'
+    ... including which row front-to-back"*. The Books tab reaches it through
+    a copy's ``shelf_id``; the shelf screen reaches it for its own id.
+
+    **A shelf that stands nowhere answers 200 with a null address**, not 404.
+    Most shelves stand nowhere \u2014 they were born from a photograph and \u00a73.1
+    keeps the drawn and the photographed one population \u2014 so *not on the map
+    yet* is the normal state, and a 404 would tell a screen that a shelf it is
+    looking at does not exist.
+
+    \u26a0 The id resolves through the alias FIRST (\u00a73.11). A copy's
+    ``shelf_id`` is a stored value: after a merge it names an identity that is
+    answered for rather than live, and a book whose location silently became
+    *nowhere* is exactly the phantom this catalogue is built not to produce.
+
+    \u26a0 It reads the whole drawing rather than asking the store for one
+    section's ancestry, for the reason ``GET /map`` gives one route up: a house
+    is tens of rows. A dedicated query per level would be four round trips to
+    save a few hundred bytes, and a fifth the day a level is added.
+    """
+    here = resolve(shelf_id, shelves.list_aliases(library))
+    shelf = shelves.get_shelf(library, here)
+    if shelf is None:
+        raise _gone("shelf")
+
+    plan = store.load_map(library)
+    # \u00a73.9's rule for the map's site segment, applied to the same ambiguity
+    # in a sentence: one home renders no chrome at all.
+    many_sites = len(plan.sites) > 1
+
+    out = ShelfWhereDTO(shelf_id=shelf.id, label=shelf.label,
+                        depth_count=shelf.depth_count)
+    if shelf.address is None:
+        return out
+
+    section = next((s for s in plan.sections
+                    if s.id == shelf.address.section_id), None)
+    if section is None:
+        # A shelf holding an address whose section is gone. \u00a73.10a leaves the
+        # extent alone rather than cascading, so this is reachable; answering
+        # "nowhere" is the truth and is what the unaddressed branch says.
+        return out
+    case = next((b for b in plan.bookcases if b.id == section.bookcase_id),
+                None)
+    if case is None:
+        return out
+    room = next((p for p in plan.places if p.id == case.place_id), None)
+    site = None
+    if many_sites:
+        floor = next((f for f in plan.floors if f.id == case.floor_id), None)
+        found = next((s for s in plan.sites
+                      if floor is not None and s.id == floor.site_id), None)
+        site = found.name if found is not None else None
+
+    parts = address_parts(
+        place=room,
+        bookcase=case,
+        section=section,
+        section_count=sum(1 for s in plan.sections
+                          if s.bookcase_id == case.id),
+        address=shelf.address,
+        depth=depth,
+    )
+    return out.model_copy(update={"site": site,
+                                  "address": AddressPartsDTO.of(parts)})
 
 
 # --- sites ----------------------------------------------------------------
