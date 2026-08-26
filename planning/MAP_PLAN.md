@@ -1677,6 +1677,22 @@ in this pillar: the name-first check enumerated `['bound_here',
 `site_added` have opened their sentences with a name the owner typed, in both
 languages, since P6.3.1.
 
+**What the phone walk found, on top of the four reviews' findings:** the
+account of what would move was **invisible** — `.merge-facts` set no `color`,
+so it inherited the PRODUCT's `--ink` and measured **1.10:1** against the map
+panel whenever the two themes disagree, which is the default on a light-mode
+phone. And the undo announced **0 books** after 22 came back: `restores`
+answers *what WOULD an undo do* and is correctly empty afterwards, so no undo
+of any kind could ever report a number — while the web ring's own test
+asserted that zero as the success message and therefore could not fail. The
+route now sends `restored` beside it. Five more: the six refusal reasons
+reached a Hebrew reader as English and a hex id; *cancel* sat 0.0px above the
+destructive *take off the map*, because the 12px gap lives on a button that is
+unmounted once the picker opens; the radios were stretched to 149×13 by a rule
+written for text inputs; the disabled ✓ had no stated reason and the
+auto-scroll landed past the question that would supply one; and the picker
+announced *0 ספרים · 0 תמונות* on a row reading *ריק*.
+
 **Walked on the owner's real library at 375×812**: 22 books and a photograph
 merged into a drawn slot, then taken back. Every table byte-identical to the
 pre-walk backup afterwards, `foreign_key_check` clean, and the journal row the
