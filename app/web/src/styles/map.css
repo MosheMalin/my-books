@@ -304,7 +304,20 @@
    one axis over: a flex item's default `min-*: auto` is min-CONTENT, so once
    the phone stacks these in a column the canvas could never shrink below its
    own content and the panel pushed it off the page. */
-.mapscreen .canvas-wrap { position: relative; flex: 1; min-width: 0; min-height: 0; }
+/* ⚠ `overflow: hidden` — a canvas is a VIEWPORT onto a drawing larger than
+   itself. Without it the furniture outside the view still contributes to
+   the DOCUMENT's width, lazily, only once something makes the browser
+   account for it: measured at 375x812 with a bookcase selected and the
+   storey menu open, `documentElement.scrollWidth` **424 against a
+   clientWidth of 375** — the whole page sliding sideways, from a bookcase
+   standing at the right-hand end of a room. `#/plan` with nothing selected
+   measured 375, which is why five pillars of walking this map never met
+   it. Everything positioned inside (the storey badge and its menu, the
+   toast, the hint) is within bounds by construction. */
+.mapscreen .canvas-wrap {
+  position: relative; flex: 1; min-width: 0; min-height: 0;
+  overflow: hidden;
+}
 
 .mapscreen .resizer {
   flex: 0 0 6px;
@@ -494,6 +507,16 @@
   height: 100%;
   background: var(--bg);
   user-select: none;
+  /* ⚠ A canvas is a VIEWPORT onto a drawing larger than itself, so it has to
+     clip. Without this the furniture outside the view still contributes to
+     the document's width — lazily, only once something makes the browser
+     account for it. Measured at 375x812 arriving from `#/plan/<shelfId>` with
+     a bookcase selected: `documentElement.scrollWidth` **424 against a
+     clientWidth of 375**, the whole page sliding sideways, on a shelf that
+     happens to stand at the right-hand end of a room. `#/plan` with nothing
+     selected measured 375, which is why five pillars of walking the map never
+     met it. Same failure the app bar had one item ago, from the other end. */
+  overflow: hidden;
 }
 
 .mapscreen .grid-minor, .mapscreen .grid-major { fill: none; vector-effect: non-scaling-stroke; }
@@ -987,6 +1010,14 @@
 }
 
 @media (max-width: 640px) {
+  /* ⚠ …and the menus that open OVER the canvas, which the panel selector
+     does not reach. A UX review measured the storey menu at 375x812: all five
+     items 180x**34**, including *remove the storey* — a destructive control
+     under the floor, on the surface `map.css` already calls "the device this
+     product is for". Exactly the hole `touch.test.ts` describes in its own
+     docstring: a control sized by padding and a font, which no sheet-reading
+     guard can see. */
+  .mapscreen .menu-pop button,
   .mapscreen .map-side.map-side a,
   .mapscreen .map-side.map-side button,
   .mapscreen .map-side.map-side input,

@@ -172,6 +172,8 @@ const HE = {
     where_unknown: 'לא הצלחנו לברר איפה זה עומד',
     where_unshelved: 'לא על מדף',
     where_case_unnamed: 'כוננית ללא שם',
+    where_room_unnamed: 'חדר ללא שם',
+    where_put_on_map: 'מקמו אותו על השרטוט →',
     where_col: (n: number) => `עמודה ${n}`,
     where_level: (n: number) => `גובה ${n}`,
     where_section: (n: number) => `יחידה ${n}`,
@@ -187,6 +189,7 @@ const HE = {
 
     // --- shelf detail (P2.8, UI_PLAN §3 level 3) ---
     shelf_not_found: 'המדף לא נמצא',
+    shelf_unreachable: 'לא הצלחנו לטעון את המדף — נראה שאין חיבור לשרת',
     shelf_untitled_photo_alt: 'תמונת המדף',
     shelf_last_read: (date: string) => `נקרא לאחרונה ב-${date}`,
     shelf_never_read: 'המדף הזה עדיין לא נקרא',
@@ -477,6 +480,8 @@ const EN: Strings = {
     where_unknown: "Couldn't find out where it is",
     where_unshelved: 'Not on a shelf',
     where_case_unnamed: 'unnamed bookcase',
+    where_room_unnamed: 'unnamed room',
+    where_put_on_map: 'Put it on the drawing →',
     where_col: (n: number) => `column ${n}`,
     where_level: (n: number) => `level ${n}`,
     where_section: (n: number) => `section ${n}`,
@@ -486,6 +491,7 @@ const EN: Strings = {
 
     // --- shelf detail (P2.8, UI_PLAN §3 level 3) ---
     shelf_not_found: 'Shelf not found',
+    shelf_unreachable: "Couldn't load the shelf — the server looks unreachable",
     shelf_untitled_photo_alt: 'Shelf photo',
     shelf_last_read: (date: string) => `Last read ${date}`,
     shelf_never_read: 'This shelf has never been read',

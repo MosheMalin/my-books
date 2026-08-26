@@ -253,7 +253,13 @@ export function PlanScreen({ library, focusShelf = null }: {
       // document, and the focus has to be applied to the one that arrives.
       focused.current = null
       chooseSite(floor.site_id)
-    })()
+    // ⚠ A `.catch`, because there is nothing to report. `focused.current` is
+    // already set, so nothing retries, and the give-up is intended — but
+    // without this the rejection ESCAPES: a review failed the lookup's
+    // `GET /map` and vitest printed *Unhandled Rejection: TypeError: Failed
+    // to fetch*, with its own warning that it *"might cause false positive
+    // tests"*. In a browser it is an uncaught rejection in the console.
+    })().catch(() => undefined)
     return () => { alive = false }
   }, [focusShelf, plan, focusCell, siteId, chooseSite])
 

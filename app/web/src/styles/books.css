@@ -376,6 +376,21 @@
      mistake wearing a different number. */
   .bookpage .btn,
   .dbody .btn,
+  /* ⚠ The surfaces the first pass did not measure, all found by a UX review
+     walking them: the members panel (its role `<select>`s and **Remove** at
+     37px), the add-a-book modal (its two inputs at **21px**), the account
+     menu (43px — one pixel short, which is the least excusable kind), and
+     the capture tab's *Run* — the one control that spends money — at 37. A
+     floor that holds on the screens somebody happened to open is the 40px
+     mistake with a different number. */
+  .modal .btn,
+  .modal input,
+  .modal select,
+  .memberspanel .btn,
+  .memberspanel select,
+  .acctmenu-list button,
+  .capture .btn,
+  .capture input[type="radio"] + span,
   .authorlink,
   .dhead .btn {
     min-height: 44px;

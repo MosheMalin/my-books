@@ -7947,3 +7947,66 @@ def test_where_never_names_a_row_the_shelf_does_not_have():
             is None, "a row past the shelf's own depth is not a location"
         # Below is still refused by the schema, not clamped.
         assert client.get(at, params={"depth": 0}).status_code == 422
+
+def test_where_walks_to_the_shelfs_OWN_site_room_case_and_section():
+    """⚠ The whole ancestry, against DECOYS — and this test exists because
+    the fixture beside it could not see the difference.
+
+    `_drawn_map` builds one of everything, so a positional lookup and an id
+    lookup are indistinguishable in it. A quality review replaced the
+    floor→site walk with `plan.sites[0].name`, the bookcase lookup with
+    `plan.bookcases[0]`, the room lookup with `plan.places[0]` and the section
+    count with `len(plan.sections)` — and **all four passed the entire
+    1229-test suite**. The first one answers with THE WRONG BUILDING, which is
+    precisely what `ShelfWhereDTO` says the field exists to prevent ("two
+    sites may each have a living room").
+
+    So: two sites, two rooms, two bookcases, and the shelf in the SECOND of
+    each, with the first of each standing there as the answer a positional
+    lookup would give.
+    """
+    with TestClient(_app()) as client:
+        first = _drawn_map(client, columns=1, levels=1)
+        second = client.post("/api/v1/map/sites", json={"name": "הורים"})
+        assert second.status_code == 201, second.text
+        floor = client.post("/api/v1/map/floors", json={
+            "site_id": second.json()["id"], "name": "קומה"})
+        room = client.post("/api/v1/map/places", json={
+            "floor_id": floor.json()["id"], "name": "חדר הורים",
+            "rect": {"x": 0, "y": 0, "w": 9, "h": 7}})
+        case = client.post("/api/v1/map/bookcases", json={
+            "floor_id": floor.json()["id"], "place_id": room.json()["id"],
+            "name": "הכוננית שלהם",
+            "rect": {"x": 0, "y": 0, "w": 4, "h": 1},
+            "columns": 1, "levels": 1, "depth": 1})
+        assert case.status_code == 201, case.text
+        theirs = case.json()["section"]["id"]
+        # A SECOND section on that same bookcase, so `section_count` has to be
+        # scoped to the case rather than counted over the whole drawing.
+        more = client.post("/api/v1/map/sections",
+                           json={"bookcase_id": case.json()["id"]})
+        assert more.status_code == 201, more.text
+
+        shelf = [s for s in client.get("/api/v1/shelves").json()
+                 if s["address"] and s["address"]["section_id"] == theirs][0]
+        body = client.get(f"/api/v1/map/where/{shelf['id']}").json()
+
+        assert body["site"] == "הורים", "answered with the wrong building"
+        assert body["address"]["place"] == "חדר הורים"
+        assert body["address"]["bookcase"] == "הכוננית שלהם"
+        # Two sections on THIS case, so the section is named — and it is the
+        # bottom one, not "section 3 of everything drawn".
+        assert body["address"]["section"] == 1
+        # …and the first site's shelf still answers for the first site, or a
+        # swapped lookup would pass both ways.
+        ours_section = first["case"]["section"]["id"]
+        mine = [s for s in client.get("/api/v1/shelves").json()
+                if s["address"]
+                and s["address"]["section_id"] == ours_section][0]
+        ours = client.get(f"/api/v1/map/where/{mine['id']}").json()
+        assert ours["site"] == first["site"]["name"]
+        assert ours["address"]["place"] == first["place"]["name"]
+        assert ours["address"]["bookcase"] == first["case"]["name"]
+        assert ours["address"]["section"] is None, (
+            "the first bookcase has ONE section and must not name it"
+        )

@@ -200,6 +200,7 @@ export function App() {
       {membersOpen && <MembersPanel onClose={() => setMembersOpen(false)} />}
       <BookDrawer
         bookId={route.name === 'book' ? null : drawerId}
+        here={route.name === 'shelf' ? route.id : undefined}
         onClose={() => setDrawerId(null)}
         onPromote={promote}
         onAuthor={filterByAuthor}

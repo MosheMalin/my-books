@@ -355,9 +355,15 @@ def where_is(
     section = next((s for s in plan.sections
                     if s.id == shelf.address.section_id), None)
     if section is None:
-        # A shelf holding an address whose section is gone. \u00a73.10a leaves the
-        # extent alone rather than cascading, so this is reachable; answering
-        # "nowhere" is the truth and is what the unaddressed branch says.
+        # Defensive, and stated as such: `sections.bookcase_id` cascades and
+        # `shelves.section_id` does not, and every delete path empties a
+        # bookcase's slots first \u2014 so a shelf holding an address whose section
+        # is gone is unreachable through the API today. The same is true of
+        # the three lookups below it.
+        # \u26a0 The citation that stood here was \u00a73.10a, which is the GAPS rule
+        # and says nothing about this. A wrong stated reason is what makes the
+        # next reader delete the guard. Answering "nowhere" is right either
+        # way \u2014 it is the same answer the unaddressed branch gives.
         return out
     # ⚠ **The address has to still BE a slot of the section as loaded.**
     # `shelf.address` and this `Section` come from two different reads with no

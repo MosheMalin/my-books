@@ -17,6 +17,9 @@ import { BookSurface } from './BookSurface'
 import { useBookRecord } from './useBookRecord'
 
 export interface BookDrawerProps {
+  /** The shelf whose screen is behind this drawer, if any — threaded so the
+   *  surface does not offer a link back to the page you are reading. */
+  here?: string | undefined
   bookId: string | null
   onClose: () => void
   onPromote: (id: string) => void
@@ -25,6 +28,7 @@ export interface BookDrawerProps {
 
 export function BookDrawer({
   bookId,
+  here,
   onClose,
   onPromote,
   onAuthor,
@@ -112,6 +116,8 @@ export function BookDrawer({
             }}
             onPromote={() => onPromote(record.book.id)}
             onDeleted={onClose}
+            onLeave={onClose}
+            here={here}
           />
         )}
       </aside>

@@ -927,6 +927,76 @@ And one that predates the item: the editor took its storey from
 selection on a storey the canvas filters out — a panel describing a bookcase
 drawn nowhere on screen. The storey now follows the selection.
 
+#### What the P6.5b/c reviews found
+
+**A CRITICAL of my own making.** `BookSurface.tsx` had never carried an anchor
+before P6.5b, and the drawer is its default mount — `App` clears `drawerId`
+only when the route becomes a BOOK. So *למדף שלו →* navigated to the shelf
+screen and left a focus-trapped overlay on top of it: measured,
+`elementFromPoint` at the middle of the viewport returned the book drawer's
+body, and recovery was two taps. `promote()` twenty lines above it exists for
+exactly this and says so. The same control on the shelf screen pointed at the
+shelf screen — an action that moves nothing, on the surface where it is
+likeliest to be pressed. Both fixed and gated.
+
+**The link's own justification did not survive the phone.** Arriving at
+`#/plan/<shelfId>` at 375×812, `useCellInView` scrolled the *fieldset* into
+view and the highlighted cell landed **409px above the fold**, with no
+scrollbar to say so — on the item whose case for the link is *"a highlighted
+cell can tell two unnamed bookcases apart"*. The cell is marked last now, so
+it wins when both cannot fit.
+
+**And the canvas did not clip.** With a bookcase selected and the storey menu
+open, `documentElement.scrollWidth` measured **424 against a clientWidth of
+375** — furniture standing outside the view contributing to the DOCUMENT's
+width, lazily, only once something made the browser account for it. `#/plan`
+with nothing selected measured 375, which is why five pillars of walking this
+map never met it. The same failure the app bar had one item earlier, from the
+other end.
+
+**Six rules of the "up" direction had no gate at all.** A review deleted the
+link, pointed it at a bare `#/plan`, stopped the focus applying, dropped it
+out of the remount key, made `cellOf` return a cell without its bookcase (the
+exact defect P6.5c's commit says was found in two places at once) and made the
+focus re-apply on every load — and the 407-test ring stayed green through all
+six. The only verification was a browser walk, which is not repeatable. Four
+`PlanScreen` cases and three `Address` cases now hold them, and the
+remount-key one had to be written as a RERENDER, because every other test
+mounts fresh and the real journey is a route change inside a mounted app.
+
+**The site walk answered with the wrong building, and passed.** Replacing the
+floor→site resolution with `plan.sites[0].name` — and the bookcase, room and
+section-count lookups with their positional equivalents — passed the entire
+1229-test suite, because `_drawn_map` builds exactly one of everything and a
+positional lookup is then indistinguishable from an identity one. Two sites,
+two rooms, two bookcases and two sections now stand as decoys.
+
+**Three more the fixtures could not see**: the unnamed-BOOKCASE fallback (the
+state all 11 of the owner's bookcases are in) and the unnamed-ROOM one (20 of
+152 addressed shelves stand on bookcases attached to no room — and the room
+was being DROPPED by the same argument that keeps the case, so the address
+said the building has one room); and `ReadState`'s absent-when-silent rule,
+which is the state of 152 of 153 shelves.
+
+**A dead end where the action was needed.** *עדיין לא על המפה* had no
+control on it while the state needing none had one — and it is the state
+**22 of 22** of the owner's shelved books are in, because every book that
+stands on a shelf stands on the ONE shelf that is not on the drawing. The
+remedy was one tab away and nothing named it.
+
+⚠ **The consequence for this pillar, stated plainly**: the book → address →
+drawing journey P6.5 exists for **cannot be walked on the owner's data today**,
+and was not. Every shelved book is on the unaddressed shelf; every addressed
+shelf holds none. What was verified end to end starts at the shelf screen.
+
+Smaller: a failed lookup was dropping the shelf link, which needs no lookup;
+the cross-site focus lookup let its rejection escape as an unhandled one; a
+dead API told the shelf screen *the shelf was not found* rather than *we could
+not reach the server*, which matters now that the screen is a destination in a
+chain; the storey menu's items (including *remove the storey*) were 34px, and
+the members panel, the add-a-book modal and the capture tab's *Run* between 21
+and 37 — the surfaces the first touch-floor pass never opened.
+
 #### P6.5b in detail
 
 `address_parts` already existed in `app/domain/place.py`, written for this

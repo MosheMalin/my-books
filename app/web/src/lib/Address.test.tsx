@@ -194,3 +194,124 @@ describe('a book with two copies', () => {
     expect(within(drawer).getByText('יחידה 2')).toBeInTheDocument()
   })
 })
+
+describe('the parts of an address that a review deleted unnoticed', () => {
+  it('names the site once a household has two', async () => {
+    // §3.7 keeps the site OUT of the address and beside it, and only once
+    // there is a second one — two sites may each have a *living room*. The
+    // server decides whether to send it; this is the half that prints it, and
+    // no fixture ever set it: deleting the segment altogether left the whole
+    // 407-test ring green.
+    const server = fakeServer([A_BOOK({ shelfId: 'sh-1', depth: 1 })])
+    server.whereByShelf['sh-1'] = AT({ site: 'הורים' })
+    renderApp(<App />)
+    const drawer = await openDrawer()
+
+    const line = await waitFor(() => {
+      const el = drawer.querySelector('.whereline')
+      expect(el).toBeTruthy()
+      return el as HTMLElement
+    })
+    expect(within(line).getByText('הורים')).toHaveClass('rtl-safe')
+    // Beside the address, and FIRST — it is the widest thing said.
+    expect(line.textContent!.indexOf('הורים'))
+      .toBeLessThan(line.textContent!.indexOf('סלון'))
+  })
+
+  it('says so when the bookcase and the room have no names', async () => {
+    // ⚠ The state the owner's whole library is in: **all 11 bookcases
+    // unnamed**, and 20 of 152 addressed shelves standing on bookcases
+    // attached to no room at all. Both fallbacks had no gate — every fixture
+    // named both — so a review deleted each and the ring stayed green.
+    // Omitting the case says the room has one bookcase; omitting the room
+    // says the building has one room. Neither is an omission; both are
+    // claims.
+    const server = fakeServer([A_BOOK({ shelfId: 'sh-1', depth: 1 })])
+    server.whereByShelf['sh-1'] = AT({
+      address: { place: '', bookcase: '', section: null, column: 1, level: 4,
+                 depth: null },
+    } as Partial<ShelfWhere>)
+    renderApp(<App />)
+    const drawer = await openDrawer()
+
+    const line = await waitFor(() => {
+      const el = drawer.querySelector('.whereline')
+      expect(el).toBeTruthy()
+      return el as HTMLElement
+    })
+    expect(within(line).getByText('חדר ללא שם')).toBeInTheDocument()
+    expect(within(line).getByText('כוננית ללא שם')).toBeInTheDocument()
+    // Ours, not the owner's — so no `rtl-safe`.
+    expect(within(line).getByText('כוננית ללא שם'))
+      .not.toHaveClass('rtl-safe')
+  })
+})
+
+describe('the link out of the book surface', () => {
+  it('closes the drawer as it goes', async () => {
+    // ⚠⚠ The drawer is this surface's DEFAULT mount, and `App` clears it only
+    // when the route becomes a BOOK — so this anchor, the first one the file
+    // has ever carried, navigated to the shelf screen and left a
+    // focus-trapped overlay on top of it. Measured: `elementFromPoint` at the
+    // middle of the viewport returned the book drawer's body, and recovery
+    // was two taps. `promote()` in the same file exists for exactly this and
+    // already says so.
+    const server = fakeServer([A_BOOK({ shelfId: 'sh-1', depth: 1 })])
+    server.whereByShelf['sh-1'] = AT()
+    renderApp(<App />)
+    const drawer = await openDrawer()
+
+    const link = await within(drawer).findByRole('link',
+                                                 { name: 'למדף שלו →' })
+    await userEvent.click(link)
+
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  it('offers no link back to the shelf you are reading', async () => {
+    // The same control on the shelf screen pointed at the shelf screen: an
+    // action that moves nothing, on the surface where it is likeliest to be
+    // pressed.
+    const server = fakeServer([A_BOOK({ shelfId: 'sh-1', depth: 1 })])
+    server.whereByShelf['sh-1'] = AT()
+    globalThis.location.hash = '#/map/sh-1'
+    renderApp(<App />)
+
+    await userEvent.click(await screen.findByText('היער השיכור'))
+    const drawer = await screen.findByRole('dialog')
+    await waitFor(() =>
+      expect(within(drawer).getByText('סלון')).toBeInTheDocument())
+    expect(within(drawer).queryByRole('link', { name: 'למדף שלו →' }))
+      .not.toBeInTheDocument()
+  })
+
+  it('points the shelf screen at its own cell on the drawing', async () => {
+    // The UP half of P6.5c's drill, and it had no gate at all: a review
+    // deleted the link, and pointed it at a bare `#/plan`, and 407 tests
+    // stayed green. It is the control that makes an address usable on a
+    // library whose bookcases are all unnamed.
+    const server = fakeServer([A_BOOK({ shelfId: 'sh-1', depth: 1 })])
+    server.whereByShelf['sh-1'] = AT()
+    globalThis.location.hash = '#/map/sh-1'
+    renderApp(<App />)
+
+    const show = await screen.findByRole(
+      'link', { name: 'הצגה על השרטוט →' })
+    expect(show).toHaveAttribute('href', '#/plan/sh-1')
+  })
+
+  it('offers the drawing to a shelf that is not on it', async () => {
+    // ⚠ The state that needs an ACTION had no control on it, while the state
+    // that needs none had one — and it is the state 22 of 22 of the owner's
+    // shelved books are in. The remedy is one tab away and nothing named it.
+    const server = fakeServer([A_BOOK({ shelfId: 'sh-2', depth: 1 })])
+    server.whereByShelf['sh-2'] = AT({ shelf_id: 'sh-2', address: null })
+    globalThis.location.hash = '#/map/sh-2'
+    renderApp(<App />)
+
+    const put = await screen.findByRole('link',
+                                        { name: 'מקמו אותו על השרטוט →' })
+    expect(put).toHaveAttribute('href', '#/plan')
+  })
+})
