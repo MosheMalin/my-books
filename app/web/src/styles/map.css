@@ -620,7 +620,15 @@
   padding: 7px 8px;
   min-height: 34px;
 }
-.mapscreen .field > input:not([type='number']) { width: 100%; }
+/* ⚠ Text inputs only. This was written before the sheet had a radio, and it
+   caught the first one: measured at **149×13** with its own label starting
+   120px away, so the two dots floated loose near the middle of the panel
+   while their words sat at the edge. The 54px label is still the hit target,
+   so it worked — and the control §5.7 says must be explicitly DECLARED did
+   not look like a pair of radios. */
+.mapscreen .field > input:not([type='number']):not([type='radio']):not([type='checkbox']) {
+  width: 100%;
+}
 .mapscreen input[type='number'] { width: 68px; }
 
 .mapscreen .rtl-safe { unicode-bidi: plaintext; text-align: start; }
@@ -866,6 +874,72 @@
   text-align: start;
 }
 .mapscreen .shelf-pick li button .note { margin: 0; font-size: 11px; }
+/* Merging two identities into one (P6.4d, MAP_PLAN §3.11).
+   ⚠ It reuses `.shelf-pick` for the list — the same rows, the same bound —
+   and adds only what is different: the account of what would move, and the
+   one question §3.12 says must be ANSWERED rather than defaulted. */
+.mapscreen .merge-open {
+  margin-top: 8px;
+  /* ⚠ And a margin BELOW it. Measured on a phone: this button ends at y=767
+     and *take off the map* — 34px tall, and the destructive one — began at
+     y=767. Zero pixels between a full-width control and a destructive one is
+     a mis-tap waiting to happen, and it is a gap this item introduced by
+     putting a wide button directly above it. (The 34px itself is P6.5's
+     touch-floor sweep, not this item's.) */
+  margin-bottom: 12px;
+  width: 100%;
+  min-height: 44px;
+}
+.mapscreen .merge-preview { margin-top: 8px; }
+/* ⚠ And a gap BELOW both open states. The 12px under `.merge-open` protects
+   nothing once the picker opens, because that button is unmounted — measured
+   with *cancel this merge* sitting **0.0px** above the destructive *take off
+   the map*, overlapping horizontally. A missed tap on the way out of a merge
+   landed on taking the shelf off the map. */
+.mapscreen .shelf-pick,
+.mapscreen .merge-preview { margin-bottom: 12px; }
+.mapscreen .merge-facts {
+  /* ⚠ **MEASURED at 1.10:1** — near-black on near-black, on a light-mode
+     phone with the map in its default dark theme. This sheet defines `--ink`
+     inside `.mapscreen` but never paints it at the root, so a child with no
+     colour of its own inherits the PRODUCT's `--ink`; when the two themes
+     disagree, the text is invisible. Both mismatched combinations fail, and
+     the one child that did carry a colour is `.warn` — so the worst case
+     showed a warning and nothing it referred to. Every sibling list in this
+     file sets one (`.picked li`, `.steps`); this one did not, and it is the
+     whole reason the merge is three steps rather than one. */
+  color: var(--ink);
+  margin: 6px 0;
+  /* `padding-inline-start`, never `padding-left`: the bullets sit on the
+     start edge in both directions, and this panel is read in Hebrew. */
+  padding-inline-start: 18px;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.mapscreen .merge-facts .warn { color: var(--warn); }
+/* ⚠ `.note.warn` had NO rule at all, in either theme. P6.4c introduced two
+   of them — the shelf list that could not be read, and the merge preview that
+   could not — and both rendered in `--dim`, the colour this sheet uses for
+   *this is a detail you can skip*. A failure that reads as a footnote is the
+   same family as the empty list that read as "every shelf is already on the
+   map": absent is not unknown, and unreadable is not fine. */
+.mapscreen .note.warn { color: var(--warn); }
+.mapscreen .merge-strip { margin: 8px 0; }
+.mapscreen .merge-strip .field.inline { min-height: 44px; }
+/* A destructive control that is not yet allowed to fire has to LOOK unusable;
+   `disabled` alone leaves a full-strength danger button that swallows taps
+   in silence. */
+.mapscreen .merge-preview button[disabled] { opacity: 0.45; }
+/* ⚠ And they do not TOUCH. Measured on a phone: the ✓ ended at y=768 and
+   *cancel* began at y=768 — zero pixels between the control that merges two
+   identities and the one that abandons it. The same gap this sheet puts under
+   `.merge-open`, and for the sharper reason: here the two are pressed in the
+   same breath. */
+.mapscreen .merge-preview .danger { min-height: 44px; margin-bottom: 10px; }
+.mapscreen .merge-preview .linkish { min-height: 44px; }
+
 /* While the document is being re-derived (P6.4c). The editor STAYS on
    screen — a blank is what a review measured at 1.42s for one tap — and is
    made inert rather than merely dim, because an edit made in that window

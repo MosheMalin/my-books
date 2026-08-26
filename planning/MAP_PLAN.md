@@ -1237,8 +1237,8 @@ The decomposition, each landing on `main` before the next:
 | **P6.4a** | ✅ **The alias, and nothing using it** — schema **v24**, one alias row carrying the absorbed shelf's id AND its former address, the resolver, `BookStore.books_on_shelf`, and "a shelf other identities resolve to is OCCUPIED". No merge, no route. | M | `review-migration` **before**, data-integrity, quality |
 | **P6.4b** | **Undo for destructive map edits** (§3.15) — the journal, the inverse, and the invalidation rule. Covers remove column, remove section, delete bookcase, remove site, **and switching cells off** (P6.3.2, which arrived after §3.15 was written); the merge joins it in P6.4d. Fingerprint at undo time and no expiry; record all, undo the head; a minimal UI lands with it (owner, 2026-08-24). ⚠ Schema **v22** and **v23** — see the note below. | L | `review-migration` **before**, data-integrity, quality, ux | ✅ |
 | **P6.4c** | ✅ **Bind** — an unaddressed shelf gains an address, and loses one. No identities join; a taken slot is a 409 naming the occupant and offering the merge. Unbinding is journalled and binding is not; the panel gained a picker; two pre-existing journal bugs fell out of it. | S | data-integrity, security, quality, ux |
-| **P6.4d** | **Merge** — two identities become one, undoable. ⚠ **carries the data-loss risk**, and P6.4a left it three named traps: removing the absorbed shelf's row CASCADES its captures away (`captures.shelf_id … ON DELETE CASCADE`, measured), and merging a shelf that has itself absorbed one is refused by the one-hop rule, so re-pointing must happen inside the same transaction; and `DELETE /api/v1/shelves/{id}` catches only `ShelfNotEmpty`, so the owner's *refuse, naming the count* would arrive as a 500 on the one surface that could show the count. | L | data-integrity, security, quality, ux |
-| **P6.4e** | **History across the seam** — reads, streaks, staleness and the *formerly* line resolve through the alias. | M | data-integrity, quality, ux |
+| **P6.4d** | ✅ **Merge** — two identities become one, undoable. All three of P6.4a's named traps met: the captures move BEFORE the row goes, `absorb_shelf` re-points inside one transaction, and `DELETE /shelves/{id}` now catches `ShelfHasAliases` too (it was answering 500 for the first survivor a merge made). Four reviews found one critical, nine majors and a conditional React hook. | L | data-integrity, security, quality, ux | ✅ |
+| **P6.4e** | **History across the seam** — streaks, staleness and the *formerly* line resolve through the alias. ⚠ **Two thirds of this arrived early**, because a data-integrity review measured what deferring them cost: `apply_diff` and `_load_read`/`_load_shelf` now resolve, since without it a read settling across a merge had its ENTIRE diff discarded in silence (the settle path logs and does not re-raise) while the read was stored DONE with a summary claiming books it never added — and every §5.4 question a merge moved became permanently unanswerable, unevictable, and 404 forever. What is left is the STREAK (§3.16) and the *formerly* line. | M | data-integrity, quality, ux |
 | **P6.4f** | *Optional:* **the proposal** — candidates from typed labels only, each an explicit ✓. | S | quality, ux, security |
 
 ⚠ **The order moved, and so did the numbering** (owner, 2026-08-23). **P6.4b
@@ -1540,8 +1540,8 @@ branch one `if` above already has. Rarity was the wrong argument for leaving
 it: a free cell is not rare, it is *always the answer to a question the owner
 has just asked*.
 
-**What P6.4d inherits from this item**, beyond the three traps already on its
-row:
+**What P6.4d inherited from this item**, beyond the three traps already on
+its row — all three met, see "P6.4d in detail" below:
 
 - **an absorbed identity is already refused a slot** (`ShelfWasMerged`). A row
   that outlives its merge has no address, so it appears in `GET /shelves` and
@@ -1589,6 +1589,125 @@ against the post-merge state and assert the suppressed set is identical.
   photo off A onto B today — the books stay. P6.4c must not contradict that
   route's ordering, and the shelf screen should stop showing the resulting
   empty A as if it were furniture.
+
+### P6.4d — the merge, and the four reviews it took
+
+**What landed.** Two shelf identities become one: the copies move, the two
+capture strips join in a DECLARED order (§3.12), §3.13's four "governs a
+future write" tables move with the wood while `provenance` and `reads`/
+`claims` stay, the survivor deepens by §5.1's ladder, and the absorbed
+identity survives as an alias of its id AND its former address (§3.11).
+Nothing is rewritten. It is undoable, and the inverse is the rows as they
+stood — which is why §3.15 put the journal ahead of this item.
+
+`MapRestore` grew a second half to carry it: five ledger tuples plus three
+*the edit MINTED this, so the undo deletes it* fields. Extended rather than
+given a parallel `MergeRestore`, because the scope, the fingerprint, the
+coalescing, the codec and the one-deep head are all written against ONE bag of
+remembered rows, and a second copy is where they would disagree.
+
+**⚠ The ordering IS the safety argument, and it was backwards.** The alias was
+written last, on the reasoning that a crash before it loses the identity
+outright. A data-integrity review measured the other end: with the books moved
+first, a concurrent `DELETE /api/v1/shelves/{survivor}` — which SUCCEEDS,
+because this section's own example absorbs a photo-born shelf into a DRAWN
+slot, and a drawn slot is empty by construction — left three copies naming a
+shelf that was neither live nor an alias. `foreign_key_check` clean, no
+journal entry. The alias goes first now: once `A -> B` exists every row still
+naming A is reachable through `identities()`, so an interruption loses nothing
+and a retry finishes.
+
+**The three traps P6.4a wrote down, all met:** captures move before the row
+goes, so the CASCADE never fires; `absorb_shelf` re-points what already
+answered to the absorbed shelf and writes the alias in ONE transaction (two
+calls would leave the library holding identities that name a shelf about to be
+deleted); and `DELETE /shelves/{id}` catches `ShelfHasAliases`, which it did
+not — it answered **500** for the first survivor any merge made.
+
+**What four reviews found**, beyond the critical:
+
+- ⚠ **§3.11's `apply_diff` clause did not exist.** This section promised in
+  words that *"a read that started at A finishes at B rather than raising
+  'shelf no longer exists; nothing to apply' and discarding a whole diff"*,
+  and `grep` for the resolver found four call sites, none in the apply path.
+  Measured: the settle handler logs that exception and does not re-raise, so
+  the ENTIRE diff was discarded in silence while the read was stored DONE with
+  a `diff_summary` claiming books it never added. And every §5.4 question a
+  merge moved became permanently unanswerable — `_load_read` refuses a read
+  whose shelf is not the one in the URL, and the queue's stale-cleanup is
+  DOWNSTREAM of that 404, so the row could not even be evicted;
+- ⚠ **the survivor was written back whole from a stale read**, reverting a
+  rename typed in another tab — invisibly, because `wrote` reports the stale
+  row as this edit's own work — and SHALLOWING it under books at depth 3 when
+  two merges interleaved, which §3.12 says never happens here;
+- ⚠ **decisions were gathered by looping the depths anybody could name.** A
+  REJECTED decision leaves nothing standing and the depth patch floors at
+  `deepest_occupied_depths`, which counts copies and photographs, not answers
+  — so a shelf shallowed after a rejection held a row at a depth no caller
+  could enumerate, and §3.13's load-bearing table was left behind at an id
+  about to stop existing;
+- ⚠ **the whole `StoreError` family escaped `_translated` as a 500** on a
+  mutating LAN route (it subclasses bare `Exception`, so the `DomainError`
+  fall-through never caught it), and the client classifies a 500 as *dropped*
+  and invites the retry that can never succeed;
+- ⚠ **`other_library` would have become a §4.2 oracle** the day anyone widens
+  the `into` lookup — a REAL foreign shelf answering a named refusal while a
+  fictional one answers 404. Both doors send 404 now;
+- ⚠ **`census()` digested two of the four tables it names.** Decisions and
+  questions were absent, so the one test that meets the JSON codec through a
+  real merge was blind to a lost human answer; and its orphan line — which its
+  own docstring calls *the point* — was structurally inert, because
+  photographs were gathered by iterating the shelves already known;
+- ⚠ **the strip radio counted the wrong side.** It gated *which half is on the
+  left* on the ABSORBED shelf's photographs alone, so with photographs on one
+  side only — where both orderings produce a byte-identical strip — it still
+  demanded an answer. The flagship *declared, never detected* test was set up
+  in exactly that scenario, so §5.7's one gate was pinning a question with a
+  single answer;
+- ⚠ **a conditional React hook.** `useCellInView` sat below two early returns
+  in `ShelfPanel`, so *select a bookcase, then tap a cell* — the ordinary
+  gesture — produced *"a change in the order of Hooks"*, *"Should have a
+  queue"* and *"Internal React error"* in a real browser while the whole ring
+  was green. Every other test in the file mounts the panel already pointing at
+  a cell.
+
+**Two live RTL defects fell out of a guard widening**, which is the third time
+in this pillar: the name-first check enumerated `['bound_here',
+'unbound_shelf']` rather than reading the TYPE, and `site_removed` /
+`site_added` have opened their sentences with a name the owner typed, in both
+languages, since P6.3.1.
+
+**What the phone walk found, on top of the four reviews' findings:** the
+account of what would move was **invisible** — `.merge-facts` set no `color`,
+so it inherited the PRODUCT's `--ink` and measured **1.10:1** against the map
+panel whenever the two themes disagree, which is the default on a light-mode
+phone. And the undo announced **0 books** after 22 came back: `restores`
+answers *what WOULD an undo do* and is correctly empty afterwards, so no undo
+of any kind could ever report a number — while the web ring's own test
+asserted that zero as the success message and therefore could not fail. The
+route now sends `restored` beside it. Five more: the six refusal reasons
+reached a Hebrew reader as English and a hex id; *cancel* sat 0.0px above the
+destructive *take off the map*, because the 12px gap lives on a button that is
+unmounted once the picker opens; the radios were stretched to 149×13 by a rule
+written for text inputs; the disabled ✓ had no stated reason and the
+auto-scroll landed past the question that would supply one; and the picker
+announced *0 ספרים · 0 תמונות* on a row reading *ריק*.
+
+**Walked on the owner's real library at 375×812**: 22 books and a photograph
+merged into a drawn slot, then taken back. Every table byte-identical to the
+pre-walk backup afterwards, `foreign_key_check` clean, and the journal row the
+walk created removed. 60 mutants across eight batteries, all killed, every
+file restored byte-exact.
+
+**What P6.4e inherits.** The streak (§3.16) and the *formerly* line are all
+that is left of "history across the seam" — the read and apply paths already
+resolve. And the number today is **0**, measured: `not_seen_streak` answers 0
+both for *reconfirmed by the most recent read* and for *never sighted at this
+(shelf, depth) at all*, and after a merge every moved copy takes the second
+branch. It errs safely (a lost warning, never a lost book, and never §3.16's
+inflated streak, because the reads stay filed at the absorbed id) — but two
+halves of what the owner has just declared to be one piece of wood report
+different staleness from identical evidence.
 
 ## 6. What P6.1 must not repeat
 

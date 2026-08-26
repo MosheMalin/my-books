@@ -4811,6 +4811,243 @@ def a_cycle_between_two_identities_is_refused(shelves):
         "A is nobody's survivor, so it must still be deletable")
 
 
+@shelf_contract
+def absorbing_a_survivor_re_points_what_already_answered_to_it(shelves):
+    """P6.4a's named trap, and the reason this is one method rather than two.
+
+    ``save_alias`` refuses a survivor that has itself absorbed others — the
+    one-hop rule, and correct. So the only way to merge B (which has already
+    absorbed A) into C is to send A to C FIRST. Doing that in a separate call
+    leaves the library, for one round trip, holding an identity that resolves
+    to a shelf about to be deleted: every book that arrived with A becomes
+    unreachable and `foreign_key_check` reports a clean file throughout.
+    """
+    from app.domain.alias import identities
+
+    for i in ("A", "B", "C"):
+        shelves.save_shelf(LIB, new_shelf(id=i, library_id=LIB.id))
+    shelves.save_alias(LIB, _absorb(alias_id="A", into="B"))
+
+    stood = shelves.absorb_shelf(LIB, _absorb(alias_id="B", into="C"))
+
+    assert [a.alias_id for a in stood] == ["A"], (
+        "the rows AS THEY STOOD are what the journal writes down; without "
+        "them an undo has nothing to put A back to")
+    assert stood[0].shelf_id == "B", "returned the row after the write"
+    after = shelves.list_aliases(LIB)
+    assert {(a.alias_id, a.shelf_id) for a in after} == {("A", "C"), ("B", "C")}
+    assert set(identities("C", after)) == {"C", "A", "B"}, (
+        "an identity fell out of the closure, so every book that arrived "
+        "with it is unreachable from the only shelf still standing")
+
+
+@shelf_contract
+def absorbing_keeps_the_former_address_of_every_identity_it_moves(shelves):
+    """Re-pointing changes WHO answers, never WHERE it stood.
+
+    §3.11's address half is historical — *"the shelf that was at section 1,
+    column 2, level 3"* — so it belongs to the absorbed identity, not to
+    whichever shelf currently answers for it. Carrying the survivor's address
+    across would make the library answer a question about wood with the wrong
+    slot, and silently.
+    """
+    for i in ("A", "B", "C"):
+        shelves.save_shelf(LIB, new_shelf(id=i, library_id=LIB.id))
+    shelves.save_alias(LIB, _absorb(alias_id="A", into="B",
+                                    at=ShelfAddress("se-1", 1, 1),
+                                    label="ספרי בישול"))
+    shelves.absorb_shelf(LIB, _absorb(alias_id="B", into="C",
+                                      at=ShelfAddress("se-1", 2, 4)))
+
+    moved = {a.alias_id: a for a in shelves.list_aliases(LIB)}
+    assert moved["A"].address == ShelfAddress("se-1", 1, 1)
+    assert moved["A"].label == "ספרי בישול"
+    assert moved["B"].address == ShelfAddress("se-1", 2, 4)
+
+
+@shelf_contract
+def absorbing_into_a_shelf_that_was_itself_absorbed_is_still_refused(shelves):
+    """Re-pointing is for the identities BELOW the merge, never above it.
+
+    Absorbing into a shelf that has itself been absorbed would rewrite a merge
+    somebody already made — a second answer to *"who answers for this?"* — so
+    this end of the one-hop rule stands exactly as `save_alias` leaves it.
+    """
+    for i in ("A", "B", "C"):
+        shelves.save_shelf(LIB, new_shelf(id=i, library_id=LIB.id))
+    shelves.save_alias(LIB, _absorb(alias_id="B", into="C"))
+    try:
+        shelves.absorb_shelf(LIB, _absorb(alias_id="A", into="B"))
+    except ShelfHasAliases as exc:
+        assert "B" in str(exc), exc
+    else:
+        raise AssertionError("a chain A -> B -> C was stored")
+
+
+@shelf_contract
+def a_refused_absorb_re_points_nothing(shelves):
+    """All of it or none of it.
+
+    ⚠ The re-point comes FIRST, so a refusal after it is the state this method
+    exists to make unreachable: A resolving to a shelf that is not being
+    merged into anything, and no record anywhere that it ever answered to B.
+    """
+    for i in ("A", "B"):
+        shelves.save_shelf(LIB, new_shelf(id=i, library_id=LIB.id))
+    shelves.save_alias(LIB, _absorb(alias_id="A", into="B"))
+    try:
+        shelves.absorb_shelf(LIB, _absorb(alias_id="B", into="ghost"))
+    except UnknownShelf:
+        # ⚠ ONE class, not a tuple of three. A migration review pointed out
+        # that a three-way `except` in the one spec that compares the two
+        # implementations cannot report a class DISAGREEMENT — which is the
+        # only thing this file exists to catch — and then found one next door
+        # in `rewrite_aliases`.
+        pass
+    else:
+        raise AssertionError("B was absorbed into a shelf that does not exist")
+    assert [(a.alias_id, a.shelf_id) for a in shelves.list_aliases(LIB)] == [
+        ("A", "B")], "a refused merge left A pointing somewhere else"
+
+
+@shelf_contract
+def rewriting_aliases_puts_a_merge_back_the_way_it_stood(shelves):
+    """The undo's half: drop the minted row, send the re-pointed ones home.
+
+    One method rather than a delete and a loop of saves, because between those
+    statements the library holds identities resolving to a shelf whose row the
+    undo is about to overwrite — a state no reader should see and, on a crash,
+    one nothing would repair.
+    """
+    for i in ("A", "B", "C"):
+        shelves.save_shelf(LIB, new_shelf(id=i, library_id=LIB.id))
+    shelves.save_alias(LIB, _absorb(alias_id="A", into="B"))
+    stood = shelves.absorb_shelf(LIB, _absorb(alias_id="B", into="C"))
+
+    shelves.rewrite_aliases(LIB, remove=("B",), put=stood)
+
+    assert [(a.alias_id, a.shelf_id) for a in shelves.list_aliases(LIB)] == [
+        ("A", "B")]
+    assert shelves.delete_shelf(LIB, "C") is True, (
+        "C is nobody's survivor once the merge is taken back")
+
+
+@shelf_contract
+def rewriting_aliases_refuses_a_chain_it_would_create(shelves):
+    """One hop, checked over the RESULT.
+
+    ⚠ A per-row check cannot see this: each row here is legal against the
+    table as it stands when that row is written, and the pair is illegal
+    together. An undo is not a way around the rule `save_alias` exists to
+    keep.
+    """
+    for i in ("A", "B", "C"):
+        shelves.save_shelf(LIB, new_shelf(id=i, library_id=LIB.id))
+    try:
+        shelves.rewrite_aliases(LIB, put=(_absorb(alias_id="A", into="B"),
+                                          _absorb(alias_id="B", into="C")))
+    except ShelfHasAliases:
+        pass
+    else:
+        raise AssertionError("an undo stored the chain A -> B -> C")
+
+
+@shelf_contract
+def removing_an_alias_that_is_not_there_is_not_an_error(shelves):
+    """An undo is allowed to be a no-op about a row somebody else removed —
+    the same reasoning as `delete_question` returning False rather than
+    raising."""
+    _two_shelves(shelves)
+    shelves.rewrite_aliases(LIB, remove=("never-existed",))
+    assert shelves.list_aliases(LIB) == ()
+
+
+@shelf_contract
+def rewriting_aliases_refuses_a_survivor_that_is_not_a_live_shelf(shelves):
+    """One class, and it is the same class in both stores.
+
+    ⚠ The SQLite path leaned on the foreign key here, and the key is
+    `shelf_id REFERENCES shelves (id)` — by id ALONE, blind to `library_id`.
+    So this store accepted an alias naming another library's shelf while the
+    memory store refused it, and that shelf's own library could then never
+    delete it: its `delete_shelf` guard reads `aliases_of` scoped to itself,
+    finds nothing, and the key refuses with a raw `sqlite3.IntegrityError`
+    crossing the port boundary — a 500 where a refusal was owed. The missing
+    shelf was worse still: the driver's message reached the ADDRESS branch of
+    the translation and answered *another identity already claims the slot
+    None*, as a 409.
+    """
+    _two_shelves(shelves)
+    try:
+        shelves.rewrite_aliases(LIB, put=(_absorb(into="ghost"),))
+    except UnknownShelf as exc:
+        assert "ghost" in str(exc), exc
+    else:
+        raise AssertionError("an undo pointed an identity at no shelf")
+    assert shelves.list_aliases(LIB) == ()
+
+
+@shelf_contract
+def absorbing_narrows_every_statement_to_this_library(shelves):
+    """H2 on the RE-POINT, which is a raw UPDATE with nothing else to lean on.
+
+    ⚠ A security review dropped `library_id = ?` from `absorb_shelf`'s UPDATE
+    and from three of its lookups and the whole ring stayed green — because
+    `shelves.id` is a GLOBAL primary key, so the collision those queries would
+    need is unrepresentable. Redundant enforcement, correctly. But that is a
+    property of a table two files away, not of these methods, and rule 7 says
+    to ask *what else enforces this?* rather than to rest on it silently.
+    """
+    for lib in (LIB, OTHER):
+        for i in ("A", "B", "C"):
+            shelves.save_shelf(lib, new_shelf(id=f"{lib.id}-{i}",
+                                              library_id=lib.id))
+    shelves.save_alias(LIB, _absorb(alias_id=f"{LIB.id}-A",
+                                    into=f"{LIB.id}-B"))
+    shelves.save_alias(OTHER, _absorb(alias_id=f"{OTHER.id}-A",
+                                      into=f"{OTHER.id}-B",
+                                      lib=OTHER))
+
+    shelves.absorb_shelf(LIB, _absorb(alias_id=f"{LIB.id}-B",
+                                      into=f"{LIB.id}-C"))
+
+    assert [(a.alias_id, a.shelf_id) for a in shelves.list_aliases(OTHER)] == [
+        (f"{OTHER.id}-A", f"{OTHER.id}-B")], (
+        "the re-point reached across the library boundary")
+    shelves.rewrite_aliases(OTHER, remove=(f"{OTHER.id}-A",))
+    assert shelves.list_aliases(OTHER) == ()
+    assert len(shelves.list_aliases(LIB)) == 2, (
+        "a removal in one library took a row out of another")
+
+
+@shelf_contract
+def an_alias_may_not_name_a_shelf_of_another_library(shelves):
+    """H2, at the one door the composite primary key does not stand in.
+
+    Both ends: the checked path and the undo's. A cross-library alias is
+    unreachable through today's callers — `absorb_shelf` returns rows from the
+    library it was handed — but this is the defence-in-depth INSIDE the
+    boundary that CLAUDE.md keeps a rule about, and it is invisible to the API
+    ring, which runs on memory stores.
+    """
+    _two_shelves(shelves)
+    shelves.save_shelf(OTHER, new_shelf(id="far", library_id=OTHER.id))
+    far = _absorb(alias_id="sh-old", into="far")
+    for write in (lambda: shelves.save_alias(LIB, far),
+                  lambda: shelves.absorb_shelf(LIB, far),
+                  lambda: shelves.rewrite_aliases(LIB, put=(far,))):
+        try:
+            write()
+        except UnknownShelf:
+            pass
+        else:
+            raise AssertionError(
+                "an alias in one library named a shelf in another; the shelf's "
+                "own library can now never delete it")
+    assert shelves.list_aliases(LIB) == ()
+    assert shelves.delete_shelf(OTHER, "far") is True
+
+
 @contract
 def books_on_shelf_answers_for_every_identity_it_is_given(store):
     """P6.4a's read. §3.11 rewrites nothing when shelves merge, so a copy
@@ -4847,15 +5084,24 @@ def books_on_shelf_names_a_book_once_however_many_copies_stand_there(store):
 # --- MapUndoStore (P6.4b) --------------------------------------------------
 
 def _full_restore():
-    """A restore with ALL SEVEN fields populated, nested types and Hebrew.
+    """A restore with EVERY field populated, nested types and Hebrew.
 
     Every field on purpose: this is the one place the two implementations are
     compared, so a field left out here is a field the codec is free to drop.
-    ``created`` is the field that WAS dropped, and it is last because it is
-    the one that is not an entity tuple and so not in ``RESTORE_ORDER``.
+    ``created`` is the field that WAS dropped, and it and ``minted_aliases``
+    are last because they are not entity tuples and so are in neither
+    ``RESTORE_ORDER`` nor ``LEDGER_ORDER``.
+
+    ⚠ The five ledger tuples (P6.4d) are here for the same reason and are the
+    riskier half: four of the five hold a type this file had never round
+    tripped, and two of them — a decision and a question — are keyed by where
+    they were asked rather than by an id, so a codec that lost the shelf would
+    write them back at the wrong shelf rather than not at all.
     """
-    from app.domain import (Bookcase, Floor, Place, Rect, Section, Shelf,
-                            ShelfAddress, Site)
+    from app.domain import (Bookcase, Capture, CopyPlacement, Decision,
+                            DecisionKind, DuplicateQuestion, Floor, Place,
+                            Rect, Section, Shelf, ShelfAddress, Site)
+    from app.domain.alias import ShelfAlias
     from app.domain.map_undo import MapRestore
 
     return MapRestore(
@@ -4870,10 +5116,51 @@ def _full_restore():
         sections=(Section(id="se", library_id=LIB.id, bookcase_id="bc",
                           ordinal=2, column_levels=(3, 4), gaps=((2, 2),),
                           default_levels=4, default_depth=2),),
+        # ⚠ TWO shelves, and the second is the WISHLIST. `virtual` was the
+        # one field across all eleven entity types left at its default, so a
+        # codec that dropped `"virtual"` from every shelf reloaded it as
+        # `False` and passed both the field-by-field assertions and the
+        # whole-object `==`. Measured by a migration review. A default that
+        # round-trips by accident is not round-tripped — and it needs a row of
+        # its own, because a virtual shelf may have neither an address nor a
+        # second depth (§5.7: it stands nowhere).
         shelves=(Shelf(id="sh", library_id=LIB.id, label="מדף עליון",
                        depth_count=2, created_at="2026-02-01T00:00:00Z",
-                       address=ShelfAddress("se", 1, 3)),),
+                       address=ShelfAddress("se", 1, 3)),
+                 Shelf(id="sh-wish", library_id=LIB.id, label="רשימת משאלות",
+                       virtual=True, created_at="2026-02-02T00:00:00Z")),
+        copies=(CopyPlacement(book_id="bk", copy_id="cp", shelf_id="sh",
+                              depth=2),),
+        # ⚠ TWO, with distinct orders and in the sequence a replay needs.
+        # Every ledger tuple held one row, so a codec that SORTED `captures`
+        # passed — and `MapRestore.captures` says in its own words that the
+        # sequence is part of the inverse rather than a detail of writing it,
+        # because `(shelf, depth, order)` is unique and a replay in the wrong
+        # order lands on a slot whose occupant has not moved yet.
+        captures=(Capture(id="cap-b", shelf_id="sh", library_id=LIB.id,
+                          depth=2, order=3, image_id="img-b",
+                          captured_at="2026-03-02T00:00:00Z"),
+                  Capture(id="cap-a", shelf_id="sh", library_id=LIB.id,
+                          depth=2, order=1, image_id="img-a",
+                          captured_at="2026-03-01T00:00:00Z"),),
+        decisions=(Decision(library_id=LIB.id, shelf_id="sh", depth=2,
+                            book_key="עגנון|תמול שלשום",
+                            kind=DecisionKind.WRONG_BOOK, copy_id="cp",
+                            decided_at="2026-04-01T00:00:00Z"),),
+        questions=(DuplicateQuestion(
+            id="dq", library_id=LIB.id, shelf_id="sh", depth=2,
+            book_key="עגנון|תמול שלשום", read_id="rd", spine_id="sp",
+            claim_title="תמול שלשום", claim_author="ש״י עגנון",
+            existing_book_id="bk", opened_at="2026-05-01T00:00:00Z",
+            captured_at="2026-03-01T00:00:00Z"),),
+        aliases=(ShelfAlias(alias_id="sh-old", library_id=LIB.id,
+                            shelf_id="sh", merged_at="2026-06-01T00:00:00Z",
+                            address=ShelfAddress("se", 2, 1),
+                            label="מדף הבישול"),),
         created=("sh-minted", "sh-minted-2"),
+        minted_aliases=("sh-absorbed",),
+        minted_decisions=(("sh", 2, "עגנון|תמול שלשום"),),
+        minted_questions=(("sh", 1, "עגנון|סיפור פשוט"),),
     )
 
 
@@ -4896,6 +5183,8 @@ def an_entry_round_trips_every_field_it_was_given(journal):
     end, because a field added tomorrow is covered by that and by nothing
     above it.
     """
+    from app.domain import DecisionKind
+
     journal.record(LIB, _entry())
     back = journal.recent(LIB, limit=5)[0]
 
@@ -4905,7 +5194,9 @@ def an_entry_round_trips_every_field_it_was_given(journal):
     assert back.undone_at is None and back.is_live
     r = back.restore
     assert r.sites[0].name == "הבית" and r.sites[0].order == 2
-    assert r.floors[0].site_id == "fl" or r.floors[0].site_id == "st"
+    # ⚠ Was `== "fl" or == "st"`. A hedge in the one spec whose stated job is
+    # to say WHICH field the codec lost names none of them.
+    assert r.floors[0].site_id == "st"
     assert r.places[0].rect == Rect(1, 2, 9, 7) and r.places[0].order == 3
     assert r.bookcases[0].front == "N" and r.bookcases[0].place_id == "pl"
     assert r.sections[0].column_levels == (3, 4)
@@ -4913,9 +5204,35 @@ def an_entry_round_trips_every_field_it_was_given(journal):
     assert r.sections[0].ordinal == 2 and r.sections[0].default_depth == 2
     assert r.shelves[0].label == "מדף עליון" and r.shelves[0].depth_count == 2
     assert r.shelves[0].address == ShelfAddress("se", 1, 3)
+    assert r.shelves[1].virtual is True, (
+        "`virtual` reloaded as its default, which is what a DROPPED field "
+        "looks like from here")
     assert r.created == ("sh-minted", "sh-minted-2"), (
         "`created` was dropped — the entry is now permanently un-undoable, "
         "because its fingerprint watches a key the restore no longer names")
+    assert r.copies[0].copy_id == "cp" and r.copies[0].depth == 2
+    assert [c.id for c in r.captures] == ["cap-b", "cap-a"], (
+        "the photographs came back in a different ORDER — a replay in the "
+        "wrong sequence lands on a slot whose occupant has not moved yet, "
+        "and a half-replayed undo leaves an entry dead forever")
+    assert r.captures[0].order == 3 and r.captures[0].image_id == "img-b"
+    assert r.decisions[0].kind is DecisionKind.WRONG_BOOK, (
+        "the decision came back as a bare string, so an undo would write a "
+        "kind no reader can compare")
+    assert r.decisions[0].shelf_id == "sh" and r.decisions[0].depth == 2
+    assert r.questions[0].claim_author == "ש״י עגנון"
+    assert r.aliases[0].address == ShelfAddress("se", 2, 1), (
+        "the alias's FORMER address was lost — the half of §3.11 that answers "
+        "\"the shelf that was at section 1, column 2, level 3\"")
+    assert r.aliases[0].label == "מדף הבישול"
+    assert r.minted_aliases == ("sh-absorbed",), (
+        "`minted_aliases` was dropped — same failure as `created`, one table "
+        "over: the undo would leave the merge standing")
+    assert r.minted_decisions == (("sh", 2, "עגנון|תמול שלשום"),), (
+        "a key triple came back as a LIST or not at all; either way it "
+        "compares unequal to the one `target_keys` builds, so the entry can "
+        "never be undone")
+    assert r.minted_questions == (("sh", 1, "עגנון|סיפור פשוט"),)
     assert back.seq == 1, "the store did not number the first entry"
     # ⚠ Compared against the entry WITH the store's own `seq`, because that
     # one field is assigned by the store and not by the caller — handing it in
@@ -4928,6 +5245,29 @@ def an_entry_round_trips_every_field_it_was_given(journal):
     assert all(getattr(back.restore, f.name) for f in _fields(_MR)), (
         "a field of MapRestore is empty, so this spec is not exercising it — "
         "populate it in `_full_restore`, or the next dropped field is silent")
+
+
+@undo_contract
+def the_blob_carries_the_current_shape_stamp(journal):
+    """⚠ Nothing read `v` and no test asserted it, so it said `1` for two
+    different shapes — eight keys and seventeen — which is worse than no stamp
+    because it looks like an answer. Skipped where the store keeps entries as
+    objects: there is no blob to stamp, and asserting one would be asserting
+    this test's own fixture."""
+    import json
+
+    journal.record(LIB, _entry())
+    reader = getattr(journal, "_connect", None)
+    if reader is None:
+        return
+    from app.adapters.sqlite_store import UNDO_BLOB_SHAPE
+
+    with reader() as conn:
+        blob = conn.execute(
+            "SELECT inverse FROM map_undo WHERE id = 'u1'").fetchone()[0]
+    assert json.loads(blob)["v"] == UNDO_BLOB_SHAPE, (
+        "the payload's key set changed and the stamp did not, so a reader "
+        "consulting it learns nothing")
 
 
 @undo_contract
@@ -5476,13 +5816,13 @@ def test_a_v18_database_gains_the_binding_column_and_keeps_its_rows():
 # counts, which is the same silent gap wearing a different hat.
 SUITES = (
     (CONTRACT, IMPLEMENTATIONS, 42),
-    (SHELF_CONTRACT, SHELF_IMPLEMENTATIONS, 25),
+    (SHELF_CONTRACT, SHELF_IMPLEMENTATIONS, 35),
     (READ_CONTRACT, READ_IMPLEMENTATIONS, 17),
     (DECISION_CONTRACT, DECISION_IMPLEMENTATIONS, 8),
     (DUPLICATE_CONTRACT, DUPLICATE_IMPLEMENTATIONS, 9),
     (TENANCY_CONTRACT, TENANCY_IMPLEMENTATIONS, 14),
     (MAP_CONTRACT, MAP_IMPLEMENTATIONS, 29),
-    (UNDO_CONTRACT, UNDO_IMPLEMENTATIONS, 7),
+    (UNDO_CONTRACT, UNDO_IMPLEMENTATIONS, 8),
 )
 
 for _cases, _impls, _expected in SUITES:

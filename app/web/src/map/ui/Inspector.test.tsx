@@ -16,6 +16,7 @@ import userEvent from '@testing-library/user-event'
 import { I18nProvider } from '../../lib/i18n'
 import { Inspector, type Actions } from './Inspector'
 import type { Selection } from './types'
+import type { MergePreview } from '../useMapSync'
 import { emptyPlan, newBookcase, withGaps } from '../core/model'
 import type { Plan, Section } from '../core/model'
 import { mapText } from '../text'
@@ -73,7 +74,15 @@ const actions = (): Actions => ({
   deleteSelection: vi.fn(), copySelection: vi.fn(), paste: vi.fn(), select: vi.fn(),
   shelvesOffTheMap: vi.fn(async () => []), bindShelf: vi.fn(),
   unbindShelf: vi.fn(),
+  previewMerge: vi.fn(async () => NOTHING_MOVES), mergeShelf: vi.fn(),
 })
+
+/** A preview that refuses nothing and moves nothing — the neutral default. */
+const NOTHING_MOVES: MergePreview = {
+  absorbed_id: 'a', survivor_id: 'b', refused: null, already: false,
+  depth: 1, books: 0, copies: [], photos: [], clashes: [],
+  answers_moved: 0, identities_moved: 0,
+}
 
 const onShelf: Selection = {
   rooms: [], cases: ['c1'],

@@ -4219,3 +4219,177 @@ absolute, and treat a comment naming a guard as a claim to verify.
 `review-ux` and the 375x812 walk. Port 8757 was held by another session's dev
 server for the whole item, so no pillar-6 flow has been walked on a phone
 since P6.3.3 — which is the exact gap P6.3.3 existed to close.
+
+
+## P6.4c — bind: a shelf gains an address, and loses one
+
+The safe half of P6.4. An unaddressed shelf takes a free slot; a slot gives
+one up. No identities join, so nothing moves and nothing is lost — which is
+§3.14's whole reason for keeping bind and merge apart, and it is why this item
+was small and the next one was not.
+
+Four reviews found more in it than the item contained.
+
+**A shallow copy carried a server-owned id into a paste.** `paste.ts` spreads
+each cell, so the `id` this item had just added rode along — and every cell of
+a PASTED bookcase addressed the ORIGINAL's shelves. With *take off the map*
+now sitting on that identity, pressing it detached a shelf elsewhere on the
+plan while the pressed cell looked unchanged. That file's own header records
+the same failure through the section id, one item earlier. `serializePlan` was
+carrying shelf ids and labels into the owner's exported drawing for the same
+reason.
+
+**Every bind blanked the editor for 1.42 seconds.** `startOver()` raises
+`loading`, and every screen that answers `if (loading) return <Loading/>`
+went blank: plan, bookcase, elevation and panel, then back with nothing
+selected — which on a 375px phone means finding an 11×88 pixel sliver again.
+CLAUDE.md's own *a refresh is not a first load*, attached to a per-cell
+gesture. ⚠ The first fix wrapped the editor in a `<div>` and the whole gate
+stayed green while the drawing canvas measured **375×0**: `.mapscreen` fills
+its board through a chain of percentage heights, and a bare div in that chain
+has none. The state moved onto the editor's own root.
+
+**A failed shelf list printed "every shelf is already on the map"** while
+forty stood nowhere, one of them the owner's real 22-book shelf. Absent is not
+unknown — the same measurement this project already has on record about "no
+admin" beside a card saying two users. Three states now: loading, failed with
+a retry, and a list.
+
+**An empty cell was pixel-identical to an occupied one** and announced *מדף*.
+It is dashed and named *תא ריק* now, which is the treatment the gap branch one
+`if` above already had. Rarity was the wrong argument for leaving it: a free
+cell is not rare, it is always the answer to a question the owner has just
+asked.
+
+Two guards covered one shape of the class they named, and widening them found
+seven live defects. The counted-string test matched `(n: number) => string`
+exactly, so `1 תמונות` shipped to a real browser in both languages; the 404
+meta-test had no completeness check where its EDIT_MAP sibling did. And
+`Shelf.sort_key` had been putting UNNAMED shelves first for four schema
+versions while its own docstring, the route's docstring, both stores and a
+test that asserted the opposite of its own sentence all said named first —
+visible only once a picker made the order a decision aid.
+
+## P6.4d — the merge, and why the alias goes first
+
+The dangerous half, and the one item of pillar 6 that can lose books. Two
+identities become one: a population of copies moves, two capture strips join
+in a DECLARED order, §3.13's four *governs a future write* tables move with
+the wood while `provenance` and the run archive stay, the survivor deepens by
+§5.1's ladder, and the absorbed identity survives as an alias of its id AND
+its former address.
+
+### The critical: order is the transaction you do not have
+
+There is no transaction across ports — the SQLite adapter opens a connection
+per operation by design — so what stands in for one is a sequence in which
+every interruption leaves a state the system already handles. The first
+version reasoned from the wrong end: write the alias LAST, because a crash
+before it would lose the identity outright.
+
+A data-integrity review measured the other end. With the books moved first, a
+concurrent `DELETE /api/v1/shelves/{survivor}` — which SUCCEEDS, because
+§3.11's own worked example absorbs a photo-born shelf into a DRAWN slot, and a
+drawn slot is empty by construction — left three copies naming a shelf that
+was neither a live shelf nor an alias:
+
+```
+merge raised: UnknownShelf no shelf 'd-2' in library 'lib-1'
+ORPHANS: ['d-2', 'd-2', 'd-2']
+journal entries: 0
+```
+
+That is the census's headline invariant, with `PRAGMA foreign_key_check`
+reporting a clean file and nothing to take it back with. The fix is one line
+of ordering: write the alias FIRST. Once `A -> B` exists, every row still
+naming A is reachable through `identities()`, so an interruption anywhere
+below loses nothing and a retry finishes the job — and `absorb_shelf` proves
+the survivor is a live shelf of this library under `BEGIN IMMEDIATE`, which is
+the check the copy loop had been running without.
+
+The generalisation is worth more than the fix: **write the row that makes
+everything else reachable first.**
+
+### A document that promised a behaviour nobody had written
+
+MAP_PLAN §3.11 says, in words: *"`apply_diff` resolves through the alias so a
+read that started at A finishes at B rather than raising 'shelf no longer
+exists; nothing to apply' and discarding a whole diff."* A `grep` for the
+resolver found four call sites and none of them in the apply path. What the
+absence cost, measured:
+
+```
+after the merge, applying that same diff:
+  RAISES: DomainError shelf 'ph' no longer exists; nothing to apply
+  books in the library: 0
+```
+
+and the settle handler wraps `apply_diff` in `except Exception: # logged, not
+re-raised`, so the whole diff went in silence while the read was stored DONE
+with a `diff_summary` claiming it added books that were never added. The same
+missing resolution made every §5.4 question a merge moved permanently
+unanswerable: §3.13 moves the queue row with the shelf and leaves the read
+where it ran, and `_load_read` refuses a read whose `shelf_id` is not the one
+in the URL — 404 forever, and unevictable, because the queue's own stale
+cleanup is downstream of that 404.
+
+This is the same family as the docstring asserting a test exists. A promise in
+prose is not a guard.
+
+### The rest, in one line each
+
+- the survivor was written back WHOLE from a row read before the merge began,
+  so a rename typed in another tab vanished — invisibly, because `wrote`
+  reports the stale row as this edit's own work — and two interleaved merges
+  SHALLOWED it under books already standing at depth 3;
+- `delete_shelf` raising after the alias was committed left a LIVE shelf and
+  an alias for the same id, permanently, with no journal entry and a retry
+  that re-raised forever;
+- decisions were gathered by looping the depths anybody could NAME, and a
+  REJECTED decision leaves nothing standing — so a shelf shallowed after one
+  was made held a row at a depth no caller could enumerate;
+- the whole `StoreError` family escaped `_translated` as a **500**, including
+  `DELETE /shelves/{id}` for a survivor, which is the third trap P6.4a wrote
+  down for this item and the one surface that could show the count;
+- `gather` hydrated every claim of every read to answer a boolean: 1.74s for
+  one preview on a shelf with a thousand reads, on a service bound to
+  0.0.0.0;
+- `other_library` would have become a §4.2 oracle the day anyone widens the
+  `into` lookup — a real foreign shelf answering a named refusal while a
+  fictional one answers 404;
+- `census()` digested two of the four tables its own docstring names, and its
+  orphan line was structurally inert;
+- the strip-order radio counted the ABSORBED shelf's photographs while gating
+  a question about both halves, so it demanded an answer where both orderings
+  produce a byte-identical strip — and the flagship *declared, never detected*
+  test was set up in exactly that scenario;
+- ⚠ **a conditional React hook.** `useCellInView` sat below two early returns
+  in `ShelfPanel`, so *select a bookcase, then tap a cell* — the ordinary
+  gesture — printed *"a change in the order of Hooks"*, *"Should have a
+  queue"* and *"Internal React error"* in a real browser while every ring was
+  green, because every test in the file mounts the panel already pointing at a
+  cell. Walk the TRANSITION, not the destination.
+
+### Two RTL defects two items old
+
+Widening the name-first guard to read the TYPE rather than a two-item list
+found `site_removed` and `site_added` opening their sentences with a name the
+owner typed, in both languages, since P6.3.1. `unicode-bidi: plaintext`
+resolves a paragraph from its first strong character, so a Latin-initial shelf
+or site name flips the whole announcement. That is the fourth guard in this
+pillar that passed because it was enumerating from a list.
+
+### What was verified, and on what
+
+Walked on the owner's real library at a true 375×812 layout viewport: 22 books
+and one photograph merged into a drawn slot, then taken back through *Edit ▾ →
+שחזור מה שהוסר לאחרונה*. Every table byte-identical to the pre-walk backup
+afterwards — content-sorted, all 12 of them — `foreign_key_check` clean, and
+the journal row the walk created removed. 60 mutants across eight batteries,
+all killed, every file restored byte-exact.
+
+⚠ One thing the walk itself did: a stray tap with the arrow tool created a
+tenth room in the owner's library. It was removed and the diff against the
+backup proved it was the only change, but the cause was not isolated — the
+`computer` click tool was timing out at 30s on every plan click, so whether a
+genuine tap can draw a room is not established. Filed rather than claimed.

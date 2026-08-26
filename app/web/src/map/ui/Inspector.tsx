@@ -18,7 +18,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Select } from '@booksnap/ui'
 
 import { Elevation } from './Elevation'
-import type { OffMapShelf } from '../useMapSync'
+import type { MergePreview, OffMapShelf, StripOrder } from '../useMapSync'
 import type { Cell, Doc, Selection } from './types'
 import { count, markCell, only, onlyCell } from './types'
 import { useSticky } from './useSticky'
@@ -61,6 +61,17 @@ export type Actions = {
               name: string) => void
   unbindShelf: (shelfId: string, sectionId: string, col: number,
                 level: number, name: string) => void
+  /**
+   * P6.4d, and a SEPARATE pair from the bind above — never one button
+   * (§3.14). A bind gives an unaddressed shelf an address and moves nothing;
+   * a merge makes two identities one, which moves a population of copies,
+   * joins two capture strips and overwrites standing answers. The preview is
+   * the other half of the ✓: seeing what moves is what makes it a decision.
+   */
+  previewMerge: (absorbedId: string, survivorId: string,
+                 strip: StripOrder) => Promise<MergePreview>
+  mergeShelf: (absorbedId: string, survivorId: string, strip: StripOrder,
+               name: string) => void
   addSection: (id: string, where: 'top' | 'bottom') => void
   removeSection: (id: string, sectionId: string) => void
   deleteSelection: () => void
@@ -515,6 +526,15 @@ function ShelfPanel({
 }) {
   const T = mapText(useI18n().lang)
   const sel = onlyCell(selection)
+  // ⚠⚠ **ABOVE the early returns, and it was below them.** `useCellInView`
+  // holds a `useRef` and a `useEffect`, so calling it after `return <p>` made
+  // it a CONDITIONAL hook: the moment the selection went from *no cell* to
+  // *a cell*, React logged *"a change in the order of Hooks called by
+  // ShelfPanel — 2. undefined → useRef"*, then *"Should have a queue"*, then
+  // *"Internal React error: Expected static flag was missing"*. Measured in a
+  // real browser on the owner's own library; the whole ring stayed green,
+  // because jsdom re-mounts between tests and never walks that transition.
+  const box = useCellInView(sel && sel.caseId === bc.id ? sel : null)
   if (!sel || sel.caseId !== bc.id) {
     return <p className="note">{T.pick_a_cell}</p>
   }
@@ -527,7 +547,7 @@ function ShelfPanel({
     bc.sections.length > 1 ? `${T.section_n(sectionIndex(bc, sec.id) + 1)} · ` : ''
   const name = shelf.label || T.shelf_unnamed
   return (
-    <fieldset className="shelf-panel" ref={useCellInView(sel)}>
+    <fieldset className="shelf-panel" ref={box}>
       <legend>
         {shelf.free
           ? T.empty_cell_legend(where, shelf.col + 1, shelf.level + 1)
@@ -574,6 +594,16 @@ function ShelfPanel({
             <strong>{shelf.photos}</strong>
           </div>
           <p className="note">{T.photos_are_captures}</p>
+          {shelf.id && (
+            // ⚠ KEYED by the cell, like `EmptyCell` — otherwise selecting a
+            // different occupied cell keeps this mounted with the previous
+            // one's open picker and its preview, which is an itemised account
+            // of a merge nobody asked about between two shelves that are no
+            // longer on screen.
+            <MergeHere key={`m:${sec.id}:${shelf.col}:${shelf.level}`}
+                       survivorId={shelf.id} survivorName={name}
+                       survivorPhotos={shelf.photos} actions={actions} />
+          )}
           {shelf.id && (
             <button
               type="button"
@@ -733,6 +763,307 @@ function EmptyCell({
               onClick={() => { setOpen(false); setList(null) }}>
         {T.pick_a_shelf_cancel}
       </button>
+    </div>
+  )
+}
+
+
+/**
+ * Absorbing another identity into the shelf that stands here (P6.4d, §3.11).
+ *
+ * **Three steps, and the middle one is the item.** Pick a shelf; read what
+ * moves; say which half is on the left and press merge. §3.14 forbids
+ * shortening it: *"a wrong binding moves a POPULATION of copies, merges two
+ * capture strips, and looks like success, because the map gets fuller."*
+ *
+ * ⚠ **The strip order has no default anywhere**, and this is where that is
+ * visible: neither radio is pre-selected, so the button stays disabled until
+ * the owner answers. §5.7's rule is *declared, never detected*, and a
+ * pre-selected radio is the system detecting it on their behalf every time.
+ *
+ * ⚠ The list is the same one the empty-cell picker reads — shelves standing
+ * NOWHERE. A shelf that is already on the map is not offered, because two
+ * drawn slots turning out to be one piece of wood is a different conversation
+ * (one of the two cells has to stop existing) and this item does not have it.
+ */
+function MergeHere({
+  survivorId,
+  survivorName,
+  survivorPhotos,
+  actions,
+}: {
+  survivorId: string
+  survivorName: string
+  /**
+   * ⚠ The SURVIVOR's photographs, and they were missing.
+   *
+   * The preview's `photos` is `MergePlan.photos_per_depth`, filtered to the
+   * ABSORBED shelf — so the condition below asked *does the shelf I picked
+   * have any?* while the question it gates is *which of the two halves is on
+   * the left*. With photographs on one side only, both orderings produce a
+   * byte-identical strip (measured), and the client still showed two radios
+   * and refused the ✓ until one was chosen: a required answer to a question
+   * with one answer. The comment right below claimed the opposite, which is
+   * the kind of wrong stated reason that makes the next reader delete the
+   * guard — and the flagship *declared, never detected* test was set up in
+   * exactly that scenario, so it pinned §5.7 over nothing.
+   */
+  survivorPhotos: number
+  actions: Actions
+}) {
+  const { t, lang } = useI18n()
+  const T = mapText(lang)
+  const [open, setOpen] = useState(false)
+  const [list, setList] = useState<OffMapShelf[] | 'failed' | null>(null)
+  const [chosen, setChosen] = useState<OffMapShelf | null>(null)
+  // Three states again, and the third for `EmptyCell`'s reason: a preview
+  // that failed must not read as a merge that moves nothing.
+  const [seen, setSeen] = useState<MergePreview | 'failed' | null>(null)
+  const [strip, setStrip] = useState<StripOrder | null>(null)
+  /**
+   * ⚠ The preview appears BELOW the picker inside `.map-side`, which is
+   * **251px tall on a 375×812 phone**. Measured: with the account of what
+   * would move rendered, the ✓ sat at y=978 in a window whose bottom edge is
+   * around y=812 — off screen, reachable only by scrolling a panel nothing
+   * says is scrollable. Same shape as the finding P6.4c already paid for one
+   * fold up, and worse here: what is out of sight is the confirmation of the
+   * one gesture in this pillar that moves books.
+   */
+  const foot = useRef<HTMLDivElement | null>(null)
+  /** The declaration §5.7 requires, when there is one to make. */
+  const ask = useRef<HTMLFieldSetElement | null>(null)
+
+  const read = () => {
+    setList(null)
+    void actions.shelvesOffTheMap().then(setList).catch(() => setList('failed'))
+  }
+
+  const look = (shelf: OffMapShelf) => {
+    setChosen(shelf)
+    setSeen(null)
+    // ⚠ The preview is asked with a strip order because the ANSWER depends on
+    // one, and `survivor_first` is what it is asked with — but the radio
+    // below stays unanswered. What the preview counts (books, photographs,
+    // answers, depth) is the same either way; only the ORDER differs, and
+    // that is the one thing the owner declares.
+    void actions.previewMerge(shelf.id, survivorId, 'survivor_first')
+      .then((answer) => {
+        setSeen(answer)
+        // After the paint, not before it: the account of what would move is
+        // what pushes the ✓ out of the window, so scrolling to where it USED
+        // to be scrolls to the wrong place.
+        //
+        // ⚠ To the QUESTION when there is one, and to the foot otherwise. In
+        // a 251px panel the two do not fit together, and scrolling past the
+        // question left a greyed button with nothing on screen explaining it.
+        requestAnimationFrame(() => (ask.current || foot.current)
+          ?.scrollIntoView?.({ block: 'nearest' }))
+      })
+      .catch(() => setSeen('failed'))
+  }
+
+  const close = () => {
+    setOpen(false)
+    setList(null)
+    setChosen(null)
+    setSeen(null)
+    setStrip(null)
+  }
+
+  if (!open) {
+    return (
+      <button type="button" className="merge-open"
+              onClick={() => { setOpen(true); read() }}>
+        {T.merge_a_shelf_here}
+      </button>
+    )
+  }
+
+  if (!chosen) {
+    return (
+      <div className="shelf-pick">
+        <p className="note rtl-safe">{T.merge_pick}</p>
+        {list === null ? (
+          <p className="note">{t.loading}</p>
+        ) : list === 'failed' ? (
+          <>
+            <p className="note warn rtl-safe" role="status">
+              {T.shelf_list_failed}
+            </p>
+            <button type="button" onClick={read}>{T.shelf_list_retry}</button>
+          </>
+        ) : list.length === 0 ? (
+          // ⚠ Not the bind's sentence. *"Every shelf is already on the map"*
+          // is a statement about PLACEMENT under a question about IDENTITY,
+          // and it never says the actual reason a merge has nothing to offer.
+          <p className="note rtl-safe">{T.merge_none_off_the_map}</p>
+        ) : (
+          <ul>
+            {list.map((s, i) => (
+              <li key={s.id}>
+                <button
+                  type="button"
+                  // ⚠ The same `holds nothing` branch the row shows. Its
+                  // bind sibling has it and this one did not, so a row
+                  // reading *ריק* announced *0 ספרים · 0 תמונות* — two
+                  // descriptions of one shelf, which is the bug that branch
+                  // was written for. Three taps to reach.
+                  aria-label={T.merge_pick_option(
+                    i + 1, s.label || T.shelf_unnamed, s.book_count,
+                    s.capture_count)}
+                  onClick={() => look(s)}
+                >
+                  <span className="rtl-safe">{s.label || T.shelf_unnamed}</span>
+                  <span className="note rtl-safe">
+                    {s.book_count + s.capture_count === 0
+                      ? T.shelf_holds_nothing
+                      : T.shelf_holds(s.book_count, s.capture_count)}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <button type="button" className="linkish" onClick={close}>
+          {T.merge_cancel}
+        </button>
+      </div>
+    )
+  }
+
+  const name = chosen.label || T.shelf_unnamed
+  const books = seen && seen !== 'failed' ? seen.books : 0
+  const photos = seen && seen !== 'failed'
+    ? seen.photos.reduce((n, p) => n + p.count, 0) : 0
+  // Order exists only when BOTH halves have something to order. Shelf-level
+  // rather than per-depth, which is the grain `_restrip` actually works at —
+  // the honest ninety per cent, and the wording the legend uses.
+  const ordered = photos > 0 && survivorPhotos > 0
+  return (
+    <div className="merge-preview">
+      {seen === null ? (
+        <p className="note" role="status">{T.merge_reading}</p>
+      ) : seen === 'failed' ? (
+        <>
+          <p className="note warn rtl-safe" role="status">
+            {T.merge_read_failed}
+          </p>
+          <button type="button" onClick={() => look(chosen)}>
+            {T.shelf_list_retry}
+          </button>
+        </>
+      ) : seen.refused ? (
+        // ⚠ TRANSLATED by `reason`, with the server's `say` as the fallback
+        // for a code this table does not know. `MergeRefused` carries a
+        // stable code beside the sentence and says in its own docstring that
+        // it is there *so a client can translate it* — and this one
+        // translated none of six, so a household member met four lines of
+        // English and a 32-character hex id. The engine's *rejection reasons
+        // are shown verbatim* convention is about a reader's FINDINGS, not
+        // about a control refusing to act.
+        <>
+          <p className="note warn rtl-safe" role="status">
+            {T.merge_refused} {T.merge_reason(seen.refused.reason)
+              || seen.refused.say}
+          </p>
+          {/* Transient by nature, so the way forward is to ask again — the
+              two failure branches beside this one both offer it. */}
+          {seen.refused.reason === 'read_running' && (
+            <button type="button" onClick={() => look(chosen)}>
+              {T.shelf_list_retry}
+            </button>
+          )}
+        </>
+      ) : seen.already ? (
+        <p className="note rtl-safe" role="status">{T.merge_already}</p>
+      ) : (
+        <>
+          <p className="note rtl-safe">
+            {T.merge_would_move(name, survivorName)}
+          </p>
+          <ul className="merge-facts">
+            {books + photos === 0 ? (
+              <li className="rtl-safe">{T.merge_moves_nothing}</li>
+            ) : (
+              <>
+                {books > 0 && <li className="rtl-safe">{T.merge_books(books)}</li>}
+                {photos > 0 && (
+                  <li className="rtl-safe">{T.merge_photos(photos)}</li>
+                )}
+              </>
+            )}
+            {seen.answers_moved > 0 && (
+              <li className="rtl-safe">{T.merge_answers(seen.answers_moved)}</li>
+            )}
+            {seen.identities_moved > 0 && (
+              <li className="rtl-safe">
+                {T.merge_identities(seen.identities_moved)}
+              </li>
+            )}
+            <li className="rtl-safe">{T.merge_depth_after(seen.depth)}</li>
+            {seen.clashes.length > 0 && (
+              <li className="rtl-safe warn">
+                {T.merge_clashes(seen.clashes.length)}
+              </li>
+            )}
+          </ul>
+          {/* ⚠ Offered only when there is something to order. With
+              photographs on one side or none at all, "which half is on the
+              left" is a question about nothing — and a required answer to it
+              would be a required answer to nothing. */}
+          {ordered && (
+            <fieldset className="merge-strip" ref={ask}>
+              <legend>{T.merge_strip}</legend>
+              <label className="field inline">
+                <input type="radio" name="strip" value="survivor_first"
+                       checked={strip === 'survivor_first'}
+                       onChange={() => setStrip('survivor_first')} />
+                <span className="rtl-safe">
+                  {T.merge_strip_survivor_first(survivorName)}
+                </span>
+              </label>
+              <label className="field inline">
+                <input type="radio" name="strip" value="absorbed_first"
+                       checked={strip === 'absorbed_first'}
+                       onChange={() => setStrip('absorbed_first')} />
+                <span className="rtl-safe">
+                  {T.merge_strip_absorbed_first(name)}
+                </span>
+              </label>
+            </fieldset>
+          )}
+          {/* ⚠ The reason, beside the control. Measured: with the radio
+              fieldset on screen the auto-scroll lands past the question, so
+              what the owner sees is a greyed destructive button, no question
+              and no account of what would move — which is exactly what
+              *reads as broken* means. */}
+          {ordered && strip === null && (
+            <p className="note rtl-safe" id="merge-why">{T.merge_pick_order}</p>
+          )}
+          <button
+            type="button"
+            className="danger"
+            aria-describedby={ordered && strip === null
+              ? 'merge-why' : undefined}
+            disabled={ordered && strip === null}
+            onClick={() => {
+              actions.mergeShelf(chosen.id, survivorId,
+                                 // Nothing to order, so the declaration is
+                                 // not owed and the survivor's (empty) strip
+                                 // comes first by arithmetic, not by guess.
+                                 strip ?? 'survivor_first', name)
+              close()
+            }}
+          >
+            {T.merge_confirm}
+          </button>
+        </>
+      )}
+      <div ref={foot}>
+        <button type="button" className="linkish" onClick={close}>
+          {T.merge_cancel}
+        </button>
+      </div>
     </div>
   )
 }

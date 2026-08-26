@@ -29,9 +29,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.domain import LibraryRef
+from app.domain import LibraryRef, refile_copy
 from app.domain.map_undo import (
     ABSENT,
+    LEDGER_ORDER,
     RESTORE_ORDER,
     MapRestore,
     MapUndoEntry,
@@ -45,9 +46,13 @@ from app.domain.map_undo import (
     merge_restores,
     parents_of,
     sections_touched,
+    shelves_touched,
     target_keys,
 )
+from app.domain.merge import CopyPlacement
 from app.ports import Clock, IdGen
+from app.ports.decisions import DecisionStore
+from app.ports.duplicates import DuplicateQueue
 from app.ports.map import MapStore
 from app.ports.map_undo import MapUndoStore
 from app.ports.store import (
@@ -87,6 +92,18 @@ class Journal:
     store: MapUndoStore
     ids: IdGen
     clock: Clock
+    #: The three stores a MERGE's inverse also reads and writes (P6.4d).
+    #:
+    #: ⚠ REQUIRED, not defaulted, and that is the whole argument of this class
+    #: applied one item later. A merge's fingerprint is a digest of copies,
+    #: photographs and standing answers as much as of shelves; a journal built
+    #: without them would record an entry whose scope it cannot compute, and
+    #: the failure would land on the owner pressing undo rather than on the
+    #: developer wiring the app. Defaulting them to ``None`` moves that
+    #: failure from construction to the one moment it must not happen.
+    books: BookStore
+    decisions: DecisionStore
+    duplicates: DuplicateQueue
 
 
 @dataclass(frozen=True)
@@ -111,6 +128,7 @@ class UndoOffer:
 # --- the fingerprint, gathered ---------------------------------------------
 
 def fingerprint(
+    journal: Journal,
     map_store: MapStore,
     shelves: ShelfStore,
     library: LibraryRef,
@@ -203,10 +221,12 @@ def fingerprint(
         known[f"shape:{section_id}"] = digest_shape(
             live["sections"].get(section_id))
 
+    known.update(_ledger(journal, shelves, library, restore))
+
     # What the edit wrote WINS over what a later read says, for the reason in
     # the docstring: the read can already be somebody else's work.
     for key, value in wrote.items():
-        known[key] = digest_row(value) if value is not None else ABSENT
+        known[key] = _digest_for(key, value)
         # ⚠ A section the edit wrote decides its own SHAPE key too. Without
         # this the row digest comes from `wrote` and the shape digest comes
         # from a read taken after it — two answers about one section, from two
@@ -223,6 +243,113 @@ def fingerprint(
     # ⚠ No `if key in known` filter: a key the scope names and nothing
     # produced is a bug in one of the two, and it used to be swallowed here.
     return {key: known[key] for key in target_keys(restore)}
+
+
+def _ledger(
+    journal: Journal,
+    shelves: ShelfStore,
+    library: LibraryRef,
+    restore: MapRestore,
+) -> dict[str, str]:
+    """Digest the four non-map tables a MERGE moves, plus the alias table.
+
+    ⚠ **Bounded, like everything else here**, and the bound is the two shelves
+    the merge joined: a listing of the books standing at them, one capture
+    listing each, one decision listing per remembered ``(shelf, depth)`` and
+    one open-question listing each. The naive shape — ``books.get`` per
+    remembered copy — is a connection per book in the SQLite adapter, on the
+    path that draws a map.
+
+    ⚠ **Read from BOTH shelves, always.** A merge's rows are remembered where
+    they STOOD and are read where they now ARE, and those differ by
+    construction — that is what the edit did. Asking only about the shelf a
+    row came from digests every one of them as gone, so the entry could never
+    match itself and every merge would be un-undoable the moment it was made.
+    """
+    if not (any(getattr(restore, name) for name in LEDGER_ORDER)
+            or restore.minted_aliases or restore.minted_decisions
+            or restore.minted_questions):
+        return {}
+
+    known: dict[str, str] = {}
+    where = shelves_touched(restore)
+
+    if restore.copies:
+        standing: dict[str, CopyPlacement] = {}
+        for book in journal.books.books_on_shelf(library, where):
+            for copy in book.copies:
+                if copy.shelf_id in set(where):
+                    standing[copy.id] = CopyPlacement(
+                        book_id=book.id, copy_id=copy.id,
+                        shelf_id=copy.shelf_id, depth=copy.depth or 1)
+        for placement in restore.copies:
+            known[f"copies:{placement.copy_id}"] = _digest_for(
+                "copies:", standing.get(placement.copy_id))
+
+    if restore.captures:
+        photos = {c.id: c for shelf_id in where
+                  for c in shelves.list_captures(library, shelf_id)}
+        for capture in restore.captures:
+            known[f"captures:{capture.id}"] = _digest_for(
+                "captures:", photos.get(capture.id))
+
+    answered = restore.decisions or restore.minted_decisions
+    if answered:
+        scopes = {(d.shelf_id, d.depth) for d in restore.decisions}
+        scopes.update((s, d) for s, d, _ in restore.minted_decisions)
+        answered_now = {(d.shelf_id, d.depth, d.book_key): d
+                        for shelf_id, depth in scopes
+                        for d in journal.decisions.list_decisions(
+                            library, shelf_id, depth)}
+        for key in ([(d.shelf_id, d.depth, d.book_key)
+                     for d in restore.decisions]
+                    + list(restore.minted_decisions)):
+            known[f"decisions:{key[0]}:{key[1]}:{key[2]}"] = _digest_for(
+                "decisions:", answered_now.get(key))
+
+    asked = restore.questions or restore.minted_questions
+    if asked:
+        asked_now = {(q.shelf_id, q.depth, q.book_key): q
+                     for shelf_id in where
+                     for q in journal.duplicates.list_open_questions(
+                         library, shelf_id=shelf_id)}
+        for key in ([(q.shelf_id, q.depth, q.book_key)
+                     for q in restore.questions]
+                    + list(restore.minted_questions)):
+            known[f"questions:{key[0]}:{key[1]}:{key[2]}"] = _digest_for(
+                "questions:", asked_now.get(key))
+
+    if restore.aliases or restore.minted_aliases:
+        standing_aliases = {a.alias_id: a
+                            for a in shelves.list_aliases(library)}
+        for alias_id in ([a.alias_id for a in restore.aliases]
+                         + list(restore.minted_aliases)):
+            known[f"aliases:{alias_id}"] = _digest_for(
+                "aliases:", standing_aliases.get(alias_id))
+    return known
+
+
+def _digest_for(key: str, record) -> str:
+    """ABSENT, or the row digested. **One function for every key.**
+
+    ⚠ It briefly was not, and that is why this note is here rather than in a
+    commit message. ``copies:`` was digested by a second, narrower function
+    while the ``wrote`` override used ``digest_row`` for everything — so the
+    two halves of one entry disagreed about every copy a merge moved, and the
+    offer answered ``available: false`` naming a copy nobody had touched: a
+    merge that could never be taken back, from the moment it was made.
+
+    The narrowing that avoided was real and it is still here — it just lives
+    in :class:`app.domain.merge.CopyPlacement`, which carries a location and
+    not a book, so a title fixed on the books tab cannot refuse a map undo.
+    Narrowing the ROW rather than the digest means there is one answer to
+    *what does this key digest to*, whoever is asking.
+
+    ``key`` is kept in the signature for the same reason: a future key that
+    genuinely needs its own treatment must add a branch HERE, where both sides
+    read it, rather than at one of the two call sites.
+    """
+    return ABSENT if record is None else digest_row(record)
 
 
 # --- recording -------------------------------------------------------------
@@ -277,8 +404,8 @@ def record(
         union = merge_restores(previous.restore, restore)
         merged = absorbed(
             previous, kind, restore,
-            _coalesced_fingerprint(map_store, shelves, library, previous,
-                                   union, restore, wrote),
+            _coalesced_fingerprint(journal, map_store, shelves, library,
+                                   previous, union, restore, wrote),
             journal.clock.now_iso(),
         )
         journal.store.record(library, merged)
@@ -291,14 +418,15 @@ def record(
         tag=tag,
         recorded_at=journal.clock.now_iso(),
         restore=restore,
-        fingerprint=fingerprint(map_store, shelves, library, restore,
-                                wrote),
+        fingerprint=fingerprint(journal, map_store, shelves, library,
+                                restore, wrote),
     )
     journal.store.record(library, entry)
     return entry
 
 
 def _coalesced_fingerprint(
+    journal: Journal,
     map_store: MapStore,
     shelves: ShelfStore,
     library: LibraryRef,
@@ -331,7 +459,7 @@ def _coalesced_fingerprint(
     ``target_keys(restore)`` is exactly that set; everything else the union
     adds is the first half's, and the entry beside it remembers it correctly.
     """
-    fresh = fingerprint(map_store, shelves, library, union, wrote)
+    fresh = fingerprint(journal, map_store, shelves, library, union, wrote)
     owned = set(target_keys(restore))
     return {
         key: (fresh[key] if key in owned or key not in previous.fingerprint
@@ -363,7 +491,7 @@ def offer(
 
     changed = changed_targets(
         entry.fingerprint,
-        fingerprint(map_store, shelves, library, entry.restore),
+        fingerprint(journal, map_store, shelves, library, entry.restore),
     )
     if changed:
         return UndoOffer(available=False, reason="world_moved",
@@ -397,7 +525,7 @@ def undo(
 
     changed = changed_targets(
         entry.fingerprint,
-        fingerprint(map_store, shelves, library, entry.restore),
+        fingerprint(journal, map_store, shelves, library, entry.restore),
     )
     if changed:
         raise UndoRefused(
@@ -407,7 +535,7 @@ def undo(
             changed,
         )
 
-    _replay(map_store, shelves, books, library, entry.restore)
+    _replay(journal, map_store, shelves, books, library, entry.restore)
     journal.store.mark_undone(library, entry.id, journal.clock.now_iso())
     return entry
 
@@ -418,6 +546,7 @@ def _head(journal: Journal, library: LibraryRef) -> MapUndoEntry | None:
 
 
 def _replay(
+    journal: Journal,
     map_store: MapStore,
     shelves: ShelfStore,
     books: BookStore,
@@ -520,3 +649,58 @@ def _replay(
         else:
             for record in remembered:
                 writers[name](library, record)
+
+    _replay_ledger(journal, shelves, books, library, restore)
+
+
+def _replay_ledger(
+    journal: Journal,
+    shelves: ShelfStore,
+    books: BookStore,
+    library: LibraryRef,
+    restore: MapRestore,
+) -> None:
+    """Un-merge: the books, the photographs, the answers, the identities.
+
+    **After the shelves, and that is a dependency rather than a preference.**
+    Every row here names a shelf, and the shelf it names is the one the merge
+    deleted — put a capture back before its shelf and the write is refused by
+    a foreign key, or worse, accepted by a store that has none.
+
+    ⚠ **The aliases come LAST**, after the four tables above and after the
+    shelf row they point at. Removing the minted row is what makes the
+    absorbed identity a shelf again, and the re-pointed rows can only name it
+    once it exists — so the whole alias step is one call into the store,
+    which holds it in one transaction (see ``rewrite_aliases``).
+
+    ⚠ **Captures are written IN THE ORDER THEY WERE REMEMBERED.**
+    ``(shelf, depth, order)`` is unique, so an arbitrary sequence lands on a
+    slot whose occupant has not moved yet — and a half-replayed undo leaves an
+    entry dead forever, blaming a row the undo itself changed.
+    ``app.domain.merge._restrip`` is where that order is decided, with the
+    argument.
+    """
+    for placement in restore.copies:
+        book = books.get(library, placement.book_id)
+        if book is None:
+            # The book was deleted after the merge. Its copies went with it,
+            # so there is nothing to put back and nothing lost by saying so —
+            # and the fingerprint has already refused any case where the copy
+            # still exists somewhere unexpected.
+            continue
+        books.save(library, refile_copy(book, placement.copy_id,
+                                        shelf_id=placement.shelf_id,
+                                        depth=placement.depth))
+    for capture in restore.captures:
+        shelves.save_capture(library, capture)
+    for shelf_id, depth, book_key in restore.minted_decisions:
+        journal.decisions.delete_decision(library, shelf_id, depth, book_key)
+    for decision in restore.decisions:
+        journal.decisions.save_decision(library, decision)
+    for shelf_id, depth, book_key in restore.minted_questions:
+        journal.duplicates.delete_question(library, shelf_id, depth, book_key)
+    for question in restore.questions:
+        journal.duplicates.save_question(library, question)
+    if restore.aliases or restore.minted_aliases:
+        shelves.rewrite_aliases(library, remove=restore.minted_aliases,
+                                put=restore.aliases)

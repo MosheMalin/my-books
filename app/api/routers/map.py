@@ -50,9 +50,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from app.api.deps import (
     get_book_store,
     get_clock,
+    get_decision_store,
+    get_duplicate_queue,
     get_id_gen,
     get_journal,
     get_map_store,
+    get_read_store,
     get_shelf_store,
 )
 from app.api.dto import (
@@ -65,6 +68,10 @@ from app.api.dto import (
     FloorDTO,
     FloorPatch,
     MapDTO,
+    MergePreviewDTO,
+    MergeRefusalDTO,
+    MergeRequest,
+    MergeResultDTO,
     PlaceCreate,
     PlaceDTO,
     PlacePatch,
@@ -94,10 +101,12 @@ from app.domain import (
     NotEmpty,
     Place,
     Section,
+    MergeRefused,
     Shelf,
     ShelfAddress,
     Site,
     ShelfWasMerged,
+    StripOrder,
     SlotTaken,
     SlotsOccupied,
     TooManySlots,
@@ -131,15 +140,25 @@ from app.map_edit import (
     remove_record,
     unbind_shelf_from_map,
 )
+from app.domain.alias import resolve
+from app.map_merge import Shelves, merge, preview
 from app.map_undo import Journal, UndoRefused, offer, undo
 from app.ports import Clock, IdGen
+from app.ports.decisions import DecisionStore
+from app.ports.duplicates import DuplicateQueue
 from app.ports.map import MapStore
 from app.ports.store import (
     BookStore,
+    DuplicateCaptureSlot,
     DuplicateSectionOrdinal,
     DuplicateShelfSlot,
+    ReadStore,
+    ShelfHasAliases,
+    ShelfNotEmpty,
     ShelfStore,
     UnknownParent,
+    UnknownShelf,
+    WrongLibrary,
 )
 
 router = APIRouter(prefix="/map", tags=["map"])
@@ -215,6 +234,17 @@ def _translated():
     except (NotOnThisFloor, NotEmpty, TooManySlots, SlotsOccupied,
             SlotTaken, CellIsGap, AlreadyOnTheMap, ShelfWasMerged,
             VirtualShelfHasNoDepth,
+            # ⚠ The whole `StoreError` family, not the three this tuple
+            # happened to name. `StoreError` subclasses bare `Exception`, so
+            # the `DomainError` fall-through below never caught the others —
+            # and a security review measured `ShelfNotEmpty` escaping a merge
+            # as a **500** on a mutating LAN route, which the client then
+            # classifies as *dropped* and invites the owner to retry forever.
+            # Every one of these sentences is already owner-readable and every
+            # one means *there is something here you have not dealt with*,
+            # which is a 409.
+            ShelfNotEmpty, ShelfHasAliases, UnknownShelf,
+            DuplicateCaptureSlot, WrongLibrary,
             DuplicateSectionOrdinal, DuplicateShelfSlot) as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     except DomainError as exc:
@@ -1006,6 +1036,160 @@ def unbind_shelf_route(
     return _shelf_dto(shelves, books, library, detached)
 
 
+def _ports(store, shelves, books, reads, decisions, duplicates) -> Shelves:
+    return Shelves(map_store=store, shelves=shelves, books=books, reads=reads,
+                   decisions=decisions, duplicates=duplicates)
+
+
+def _both(shelves: ShelfStore, library: LibraryRef, shelf_id: str,
+          into: str) -> tuple[Shelf, Shelf]:
+    absorbed = shelves.get_shelf(library, shelf_id)
+    survivor = shelves.get_shelf(library, into)
+    if absorbed is None or survivor is None:
+        # Foreign and fictional are the same answer (§4.2), and so is "the
+        # one you named has already been absorbed" — its row is gone, which
+        # from here is indistinguishable from never having existed.
+        raise _gone("shelf")
+    return absorbed, survivor
+
+
+def _strip(value: str) -> StripOrder:
+    try:
+        return StripOrder(value)
+    except ValueError as exc:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "strip must be `absorbed_first` or `survivor_first`; which half "
+            "of the merged shelf is to the left is declared, never detected "
+            "(§3.12)") from exc
+
+
+@router.post("/shelves/{shelf_id}/merge/preview",
+             response_model=MergePreviewDTO)
+def preview_merge(
+    shelf_id: str,
+    body: MergeRequest,
+    library: LibraryRef = Depends(require(EDIT)),
+    store: MapStore = Depends(get_map_store),
+    shelves: ShelfStore = Depends(get_shelf_store),
+    books: BookStore = Depends(get_book_store),
+    reads: ReadStore = Depends(get_read_store),
+    decisions: DecisionStore = Depends(get_decision_store),
+    duplicates: DuplicateQueue = Depends(get_duplicate_queue),
+) -> MergePreviewDTO:
+    """What absorbing this shelf into `into` would move. **Writes nothing.**
+
+    §3.15 keeps the preview even though undo exists: *"it is not a substitute
+    for undo but the other half of the same courtesy"*. §3.14 is why it is a
+    separate call rather than a field on the merge — every merge is an
+    explicit ✓, and a ✓ given without seeing what moves is not one.
+
+    **200 for a refusal too**, carried in `refused` with a stable `reason`
+    beside the sentence. A preview that answers 409 cannot show the owner why,
+    which is the only thing it is for — and the client would be parsing
+    English out of a `detail` string, which is the finding P6.4c left on this
+    item's row.
+
+    ⚠ It is a POST because it takes a body, not because it writes: `strip`
+    changes the answer (§3.12) and a GET with a mandatory query triple is the
+    same request wearing a URL. `tests/test_api.py` asserts the library is
+    byte-identical afterwards.
+    """
+    absorbed, survivor = _both(shelves, library, shelf_id, body.into)
+    ports = _ports(store, shelves, books, reads, decisions, duplicates)
+    # ⚠ `absorbed.id != survivor.id` FIRST. `resolve` answers with the id it
+    # was handed when nothing has absorbed it, so *A already resolves to B* is
+    # trivially true for A == B — and this route answered 200 `already: true`
+    # for a merge the write refuses with 409. A preview that promises a state
+    # the write will not produce is the one thing the shared `gather` exists
+    # to prevent, and the same `resolve` trap 5cd19fb fixed one function over.
+    if (absorbed.id != survivor.id
+            and resolve(absorbed.id,
+                        shelves.list_aliases(library)) == survivor.id):
+        return MergePreviewDTO(absorbed_id=absorbed.id,
+                               survivor_id=survivor.id, already=True,
+                               depth=survivor.depth_count)
+    try:
+        plan = preview(ports, library, absorbed, survivor,
+                       strip=_strip(body.strip))
+    except MergeRefused as exc:
+        if exc.reason == "other_library":
+            raise _gone("shelf") from exc
+        return MergePreviewDTO(
+            absorbed_id=absorbed.id, survivor_id=survivor.id,
+            depth=survivor.depth_count,
+            refused=MergeRefusalDTO(reason=exc.reason, say=str(exc)))
+    return MergePreviewDTO.of(absorbed.id, survivor.id, plan)
+
+
+@router.post("/shelves/{shelf_id}/merge", response_model=MergeResultDTO)
+def merge_shelves(
+    shelf_id: str,
+    body: MergeRequest,
+    library: LibraryRef = Depends(require(EDIT)),
+    store: MapStore = Depends(get_map_store),
+    shelves: ShelfStore = Depends(get_shelf_store),
+    books: BookStore = Depends(get_book_store),
+    reads: ReadStore = Depends(get_read_store),
+    decisions: DecisionStore = Depends(get_decision_store),
+    duplicates: DuplicateQueue = Depends(get_duplicate_queue),
+    clock: Clock = Depends(get_clock),
+    journal: Journal = Depends(get_journal),
+) -> MergeResultDTO:
+    """Absorb this shelf into `into`. **The dangerous half of P6.4.**
+
+    Two identities become one: a population of copies moves, two capture
+    strips join, standing answers move with the wood (§3.13), and the absorbed
+    identity survives as an alias of its id AND its former address (§3.11).
+    It is undoable, and the inverse is the rows as they stood — §3.15 put the
+    journal ahead of this item precisely so this sentence could be written.
+
+    The answers:
+
+      - **404** — either shelf is gone, foreign or fictional (§4.2);
+      - **400** — `strip` is not one of the two;
+      - **409** — refused, with a stable `reason` in `detail.reason` and the
+        sentence in `detail.say`. Six reasons, and each is a different thing
+        for a screen to say;
+      - **200** — done, or already done. A retry after a dropped response is a
+        no-op (§3.15), never a second merge.
+
+    ⚠ `detail` is an OBJECT here where every other route in this file sends a
+    string. That is the finding P6.4c left on this row: a client offered a
+    merge by a 409 whose occupant is prose has to parse English or throw the
+    whole thing away, and both were measured happening.
+    """
+    absorbed, survivor = _both(shelves, library, shelf_id, body.into)
+    ports = _ports(store, shelves, books, reads, decisions, duplicates)
+    with _translated():
+        try:
+            done = merge(ports, library, absorbed, survivor,
+                         strip=_strip(body.strip), journal=journal,
+                         clock=clock)
+        except MergeRefused as exc:
+            if exc.reason == "other_library":
+                # ⚠ **404, never a named refusal.** `_both` already scopes both
+                # lookups, so this is a safety net — and a security review
+                # measured what the net answers if the lookup is ever widened
+                # (resolving `into` through the alias table is a natural P6.4e
+                # move): a REAL shelf of another library answered
+                # `other_library` while a fictional one answered 404, which is
+                # exactly the distinction §4.2 exists to abolish. Foreign and
+                # fictional are the same answer, at every door.
+                raise _gone("shelf") from exc
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                {"reason": exc.reason, "say": str(exc)}) from exc
+    moved = (MergePreviewDTO.of(absorbed.id, survivor.id, done.plan)
+             if done.plan is not None
+             else MergePreviewDTO(absorbed_id=absorbed.id,
+                                  survivor_id=survivor.id, already=True,
+                                  depth=done.survivor.depth_count))
+    return MergeResultDTO(
+        survivor=_shelf_dto(shelves, books, library, done.survivor),
+        moved=moved)
+
+
 @router.get("/undo", response_model=UndoOfferDTO)
 def get_undo(
     library: LibraryRef = Depends(require(READ)),
@@ -1055,7 +1239,7 @@ def post_undo(
     # answer the phone client cannot classify, so it retries.
     try:
         with _translated():
-            undo(journal, store, shelves, books, library)
+            entry = undo(journal, store, shelves, books, library)
     except UndoRefused as exc:
         # ⚠ A STRING detail, never the dict this first carried. The client
         # reads `e.detail || e.message` and renders it, so an object arrives
@@ -1064,7 +1248,14 @@ def post_undo(
         # where they have a Hebrew form. What moved stays machine-readable on
         # `GET /map/undo`, which answers `reason` and `changed`.
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
-    return UndoOfferDTO.of(offer(journal, store, shelves, library))
+    # ⚠ `restored` — what this call DID — beside the forward-looking offer.
+    # The offer after an undo is correctly empty (there is nothing more to
+    # take back), so a client announcing from `restores` could only ever say
+    # zero: measured as *"0 books went back to their own shelf"* with 22 on
+    # the shelf and the alias gone. The two answer different questions and
+    # both are wanted in one round trip.
+    said = UndoOfferDTO.of(offer(journal, store, shelves, library))
+    return said.model_copy(update={"restored": entry.restore.counts()})
 
 
 # --- helpers --------------------------------------------------------------

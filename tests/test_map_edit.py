@@ -24,6 +24,8 @@ sys.path.insert(0, str(REPO_ROOT))
 from app.adapters.memory_store import (
     MemoryMapUndoStore,
     MemoryBookStore,
+    MemoryDecisionStore,
+    MemoryDuplicateQueue,
     MemoryMapStore,
     MemoryShelfStore,
 )
@@ -84,7 +86,8 @@ class SeqIdGen:
         return f"id-{self._n}"
 
 
-def _journal(ids=None, clock=None) -> Journal:
+def _journal(ids=None, clock=None, books=None, decisions=None,
+             duplicates=None) -> Journal:
     """A throwaway undo journal for a test that is not about the journal.
 
     P6.4b made ``journal`` a REQUIRED argument of every destructive function
@@ -94,7 +97,12 @@ def _journal(ids=None, clock=None) -> Journal:
     """
     return Journal(store=MemoryMapUndoStore(),
                    ids=ids if ids is not None else SeqIdGen(),
-                   clock=clock if clock is not None else StubClock())
+                   clock=clock if clock is not None else StubClock(),
+                   books=books if books is not None else MemoryBookStore(),
+                   decisions=(decisions if decisions is not None
+                              else MemoryDecisionStore()),
+                   duplicates=(duplicates if duplicates is not None
+                               else MemoryDuplicateQueue()))
 
 
 def _raises(exc, fn, *a, **kw):

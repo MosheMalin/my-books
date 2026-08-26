@@ -150,8 +150,20 @@ def bind_ports(
         if id_gen is None or clock is None:
             raise ValueError(
                 "binding a map undo journal needs an IdGen and a Clock too")
+        # ⚠ And the three the MERGE's inverse needs (P6.4d). Same sentence as
+        # the trio above, one item later: an entry that moved books,
+        # photographs and standing answers cannot be digested — let alone
+        # replayed — by a journal that can only see the map.
+        if book_store is None or decision_store is None \
+                or duplicate_queue is None:
+            raise ValueError(
+                "binding a map undo journal needs the BookStore, "
+                "DecisionStore and DuplicateQueue too: a merge's inverse "
+                "moves copies, photographs and standing answers")
         app.dependency_overrides[get_journal] = _always(
-            Journal(store=map_undo_store, ids=id_gen, clock=clock))
+            Journal(store=map_undo_store, ids=id_gen, clock=clock,
+                    books=book_store, decisions=decision_store,
+                    duplicates=duplicate_queue))
 
 
 def create_app(

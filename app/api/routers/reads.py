@@ -51,6 +51,7 @@ from app.api.dto import (
     ReadSummaryDTO,
 )
 from app.api.policy import require
+from app.domain.alias import resolve
 from app.domain import (
     Alternative,
     Capability,
@@ -219,7 +220,20 @@ def _check_mode_is_usable(reader: Reader, mode: str) -> None:
 
 
 def _load_shelf(store: ShelfStore, library: LibraryRef, shelf_id: str) -> Shelf:
+    """The shelf this id names, THROUGH the alias (§3.11).
+
+    ⚠ An id whose shelf was absorbed is not gone; it is answered for. A
+    bookmarked `#/shelves/<id>`, a phone mid-upload and a queued §5.4 question
+    all hold ids from before a merge, and §3.11 records the alias precisely so
+    none of them 404s. Resolving here rather than at each caller is the same
+    argument `books_on_shelf` makes one layer down: six tables name a shelf
+    and only two have a foreign key, so every question about a shelf has to
+    ask about its absorbed identities too.
+    """
     shelf = store.get_shelf(library, shelf_id)
+    if shelf is None:
+        shelf = store.get_shelf(
+            library, resolve(shelf_id, store.list_aliases(library)))
     if shelf is None:
         # Absent and foreign are the same answer, deliberately (§4.2).
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no such shelf")
@@ -227,12 +241,23 @@ def _load_shelf(store: ShelfStore, library: LibraryRef, shelf_id: str) -> Shelf:
 
 
 def _load_read(store: ReadStore, library: LibraryRef, shelf_id: str,
-               read_id: str) -> Read:
+               read_id: str, shelves: ShelfStore | None = None) -> Read:
     read = store.get_read(library, read_id)
     # A read id from ANOTHER shelf is a real record, just not one this URL
     # names — treated the same as absent rather than serving one shelf's
     # evidence at another shelf's address.
-    if read is None or read.shelf_id != shelf_id:
+    #
+    # ⚠ …unless the two ids are the same WOOD (§3.11). §3.13 leaves `reads`
+    # filed at the identity that ran them and moves `duplicate_questions` with
+    # the shelf, so after a merge the queue row names the survivor and its
+    # read names the absorbed id — and answering it 404d here, forever, with
+    # no way to evict the row either (the stale-cleanup is downstream of this
+    # line). Measured by a data-integrity review.
+    same = read is not None and read.shelf_id == shelf_id
+    if not same and read is not None and shelves is not None:
+        aliases = shelves.list_aliases(library)
+        same = resolve(read.shelf_id, aliases) == resolve(shelf_id, aliases)
+    if read is None or not same:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no such read")
     return read
 
@@ -343,12 +368,13 @@ def get_read(
     library: LibraryRef = Depends(require(Capability.BROWSE)),
     reads: ReadStore = Depends(get_read_store),
     jobs: JobRunner = Depends(get_job_runner),
+    shelves: ShelfStore = Depends(get_shelf_store),
 ) -> ReadDTO:
     """One read, with every claim it produced so far. While the read is still
     ``running`` the live progress from the job runner rides along in
     ``progress`` — the stored claims themselves only land once the read
     settles (see ``_job`` below)."""
-    read = _load_read(reads, library, shelf_id, read_id)
+    read = _load_read(reads, library, shelf_id, read_id, shelves)
     live = jobs.status(read_id)
     progress = live.progress if live and live.state == "running" else None
     return ReadDTO.of(read, progress=progress)
@@ -362,6 +388,7 @@ def stop(
     library: LibraryRef = Depends(require(Capability.CAPTURE)),
     reads: ReadStore = Depends(get_read_store),
     jobs: JobRunner = Depends(get_job_runner),
+    shelves: ShelfStore = Depends(get_shelf_store),
 ) -> ReadDTO:
     """Cooperative stop. **202**: the request is accepted, not honoured yet —
     the worker notices between spines (the same shape as ``Pipeline.run``'s
@@ -369,7 +396,7 @@ def stop(
     poll ``GET`` until it settles to ``stopped``. The claims already
     collected are kept — a stopped read is a real partial result, not a
     failure (§ app.domain.read)."""
-    read = _load_read(reads, library, shelf_id, read_id)
+    read = _load_read(reads, library, shelf_id, read_id, shelves)
     jobs.stop(read_id)
     return ReadDTO.of(read)
 
@@ -398,7 +425,7 @@ def diff_for(
     exactly this reason.
     """
     shelf = _load_shelf(shelves, library, shelf_id)
-    read = _load_read(reads, library, shelf_id, read_id)
+    read = _load_read(reads, library, shelf_id, read_id, shelves)
     if read.status is ReadStatus.RUNNING:
         # Applying (or even just diffing) a read that might still append
         # claims would be comparing against a moving target, and an APPLY
@@ -526,6 +553,7 @@ def lookup_findings(
     limit: int = Query(3, ge=1, le=20),
     library: LibraryRef = Depends(require(Capability.BROWSE)),
     reads: ReadStore = Depends(get_read_store),
+    shelves: ShelfStore = Depends(get_shelf_store),
 ) -> list[FindingMatchDTO]:
     """*"Did this read already find this book?"* — asked while the owner is
     typing one in by hand (P2.10, owner 2026-08-09).
@@ -548,7 +576,7 @@ def lookup_findings(
     exactly the one you might be about to re-add by hand, and staying silent
     about it would be the unhelpful half of honest.
     """
-    read = _load_read(reads, library, shelf_id, read_id)
+    read = _load_read(reads, library, shelf_id, read_id, shelves)
     query = parse(q)
     if not query:
         # An empty or too-short query means "match nothing", never "match
@@ -601,7 +629,7 @@ def add_a_finding_by_hand(
     `shelves.py` parses back out — honest for ordering, and no new column for
     a relationship nothing else needs to query.
     """
-    read = _load_read(reads, library, shelf_id, read_id)
+    read = _load_read(reads, library, shelf_id, read_id, shelves)
     try:
         claim = Claim(id=ids.new_id(), spine_id=_mint_spine_id(read, body),
                       # A hand-added book belongs to the photo the owner is

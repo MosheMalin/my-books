@@ -115,7 +115,13 @@ const openEditor = () =>
         onReload={() => {}}
         site={ONE_SITE}
         shelves={{ offTheMap: async () => [], bind: () => {},
-                   unbind: () => {} }}
+                   unbind: () => {}, merge: () => {},
+                   previewMerge: async () => ({
+                     absorbed_id: 'a', survivor_id: 'b', refused: null,
+                     already: false, depth: 1, books: 0, copies: [],
+                     photos: [], clashes: [], answers_moved: 0,
+                     identities_moved: 0,
+                   }) }}
       />
     </I18nProvider>,
   )
@@ -322,7 +328,7 @@ describe('counted strings say ONE, in both languages', () => {
       // a bound or a reached value, never 1 in practice and a value either way
       'too_many_slots.max', 'too_many_slots.asked', 'too_many_sections.max',
       // an ordinal: «1. שם המדף» is the position in the picker
-      'pick_shelf_option.n',
+      'pick_shelf_option.n', 'merge_pick_option.n',
     ])
     const bare: string[] = []
 
@@ -372,7 +378,21 @@ describe('a sentence carrying a NAME the owner typed', () => {
     // one string, so the UI's own words have to come first.
     const NAME = 'ZZlatin shelf'
     for (const [lang, table] of Object.entries(TABLES)) {
-      for (const key of ['bound_here', 'unbound_shelf'] as const) {
+      // ⚠⚠ **From the TYPE, like the counted-string guard above**, not from
+      // a list. `merged_into` — P6.4d's sibling, announced on the same flash
+      // box — was missing from `['bound_here', 'unbound_shelf']`, which is
+      // the enumerate-from-a-list shape CLAUDE.md records failing three
+      // times. A runtime probe was tried first and is wrong for this file's
+      // own recorded reason: `(n: number) => string` also takes one argument
+      // and also echoes a sentinel, so it swept every counted string in with
+      // the names. `(name: string) => string` in `MapText` IS the declaration
+      // that a parameter is something the owner typed.
+      const named = [...readFileSync(join(HERE, 'text.ts'), 'utf8')
+        .matchAll(/^ {2}(\w+): \((?:name|label): string\) => string$/gm)]
+        .map((m) => m[1]!)
+      expect(named.length, 'no name-carrying sentences found')
+        .toBeGreaterThan(2)
+      for (const key of named) {
         const said = (table as unknown as Record<string, (n: string) => string>)[key]!(NAME)
         expect(said.startsWith(NAME), `${lang}.${key} starts with the name`)
           .toBe(false)

@@ -51,6 +51,69 @@ class DecisionStore(Protocol):
         with one call per read rather than filtering a library-wide list.
         """
 
+    def decisions_at_shelf(
+        self, library: LibraryRef, shelf_id: str,
+    ) -> tuple[Decision, ...]:
+        """EVERY standing answer at this shelf, at every depth.
+
+        ⚠ Added for P6.4d, and the reason is a measured hole rather than
+        symmetry with `DuplicateQueue.list_open_questions`. A merge has to
+        take §3.13's load-bearing table with the wood, and it was gathering
+        `list_decisions(shelf, depth)` over the depths it could SEE — copies,
+        photographs, and both shelves' declared `depth_count`. A REJECTED
+        decision is precisely the answer that leaves nothing standing, so a
+        shelf shallowed after one was made (which the depth patch permits: it
+        floors at `deepest_occupied_depths`, which counts copies and
+        photographs, not answers) held a row at a depth no caller could name.
+        Measured: the row stayed at the deleted shelf id, and deepening the
+        survivor later would re-add the phantom it forbids.
+
+        Ordered by ``(depth, book_key)`` so two implementations cannot
+        disagree about it.
+        """
+
+    def decisions_at_shelf(
+        self, library: LibraryRef, shelf_id: str,
+    ) -> tuple[Decision, ...]:
+        """EVERY standing answer at this shelf, at every depth.
+
+        ⚠ Added for P6.4d, and the reason is a measured hole rather than
+        symmetry with `DuplicateQueue.list_open_questions`. A merge has to
+        take §3.13's load-bearing table with the wood, and it was gathering
+        `list_decisions(shelf, depth)` over the depths it could SEE — copies,
+        photographs, and both shelves' declared `depth_count`. A REJECTED
+        decision is precisely the answer that leaves nothing standing, so a
+        shelf shallowed after one was made (which the depth patch permits: it
+        floors at `deepest_occupied_depths`, which counts copies and
+        photographs, not answers) held a row at a depth no caller could name.
+        Measured: the row stayed at the deleted shelf id, and deepening the
+        survivor later would re-add the phantom it forbids.
+
+        Ordered by ``(depth, book_key)`` so two implementations cannot
+        disagree about it.
+        """
+
+    def decisions_at_shelf(
+        self, library: LibraryRef, shelf_id: str,
+    ) -> tuple[Decision, ...]:
+        """EVERY standing answer at this shelf, at every depth.
+
+        ⚠ Added for P6.4d, and the reason is a measured hole rather than
+        symmetry with `DuplicateQueue.list_open_questions`. A merge has to
+        take §3.13's load-bearing table with the wood, and it was gathering
+        `list_decisions(shelf, depth)` over the depths it could SEE — copies,
+        photographs, and both shelves' declared `depth_count`. A REJECTED
+        decision is precisely the answer that leaves nothing standing, so a
+        shelf shallowed after one was made (which the depth patch permits: it
+        floors at `deepest_occupied_depths`, which counts copies and
+        photographs, not answers) held a row at a depth no caller could name.
+        Measured: the row stayed at the deleted shelf id, and deepening the
+        survivor later would re-add the phantom §5.6 forbids.
+
+        Ordered by ``(depth, book_key)`` so two implementations cannot
+        disagree about it.
+        """
+
     def delete_decision(
         self, library: LibraryRef, shelf_id: str, depth: int, book_key: str,
     ) -> bool:

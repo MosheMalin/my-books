@@ -263,6 +263,66 @@ class MemoryShelfStore:
                 f"another identity already claims the slot {alias.address}")
         here[alias.alias_id] = alias
 
+    def absorb_shelf(
+        self, library: LibraryRef, alias: ShelfAlias,
+    ) -> tuple[ShelfAlias, ...]:
+        """One step, because the two halves are one fact — see the port.
+
+        This store has no transaction to hold, so what it holds instead is the
+        ORDER and the all-or-nothing: every check runs before the first write,
+        and the re-pointing is undone if the insert is refused. Without that
+        it would leave the library in the state the SQLite transaction exists
+        to make unreachable, and the API ring — which runs on this store —
+        would be the one place the bug could not be seen.
+        """
+        here = self._a(library)
+        standing = tuple(a for a in self.list_aliases(library)
+                         if a.shelf_id == alias.alias_id)
+        moved = tuple(replace(a, shelf_id=alias.shelf_id) for a in standing)
+        for row in moved:
+            here[row.alias_id] = row
+        try:
+            self.save_alias(library, alias)
+        except Exception:
+            for row in standing:
+                here[row.alias_id] = row
+            raise
+        return standing
+
+    def rewrite_aliases(
+        self,
+        library: LibraryRef,
+        *,
+        remove: tuple[str, ...] = (),
+        put: tuple[ShelfAlias, ...] = (),
+    ) -> None:
+        here = self._a(library)
+        after = {k: v for k, v in here.items() if k not in set(remove)}
+        for row in put:
+            if row.library_id != library.id:
+                raise WrongLibrary(
+                    f"alias {row.alias_id} belongs to {row.library_id!r}, "
+                    f"not {library.id!r}")
+            if row.shelf_id not in self._s(library):
+                raise UnknownShelf(
+                    f"no shelf {row.shelf_id} to absorb {row.alias_id} into")
+            after[row.alias_id] = row
+        chained = [a for a in after.values() if a.shelf_id in after]
+        if chained:
+            # One hop, checked over the RESULT rather than per row: an undo
+            # writing two rows may be legal in either order and illegal
+            # together, which a per-row check cannot see.
+            raise ShelfHasAliases(
+                f"{len(chained)} of these would resolve to a shelf that has "
+                "itself been absorbed (MAP_PLAN §3.11 keeps the resolver one "
+                "hop)")
+        addresses = [a.address for a in after.values() if a.address is not None]
+        if len(set(addresses)) != len(addresses):
+            raise DuplicateShelfSlot(
+                "two identities would claim one former slot")
+        here.clear()
+        here.update(after)
+
     def list_aliases(self, library: LibraryRef) -> tuple[ShelfAlias, ...]:
         return tuple(sorted(self._a(library).values(),
                             key=lambda a: a.alias_id))
@@ -504,6 +564,10 @@ class MemoryReadStore:
         rows.sort(key=lambda r: (r.started_at or "", r.id), reverse=True)
         return tuple(rows)
 
+    def has_running_read(self, library: LibraryRef, shelf_id: str) -> bool:
+        return any(r.shelf_id == shelf_id and not r.status.is_terminal
+                   for r in self._r(library).values())
+
     def list_all_reads(self, library: LibraryRef) -> tuple[Read, ...]:
         rows = list(self._r(library).values())
         rows.sort(key=lambda r: (r.started_at or "", r.id), reverse=True)
@@ -552,6 +616,13 @@ class MemoryDecisionStore:
                 if d.shelf_id == shelf_id and d.depth == depth]
         rows.sort(key=lambda d: d.book_key)
         return tuple(rows)
+
+    def decisions_at_shelf(
+        self, library: LibraryRef, shelf_id: str,
+    ) -> tuple[Decision, ...]:
+        return tuple(sorted(
+            (d for d in self._d(library).values() if d.shelf_id == shelf_id),
+            key=lambda d: (d.depth, d.book_key)))
 
     def delete_decision(
         self, library: LibraryRef, shelf_id: str, depth: int, book_key: str,

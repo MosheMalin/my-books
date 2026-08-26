@@ -260,6 +260,50 @@ describe('the hook that binds a shelf to a slot', () => {
     expect(seen.sync!.notice!.detail).toBe('you are a viewer')
   })
 
+  it("says the SERVER's sentence when a MERGE is refused, not ours", async () => {
+    // ⚠ A merge's 409 is not a stale drawing. It is *a read of this shelf is
+    // still running*, or *that shelf has itself been absorbed* — six things
+    // to do next, carried in `detail.reason` with the sentence beside it so
+    // no client has to parse English. Mapping them all to `slot_moved_on`
+    // told the owner to try again, which for a running read fails
+    // identically until it finishes. Same failure the bind path already
+    // records fixing for 401/403/429.
+    const { source } = fakeSource({
+      api: {
+        post: async () => {
+          throw { status: 409,
+                  detail: { reason: 'read_running',
+                            say: 'a read of sh-1 is still running' } }
+        },
+        put: async () => ({}), patch: async () => ({}), del: async () => ({}),
+      },
+    })
+    const seen = mountHook(source)
+    await screen.findByText('ready', {}, WAIT)
+
+    act(() => seen.sync!.mergeShelf('ph-1', 'sh-1', 'survivor_first', 'מדף'))
+    await waitFor(() => expect(seen.sync!.notice).not.toBeNull(), WAIT)
+
+    expect(seen.sync!.notice!.detail).toBe('a read of sh-1 is still running')
+    expect(seen.sync!.notice!.say?.(HE)).toBeUndefined()
+  })
+
+  it('still says OUR words when a merge meets a stale drawing (404)', async () => {
+    const { source } = fakeSource({
+      api: {
+        post: async () => { throw { status: 404, detail: 'no such shelf' } },
+        put: async () => ({}), patch: async () => ({}), del: async () => ({}),
+      },
+    })
+    const seen = mountHook(source)
+    await screen.findByText('ready', {}, WAIT)
+
+    act(() => seen.sync!.mergeShelf('ph-1', 'sh-1', 'survivor_first', 'מדף'))
+    await waitFor(() => expect(seen.sync!.notice).not.toBeNull(), WAIT)
+
+    expect(seen.sync!.notice!.say?.(HE)).toBe(HE.slot_moved_on)
+  })
+
   it('does NOT blank the editor for a bind, and does for a site switch', async () => {
     // ⚠⚠ CLAUDE.md's own trap — *a refresh is not a first load* — attached to
     // a per-cell gesture. A review measured 1.42s of blank on localhost for

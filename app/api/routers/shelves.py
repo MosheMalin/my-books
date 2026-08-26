@@ -70,6 +70,7 @@ from app.ports.store import (
     BookStore,
     DuplicateCaptureSlot,
     ReadStore,
+    ShelfHasAliases,
     ShelfNotEmpty,
     ShelfStore,
     UnknownShelf,
@@ -194,8 +195,20 @@ def get_shelf(
     shelf_id: str,
     library: LibraryRef = Depends(require(Capability.BROWSE)),
     store: ShelfStore = Depends(get_shelf_store),
+    books: BookStore = Depends(get_book_store),
 ) -> ShelfDTO:
-    return _dto(store, library, _load(store, library, shelf_id))
+    """One shelf, counted.
+
+    ⚠ The counts were MISSING here, found in P6.4d: `_dto`'s ``books``
+    argument defaults to an empty mapping, so this route — the one a client
+    calls when it wants one shelf rather than the list — answered
+    ``book_count: 0`` for every shelf in the library. The field's own
+    description calls it *what a destructive gesture has to be able to say out
+    loud before it happens*, and the deletion confirm reads exactly this
+    route. One grouped query, the same one the list pays.
+    """
+    return _dto(store, library, _load(store, library, shelf_id),
+                books.copies_per_shelf(library))
 
 
 @router.patch("/{shelf_id}", response_model=ShelfDTO)
@@ -262,7 +275,14 @@ def delete_shelf(
     _load(store, library, shelf_id)
     try:
         removed = store.delete_shelf(library, shelf_id)
-    except ShelfNotEmpty as exc:
+    except (ShelfNotEmpty, ShelfHasAliases) as exc:
+        # ⚠ `ShelfHasAliases` too, and P6.4a wrote this trap down for P6.4d:
+        # *"`DELETE /api/v1/shelves/{id}` catches only `ShelfNotEmpty`, so the
+        # owner's refuse-naming-the-count would arrive as a 500 on the one
+        # surface that could show the count."* It did — measured the moment a
+        # merge made the first survivor. The two are the same shape of answer
+        # (*there is something here you have not dealt with*) and the store
+        # raises both by name precisely so this route can say which.
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     if not removed:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no such shelf")
