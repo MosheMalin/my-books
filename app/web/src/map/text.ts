@@ -257,6 +257,11 @@ export interface MapText {
   merge_confirm: string
   merge_cancel: string
   merge_refused: string
+  /** One of the six `MergeRefused` codes, or '' for one this table does not
+   *  know — the caller then falls back to the server's own sentence. */
+  merge_reason: (code: string) => string
+  merge_pick_order: string
+  merge_none_off_the_map: string
   merge_already: string
   merged_into: (name: string) => string
   undo_merged: (books: number) => string
@@ -593,9 +598,10 @@ const HE: MapText = {
   merge_a_shelf_here: 'מיזוג מדף אחר לכאן…',
   merge_pick: 'איזה מדף הוא בעצם המדף הזה?',
   merge_pick_option: (n, name, books, photos) =>
-    `אפשרות ${n}: ${name} — ${heHolds(books, photos)}`,
+    `אפשרות ${n}: ${name} — ${books + photos === 0 ? 'ריק'
+      : heHolds(books, photos)}`,
   merge_reading: 'בודקים מה יזוז…',
-  merge_read_failed: 'לא הצלחנו לבדוק מה יזוז. שום דבר לא נגע.',
+  merge_read_failed: 'לא הצלחנו לבדוק מה יזוז. לא נגענו בכלום.',
   // ⚠ Our words first, then the two names. `unicode-bidi: plaintext` resolves
   // a paragraph from its FIRST strong character, so a Hebrew sentence opening
   // with a Latin-initial shelf name flips whole.
@@ -630,8 +636,22 @@ const HE: MapText = {
   merge_confirm: 'מיזוג',
   merge_cancel: 'ביטול',
   merge_refused: 'אי אפשר למזג:',
+  // ⚠ Six codes, six different next actions. Rendering the server's English
+  // sentence put four lines and a 32-character hex id in front of a household
+  // member; `MergeRefused` carries the code beside the sentence precisely so
+  // a client can say this instead.
+  merge_reason: (code) => ({
+    same_shelf: 'זה אותו מדף.',
+    other_library: 'המדפים שייכים לספריות שונות.',
+    wishlist: 'רשימת המשאלות אינה מדף — היא לא עומדת בשום מקום.',
+    survivor_absorbed: 'המדף שכאן כבר מוזג למדף אחר. מזגו לתוך זה שעונה בשמו.',
+    read_running: 'קריאה של אחד המדפים עדיין רצה. נסו שוב כשתסתיים.',
+    address_taken: 'זהות אחרת כבר זוכרת את התא הזה.',
+  }[code] || ''),
+  merge_pick_order: 'בחרו אחת מהשתיים כדי להמשיך.',
+  merge_none_off_the_map: 'אין מדף שאינו על המפה. אפשר למזג רק מדף כזה.',
   merge_already: 'שני המדפים כבר מאוחדים.',
-  merged_into: (name) => `מוזג לתוך המדף הזה: ${name}`,
+  merged_into: (name) => `מוזג לתוך המדף הזה, ואפשר לשחזר: ${name}`,
   undo_merged: (books) => (books === 1
     ? 'המיזוג בוטל. ספר אחד חזר למדף שלו.'
     : `המיזוג בוטל. ${books} ספרים חזרו למדף שלהם.`),
@@ -906,7 +926,8 @@ const EN: MapText = {
   merge_a_shelf_here: 'Merge another shelf into this one…',
   merge_pick: 'Which shelf is really this shelf?',
   merge_pick_option: (n, name, books, photos) =>
-    `Option ${n}: ${name} — ${enHolds(books, photos)}`,
+    `Option ${n}: ${name} — ${books + photos === 0 ? 'empty'
+      : enHolds(books, photos)}`,
   merge_reading: 'Working out what would move…',
   merge_read_failed: 'We could not work out what would move. Nothing was touched.',
   merge_would_move: (name, here) =>
@@ -933,8 +954,18 @@ const EN: MapText = {
   merge_confirm: 'Merge',
   merge_cancel: 'Cancel',
   merge_refused: 'Cannot merge:',
+  merge_reason: (code) => ({
+    same_shelf: 'That is the same shelf.',
+    other_library: 'The two shelves belong to different libraries.',
+    wishlist: 'The wishlist is not a shelf — it stands nowhere.',
+    survivor_absorbed: 'This shelf has itself been merged. Merge into the one that answers for it.',
+    read_running: 'A read of one of these shelves is still running. Try again when it finishes.',
+    address_taken: 'Another identity already remembers this cell.',
+  }[code] || ''),
+  merge_pick_order: 'Pick one of the two to continue.',
+  merge_none_off_the_map: 'No shelf stands off the map. Only such a shelf can be merged in.',
   merge_already: 'These two shelves are already one.',
-  merged_into: (name) => `Merged into this shelf: ${name}`,
+  merged_into: (name) => `Merged into this shelf, and can be taken back: ${name}`,
   undo_merged: (books) => (books === 1
     ? 'The merge was taken back. 1 book went back to its own shelf.'
     : `The merge was taken back. ${books} books went back to their own shelf.`),

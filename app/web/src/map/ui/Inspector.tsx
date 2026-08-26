@@ -830,6 +830,8 @@ function MergeHere({
    * one gesture in this pillar that moves books.
    */
   const foot = useRef<HTMLDivElement | null>(null)
+  /** The declaration §5.7 requires, when there is one to make. */
+  const ask = useRef<HTMLFieldSetElement | null>(null)
 
   const read = () => {
     setList(null)
@@ -850,8 +852,12 @@ function MergeHere({
         // After the paint, not before it: the account of what would move is
         // what pushes the ✓ out of the window, so scrolling to where it USED
         // to be scrolls to the wrong place.
-        requestAnimationFrame(
-          () => foot.current?.scrollIntoView?.({ block: 'nearest' }))
+        //
+        // ⚠ To the QUESTION when there is one, and to the foot otherwise. In
+        // a 251px panel the two do not fit together, and scrolling past the
+        // question left a greyed button with nothing on screen explaining it.
+        requestAnimationFrame(() => (ask.current || foot.current)
+          ?.scrollIntoView?.({ block: 'nearest' }))
       })
       .catch(() => setSeen('failed'))
   }
@@ -887,13 +893,21 @@ function MergeHere({
             <button type="button" onClick={read}>{T.shelf_list_retry}</button>
           </>
         ) : list.length === 0 ? (
-          <p className="note rtl-safe">{T.no_shelves_off_the_map}</p>
+          // ⚠ Not the bind's sentence. *"Every shelf is already on the map"*
+          // is a statement about PLACEMENT under a question about IDENTITY,
+          // and it never says the actual reason a merge has nothing to offer.
+          <p className="note rtl-safe">{T.merge_none_off_the_map}</p>
         ) : (
           <ul>
             {list.map((s, i) => (
               <li key={s.id}>
                 <button
                   type="button"
+                  // ⚠ The same `holds nothing` branch the row shows. Its
+                  // bind sibling has it and this one did not, so a row
+                  // reading *ריק* announced *0 ספרים · 0 תמונות* — two
+                  // descriptions of one shelf, which is the bug that branch
+                  // was written for. Three taps to reach.
                   aria-label={T.merge_pick_option(
                     i + 1, s.label || T.shelf_unnamed, s.book_count,
                     s.capture_count)}
@@ -939,12 +953,27 @@ function MergeHere({
           </button>
         </>
       ) : seen.refused ? (
-        // The server's own sentence, because the six reasons are six
-        // different things to do next and this client has no better words for
-        // *a read of this shelf is still running* than the one that knows it.
-        <p className="note warn rtl-safe" role="status">
-          {T.merge_refused} {seen.refused.say}
-        </p>
+        // ⚠ TRANSLATED by `reason`, with the server's `say` as the fallback
+        // for a code this table does not know. `MergeRefused` carries a
+        // stable code beside the sentence and says in its own docstring that
+        // it is there *so a client can translate it* — and this one
+        // translated none of six, so a household member met four lines of
+        // English and a 32-character hex id. The engine's *rejection reasons
+        // are shown verbatim* convention is about a reader's FINDINGS, not
+        // about a control refusing to act.
+        <>
+          <p className="note warn rtl-safe" role="status">
+            {T.merge_refused} {T.merge_reason(seen.refused.reason)
+              || seen.refused.say}
+          </p>
+          {/* Transient by nature, so the way forward is to ask again — the
+              two failure branches beside this one both offer it. */}
+          {seen.refused.reason === 'read_running' && (
+            <button type="button" onClick={() => look(chosen)}>
+              {T.shelf_list_retry}
+            </button>
+          )}
+        </>
       ) : seen.already ? (
         <p className="note rtl-safe" role="status">{T.merge_already}</p>
       ) : (
@@ -983,7 +1012,7 @@ function MergeHere({
               left" is a question about nothing — and a required answer to it
               would be a required answer to nothing. */}
           {ordered && (
-            <fieldset className="merge-strip">
+            <fieldset className="merge-strip" ref={ask}>
               <legend>{T.merge_strip}</legend>
               <label className="field inline">
                 <input type="radio" name="strip" value="survivor_first"
@@ -1003,9 +1032,19 @@ function MergeHere({
               </label>
             </fieldset>
           )}
+          {/* ⚠ The reason, beside the control. Measured: with the radio
+              fieldset on screen the auto-scroll lands past the question, so
+              what the owner sees is a greyed destructive button, no question
+              and no account of what would move — which is exactly what
+              *reads as broken* means. */}
+          {ordered && strip === null && (
+            <p className="note rtl-safe" id="merge-why">{T.merge_pick_order}</p>
+          )}
           <button
             type="button"
             className="danger"
+            aria-describedby={ordered && strip === null
+              ? 'merge-why' : undefined}
             disabled={ordered && strip === null}
             onClick={() => {
               actions.mergeShelf(chosen.id, survivorId,

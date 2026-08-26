@@ -7556,3 +7556,39 @@ def test_the_preview_never_promises_a_merge_the_write_refuses():
         assert seen.json()["refused"]["reason"] == "same_shelf"
         assert client.post(f"/api/v1/map/shelves/{shelf['id']}/merge",
                            json=body).status_code == 409
+
+
+def test_the_undo_says_what_it_PUT_BACK_and_not_what_is_left():
+    """⚠ Measured in a real browser: undoing a merge announced *"0 books went
+    back to their own shelf"* with 22 of them back on the shelf, the alias
+    gone and `foreign_key_check` clean. The undo was perfect; the sentence
+    said it had done nothing.
+
+    Structural, not a typo: `restores` answers *what WOULD an undo do*, so
+    after a successful one it is correctly EMPTY — and the client announced
+    from it, so no undo of any kind could ever report a non-zero number. The
+    web ring was green on it because its own test asserted the zero as the
+    success message.
+    """
+    books = MemoryBookStore()
+    with TestClient(_app(store=books)) as client:
+        _drawn_map(client, columns=2, levels=1)
+        survivor = [s for s in client.get("/api/v1/shelves").json()
+                    if s["address"]][0]
+        absorbed = client.post("/api/v1/shelves", json={}).json()
+        for n in range(3):
+            books.save(TEST_LIBRARY, new_book(
+                id=f"bk-{n}", library_id=TEST_LIBRARY.id, title=f"ספר {n}",
+                author="מחבר", copy_id=f"cp-{n}", shelf_id=absorbed["id"],
+                depth=1))
+        client.post(f"/api/v1/map/shelves/{absorbed['id']}/merge",
+                    json={"into": survivor["id"], "strip": "survivor_first"})
+
+        done = client.post("/api/v1/map/undo")
+
+        assert done.status_code == 200, done.text
+        assert done.json()["restored"]["copies"] == 3, done.text
+        # …and `restores` stays what it always meant: what is left to take
+        # back, which after this is nothing.
+        assert done.json()["restores"] == {}
+        assert done.json()["available"] is False

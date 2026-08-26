@@ -1239,7 +1239,7 @@ def post_undo(
     # answer the phone client cannot classify, so it retries.
     try:
         with _translated():
-            undo(journal, store, shelves, books, library)
+            entry = undo(journal, store, shelves, books, library)
     except UndoRefused as exc:
         # ⚠ A STRING detail, never the dict this first carried. The client
         # reads `e.detail || e.message` and renders it, so an object arrives
@@ -1248,7 +1248,14 @@ def post_undo(
         # where they have a Hebrew form. What moved stays machine-readable on
         # `GET /map/undo`, which answers `reason` and `changed`.
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
-    return UndoOfferDTO.of(offer(journal, store, shelves, library))
+    # ⚠ `restored` — what this call DID — beside the forward-looking offer.
+    # The offer after an undo is correctly empty (there is nothing more to
+    # take back), so a client announcing from `restores` could only ever say
+    # zero: measured as *"0 books went back to their own shelf"* with 22 on
+    # the shelf and the alias gone. The two answer different questions and
+    # both are wanted in one round trip.
+    said = UndoOfferDTO.of(offer(journal, store, shelves, library))
+    return said.model_copy(update={"restored": entry.restore.counts()})
 
 
 # --- helpers --------------------------------------------------------------

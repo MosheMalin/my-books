@@ -620,7 +620,15 @@
   padding: 7px 8px;
   min-height: 34px;
 }
-.mapscreen .field > input:not([type='number']) { width: 100%; }
+/* ⚠ Text inputs only. This was written before the sheet had a radio, and it
+   caught the first one: measured at **149×13** with its own label starting
+   120px away, so the two dots floated loose near the middle of the panel
+   while their words sat at the edge. The 54px label is still the hit target,
+   so it worked — and the control §5.7 says must be explicitly DECLARED did
+   not look like a pair of radios. */
+.mapscreen .field > input:not([type='number']):not([type='radio']):not([type='checkbox']) {
+  width: 100%;
+}
 .mapscreen input[type='number'] { width: 68px; }
 
 .mapscreen .rtl-safe { unicode-bidi: plaintext; text-align: start; }
@@ -883,7 +891,24 @@
   min-height: 44px;
 }
 .mapscreen .merge-preview { margin-top: 8px; }
+/* ⚠ And a gap BELOW both open states. The 12px under `.merge-open` protects
+   nothing once the picker opens, because that button is unmounted — measured
+   with *cancel this merge* sitting **0.0px** above the destructive *take off
+   the map*, overlapping horizontally. A missed tap on the way out of a merge
+   landed on taking the shelf off the map. */
+.mapscreen .shelf-pick,
+.mapscreen .merge-preview { margin-bottom: 12px; }
 .mapscreen .merge-facts {
+  /* ⚠ **MEASURED at 1.10:1** — near-black on near-black, on a light-mode
+     phone with the map in its default dark theme. This sheet defines `--ink`
+     inside `.mapscreen` but never paints it at the root, so a child with no
+     colour of its own inherits the PRODUCT's `--ink`; when the two themes
+     disagree, the text is invisible. Both mismatched combinations fail, and
+     the one child that did carry a colour is `.warn` — so the worst case
+     showed a warning and nothing it referred to. Every sibling list in this
+     file sets one (`.picked li`, `.steps`); this one did not, and it is the
+     whole reason the merge is three steps rather than one. */
+  color: var(--ink);
   margin: 6px 0;
   /* `padding-inline-start`, never `padding-left`: the bullets sit on the
      start edge in both directions, and this panel is read in Hebrew. */

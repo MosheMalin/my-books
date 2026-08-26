@@ -3783,6 +3783,14 @@ export interface components {
              */
             recorded_at: string;
             /**
+             * Restored
+             * @description What THIS call actually put back. `POST` only — and it exists because `restores` cannot serve: that one answers *what WOULD an undo do*, so after a successful undo it is correctly empty. A client announcing from it said *0 books came back* with 22 measured on the shelf.
+             * @default {}
+             */
+            restored: {
+                [key: string]: number;
+            };
+            /**
              * Restores
              * @description What the undo would put back, counted per kind of row (plus `removed`, for shelves the edit created that the undo would take away again). Empty unless available.
              * @default {}

@@ -131,9 +131,15 @@ function fakeMapServer() {
       if (state.refuseUndo) {
         return respond({ detail: 'the world moved' }, state.refuseUndo)
       }
+      // ⚠ `restores: {}` and `restored: {…}`, which is the SHAPE the route
+      // sends and the reason this test was passing on a lie. The offer AFTER
+      // an undo is correctly empty — there is nothing left to take back — so
+      // a client announcing from it can only ever say zero, and this suite
+      // asserted the zero as the success message. A test that expects
+      // `undo_done(0)` cannot fail.
       return respond({ available: false, reason: 'already_undone', kind:
                        'remove_column', recorded_at: '', restores: {},
-                       changed: [] })
+                       restored: { shelves: 5 }, changed: [] })
     }
     if (method === 'POST') {
       if (state.holding || (state.holdFloors && path === '/map/floors'))
@@ -634,7 +640,13 @@ describe('taking back the last destructive map edit', () => {
 
     await waitFor(() => expect(posted('/map/undo')).toHaveLength(1), WAIT)
     await waitFor(() => expect(derives()).toBeGreaterThan(settled), WAIT)
-    expect(await saidIn('status', HE.undo_done(0))).toContain(HE.undo_done(0))
+    expect(await saidIn('status', HE.undo_done(5))).toContain(HE.undo_done(5))
+    // ⚠ And NOT the zero. The route's `restores` is empty after a successful
+    // undo by design, so announcing from it printed *"0 shelves are back in
+    // place"* — measured on the merge path as *"0 books went back"* with 22
+    // of them back on the shelf and the alias gone.
+    expect(screen.getAllByRole('status').map((e) => e.textContent).join(' | '))
+      .not.toContain(HE.undo_done(0))
     // …and the drawing is re-derived, because the server has just changed
     // rows this session's document knows nothing about.
     //

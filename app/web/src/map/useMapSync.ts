@@ -523,8 +523,14 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
       setSaved('saving')
       await inflight.current
 
-      let offer: { kind?: string;
-                   restores?: Record<string, number> } | undefined
+      let offer: {
+        kind?: string
+        restores?: Record<string, number>
+        /** What the call actually PUT BACK — see the route. `restores` is
+         *  the forward-looking offer, which after a successful undo is
+         *  correctly empty. */
+        restored?: Record<string, number>
+      } | undefined
       try {
         offer = await source.api.post('/map/undo', undefined)
       } catch (err) {
@@ -581,9 +587,16 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
       // that put back a population of copies, two capture strips, N standing
       // answers and an identity. "2 shelves are back in place" is true and
       // useless, and it is the only sentence the owner sees.
+      // ⚠ `restored`, not `restores`. The second is what an undo WOULD do,
+      // so after a successful one it is empty by design — and announcing
+      // from it printed *"0 books went back to their own shelf"* with 22
+      // measured back on the shelf and the alias gone. The undo was perfect;
+      // the sentence said it had done nothing. Neither the shelf count nor
+      // the book count could ever have been anything but zero.
+      const put = offer?.restored ?? {}
       announce(offer?.kind === 'merge_shelves'
-        ? T.undo_merged(offer?.restores?.copies ?? 0)
-        : T.undo_done(offer?.restores?.shelves ?? 0), 9000)
+        ? T.undo_merged(put.copies ?? 0)
+        : T.undo_done(put.shelves ?? 0), 9000)
       startOver()
     })()
   }, [announce, source, startOver, T])

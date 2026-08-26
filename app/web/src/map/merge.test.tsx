@@ -145,6 +145,34 @@ describe('the panel offers a merge, and shows what it would cost', () => {
     expect(acts.mergeShelf).not.toHaveBeenCalled()
   })
 
+  it('says why a merge has nothing to offer, not where shelves are', async () => {
+    // ⚠ It reused the bind's *"every shelf is already on the map"* — a
+    // statement about PLACEMENT under a question about IDENTITY, which never
+    // says the actual reason: only a shelf standing nowhere can be merged in.
+    const acts = actions({ shelvesOffTheMap: vi.fn(async () => []) })
+    await openPicker(acts)
+    expect(await screen.findByText(HE.merge_none_off_the_map))
+      .toBeInTheDocument()
+    expect(screen.queryByText(HE.no_shelves_off_the_map)).toBeNull()
+  })
+
+  it('announces an empty shelf the same way the row shows it', async () => {
+    // ⚠ The row read *ריק* while its accessible name said *0 ספרים · 0
+    // תמונות* — two descriptions of one shelf, which is the bug the bind
+    // sibling's own branch was written for. Three taps to reach: unbind an
+    // empty shelf, then open the merge picker.
+    const acts = actions({
+      shelvesOffTheMap: vi.fn(async () => [
+        { id: 'a', label: 'ריקה', capture_count: 0, book_count: 0 },
+      ]),
+    })
+    await openPicker(acts)
+    const row = await screen.findByRole('button',
+      { name: HE.merge_pick_option(1, 'ריקה', 0, 0) })
+    expect(row.getAttribute('aria-label')).toContain(HE.shelf_holds_nothing)
+    expect(row.getAttribute('aria-label')).not.toMatch(/0/)
+  })
+
   it('will not merge until the strip order is DECLARED (§3.12)', async () => {
     // §5.7's rule is *declared, never detected*, and which half of the merged
     // shelf is on the left is a physical claim about wood that no photograph
@@ -216,24 +244,67 @@ describe('the panel offers a merge, and shows what it would cost', () => {
       .toBeEnabled()
   })
 
-  it("says the SERVER's words for a refusal, and offers no ✓", async () => {
-    // Six reasons, six different things to do next. This client has no better
-    // sentence for *a read of this shelf is still running* than the one that
-    // knows it — and `reason` is a stable code beside it precisely so a screen
-    // that DOES want its own words never has to parse the English.
+  it("says a refusal in the READER's language, and offers no ✓", async () => {
+    // ⚠ Six reasons, six different next actions — and `MergeRefused` carries
+    // a stable code beside the sentence *so a client can translate it*, in
+    // its own words. This client translated none of them, so a household
+    // member met four lines of English and a 32-character hex id. Measured in
+    // a real browser on the owner's library.
     const acts = actions({
       previewMerge: vi.fn(async () => ({
         ...MOVES,
-        refused: { reason: 'read_running', say: 'a read of sh-1 is running' },
+        refused: { reason: 'read_running',
+                   say: 'a read of 83e6eaf0d861 is still running' },
       })),
     })
     const user = await openPicker(acts)
     await user.click(await screen.findByRole('button',
       { name: HE.merge_pick_option(1, 'ספרי בישול', 22, 2) }))
 
-    expect(await screen.findByText(/a read of sh-1 is running/))
-      .toBeInTheDocument()
+    expect(await screen.findByText(
+      new RegExp(HE.merge_reason('read_running')))).toBeInTheDocument()
+    expect(screen.queryByText(/83e6eaf0d861/)).toBeNull()
     expect(screen.queryByRole('button', { name: HE.merge_confirm })).toBeNull()
+    // Transient by nature, so the way forward is to ask again.
+    expect(screen.getByRole('button', { name: HE.shelf_list_retry }))
+      .toBeInTheDocument()
+  })
+
+  it("falls back to the server's sentence for a code it does not know", async () => {
+    // A table that answers '' for an unknown code and a caller that prints
+    // nothing would leave *Cannot merge:* with no reason at all — which is
+    // the refusal §3.15 explicitly does not want.
+    const acts = actions({
+      previewMerge: vi.fn(async () => ({
+        ...MOVES,
+        refused: { reason: 'a_reason_from_the_future', say: 'because of X' },
+      })),
+    })
+    const user = await openPicker(acts)
+    await user.click(await screen.findByRole('button',
+      { name: HE.merge_pick_option(1, 'ספרי בישול', 22, 2) }))
+
+    expect(await screen.findByText(/because of X/)).toBeInTheDocument()
+  })
+
+  it('says WHY the ✓ is disabled, beside the ✓', async () => {
+    // ⚠ Measured: with the radio fieldset on screen the auto-scroll landed
+    // past the question, so what the owner saw in a 251px panel was a greyed
+    // destructive button, no question, and no account of what would move.
+    const acts = actions()
+    const user = await openPicker(acts)
+    await user.click(await screen.findByRole('button',
+      { name: HE.merge_pick_option(1, 'ספרי בישול', 22, 2) }))
+
+    const go = await screen.findByRole('button', { name: HE.merge_confirm })
+    expect(go).toBeDisabled()
+    expect(screen.getByText(HE.merge_pick_order)).toBeInTheDocument()
+    expect(go.getAttribute('aria-describedby')).toBeTruthy()
+
+    await user.click(screen.getByRole('radio',
+      { name: HE.merge_strip_absorbed_first('ספרי בישול') }))
+    expect(screen.queryByText(HE.merge_pick_order)).toBeNull()
+    expect(go.getAttribute('aria-describedby')).toBeNull()
   })
 
   it('says a preview could not be READ rather than showing an empty one', async () => {
