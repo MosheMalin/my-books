@@ -1749,14 +1749,57 @@ that 404, so it could not even be dismissed. `_release` now clears the
 questions of the shelves it DELETES, and only those: a detached shelf still
 exists, so its questions are still answerable.
 
-⚠ **A standing DECISION at a deleted shelf is left alone, deliberately**, and
-that is the one thing this item does not close. It is silent rather than
-visible (a shelf id is uuid4 and never reused, so it can never suppress
-anything again), and clearing it would destroy a human answer on the one path
-in this project whose whole argument is that nothing is destroyed
-automatically. §3.11's alias covers the MERGE case; a deleted shelf has no
-alias by construction, and the gap stays written down rather than closed by
-guessing.
+⚠ **A standing DECISION at a deleted shelf is left alone, deliberately.** The
+first draft gave the wrong reason — *a shelf id is uuid4 and never reused* —
+which P6.4b's own undo falsifies by restoring the row under its ORIGINAL id.
+The true reason is narrower and checkable: every decision in this codebase is
+read shelf-scoped, no route enumerates them library-wide, and `reconcile()`
+raises if one's `(shelf, depth)` disagrees with the shelf it was called for.
+So a row at a dead shelf is INERT — and because the id does come back, the
+human's answer comes back with it, intact. Clearing it would be the only lossy
+half. A question is different in kind: a pending ASK the owner can see and
+cannot dismiss.
+
+**What three reviews then found**, and the first defeats the item:
+
+- ⚠⚠ **the streak fix survived until the next photograph.** `break` on a read
+  it could not vouch for discarded every OLDER read with it, and after a merge
+  every new read is a survivor read — which a copy that has left is never
+  re-sighted by. Measured: 3 right after the merge, **0** after one read of
+  the merged shelf, 0 forever. Rebuilt around `merged_at`, which the alias
+  already carried and nothing used: a read of the survivor from the merge
+  onwards covers the whole wood, because the captures were refiled. §3.16's
+  *"stops at the first read whose coverage cannot be vouched for"* means SKIP,
+  and a literal stop is what threw the evidence away;
+- ⚠ **`vouched` was *ever sighted at*, not *stands at*** — so a copy that moved
+  between halves was answerable to both, and every later read of the half it
+  had LEFT counted as a miss. 0 before a merge, **3** after it, with no read
+  in between: §3.16's own title, produced by the code that claims to prevent
+  it;
+- ⚠ **the *formerly* line was dead on the only screen that renders it.**
+  `ShelfDTO` has eleven construction sites and two carried `formerly` —
+  neither of them the overview, which is the one the shelf screen reads. The
+  client ring was green because its harness echoes the shelf it is handed;
+- ⚠ **the undo did not put back what the edit destroyed.** A sixth kind of
+  destruction was added to `_release` and its inverse was not, so the offer
+  said `available: true` with an empty `changed` and the pending ask was gone;
+- the clearing moved to `ShelfStore.delete_shelf` — `_release` was one of four
+  doors, and `DELETE /api/v1/shelves/{id}` reached the identical orphan;
+- the card said 1 beside a list of 2; the header said *never read* above 22
+  books from four reads; `GET /shelves/{absorbed}` answered **404** for a
+  bookmark taken before a merge; the merge's own 200 answered `formerly: []`
+  about the alias it had just written;
+- ⚠ **on the owner's library 0 of 154 shelves carry a label**, so the line read
+  *"היה גם: לא משויך"* — one identical panel per merge, saying nothing. Label,
+  else the former ADDRESS, else silence.
+
+⚠ **And widening the counted-string guard to read EVERY string table rather
+than the map's found six live plurals**, in both languages — `1 books` in the
+most-read sentence in the product, and the not-seen badge this item is about.
+Three were a number joined to a bare noun in JSX, the one shape the guard
+cannot see; they are functions now. That is the fifth guard in this pillar
+that passed because it was enumerating from something narrower than the class
+it named.
 
 ## 6. What P6.1 must not repeat
 
