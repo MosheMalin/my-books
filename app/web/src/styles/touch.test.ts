@@ -56,15 +56,35 @@ const FLOOR = 44
  */
 const NOT_PRESSED = [
   // The panel itself, the scroll boxes and the plan workspace: containers.
-  /^\S*\s*\.(map-side|body|canvas-wrap|elev-scroll|page|mapscreen)$/,
-  // Overlays and labels — a toast, a hint, the storey caption.
-  /\.(toast|hint|floor-badge|saved|brand|note)\b/,
-  // A slider's TRACK width, not a target.
-  /\.slider input$/,
+  /^\.(map-side|body|canvas-wrap|elev-scroll|page|mapscreen)$/,
+  // Overlays and labels — a toast, a hint, the storey caption, a note.
+  /^\.(toast|hint|floor-badge|saved|brand|note)$/,
 ]
 
+/**
+ * Whether a rule sizes something a finger presses.
+ *
+ * ⚠ The exemption is matched against the LAST SIMPLE SELECTOR, anchored at
+ * both ends, and every comma-part has to be exempt for the rule to be. The
+ * first version tested the whole selector with unanchored patterns, and a
+ * review measured what that let through: `.floor-badge` in the list exempted
+ * `.mapscreen .floor-badge .menu > button` — the storey chevron, which
+ * `map.css`'s own comment calls *"two bare chevrons 47px apart, one of which
+ * changes the whole board"*, and which THIS commit had just raised from 40 to
+ * 44. Reverting it stayed green. `\b` ends a word at a hyphen too, so
+ * `.note-field` and `.brand-btn` were exempt as well, and `.note button` — a
+ * container in the list swallowing every control inside it.
+ *
+ * Same shape as the dead-key scan CLAUDE.md records: anchor both ends, or
+ * every name that CONTAINS an exempt one rides along.
+ */
 function isPressed(selector: string): boolean {
-  return !NOT_PRESSED.some((skip) => skip.test(selector))
+  const parts = selector.split(',').map((p) => p.trim()).filter(Boolean)
+  if (parts.length === 0) return false
+  return !parts.every((one) => {
+    const last = one.split(/[\s>+~]+/).filter(Boolean).pop() ?? ''
+    return NOT_PRESSED.some((skip) => skip.test(last))
+  })
 }
 
 /**
@@ -98,28 +118,48 @@ function floorsInPhoneBlocks(css: string): { at: string; px: number }[] {
     for (const rule of inner.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
       const at = rule[1]!.trim().replace(/\s+/g, ' ')
       for (const decl of rule[2]!.matchAll(
-        /(?:^|[;{\s])(?:min-)?height:\s*(\d+(?:\.\d+)?)px/g)) {
-        found.push({ at, px: Number(decl[1]) })
+        /(?:^|[;{\s])(?:min-)?(?:block-size|height):\s*(\d+(?:\.\d+)?)(px|rem)/g)) {
+        // ⚠ `rem` as well as `px`, and `block-size` as well as `height`. Both
+        // were holes a review found by injection: `min-height: 2rem` (32px)
+        // and `min-block-size: 20px` both passed, and this repo is already
+        // writing logical properties (`inset-inline`, `padding-inline-start`)
+        // in these very sheets. 16px is the root size these apps never change.
+        found.push({ at, px: Number(decl[1]) * (decl[2] === 'rem' ? 16 : 1) })
       }
     }
   }
   return found
 }
 
+/**
+ * Sheets that MUST contribute at least one watched declaration.
+ *
+ * ⚠ A per-sheet floor rather than one total, because a total hides a sheet
+ * going dark. A review instrumented the first version: it watched six
+ * declarations against a threshold of `> 2`, so `map.css` could have gone
+ * entirely blind and the test would still have passed — and deleting the
+ * whole shared-sheet phone block left it green. These three are the sheets
+ * that carry a phone floor today; a sheet that stops carrying one is a
+ * deliberate change and belongs in this list's diff.
+ */
+const MUST_WATCH = ['map.css', 'books.css', '@booksnap/ui — ui.css']
+
 describe('a control a phone has to press', () => {
   it('is never given a min-height below the touch floor', () => {
     const offenders: string[] = []
-    let watched = 0
+    const watched = new Map<string, number>()
     for (const [name, css] of SHEETS) {
       for (const { at, px } of floorsInPhoneBlocks(css)) {
         if (!isPressed(at)) continue
-        watched += 1
+        watched.set(name, (watched.get(name) ?? 0) + 1)
         if (px < FLOOR) offenders.push(`${name}: ${at} — ${px}px`)
       }
     }
     // A parser that quietly matches nothing reports every sheet as perfect.
-    expect(watched, 'no control min-heights found — the parser stopped seeing')
-      .toBeGreaterThan(2)
+    for (const name of MUST_WATCH)
+      expect(watched.get(name) ?? 0,
+             `${name}: nothing watched — the parser stopped seeing it`)
+        .toBeGreaterThan(0)
     expect(offenders, `under ${FLOOR}px`).toEqual([])
   })
 })
