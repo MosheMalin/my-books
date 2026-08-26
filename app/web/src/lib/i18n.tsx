@@ -183,6 +183,7 @@ const HE = {
     // agree on that, and an arrow is a glyph rather than something bidi
     // mirrors.
     where_open_shelf: 'למדף שלו →',
+    where_show_on_map: 'הצגה על השרטוט →',
 
     // --- shelf detail (P2.8, UI_PLAN §3 level 3) ---
     shelf_not_found: 'המדף לא נמצא',
@@ -481,6 +482,7 @@ const EN: Strings = {
     where_section: (n: number) => `section ${n}`,
     where_behind: 'the row in front has to be moved',
     where_open_shelf: 'Open its shelf →',
+    where_show_on_map: 'Show it on the drawing →',
 
     // --- shelf detail (P2.8, UI_PLAN §3 level 3) ---
     shelf_not_found: 'Shelf not found',

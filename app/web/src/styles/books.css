@@ -360,7 +360,14 @@
      the next control arriving under it. `touch.test.ts` cannot see this one
      (it has no declared pixel height, and the guard says so in its own
      docstring), so it is the browser walk that caught it. */
+  /* ⚠ `inline-flex`, because `min-height` DOES NOT APPLY to a non-replaced
+     inline box. `.linkish` is a bare anchor here, and the identical rule
+     measured 44px inside `.wherecell` (a flex container, which blockifies its
+     children) and **21px** on the shelf screen, where the parent is a plain
+     div. Two links, one rule, one of them silently exempt — and `touch.test.ts`
+     cannot see it, because the declaration IS 44. Found by measuring. */
   .wherecell .linkish,
+  .shelfwhere .linkish,
   /* The book surface — one renderer, two mounts, so `.dbody` covers the
      drawer and `.bookpage` the full page. Measured at 375x812 on the owner's
      library: eight controls between 23 and 37px, including *delete from the
@@ -375,6 +382,21 @@
     /* Both axes: the drawer's close is a 39px-wide glyph button, and a target
        that clears the floor in one direction only is not a target. */
     min-width: 44px;
+  }
+  .wherecell .linkish,
+  .shelfwhere .linkish {
+    display: inline-flex;
+    align-items: center;
+  }
+  /* The shelf screen's depth bar — the control §5.7 says must be offered
+     even on a flat shelf, *because most owners never learn depth exists*. It
+     was 34px, and *+ add a row behind* beside it 24: the two controls that
+     teach the concept, both under the floor on the device it matters on. */
+  .depthbar .depthbtn,
+  .depthbar .linkish {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
   }
   /* The chips sit in a wrapping row; without this they grow tall and stay
      narrow, which reads as a column of stripes rather than a filter row. */

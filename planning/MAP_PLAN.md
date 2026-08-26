@@ -801,7 +801,7 @@ What is missing are the navigation VERBS and the device.
 |---|---|---|---|
 | **P6.5a** | ✅ **The phone shell** — the app bar cannot hold six controls, so the tabs move to a fixed bottom bar below 760px and the bar stops being sticky; a 44px touch floor across the map panel, the Books toolbar and the shared sort control. Taken FIRST because every other item in this pillar is verified at 375×812 and the map was 109px wider than the phone. | M | quality, ux |
 | **P6.5b** | ✅ **Where is it** — `GET /map/where/{shelf}?depth=`, the address in PARTS, and the book surface's location section (absent by design since P1.0, waiting on the map). Resolves through the alias; three distinct empty states. | M | quality, data-integrity, ux |
-| **P6.5c** | **The drill, both ways** — *open this shelf* from an elevation cell, *show it on the map* from the shelf screen (a plan deep-link that selects site, case and cell), and the selected cell's own depth + staleness so §7's *"3 rows, back two not read since March"* is answerable FROM the map. | M | quality, ux |
+| **P6.5c** | ✅ **The drill, both ways** — *open this shelf* from an elevation cell, *show it on the map* from the shelf screen (a plan deep-link that selects site, case and cell), and the selected cell's own depth + staleness so §7's *"3 rows, back two not read since March"* is answerable FROM the map. | M | quality, ux |
 
 #### P6.5a in detail
 
@@ -877,6 +877,51 @@ is an event gate rather than a time budget, and it belongs to the capture item.
 ⚠ **Tab ORDER**, for the owner: the bottom bar carries Books / Capture / Map,
 inherited from the app bar. `UI_PLAN.md` §1 lists Books / **Map** / Capture. On
 a thumb-reached bar the order is a decision rather than a carry-over.
+
+#### P6.5c in detail
+
+The three drill levels were all BUILT before this item — as *editing*. What
+was missing is that nothing ever linked between them: `#/map/<shelfId>` has
+been level 3 since P2.8 and the only ways in were a typed URL and a Capture
+chip the owner removed in 2026-08, and there was no route back onto the
+drawing at all.
+
+- **down**: an occupied cell offers *פתחו את המדף הזה →*, an `<a>` rather
+  than a button because it is a place — it opens in a new tab and copies as a
+  link;
+- **up**: `#/plan/<shelfId>` opens the drawing pointing at that shelf, on its
+  storey, with its bookcase and its cell selected. Offered only when there IS
+  an address, because a link to a plan that cannot point at anything is a door
+  onto a shrug;
+- **§7's sentence, first clause**: the cell says when it was last read and
+  marks a stale row. The sentence naming WHICH rows stays on the shelf screen
+  — rendering it twice out of two string tables is how one rule becomes two
+  that disagree.
+
+Five defects the browser found and the ring could not:
+
+- resolving the focus in an EFFECT is one render too late. `MapScreen` reads
+  `initialSelection` in a `useState` initialiser, so it is consumed at mount:
+  the walk landed on `#/plan/<shelf>` with nothing selected;
+- a selection carrying only `cells` renders *nothing selected* — `pickCell`
+  keeps `cases` because the shelf panel is drawn INSIDE the bookcase panel;
+- `min-height` does not apply to a non-replaced inline box. The identical
+  44px rule measured 44 inside `.wherecell` (a flex parent, which blockifies
+  its children) and **21** on the shelf screen. `touch.test.ts` cannot see
+  that class of failure — the declaration IS 44;
+- a deep link to a shelf that stands nowhere cost **eleven** requests, because
+  the "already tried" marker was set after the await rather than before it;
+- selecting one cell fetched its overview **four** times: `MapScreen` rebuilds
+  `actions` every render and `PlanScreen` wrapped the fetch in a fresh arrow.
+  The fix holds the function in a ref, so the effect depends on the CELL and
+  on nothing else — and the gate had to be rebuilt around a re-rendering
+  PARENT, because rendering `MapScreen` directly never changes its props
+  identity and the first version of that test passed on the broken code.
+
+And one that predates the item: the editor took its storey from
+`localStorage` regardless of what was selected, so a re-derive could hand it a
+selection on a storey the canvas filters out — a panel describing a bookcase
+drawn nowhere on screen. The storey now follows the selection.
 
 #### P6.5b in detail
 

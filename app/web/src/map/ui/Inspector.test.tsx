@@ -75,6 +75,14 @@ const actions = (): Actions => ({
   shelvesOffTheMap: vi.fn(async () => []), bindShelf: vi.fn(),
   unbindShelf: vi.fn(),
   previewMerge: vi.fn(async () => NOTHING_MOVES), mergeShelf: vi.fn(),
+  // P6.5c: the panel asks when this cell's shelf was last read.
+  shelfOverview: vi.fn(async () => ({
+                     shelf: { id: 'sh', label: '', depth_count: 1,
+                              virtual: false, created_at: null,
+                              capture_count: 0, book_count: 0, address: null,
+                              formerly: [] },
+                     depths: [], last_read_at: null,
+                   })),
 })
 
 /** A preview that refuses nothing and moves nothing — the neutral default. */

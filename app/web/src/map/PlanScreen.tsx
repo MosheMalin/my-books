@@ -20,6 +20,7 @@ import type { MapSource } from './useMapSync'
 import { useMapSync } from './useMapSync'
 import {
   getMap,
+  getShelfOverview,
   getUndoOffer,
   listShelves,
   mapDelete,
@@ -38,7 +39,42 @@ import {
  */
 const SITE_KEY = (library: string) => `booksnap.map.site.${library}`
 
-export function PlanScreen({ library }: { library: string }) {
+/**
+ * The cell one shelf stands in, anywhere in this document.
+ *
+ * Returns null when the shelf is not on this SITE's drawing — which is not
+ * an error and not "nowhere": `toPlan` builds one site at a time, so a shelf
+ * in the parents' place is simply not in the document on screen. The caller
+ * switches site and asks again.
+ */
+function cellOf(plan: Plan, shelfId: string): Selection | null {
+  for (const bc of plan.cases)
+    for (const sec of bc.sections)
+      for (const shelf of sec.shelves)
+        if (shelf.id === shelfId)
+          // ⚠ The CASE as well as the cell. `pickCell` keeps `cases`
+          // (`ui/types.ts`) because the shelf panel is drawn INSIDE the
+          // bookcase panel — a selection carrying only cells opens the editor
+          // on the right storey and then shows "nothing selected".
+          return { rooms: [], cases: [bc.id],
+                   cells: [{ caseId: bc.id, sectionId: sec.id,
+                             col: shelf.col, level: shelf.level }] }
+  return null
+}
+
+export function PlanScreen({ library, focusShelf = null }: {
+  library: string
+  /**
+   * A shelf to open the drawing POINTING AT (P6.5c, `#/plan/<shelfId>`).
+   *
+   * The return half of UI_PLAN §3's drill: `#/map/<shelfId>` goes from the
+   * map to the shelf, this goes back the other way — and it is what makes an
+   * address usable at all on a library whose bookcases are unnamed, because
+   * «סלון · כוננית ללא שם» cannot tell two cases in one room apart and
+   * a highlighted cell on the drawing can.
+   */
+  focusShelf?: string | null
+}) {
   const { t, lang } = useI18n()
   const T = mapText(lang)
 
@@ -141,6 +177,86 @@ export function PlanScreen({ library }: { library: string }) {
   /** What the owner had selected when the document was last replaced. */
   const selection = useRef<Selection>(EMPTY)
 
+  /**
+   * Point the editor at `focusShelf`, once, when its document arrives.
+   *
+   * ⚠ ONCE, and tracked by the id rather than by a boolean: a re-derive
+   * hands `initialSelection` back from `selection.current`, so re-applying the
+   * focus on every load would drag the owner back to the linked shelf after
+   * every edit they made somewhere else.
+   *
+   * ⚠ A shelf on ANOTHER SITE is reached by switching site and letting the
+   * reload find it — `chooseSite` is the same call the picker makes, so
+   * nothing here needs to know how a site change is performed.
+   */
+  const focused = useRef<string | null>(null)
+  const plan = sync.ready ? sync.initial : null
+
+  /**
+   * The cell `focusShelf` names, resolved DURING RENDER rather than in an
+   * effect.
+   *
+   * ⚠ An effect is one render too late, and it is exactly the render that
+   * matters: `MapScreen` reads `initialSelection` in a `useState` initialiser,
+   * so it is consumed at MOUNT and never again. The first cut set
+   * `selection.current` from an effect, and a walk at 375x812 landed on
+   * `#/plan/<shelf>` with nothing selected — the editor had already been
+   * mounted with the empty selection the effect was about to replace.
+   */
+  const focusCell = plan && focusShelf ? cellOf(plan, focusShelf) : null
+  // Narrow deps: `sync` is rebuilt every render, so an effect that
+  // depended on the whole object would re-run on every one of them.
+  const { siteId, chooseSite } = sync
+
+  /**
+   * ONCE, and tracked by the id rather than by a boolean: `initialSelection`
+   * is also how a selection survives a re-derive, so re-applying the focus on
+   * every load would drag the owner back to the linked shelf after every edit
+   * they made somewhere else.
+   */
+  useEffect(() => {
+    if (focusCell && focusShelf) focused.current = focusShelf
+  }, [focusCell, focusShelf])
+
+  /**
+   * A shelf on ANOTHER SITE is reached by switching site and letting the
+   * reload find it — `chooseSite` is the same call the picker makes, so
+   * nothing here needs to know how a site change is performed.
+   */
+  useEffect(() => {
+    if (!focusShelf || !plan || focusCell || focused.current === focusShelf)
+      return
+    // ⚠ Marked ATTEMPTED, not succeeded, and marked before the await. The
+    // first cut set this inside the callback, so every re-render between the
+    // request going out and its answer coming back started another one —
+    // measured at 375x812 on a deep link to a shelf that stands nowhere:
+    // ELEVEN requests for one lookup. A guard that only closes once the work
+    // is done does not guard the work.
+    focused.current = focusShelf
+    let alive = true
+    void (async () => {
+      const [map, shelves] = await Promise.all([getMap(), listShelves()])
+      if (!alive) return
+      const shelf = shelves.find((s) => s.id === focusShelf)
+      const section = shelf?.address
+        && map.sections.find((x) => x.id === shelf.address!.section_id)
+      const bookcase = section
+        && map.bookcases.find((b) => b.id === section.bookcase_id)
+      const floor = bookcase
+        && map.floors.find((f) => f.id === bookcase.floor_id)
+      // ⚠ Give up QUIETLY when the shelf stands nowhere. It is the normal
+      // state for most shelves (§3.1), the link that got here is only offered
+      // when there IS an address, and an alert about a shelf the owner did not
+      // ask about would be noise on the screen they did ask for.
+      if (!floor || floor.site_id === siteId) return
+      // ⚠ Re-opened for the reload: the site switch is about to rebuild the
+      // document, and the focus has to be applied to the one that arrives.
+      focused.current = null
+      chooseSite(floor.site_id)
+    })()
+    return () => { alive = false }
+  }, [focusShelf, plan, focusCell, siteId, chooseSite])
+
   if (sync.error) {
     return (
       <main className="mapstate">
@@ -219,10 +335,17 @@ export function PlanScreen({ library }: { library: string }) {
           data does — see `useMapSync`'s note and the storey this cost. `key`
           makes a reload a fresh mount rather than an adoption. */}
       <MapScreen
-        key={live.gen}
+        /* ⚠ The focus is part of the key. Arriving at `#/plan/<shelf>` from
+           the shelf screen is a route change inside a mounted app, so without
+           it the editor would keep the mount it already had and the selection
+           passed above would never be read. */
+        key={`${live.gen}:${focusShelf ?? ''}`}
         initialPlan={live.plan}
         refreshing={refreshing}
-        initialSelection={selection.current}
+        initialSelection={
+          focusCell && focused.current !== focusShelf
+            ? focusCell : selection.current
+        }
         onSelectionChange={(s) => { selection.current = s }}
         onChange={sync.record}
         saved={sync.saved}
@@ -253,6 +376,11 @@ export function PlanScreen({ library }: { library: string }) {
           unbind: sync.unbindShelf,
           previewMerge: sync.previewMerge,
           merge: sync.mergeShelf,
+          /* ⚠ The imported function ITSELF, not an arrow around it. An
+             arrow here is a new identity every render, and the panel's
+             effect depends on it: measured at 375x812, selecting one cell
+             fetched its overview FOUR times. */
+          overview: getShelfOverview,
         }}
       />
     </>

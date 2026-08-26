@@ -47,6 +47,7 @@ import {
   overCeiling,
 } from './limits'
 import { mapText, type MapText } from './text'
+import type { ShelfOverviewDTO } from '../api/client'
 import type { MergePreview, OffMapShelf, StripOrder } from './useMapSync'
 
 /**
@@ -131,7 +132,27 @@ export type MapScreenProps = {
                    strip: StripOrder) => Promise<MergePreview>
     merge: (absorbedId: string, survivorId: string, strip: StripOrder,
             name: string) => void
+    /**
+     * What this shelf's own screen knows about it (P6.5c): when it was last
+     * read, and whether any row front-to-back is stale.
+     *
+     * ⚠ VISION §7 asks for *"3 rows, back two not read since March"* to be
+     * answerable FROM the map. The map answers the first half — the declared
+     * depth is already in this panel — and this adds *whether there is
+     * anything stale here*. It does NOT re-render the sentence: that lives on
+     * the shelf screen, and building it twice out of two string tables is how
+     * one rule becomes two that disagree. Different grain on purpose: the map
+     * says there is something to look at, the shelf screen says what.
+     */
+    overview: (shelfId: string) => Promise<ShelfOverviewDTO>
   }
+}
+
+/** The storey a selection stands on, if it names anything drawn. */
+function floorOfSelection(plan: Plan, selection?: Selection): string | null {
+  const caseId = selection?.cells[0]?.caseId ?? selection?.cases[0]
+  if (!caseId) return null
+  return plan.cases.find((c) => c.id === caseId)?.floorId ?? null
 }
 
 export default function MapScreen(props: MapScreenProps) {
@@ -146,8 +167,20 @@ export default function MapScreen(props: MapScreenProps) {
   const [theme, setTheme] = useState<Theme>(loadTheme)
   const [selection, setSelection] = useState<Selection>(
     props.initialSelection ?? EMPTY)
+  /**
+   * Which storey the editor opens on.
+   *
+   * ⚠ A selection WINS over what was last looked at, and that is a rule
+   * rather than a convenience for P6.5c's deep link. `initialSelection` is
+   * also how a selection survives a re-derive — so without this, taking a
+   * shelf off the map while looking at the first floor could hand the
+   * rebuilt editor a selection on the ground floor, which `visible` then
+   * filters out of the canvas entirely: a panel describing a bookcase that
+   * is not drawn anywhere on screen.
+   */
   const [floorPick, setFloorPick] = useState<string>(
-    () => loadFloor(props.site.siteId))
+    () => floorOfSelection(props.initialPlan, props.initialSelection)
+      ?? loadFloor(props.site.siteId))
   const [clipboard, setClipboard] = useState<Clipboard>(null)
   const [view, setView] = useState<View>(initialView)
   const [message, setMessage] = useState<{ text: string; n: number } | null>(null)
@@ -590,6 +623,7 @@ export default function MapScreen(props: MapScreenProps) {
     unbindShelf: props.shelves.unbind,
     previewMerge: props.shelves.previewMerge,
     mergeShelf: props.shelves.merge,
+    shelfOverview: props.shelves.overview,
   }
 
   /** Double-click on the plan: select it and ask the panel to start editing. */

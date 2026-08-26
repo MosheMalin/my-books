@@ -175,7 +175,8 @@ export function App() {
           /* ⚠ `key` on the library: switching libraries REMOUNTS the app
              (CLAUDE.md), and a plan editor holding another library's drawing
              mid-session would push it to the wrong one. */
-          <PlanScreen key={current?.id ?? 'none'} library={current?.id ?? 'none'} />
+          <PlanScreen key={current?.id ?? 'none'} library={current?.id ?? 'none'}
+                      focusShelf={route.focus} />
         ) : route.name === 'shelf' ? (
           <ShelfPage shelfId={route.id} onBack={back} onOpen={setDrawerId} />
         ) : (

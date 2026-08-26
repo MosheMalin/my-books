@@ -29,6 +29,7 @@ import { useAsync } from '@booksnap/ui'
 import type { ShelfWhere } from '../api/client'
 import { getShelfWhere } from '../api/client'
 import { useI18n } from './i18n'
+import { planHash } from './route'
 
 /**
  * Ask the server where a shelf stands. ONE fetch shape for every surface that
@@ -52,6 +53,17 @@ export interface AddressProps {
   /** Renders the §5.7 note under the line when the copy stands behind the
    *  front row. Off on a list row, where one line is the whole budget. */
   note?: boolean
+  /**
+   * Append *show it on the drawing* (P6.5c).
+   *
+   * ⚠ Offered only when there IS an address — a link to a plan that cannot
+   * point at anything is a door onto a shrug. And it is the half that makes
+   * an address usable at all on a real library: measured on the owner's,
+   * **every one of the 11 bookcases is unnamed**, so «סלון · כוננית ללא
+   * שם · עמודה 2» cannot tell two cases in one room apart. A highlighted
+   * cell on the drawing can.
+   */
+  onMap?: boolean
 }
 
 /** One piece of the address. `typed` marks a name the OWNER wrote, which is
@@ -89,7 +101,7 @@ export function addressSegments(
   return out
 }
 
-export function Address({ where, note = true }: AddressProps) {
+export function Address({ where, note = true, onMap = false }: AddressProps) {
   const { t } = useI18n()
   const parts = addressSegments(where, t)
   if (parts.length === 0)
@@ -126,6 +138,11 @@ export function Address({ where, note = true }: AddressProps) {
         ))}
       </p>
       {behind && <p className="tiny muted">{t.where_behind}</p>}
+      {onMap && (
+        <a className="linkish show-on-map" href={planHash(where.shelf_id)}>
+          {t.where_show_on_map}
+        </a>
+      )}
     </>
   )
 }

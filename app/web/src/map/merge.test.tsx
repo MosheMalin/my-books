@@ -70,6 +70,13 @@ const actions = (over: Partial<Actions> = {}): Actions => ({
   shelvesOffTheMap: vi.fn(async () => OFF),
   bindShelf: vi.fn(), unbindShelf: vi.fn(),
   previewMerge: vi.fn(async () => MOVES), mergeShelf: vi.fn(),
+  shelfOverview: vi.fn(async () => ({
+                     shelf: { id: 'sh', label: '', depth_count: 1,
+                              virtual: false, created_at: null,
+                              capture_count: 0, book_count: 0, address: null,
+                              formerly: [] },
+                     depths: [], last_read_at: null,
+                   })),
   ...over,
 })
 

@@ -36,7 +36,7 @@ export type Route =
   | { name: 'book'; id: string }
   | { name: 'capture' }
   | { name: 'shelf'; id: string }
-  | { name: 'plan' }
+  | { name: 'plan'; focus: string | null }
   | { name: 'login'; token: string | null }
   | { name: 'invite'; token: string | null }
 
@@ -48,7 +48,17 @@ export function parseHash(hash: string): Route {
   // ⚠ Before the `map/<id>` line below, which is the SHELF detail screen and
   // has carried that prefix since P2.8. `#/plan` is the drawing; a bare
   // `#/map` would read as the same thing as `#/map/<shelf>` and is not.
-  if (head === 'plan') return { name: 'plan' }
+  //
+  // `#/plan/<shelfId>` opens the drawing POINTING AT that shelf — the storey
+  // it stands on, its bookcase selected, its cell selected. UI_PLAN §3 asks
+  // for the drill in one direction (`#/map/<shelfId>` "deep-links straight to
+  // level 3 with the right place, case and elevation already open"); this is
+  // the same journey the other way, and it is the one an address needs.
+  // On the owner's library every bookcase is unnamed, so *סלון · כוננית
+  // ללא שם · עמודה 2* cannot discriminate between two cases in one
+  // room, and pointing at it on the drawing is the only thing that can.
+  if (head === 'plan')
+    return { name: 'plan', focus: arg ? decodeURIComponent(arg) : null }
   if (head === 'map' && arg) return { name: 'shelf', id: decodeURIComponent(arg) }
   if (head === 'login' || head === 'invite') {
     // The two routes that read their query: an emailed sign-in link and a
@@ -66,6 +76,11 @@ export function bookHash(id: string): string {
 
 export function shelfHash(id: string): string {
   return `#/map/${encodeURIComponent(id)}`
+}
+
+/** The drawing, optionally pointing at one shelf. */
+export function planHash(shelfId?: string): string {
+  return shelfId ? `#/plan/${encodeURIComponent(shelfId)}` : PLAN_HASH
 }
 
 export const LIBRARY_HASH = '#/library'

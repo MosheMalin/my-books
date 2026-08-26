@@ -114,7 +114,7 @@ export function ShelfPage({ shelfId, onBack, onOpen }: ShelfPageProps) {
                       the thing a person would go and fix. */}
                   {where.data && (
                     <div className="shelfwhere">
-                      <Address where={where.data} note={false} />
+                      <Address where={where.data} note={false} onMap />
                     </div>
                   )}
                   <p className="muted">

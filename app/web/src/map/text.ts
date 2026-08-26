@@ -267,6 +267,10 @@ export interface MapText {
   undo_merged: (books: number) => string
   own_depth: string
   photos_attached: string
+  // --- the cell as a place you can go to (P6.5c) ---
+  last_read: string
+  rows_stale: (n: number) => string
+  open_this_shelf: string
   photos_are_captures: string
   shelf_depth: string
   // chrome
@@ -657,6 +661,11 @@ const HE: MapText = {
     : `המיזוג בוטל. ${books} ספרים חזרו למדף שלהם.`),
   own_depth: 'העומק שלו',
   photos_attached: 'תמונות מצורפות',
+  last_read: 'נקרא לאחרונה',
+  rows_stale: (n) => (n === 1
+    ? 'שורה אחת לא נקראה מזמן — פתחו את המדף כדי לראות איזו'
+    : `${n} שורות לא נקראו מזמן — פתחו את המדף כדי לראות אילו`),
+  open_this_shelf: 'פתחו את המדף הזה →',
   photos_are_captures:
     'תמונות מגיעות מצילום המדף, לא מכאן. אפשר לצלם כמה תמונות לאותו מדף, ולכל אחת העומק שלה.',
   shelf_depth: 'עומק המדף הזה',
@@ -971,6 +980,11 @@ const EN: MapText = {
     : `The merge was taken back. ${books} books went back to their own shelf.`),
   own_depth: 'Its own depth',
   photos_attached: 'Photos attached',
+  last_read: 'Last read',
+  rows_stale: (n) => (n === 1
+    ? 'One row has not been read in a while — open the shelf to see which'
+    : `${n} rows have not been read in a while — open the shelf to see which`),
+  open_this_shelf: 'Open this shelf →',
   photos_are_captures:
     'Photos arrive by photographing the shelf, not from here. A shelf can have several, each with its own depth.',
   shelf_depth: "this shelf's depth",

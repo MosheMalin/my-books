@@ -975,7 +975,19 @@
  * The elevation's cells keep their own rule in the layout block because theirs
  * is a GRID row height, and the tight axis there was never the one the grid
  * governed. */
+/* The cell's own facts and its way out (P6.5c). The link is a place, so it
+   sits apart from the controls above it rather than in their row. */
+.mapscreen .read-state strong { display: flex; align-items: center; gap: 4px; }
+.mapscreen .stale-dot { color: var(--warn); font-size: 11px; }
+/* ⚠ `inline-flex` with a min-height, not `inline-block`: an inline box
+   ignores `min-height` entirely, which is how the same 44px rule measured
+   44 in one place and 21 in another. */
+.mapscreen .open-shelf {
+  display: inline-flex; align-items: center; margin: 8px 0 4px;
+}
+
 @media (max-width: 640px) {
+  .mapscreen .map-side.map-side a,
   .mapscreen .map-side.map-side button,
   .mapscreen .map-side.map-side input,
   .mapscreen .map-side.map-side select {
