@@ -13,7 +13,7 @@ import { AuthProvider } from '../lib/auth'
 import { BooksProvider } from '../lib/books'
 import { I18nProvider } from '../lib/i18n'
 import { LibraryProvider, LibraryScope, applyStoredLibrary } from '../lib/library'
-import type { Book, Copy, LibraryDTO } from '../api/client'
+import type { Book, Copy, LibraryDTO, ShelfWhere } from '../api/client'
 
 export interface FakeBook {
   id: string
@@ -21,6 +21,14 @@ export interface FakeBook {
   author?: string
   status?: 'auto' | 'approved' | 'manual'
   added_at?: string | null
+  /** Where the first copy stands (P6.5b). `null` — the default — is a copy
+   *  on no shelf, which is a legitimate state and not a missing fixture. */
+  shelfId?: string | null
+  depth?: number | null
+  /** Further copies, each with its OWN location. Two copies of one book in
+   *  two rooms is the household "where is it" exists for, and the shape that
+   *  catches a screen reading `copies[0]`. */
+  alsoAt?: { shelfId: string; depth?: number }[]
 }
 
 // Typed against the GENERATED `Book`/`Copy`, not a hand-written shape — the
@@ -30,19 +38,23 @@ export interface FakeBook {
 export type FakeBookRecord = Book
 
 export function book(b: FakeBook): FakeBookRecord {
+  const one = (id: string, shelf: string | null, depth: number | null): Copy => ({
+    id,
+    status: b.status ?? 'auto',
+    label: '',
+    shelf_id: shelf,
+    depth: shelf === null ? null : depth ?? 1,
+    tags: [],
+    condition: '',
+    acquired_at: null,
+    lending: null,
+    last_seen: null,
+    sighting_count: 0,
+  })
   const copies: Copy[] = [
-    {
-      id: `${b.id}c1`,
-      status: b.status ?? 'auto',
-      label: '',
-      shelf_id: null,
-      tags: [],
-      condition: '',
-      acquired_at: null,
-      lending: null,
-      last_seen: null,
-      sighting_count: 0,
-    },
+    one(`${b.id}c1`, b.shelfId ?? null, b.depth ?? null),
+    ...(b.alsoAt ?? []).map((at, i) =>
+      one(`${b.id}c${i + 2}`, at.shelfId, at.depth ?? 1)),
   ]
   return {
     id: b.id,
@@ -50,7 +62,7 @@ export function book(b: FakeBook): FakeBookRecord {
     author: b.author ?? '',
     author_key: (b.author ?? '').trim(),
     status: b.status ?? 'auto',
-    copy_count: 1,
+    copy_count: copies.length,
     added_at: (b.added_at ?? '2026-01-01T00:00:00+00:00') as string | null,
     shared_book_id: null,
     work: { rating: null, notes: '', read_status: null },
@@ -108,6 +120,21 @@ export interface FakeServer {
    *  request was never made — assert on that separately, or a test that
    *  proves nothing passes. */
   tenantsFor: (part: string) => (string | null)[]
+  /**
+   * What `GET /map/where/{shelf}` answers, per shelf id (P6.5b).
+   *
+   * ⚠ The fake RESOLVES like the real route does — a key may be an absorbed
+   * id whose entry carries a different `shelf_id`, which is how a test can
+   * exercise §3.11 — and it HONOURS `?depth=`, applying §5.7's rule that the
+   * row is named only when it is not the front one. A fake that ignored the
+   * parameter would have decided the screen cannot be wrong about it, which
+   * is the failure CLAUDE.md records for the account drawer's per-library
+   * cap.
+   */
+  whereByShelf: Record<string, ShelfWhere>
+  /** Shelf ids whose `where` lookup answers 500 — the third state, which is
+   *  neither "on no shelf" nor "not on the map yet". */
+  whereFails: Set<string>
 }
 
 export function fakeServer(initial: FakeBookRecord[] = []): FakeServer {
@@ -136,6 +163,8 @@ export function fakeServer(initial: FakeBookRecord[] = []): FakeServer {
     invitedLibraries: [{ id: 'lib-joined', account_id: 'acc-other',
                          label: 'של ההורים', role: 'editor',
                          created_at: null }],
+    whereByShelf: {},
+    whereFails: new Set<string>(),
     tenantsFor: (part) =>
       server.libraryHeaders.filter((_, i) => server.calls[i]?.includes(part)),
     release: () => {
@@ -397,6 +426,25 @@ export function fakeServer(initial: FakeBookRecord[] = []): FakeServer {
       }
       server.books[idx] = updated
       return respond(updated)
+    }
+
+    // --- where is it (P6.5b) ---------------------------------------------
+    if (u.pathname.startsWith('/api/v1/map/where/') && method === 'GET') {
+      const id = decodeURIComponent(u.pathname.split('/').pop() ?? '')
+      if (server.whereFails.has(id))
+        return respond({ detail: 'the map could not be read' }, 500)
+      const found = server.whereByShelf[id]
+      if (!found) return respond({ detail: 'no such shelf' }, 404)
+      const asked = u.searchParams.get('depth')
+      const depth = asked === null ? null : Number(asked)
+      return respond({
+        ...found,
+        address: found.address
+          ? { ...found.address,
+              // §5.7: the front row is never called a row.
+              depth: depth !== null && depth > 1 ? depth : null }
+          : null,
+      })
     }
 
     if (u.pathname.startsWith('/api/v1/books/') && method === 'DELETE') {

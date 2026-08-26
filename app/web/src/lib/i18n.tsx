@@ -162,6 +162,28 @@ const HE = {
     run_failed: 'הקריאה נכשלה',
     open_shelf: 'פתחו את המדף →',
 
+    // --- where is it (P6.5b, VISION §7, UI_PLAN §1.1) ---
+    // ⚠ Three axes, three words that must never be shared: **column**
+    // across, **level** down, **depth** back. `segment.py` already owns
+    // *band* for the horizontal shelf rows inside one photo, which is a
+    // vertical concept where depth is front-to-back.
+    where_title: 'איפה זה עומד',
+    where_nowhere: 'עדיין לא על המפה',
+    where_unknown: 'לא הצלחנו לברר איפה זה עומד',
+    where_unshelved: 'לא על מדף',
+    where_case_unnamed: 'כוננית ללא שם',
+    where_col: (n: number) => `עמודה ${n}`,
+    where_level: (n: number) => `גובה ${n}`,
+    where_section: (n: number) => `יחידה ${n}`,
+    // §5.7's reason for naming the row at all: reaching it means moving the
+    // row in front of it. Said once, quietly, and only when there IS one.
+    where_behind: 'צריך להזיז את השורה שלפניו',
+    // → for onward and ← for back, the same way round in both languages:
+    // the table's own `open_shelf` and the shelf screen's `← חזרה` already
+    // agree on that, and an arrow is a glyph rather than something bidi
+    // mirrors.
+    where_open_shelf: 'למדף שלו →',
+
     // --- shelf detail (P2.8, UI_PLAN §3 level 3) ---
     shelf_not_found: 'המדף לא נמצא',
     shelf_untitled_photo_alt: 'תמונת המדף',
@@ -447,6 +469,18 @@ const EN: Strings = {
     staged_note: 'staged — applied when you click "Apply to shelf"',
     run_failed: 'The read failed',
     open_shelf: 'Open the shelf →',
+
+    // --- where is it (P6.5b, VISION §7, UI_PLAN §1.1) ---
+    where_title: 'Where it is',
+    where_nowhere: 'Not on the map yet',
+    where_unknown: "Couldn't find out where it is",
+    where_unshelved: 'Not on a shelf',
+    where_case_unnamed: 'unnamed bookcase',
+    where_col: (n: number) => `column ${n}`,
+    where_level: (n: number) => `level ${n}`,
+    where_section: (n: number) => `section ${n}`,
+    where_behind: 'the row in front has to be moved',
+    where_open_shelf: 'Open its shelf →',
 
     // --- shelf detail (P2.8, UI_PLAN §3 level 3) ---
     shelf_not_found: 'Shelf not found',

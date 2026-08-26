@@ -643,6 +643,31 @@ export type UndoOffer = components['schemas']['UndoOfferDTO']
 export const getUndoOffer = (opts: ApiOptions = {}): Promise<UndoOffer> =>
   getJson('/api/v1/map/undo', opts)
 
+/**
+ * Where one shelf stands (P6.5b) — VISION §7's *"given a book, answer where
+ * is it"*.
+ *
+ * Named rather than left to the generic verbs beside it for the same reason
+ * `getUndoOffer` is: it is a READ, and it is the one map call a screen makes
+ * that is not the editor.
+ *
+ * `depth` is a COPY's row front-to-back. It is a query parameter rather than
+ * something the caller stitches on afterwards because the rule *"name the row
+ * only when it is not the front one"* has exactly one implementation, in
+ * `app.domain.place.address_parts`, and a client that decided it locally
+ * would be the second copy.
+ */
+export type ShelfWhere = components['schemas']['ShelfWhereDTO']
+
+export const getShelfWhere = (
+  shelfId: string, depth?: number, opts: ApiOptions = {},
+): Promise<ShelfWhere> =>
+  getJson(
+    `/api/v1/map/where/${encodeURIComponent(shelfId)}`
+      + (depth !== undefined ? `?depth=${depth}` : ''),
+    opts,
+  )
+
 export const mapPost = (path: string, body?: unknown, opts?: ApiOptions) =>
   send('POST', `/api/v1${path}`, body, opts) as Promise<any>
 

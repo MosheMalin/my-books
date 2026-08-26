@@ -355,6 +355,21 @@
   .toolbar input,
   .toolbar select,
   .libswitch-btn,
+  /* P6.5b's link into the shelf screen — measured 81x24 the day it landed,
+     which is how a floor stops being one: not by anybody lowering it, but by
+     the next control arriving under it. `touch.test.ts` cannot see this one
+     (it has no declared pixel height, and the guard says so in its own
+     docstring), so it is the browser walk that caught it. */
+  .wherecell .linkish,
+  /* The book surface — one renderer, two mounts, so `.dbody` covers the
+     drawer and `.bookpage` the full page. Measured at 375x812 on the owner's
+     library: eight controls between 23 and 37px, including *delete from the
+     library* and the author link. Same floor, same reason; the alternative is
+     a floor that holds on three screens out of five, which is the 40px
+     mistake wearing a different number. */
+  .bookpage .btn,
+  .dbody .btn,
+  .authorlink,
   .dhead .btn {
     min-height: 44px;
     /* Both axes: the drawer's close is a 39px-wide glyph button, and a target
@@ -922,6 +937,44 @@
   min-width: 92px;
   flex: none;
 }
+/* "Where it is" (P6.5b). The cell stacks because the address, its §5.7 note
+   and the link into the shelf screen are three lines, not one — and `.kv` is a
+   ROW, so without this they lay out side by side and the address is truncated
+   before the room name ends. */
+.wherecell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  min-width: 0;
+}
+/* ⚠ Each SEGMENT resolves its own direction, which is why the line is
+   several elements and not one string: the room and the bookcase are names
+   the owner typed, and `unicode-bidi: plaintext` reads a paragraph's
+   direction from its first strong character. One string beginning with
+   "Ikea Billy" prints the whole Hebrew address left-to-right, in the wrong
+   order — the failure this product has already met on a shelf name, a site
+   name and a library name. */
+.whereline {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+/* A segment and the separator after it never come apart: a line that wraps
+   must begin with a word, not with a dot (measured — «· גובה 2» at the
+   start of the second line reads as a bullet).
+   ⚠ `addr-seg`, not `seg`: this sheet already owns `.seg` for the Books
+   tab's segmented list/grid toggle, which is `display: flex`. Measured — the
+   four parts of the address each took a full line. A generic class name in a
+   shared sheet is the same hazard `scoping.test.ts` was written for one
+   sheet along. */
+.whereline .addr-seg {
+  white-space: nowrap;
+}
+.whereline .sep {
+  color: var(--muted);
+}
+
 .copybox {
   border: 1px solid var(--line);
   border-radius: 9px;

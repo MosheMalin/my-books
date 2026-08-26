@@ -1363,6 +1363,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/map/where/{shelf_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Where Is
+         * @description Where this shelf stands, in the words a person would use.
+         *
+         *     VISION §7's requirement, and the sentence this router's own docstring
+         *     says the map exists for: *"given a book, the UI can answer 'where is it'
+         *     ... including which row front-to-back"*. The Books tab reaches it through
+         *     a copy's ``shelf_id``; the shelf screen reaches it for its own id.
+         *
+         *     **A shelf that stands nowhere answers 200 with a null address**, not 404.
+         *     Most shelves stand nowhere — they were born from a photograph and §3.1
+         *     keeps the drawn and the photographed one population — so *not on the map
+         *     yet* is the normal state, and a 404 would tell a screen that a shelf it is
+         *     looking at does not exist.
+         *
+         *     ⚠ The id resolves through the alias FIRST (§3.11). A copy's
+         *     ``shelf_id`` is a stored value: after a merge it names an identity that is
+         *     answered for rather than live, and a book whose location silently became
+         *     *nowhere* is exactly the phantom this catalogue is built not to produce.
+         *
+         *     ⚠ It reads the whole drawing rather than asking the store for one
+         *     section's ancestry, for the reason ``GET /map`` gives one route up: a house
+         *     is tens of rows. A dedicated query per level would be four round trips to
+         *     save a few hundred bytes, and a fifth the day a level is added.
+         */
+        get: operations["where_is_api_v1_map_where__shelf_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/members": {
         parameters: {
             query?: never;
@@ -1945,6 +1986,46 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AddressPartsDTO
+         * @description A shelf's address as PARTS, never as a sentence.
+         *
+         *     The sentence is Hebrew in the product and English in the console, so
+         *     assembling it here would be a second i18n table nobody maintains. What is
+         *     NOT the client's is which parts appear at all — that rule has one copy, in
+         *     ``app.domain.place.address_parts``, and this DTO is its wire shape.
+         *
+         *     ``section``, ``column`` and ``depth`` are null when naming them would
+         *     imply a choice that does not exist: a one-section case never says
+         *     *section 1*, a one-column case never says *column 1*, and the front row
+         *     is never called a row (§3.6, UI_PLAN §1.1, §5.7).
+         */
+        AddressPartsDTO: {
+            /**
+             * Bookcase
+             * @description The furniture's name. May be empty: naming a case is optional, exactly as naming a shelf is.
+             */
+            bookcase: string;
+            /** Column */
+            column?: number | null;
+            /**
+             * Depth
+             * @description Row front-to-back, and only when it is not the front one. Asked for by query, because the shelf has a depth COUNT and a copy has a depth.
+             */
+            depth?: number | null;
+            /**
+             * Level
+             * @description 1-based, counted from the TOP.
+             */
+            level: number;
+            /**
+             * Place
+             * @description The ROOM. Empty when the bookcase stands on no room — legal, and not the same as unknown (§3.7).
+             */
+            place: string;
+            /** Section */
+            section?: number | null;
+        };
         /**
          * AlternativeDTO
          * @description One ranked runner-up `booksnap.match.explain()` considered for a
@@ -3672,6 +3753,43 @@ export interface components {
         ShelfPatch: {
             /** Label */
             label?: string | null;
+        };
+        /**
+         * ShelfWhereDTO
+         * @description Where one shelf stands — VISION §7's *"given a book, answer where is
+         *     it"*, which is the sentence P6.5 exists to make answerable.
+         *
+         *     ⚠ ``site`` is beside the address and never inside it. §3.7 settles that a
+         *     Site and a Floor are groupings and *"never part of an address"*, because
+         *     putting either in would re-address every shelf in the house the day
+         *     somebody renames a building. But two sites may each have a *living room*,
+         *     so the site is carried as CONTEXT — and only when there is more than one
+         *     of them, which is §3.9's rule for the map's own site segment, applied
+         *     where the same ambiguity turns up.
+         */
+        ShelfWhereDTO: {
+            /** @description Null for a shelf that stands nowhere, which is MOST of them and stays legal forever: the drawn and the photographed are one population (§3.1). A screen must read this as *not on the map yet*, never as an error. */
+            address?: components["schemas"]["AddressPartsDTO"] | null;
+            /**
+             * Depth Count
+             * @description Rows front-to-back the owner declared. 1 for almost every shelf; what makes *row 2 of 3* sayable.
+             */
+            depth_count: number;
+            /**
+             * Label
+             * @default
+             */
+            label: string;
+            /**
+             * Shelf Id
+             * @description RESOLVED through the alias (§3.11), so a bookmarked or queued id from before a merge answers with the shelf that stands there now rather than 404.
+             */
+            shelf_id: string;
+            /**
+             * Site
+             * @description Null when this library has one site — naming it would be chrome for a household that has never met the concept.
+             */
+            site?: string | null;
         };
         /**
          * SightingDTO
@@ -5806,6 +5924,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UndoOfferDTO"];
+                };
+            };
+        };
+    };
+    where_is_api_v1_map_where__shelf_id__get: {
+        parameters: {
+            query?: {
+                /** @description The row front-to-back this answer is about — a COPY's depth, which the shelf itself does not have. Omitted, the answer names no row. */
+                depth?: number | null;
+            };
+            header?: never;
+            path: {
+                shelf_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShelfWhereDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

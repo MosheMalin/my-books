@@ -9,11 +9,17 @@
  * rather than stubbed:
  *
  *   spine crop ............ needs a BlobStore (P3.5)
- *   Where it is (location) . comes from the map (P6) — every copy is
- *                           unlocated until then, so there is nothing to show
  *   Mine (rating/notes) ... VISION §6 "Should", phase 2; no API for it yet
  *   Where it was seen ..... reads belong to a shelf (P2.5)
  *   remove from shelf ..... there is no shelf to remove from until P2.1
+ *
+ * *Where it is* graduated out of that list at P6.5b — it was waiting on the
+ * map, and the map now answers. It sits inside each COPY's box rather than
+ * beside the title, because a location belongs to a physical object: two
+ * copies of one book stand in two places, and the version of this section
+ * that read `copies[0]` would have been silently wrong for exactly the
+ * households that need it (the same defect "last seen" had, fixed the same
+ * way at P1.7).
  *
  * Copies graduated out of this list at P1.7: label/tags/condition, lending
  * and "I have another copy" are built below. The word "copies" and the count
@@ -27,8 +33,54 @@ import { useEffect, useRef, useState } from 'react'
 import type { Book, Copy } from '../api/client'
 import { isConflict, useBooks } from '../lib/books'
 import { formatDate } from '@booksnap/ui'
+import { Address, useShelfWhere } from '../lib/Address'
 import { useI18n } from '../lib/i18n'
+import { shelfHash } from '../lib/route'
 import { CopyBadges, StatusBadge } from '../books/Feed'
+
+/**
+ * One copy's answer to *"where is it"* (P6.5b).
+ *
+ * Its own fetch, per copy, deliberately: a book has one or two copies, and
+ * threading a lookup table down from the drawer would make the surface's
+ * props depend on how many shelves the household has drawn.
+ *
+ * ⚠ Three states, and the third is the one that gets skipped. A copy on no
+ * shelf says so; a copy on a shelf that stands nowhere says *not on the map
+ * yet* (the NORMAL state — §3.1 keeps the drawn and the photographed one
+ * population); a lookup that FAILED says it could not find out. Collapsing
+ * the last two would report a server error as a fact about the furniture.
+ */
+function CopyWhere({ copy }: { copy: Copy }) {
+  const { t } = useI18n()
+  const shelfId = copy.shelf_id ?? null
+  const { data, loading, error } = useShelfWhere(shelfId, copy.depth ?? undefined)
+
+  return (
+    <div className="kv">
+      <span className="k">{t.where_title}</span>
+      <span className="wherecell">
+        {shelfId === null ? (
+          <span className="muted">{t.where_unshelved}</span>
+        ) : loading ? (
+          <span className="muted">{t.loading}</span>
+        ) : error || !data ? (
+          <span className="muted">{t.where_unknown}</span>
+        ) : (
+          <>
+            <Address where={data} />
+            {/* The drill the other way: UI_PLAN §3's level 3 is the shelf
+                screen, and this is the link into it that the Books tab never
+                had. `#/map/<shelfId>` is that route's own shape. */}
+            <a className="linkish" href={shelfHash(data.shelf_id)}>
+              {t.where_open_shelf}
+            </a>
+          </>
+        )}
+      </span>
+    </div>
+  )
+}
 
 export interface BookSurfaceProps {
   book: Book
@@ -404,6 +456,7 @@ export function BookSurface({
                       </span>
                     </div>
                   )}
+                  <CopyWhere copy={copy} />
                   <div className="kv">
                     <span className="k">{t.lending}</span>
                     <span>

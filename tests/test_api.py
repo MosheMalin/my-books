@@ -7667,3 +7667,150 @@ def test_a_merged_shelf_says_what_it_was_and_still_answers_for_it():
         assert [f["id"] for f in over["shelf"]["formerly"]] == [absorbed["id"]]
         assert over["shelf"]["formerly"][0]["address"] is not None or True
         assert over["shelf"]["book_count"] == 2
+
+# --- "where is it" (P6.5b, VISION §7) -------------------------------------
+
+
+def test_a_drawn_shelf_says_where_it_is_in_the_words_a_person_uses():
+    """VISION §7's requirement, which the map router's own docstring names as
+    the reason the map exists: *given a book, answer where is it*.
+
+    The parts, never a sentence — the sentence is Hebrew here and English in
+    the console. What is asserted is the RULE about which parts appear: a
+    one-section case never says *section 1*, because saying it would imply
+    there is a section 2 (§3.6, UI_PLAN §1.1).
+    """
+    with TestClient(_app()) as client:
+        _drawn_map(client, columns=2, levels=3)
+        shelf = [s for s in client.get("/api/v1/shelves").json()
+                 if s["address"] and s["address"]["col"] == 2
+                 and s["address"]["level"] == 3][0]
+
+        got = client.get(f"/api/v1/map/where/{shelf['id']}")
+
+        assert got.status_code == 200, got.text
+        body = got.json()
+        assert body["shelf_id"] == shelf["id"]
+        assert body["address"] == {
+            "place": "סלון", "bookcase": "הכוננית",
+            # TWO columns, so the column discriminates and is named.
+            "column": 2, "level": 3,
+            # ONE section, so it is not.
+            "section": None,
+            # No row was asked about.
+            "depth": None,
+        }
+        # One site: naming it would be chrome for a household that has never
+        # met the concept (§3.9's rule for the map's own site segment).
+        assert body["site"] is None
+
+
+def test_a_one_column_case_never_says_column_one():
+    """UI_PLAN §1.1, stated as a rule rather than a nicety: *"it is hidden
+    until it exists. A single-bay case renders `Shelf 1`, never `Col 1 ·
+    Shelf 1`"*. Most people's cases have one column and should never meet the
+    concept."""
+    with TestClient(_app()) as client:
+        _drawn_map(client, columns=1, levels=4)
+        shelf = [s for s in client.get("/api/v1/shelves").json()
+                 if s["address"]][0]
+
+        body = client.get(f"/api/v1/map/where/{shelf['id']}").json()
+
+        assert body["address"]["column"] is None
+        assert body["address"]["level"] >= 1
+
+
+def test_a_shelf_standing_nowhere_answers_where_with_no_address_not_404():
+    """MOST shelves stand nowhere — they were born from a photograph, and
+    §3.1 keeps the drawn and the photographed ONE population. So *not on the
+    map yet* is the normal state, and a 404 would tell the book screen that a
+    shelf it is looking at does not exist."""
+    with TestClient(_app()) as client:
+        shelf = client.post("/api/v1/shelves",
+                            json={"label": "ספרי בישול"}).json()
+
+        got = client.get(f"/api/v1/map/where/{shelf['id']}")
+
+        assert got.status_code == 200, got.text
+        assert got.json()["address"] is None
+        assert got.json()["label"] == "ספרי בישול"
+        assert got.json()["depth_count"] == 1
+
+
+def test_where_names_the_row_only_when_it_is_not_the_front_one():
+    """§5.7 through the wire. A back-row book means moving the front row to
+    reach it, so the row is worth saying — and *row 1* on a flat shelf is
+    noise the owner never asked to see."""
+    with TestClient(_app()) as client:
+        _drawn_map(client, columns=1, levels=2, depth=3)
+        shelf = [s for s in client.get("/api/v1/shelves").json()
+                 if s["address"]][0]
+        at = f"/api/v1/map/where/{shelf['id']}"
+
+        assert client.get(at).json()["address"]["depth"] is None
+        assert client.get(at, params={"depth": 1}).json()["address"]["depth"] \
+            is None
+        assert client.get(at, params={"depth": 3}).json()["address"]["depth"] \
+            == 3
+        assert client.get(at).json()["depth_count"] == 3
+
+
+def test_where_names_the_site_only_once_a_second_one_exists():
+    """Two sites may each have a *living room*, so the site is carried — as
+    CONTEXT beside the address, never inside it (§3.7: a Site is a grouping
+    and never part of an address, or renaming a building re-addresses every
+    shelf in it)."""
+    with TestClient(_app()) as client:
+        world = _drawn_map(client, columns=1, levels=1)
+        shelf = [s for s in client.get("/api/v1/shelves").json()
+                 if s["address"]][0]
+        at = f"/api/v1/map/where/{shelf['id']}"
+        assert client.get(at).json()["site"] is None
+
+        second = client.post("/api/v1/map/sites",
+                             json={"name": "הורים"})
+        assert second.status_code == 201, second.text
+
+        body = client.get(at).json()
+        assert body["site"] == world["site"]["name"]
+        # The address itself did not gain a field.
+        assert "site" not in body["address"]
+
+
+def test_where_answers_for_an_id_taken_before_a_merge():
+    """§3.11 on the surface that reads STORED ids. A copy's `shelf_id` is a
+    value written when the book was shelved; after a merge it names an
+    identity that is answered for rather than live. A book whose location
+    silently became *nowhere* is the phantom this catalogue exists not to
+    produce."""
+    books = MemoryBookStore()
+    with TestClient(_app(store=books)) as client:
+        _drawn_map(client, columns=1, levels=1)
+        survivor = [s for s in client.get("/api/v1/shelves").json()
+                    if s["address"]][0]
+        absorbed = client.post("/api/v1/shelves",
+                               json={"label": "ספרי בישול"}).json()
+        books.save(TEST_LIBRARY, new_book(
+            id="bk-w", library_id=TEST_LIBRARY.id, title="ספר",
+            author="מחבר", copy_id="cp-w",
+            shelf_id=absorbed["id"], depth=1))
+        done = client.post(f"/api/v1/map/shelves/{absorbed['id']}/merge",
+                           json={"into": survivor["id"],
+                                 "strip": "survivor_first"})
+        assert done.status_code == 200, done.text
+
+        got = client.get(f"/api/v1/map/where/{absorbed['id']}")
+
+        assert got.status_code == 200, got.text
+        assert got.json()["shelf_id"] == survivor["id"]
+        assert got.json()["address"] is not None, (
+            "the absorbed id lost its location across the seam"
+        )
+
+
+def test_where_is_404_for_a_fictional_shelf():
+    """Foreign and fictional are the same answer (CLAUDE.md): 404, never 403,
+    before any capability check."""
+    with TestClient(_app()) as client:
+        assert client.get("/api/v1/map/where/nope").status_code == 404
