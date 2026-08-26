@@ -258,7 +258,13 @@ def plan_merge(
     (moves, drops, was_decisions,
      clashes) = _move_decisions(absorbed, survivor, decisions)
     (q_moves, q_drops, was_questions) = _move_questions(
-        absorbed, survivor, questions, moves)
+        absorbed, survivor, questions,
+        # ⚠ BOTH: the answers this merge moves, and the ones the survivor
+        # already had. Built from the moving set alone, an absorbed question
+        # could land on a key the survivor had decided long ago — the exact
+        # pair `_move_questions` exists to forbid, reachable from the
+        # direction its own test did not walk.
+        moves + tuple(d for d in decisions if d.shelf_id == survivor.id))
 
     return MergePlan(
         absorbed_id=absorbed.id,
@@ -322,6 +328,14 @@ def _restrip(
                 replace(c, shelf_id=survivor.id, order=start + n)
                 for n, c in enumerate(here))
         else:
+            if not here:
+                # ⚠ Nothing of the absorbed shelf at this depth, so the shift
+                # is zero and every write is a no-op — except that a
+                # remembered row is a WATCHED row, so an untouched photograph
+                # re-photographed later refused a legitimate undo. Measured.
+                # This branch's own ⚠ already says rows that stand still are
+                # not remembered; it was true of `SURVIVOR_FIRST` only.
+                continue
             shift = len(here)
             # HIGHEST first: each target slot is vacated by the write before
             # it. Ascending would land on a row that has not moved yet.

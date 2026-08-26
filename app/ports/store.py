@@ -644,6 +644,18 @@ class ReadStore(Protocol):
         would have to re-derive that scoping every time.
         """
 
+    def has_running_read(self, library: LibraryRef, shelf_id: str) -> bool:
+        """Is a read of this shelf still running? One boolean, one query.
+
+        ⚠ Not ``any(not r.status.is_terminal for r in list_reads(...))``,
+        which is what P6.4d's merge asked first. A `Read` travels WITH its
+        claims — every one hydrated, with its JSON ``box`` and
+        ``alternatives`` — so the cheapest question in the system was costing
+        the whole archive: a security review measured **1.74s** for one merge
+        preview on a shelf with 1 000 reads of 60 claims, on a service bound
+        to 0.0.0.0. The caller wants a flag, so the port answers with one.
+        """
+
     def list_all_reads(self, library: LibraryRef) -> tuple[Read, ...]:
         """EVERY read in the library, most recent first — the blob
         reconciler's method (P3.5), not a screen's.

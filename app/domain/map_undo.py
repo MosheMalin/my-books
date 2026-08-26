@@ -140,9 +140,12 @@ class MapRestore:
     #: merge's half of what ``created`` is for a shelf. One entry, normally:
     #: the ``alias_id`` of the shelf that was absorbed.
     #:
-    #: ⚠ Removing it is what makes the absorbed identity a SHELF again, and it
-    #: has to happen before that shelf's row is written back, or ``save_alias``
-    #: and the restored row disagree about whether the id is live.
+    #: ⚠ Removing it is what makes the absorbed identity a SHELF again, and
+    #: it happens AFTER that shelf's row is written back — see
+    #: ``LEDGER_ORDER``'s own note. (This one said "before" and was simply
+    #: wrong about the code beside it: ``_replay`` writes ``shelves`` and
+    #: ``_replay_ledger`` runs after it. A wrong stated reason is what makes
+    #: the next reader delete the guard.)
     minted_aliases: tuple[str, ...] = ()
 
     #: ``(shelf_id, depth, book_key)`` the merge answered at the survivor
@@ -529,8 +532,18 @@ def merge_restores(older: MapRestore, newer: MapRestore) -> MapRestore:
         merged[name] = tuple(by_id.values())
     for name in LEDGER_ORDER:
         key = LEDGER_KEY[name]
-        by_key = {key(record): record for record in getattr(newer, name)}
-        by_key.update({key(record): record for record in getattr(older, name)})
+        # ⚠ **Older FIRST, and the sequence is the point.**
+        # ``MapRestore.captures`` says the replay order is part of the inverse
+        # rather than a detail of writing it, and a plain dict union built
+        # from the NEWER bag reorders it: measured as `['c','d','a','b']` for
+        # two halves whose own orders were `['a','b','c']` and `['c','d']` —
+        # exactly the sequence ``_replay_ledger`` says leaves an entry dead
+        # forever. Nothing in ``CONTINUES`` coalesces a merge today, which is
+        # why this went unnoticed; it is still a pure function that can be
+        # wrong on its own.
+        by_key: dict = {}
+        for record in tuple(getattr(older, name)) + tuple(getattr(newer, name)):
+            by_key.setdefault(key(record), record)
         merged[name] = tuple(by_key.values())
     merged["minted_aliases"] = tuple(
         dict.fromkeys(older.minted_aliases + newer.minted_aliases))

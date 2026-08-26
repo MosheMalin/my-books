@@ -50,6 +50,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+from app.domain.alias import resolve
 from app.domain import (
     Book,
     Decision,
@@ -168,7 +169,25 @@ def apply_diff(
     ``duplicates`` keeps the P2.6 queue in step (see the module docstring);
     pass ``None`` to skip that bookkeeping entirely.
     """
-    shelf = shelves.get_shelf(library, diff.shelf_id)
+    # ⚠⚠ **Resolved through the alias** (MAP_PLAN §3.11), which promised this
+    # in words and did not have it in code until a review went looking: *"a
+    # read that started at A finishes at B rather than raising 'shelf no
+    # longer exists; nothing to apply' and discarding a whole diff."*
+    #
+    # What the absence cost, measured: merge while a read of the absorbed
+    # shelf is settling, and this raised — into `reads.py`'s settle handler,
+    # which logs and does not re-raise. The ENTIRE diff was discarded in
+    # silence while the read was stored DONE with a `diff_summary` claiming it
+    # added books that were never added. `plan()`'s *a read is running*
+    # refusal narrows that window; it cannot close it, because a read started
+    # after the check is not seen at all.
+    #
+    # ``here`` and not ``diff.shelf_id`` from this line down: the books, the
+    # provenance and the standing answers all belong to the wood, and the wood
+    # is the survivor now. Filing them under the absorbed id would leave every
+    # one of them out of reach of the only shelf that still exists.
+    here = resolve(diff.shelf_id, shelves.list_aliases(library))
+    shelf = shelves.get_shelf(library, here)
     if shelf is None:
         raise DomainError(
             f"shelf {diff.shelf_id!r} no longer exists; nothing to apply"
@@ -181,7 +200,7 @@ def apply_diff(
 
     def _prov(claim) -> Provenance:
         return Provenance(run_id=diff.read_id, spine_id=claim.spine_id,
-                          shelf_id=diff.shelf_id, depth=diff.depth,
+                          shelf_id=here, depth=diff.depth,
                           captured_at=when)
 
     # --- what `reconcile()` already decided, with no human input needed ---
@@ -195,7 +214,7 @@ def apply_diff(
         book = new_book(
             id=ids.new_id(), library_id=library.id, title=outcome.claim.title,
             author=outcome.claim.author, copy_id=ids.new_id(),
-            status=Status.MANUAL, shelf_id=diff.shelf_id, depth=diff.depth,
+            status=Status.MANUAL, shelf_id=here, depth=diff.depth,
             provenance=(_prov(outcome.claim),), added_at=when,
         )
         books.save(library, book)
@@ -209,7 +228,7 @@ def apply_diff(
 
     for outcome in diff.corrected:
         book = _apply_corrected(outcome, when=when, prov=_prov(outcome.claim),
-                                ids=ids, shelf_id=diff.shelf_id, depth=diff.depth)
+                                ids=ids, shelf_id=here, depth=diff.depth)
         books.save(library, book)
         saved.append(book)
 
@@ -224,7 +243,7 @@ def apply_diff(
                 f"diff (read {diff.read_id!r})"
             )
         book, decision = _apply_answer(
-            outcome, answer, library=library, shelf_id=diff.shelf_id,
+            outcome, answer, library=library, shelf_id=here,
             depth=diff.depth, when=when, prov=_prov(outcome.claim), ids=ids,
         )
         if book is not None:
@@ -236,7 +255,7 @@ def apply_diff(
 
     if duplicates is not None:
         _sync_duplicate_queue(diff, answers, duplicates, library=library,
-                              when=when, ids=ids)
+                              here=here, when=when, ids=ids)
 
     return AppliedResult(books_saved=tuple(saved),
                          decisions_saved=tuple(saved_decisions))
@@ -330,9 +349,13 @@ def _sync_duplicate_queue(
     duplicates: DuplicateQueue,
     *,
     library: LibraryRef,
+    here: str,
     when: str,
     ids: IdGen,
 ) -> None:
+    """``here`` is ``diff.shelf_id`` RESOLVED through the alias (§3.11) — the
+    shelf a question is filed at has to be the one that still exists, or the
+    row is opened at an id nothing can look up."""
     """Keep the durable queue in step with what THIS call resolved.
 
     Every still-open ``ambiguous_location`` claim (the one reason
@@ -360,14 +383,14 @@ def _sync_duplicate_queue(
             f"apart for reason {outcome.reason!r}"
         )
         if outcome.claim.id in answered_claim_ids:
-            duplicates.delete_question(library, diff.shelf_id, diff.depth,
+            duplicates.delete_question(library, here, diff.depth,
                                        outcome.book_key)
             continue
-        existing = duplicates.get_question(library, diff.shelf_id, diff.depth,
+        existing = duplicates.get_question(library, here, diff.depth,
                                            outcome.book_key)
         question = open_or_refresh(
             existing, new_id=ids.new_id(), library_id=library.id,
-            shelf_id=diff.shelf_id, depth=diff.depth, book_key=outcome.book_key,
+            shelf_id=here, depth=diff.depth, book_key=outcome.book_key,
             read_id=diff.read_id, spine_id=outcome.claim.spine_id,
             claim_title=outcome.claim.title, claim_author=outcome.claim.author,
             existing_book_id=outcome.existing_book.id, when=when,
@@ -378,7 +401,7 @@ def _sync_duplicate_queue(
     for outcome in (*diff.corrected, *diff.rejected):
         if outcome.reason in ("relinked_by_decision", "new_copy_by_decision",
                               "wrong_book"):
-            duplicates.delete_question(library, diff.shelf_id, diff.depth,
+            duplicates.delete_question(library, here, diff.depth,
                                        outcome.book_key)
 
 

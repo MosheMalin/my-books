@@ -7421,9 +7421,17 @@ def test_the_strip_order_has_no_default_and_a_bad_one_is_400():
                            ).status_code == 400
 
 
-def test_a_retry_of_a_merge_answers_200_rather_than_a_second_merge():
-    """§3.15: the retry a dropped response provokes must not half-merge, and
-    must not look like a new failure."""
+def test_a_retry_of_a_merge_reaches_a_row_that_is_gone_and_says_so():
+    """§3.15 asks that a retry not half-merge. Through the ROUTE it cannot
+    even get that far: the absorbed row is gone, so `_both` answers 404 before
+    anything reads the alias — *there is no such shelf*, which is true.
+
+    ⚠ The name said `answers 200` and the assertion said 404, which is this
+    codebase's own recorded failure shape (a test asserting the opposite of
+    its docstring). `MergeOutcome.already` IS reachable, but only from inside
+    a merge that died between its alias and its delete — the module's resume
+    branch — and `tests/test_map_merge.py` is where that is exercised.
+    """
     with TestClient(_app()) as client:
         _drawn_map(client, columns=2, levels=1)
         survivor = [s for s in client.get("/api/v1/shelves").json()
@@ -7440,3 +7448,111 @@ def test_a_retry_of_a_merge_answers_200_rather_than_a_second_merge():
         assert again.status_code == 404, (
             "a retry after the row is gone must read as *there is no such "
             "shelf*, not as a fresh refusal to merge")
+
+
+def test_a_real_shelf_of_another_library_is_404_and_not_a_named_refusal():
+    """§4.2: foreign and fictional are the SAME answer, at every door.
+
+    ⚠ `_both` already scopes both lookups, so `other_library` is a safety net.
+    A security review widened the `into` lookup to prove what the net answers
+    then — a REAL shelf of another library came back `other_library` while a
+    fictional one came back 404, which is exactly the distinction §4.2 exists
+    to abolish, and an id-existence oracle across the boundary. Resolving
+    `into` through the alias table is a natural P6.4e move; this is the test
+    that catches the day it widens the lookup.
+
+    ⚠ ONE store, two libraries — the shape `test_store_contract.py`'s note
+    calls the cross-tenant half. A second `TestClient` with its own empty
+    store would prove "absent is 404" and nothing about the boundary.
+    """
+    from app.domain import new_shelf
+
+    p = StubPrincipal()
+    tenancy = _tenancy(p)
+    _second_library(p, tenancy)
+    shelves = MemoryShelfStore()
+    lib2 = LibraryRef("lib-2", "Office")
+    shelves.save_shelf(lib2, new_shelf(id="far", library_id=lib2.id,
+                                       label="לא שלי"))
+    # ⚠ The header on EVERY call. A header-less request resolves the
+    # switcher's first row, which with a second account in play is `lib-2`
+    # itself — so the "mine" side would be drawn in the very library this test
+    # is trying to reach across, and the merge would be legal.
+    ours = {deps.LIBRARY_HEADER: TEST_LIBRARY.id}
+    with TestClient(_app(p, tenancy=tenancy, shelves=shelves)) as client:
+        client.headers.update(ours)
+        _drawn_map(client, columns=2, levels=1)
+        mine = [s for s in client.get("/api/v1/shelves").json()
+                if s["address"]][0]
+
+        for path in (f"/api/v1/map/shelves/{mine['id']}/merge",
+                     f"/api/v1/map/shelves/{mine['id']}/merge/preview"):
+            got = client.post(path, json={"into": "far",
+                                          "strip": "survivor_first"})
+            assert got.status_code == 404, (path, got.status_code, got.text)
+            assert got.json()["detail"] == "no such shelf", got.text
+        # And the other id, in the other position.
+        got = client.post("/api/v1/map/shelves/far/merge",
+                          json={"into": mine["id"], "strip": "survivor_first"})
+        assert got.status_code == 404, got.text
+    assert shelves.get_shelf(lib2, "far") is not None, (
+        "another library's shelf was touched")
+
+
+def test_a_store_refusal_during_a_merge_is_a_409_and_not_a_500():
+    """⚠ `StoreError` subclasses bare `Exception`, so `_translated`'s
+    `DomainError` fall-through never caught it — and its 409 tuple named
+    three of the family. A security review measured `ShelfNotEmpty` escaping
+    a merge as a **500** on a mutating LAN route, which the client classifies
+    as *dropped* and invites the owner to retry forever.
+
+    Provoked here through the door that reaches it without a race: deleting a
+    shelf other identities resolve to is refused by the store, by name.
+    """
+    with TestClient(_app()) as client:
+        _drawn_map(client, columns=2, levels=1)
+        survivor = [s for s in client.get("/api/v1/shelves").json()
+                    if s["address"]][0]
+        absorbed = client.post("/api/v1/shelves", json={}).json()
+        client.post(f"/api/v1/map/shelves/{absorbed['id']}/merge",
+                    json={"into": survivor["id"], "strip": "survivor_first"})
+
+        # The survivor now answers for another identity, so the store refuses
+        # to delete it — `ShelfHasAliases`, which the map router must render.
+        gone = client.delete(f"/api/v1/map/shelves/{survivor['id']}/address")
+        assert gone.status_code == 200, gone.text
+        removed = client.delete(f"/api/v1/shelves/{survivor['id']}")
+        assert removed.status_code == 409, removed.text
+
+        # And the map router's own door, which is the one the review measured
+        # answering 500: a section removal that would take the survivor with
+        # it meets the same refusal.
+        section = client.get("/api/v1/map").json()["sections"][0]
+        refused = client.delete(f"/api/v1/map/sections/{section['id']}")
+        assert refused.status_code in (204, 409), refused.text
+        assert refused.status_code != 500
+
+
+def test_the_preview_never_promises_a_merge_the_write_refuses():
+    """A shelf into itself: 409 from the write, so 200 `already` from the
+    preview is a promise the ✓ breaks.
+
+    ⚠ `resolve` answers with the id it was handed when nothing has absorbed
+    it, so *A already resolves to B* is trivially true for A == B. That trap
+    was fixed in `merge()` and left standing in this route, which does its own
+    check — the same bug, one function over, exactly the shape a shared
+    `gather` is supposed to make impossible.
+    """
+    with TestClient(_app()) as client:
+        _drawn_map(client, columns=2, levels=1)
+        shelf = [s for s in client.get("/api/v1/shelves").json()
+                 if s["address"]][0]
+        body = {"into": shelf["id"], "strip": "survivor_first"}
+
+        seen = client.post(
+            f"/api/v1/map/shelves/{shelf['id']}/merge/preview", json=body)
+        assert seen.status_code == 200, seen.text
+        assert seen.json()["already"] is False
+        assert seen.json()["refused"]["reason"] == "same_shelf"
+        assert client.post(f"/api/v1/map/shelves/{shelf['id']}/merge",
+                           json=body).status_code == 409

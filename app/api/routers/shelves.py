@@ -70,6 +70,7 @@ from app.ports.store import (
     BookStore,
     DuplicateCaptureSlot,
     ReadStore,
+    ShelfHasAliases,
     ShelfNotEmpty,
     ShelfStore,
     UnknownShelf,
@@ -274,7 +275,14 @@ def delete_shelf(
     _load(store, library, shelf_id)
     try:
         removed = store.delete_shelf(library, shelf_id)
-    except ShelfNotEmpty as exc:
+    except (ShelfNotEmpty, ShelfHasAliases) as exc:
+        # ⚠ `ShelfHasAliases` too, and P6.4a wrote this trap down for P6.4d:
+        # *"`DELETE /api/v1/shelves/{id}` catches only `ShelfNotEmpty`, so the
+        # owner's refuse-naming-the-count would arrive as a 500 on the one
+        # surface that could show the count."* It did — measured the moment a
+        # merge made the first survivor. The two are the same shape of answer
+        # (*there is something here you have not dealt with*) and the store
+        # raises both by name precisely so this route can say which.
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     if not removed:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no such shelf")

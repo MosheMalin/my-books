@@ -62,7 +62,13 @@ from app.ports import Clock
 from app.ports.decisions import DecisionStore
 from app.ports.duplicates import DuplicateQueue
 from app.ports.map import MapStore
-from app.ports.store import BookStore, ReadStore, ShelfStore
+from app.ports.store import (
+    BookStore,
+    ReadStore,
+    ShelfHasAliases,
+    ShelfNotEmpty,
+    ShelfStore,
+)
 
 
 @dataclass(frozen=True)
@@ -95,6 +101,16 @@ class MergeOutcome:
     survivor: Shelf
     plan: MergePlan | None = None
     already: bool = False
+    #: Whether THIS call left an entry the owner can take back.
+    #:
+    #: ⚠ False on a resumed merge, and saying so is the honest half of
+    #: §3.15's promise. A merge interrupted half-way and finished by a retry
+    #: cannot be given a true inverse: the rows the first attempt moved are at
+    #: the survivor and indistinguishable from ones that were always there, so
+    #: an entry built from what the SECOND attempt saw would restore half a
+    #: library and report success. A guessed inverse is what §3.15 rejected in
+    #: the first place, so this call records none and says it recorded none.
+    undoable: bool = True
 
 
 def gather(
@@ -114,12 +130,14 @@ def gather(
         for copy in book.copies if copy.shelf_id in where)
     captures = tuple(c for shelf_id in where
                      for c in ports.shelves.list_captures(library, shelf_id))
-    depths = {c.depth for c in copies} | {c.depth for c in captures}
-    depths.update(absorbed.depths)
-    depths.update(survivor.depths)
-    decisions = tuple(d for shelf_id in where for depth in sorted(depths)
-                      for d in ports.decisions.list_decisions(
-                          library, shelf_id, depth))
+    # ⚠ The WHOLE shelf, not a loop over the depths anybody can name. A
+    # REJECTED decision leaves nothing standing, so a shelf shallowed after
+    # one was made held a row at a depth no caller could enumerate — and
+    # §3.13's load-bearing table was silently left behind at an id that was
+    # about to stop existing. Measured by a data-integrity review.
+    decisions = tuple(d for shelf_id in where
+                      for d in ports.decisions.decisions_at_shelf(
+                          library, shelf_id))
     questions = tuple(q for shelf_id in where
                       for q in ports.duplicates.list_open_questions(
                           library, shelf_id=shelf_id))
@@ -155,6 +173,14 @@ def plan(
     deserves a sentence, not a driver error two statements into a write that
     has already moved books.
     """
+    if absorbed.id == survivor.id:
+        # ⚠ HERE rather than in `merge` alone, which is where it was: the
+        # preview did its own `resolve` check, found *A resolves to A* true,
+        # and answered 200 `already: true` for a merge the write refuses with
+        # 409. A preview that promises a state the write will not produce is
+        # the one thing the shared `gather` exists to prevent.
+        raise MergeRefused(
+            "same_shelf", "a shelf cannot be merged into itself")
     standing = ports.shelves.list_aliases(library)
     if resolve(survivor.id, standing) != survivor.id:
         raise MergeRefused(
@@ -162,13 +188,17 @@ def plan(
             f"{survivor.id} has itself been absorbed; merge into the shelf "
             "that answers for it")
     for shelf in (absorbed, survivor):
-        for read in ports.reads.list_reads(library, shelf.id):
-            if not read.status.is_terminal:
-                raise MergeRefused(
-                    "read_running",
-                    f"a read of {shelf.id} is still running; merging now "
-                    "would apply its findings to a shelf that has stopped "
-                    "existing")
+        # ⚠ One boolean per shelf, not the archive. Asking
+        # `list_reads(...)` hydrated every `Claim` of every read with its JSON
+        # `box` and `alternatives` — 1.74s measured for one preview on a shelf
+        # with a thousand reads, on a LAN-bound service, to answer a question
+        # with two possible values.
+        if ports.reads.has_running_read(library, shelf.id):
+            raise MergeRefused(
+                "read_running",
+                f"a read of {shelf.id} is still running; merging now "
+                "would apply its findings to a shelf that has stopped "
+                "existing")
     if absorbed.address is not None and any(
         a.address == absorbed.address for a in standing
     ):
@@ -204,32 +234,75 @@ def merge(
 ) -> MergeOutcome:
     """Absorb ``absorbed`` into ``survivor``, and journal the inverse.
 
-    ⚠ **A retry is a no-op, not a second merge.** §3.15 requires it, and the
-    shape that delivers it is the alias: once ``absorbed`` resolves to
-    ``survivor``, everything below has already happened or is being finished
-    by the branch above it, and the answer is 200 with what stands now.
+    ⚠⚠ **THE ALIAS IS WRITTEN FIRST**, and that ordering is the whole safety
+    argument. It was written last, on the reasoning that a crash before it
+    would lose the identity outright — and a data-integrity review measured
+    what the other end costs: with the books moved first, a concurrent
+    ``DELETE /api/v1/shelves/{survivor}`` (which SUCCEEDS, because §3.11's own
+    example is a photo-born shelf absorbed into a DRAWN slot, and a drawn slot
+    is empty by construction) left three copies naming a shelf that was
+    neither live nor an alias — the census's headline invariant, with
+    ``foreign_key_check`` clean and no journal entry to take it back.
+
+    Once ``A -> B`` exists, every row still naming ``A`` is reachable through
+    :func:`app.domain.alias.identities`, so an interruption anywhere below
+    loses nothing and a retry finishes the job. ``absorb_shelf`` proves the
+    survivor is a live shelf of this library under ``BEGIN IMMEDIATE``, which
+    is the check the copy loop used to run without.
+
+    ⚠ **A retry is a no-op, not a second merge** (§3.15) — and a retry of an
+    INTERRUPTED merge continues it rather than stopping at the alias, because
+    the alias existing now means step 1 finished, not that the merge did.
     """
     if absorbed.id == survivor.id:
-        # ⚠ Before the no-op branch, not after. `resolve` answers with the id
+        # ⚠ Before the resume branch, not after. `resolve` answers with the id
         # it was handed when nothing has absorbed it, so *A resolves to B* is
         # trivially true for A == B — and merging a shelf into itself answered
-        # 200 `already: true` while `plan_merge`'s refusal never ran. The
-        # idempotent branch is for a RETRY; a retry of a refusal is a refusal.
+        # 200 `already: true` while `plan_merge`'s refusal never ran. Repeated
+        # here rather than left to `plan` below, because the resume branch
+        # short-circuits before `plan` runs.
         raise MergeRefused(
             "same_shelf", "a shelf cannot be merged into itself")
+
     standing = ports.shelves.list_aliases(library)
-    if resolve(absorbed.id, standing) == survivor.id:
-        # Already merged. If the row is still there, the previous attempt died
-        # between step 4 and step 5 — finish it rather than leaving a shelf
-        # that no screen lists and every query folds into another one.
-        if ports.shelves.get_shelf(library, absorbed.id) is not None:
-            ports.shelves.delete_shelf(library, absorbed.id)
+    resumed = resolve(absorbed.id, standing) == survivor.id
+    if resumed and ports.shelves.get_shelf(library, absorbed.id) is None:
+        # Nothing left to do: the row is gone and the identity answers.
         return MergeOutcome(
             survivor=ports.shelves.get_shelf(library, survivor.id) or survivor,
             already=True)
 
     todo = plan(ports, library, absorbed, survivor, strip=strip)
     wrote: dict[str, object] = {}
+    moved: tuple[ShelfAlias, ...] = ()
+
+    if not resumed:
+        alias = ShelfAlias(alias_id=absorbed.id, library_id=library.id,
+                           shelf_id=survivor.id, merged_at=clock.now_iso(),
+                           address=absorbed.address, label=absorbed.label)
+        # ⚠ What it ACTUALLY re-pointed, not what the plan expected to. The
+        # two differ exactly when somebody merged something else into the
+        # absorbed shelf between the plan and here — and the journal has to
+        # remember the rows the write moved, not the rows a read a moment
+        # earlier saw.
+        moved = ports.shelves.absorb_shelf(library, alias)
+        wrote[f"aliases:{alias.alias_id}"] = alias
+        for identity in moved:
+            wrote[f"aliases:{identity.alias_id}"] = replace(
+                identity, shelf_id=survivor.id)
+
+    # ⚠ The survivor is DEEPENED on a freshly read row, never written back
+    # whole from the one `plan` was handed. `save_shelf` is a full-row upsert,
+    # so writing a stale read reverted a rename typed in another tab during
+    # the merge — invisible to the fingerprint, because `wrote` reports the
+    # stale row as this edit's own work — and, with two merges interleaved,
+    # SHALLOWED the survivor under books already standing at depth 3. §3.12
+    # says shallowing never happens here; it did, measured.
+    live = ports.shelves.get_shelf(library, survivor.id) or todo.survivor
+    deepened = replace(live, depth_count=max(live.depth_count, todo.depth))
+    if deepened != live:
+        ports.shelves.save_shelf(library, deepened)
+    wrote[f"shelves:{survivor.id}"] = deepened
 
     for placement in todo.copies:
         book = ports.books.get(library, placement.book_id)
@@ -257,40 +330,40 @@ def merge(
         wrote[f"questions:{question.shelf_id}:{question.depth}:"
               f"{question.book_key}"] = question
 
-    ports.shelves.save_shelf(library, todo.survivor)
-    wrote[f"shelves:{todo.survivor.id}"] = todo.survivor
+    # ⚠ **Refusable, and not an error.** Anything that landed on the absorbed
+    # shelf while the merge ran — a phone finishing an upload, a read
+    # settling — makes this raise, and it used to escape: the alias was
+    # already committed, no entry had been journalled, and every retry
+    # re-raised from the resume branch. Measured as a library holding a LIVE
+    # shelf and an alias for the same id, permanently, recoverable only by
+    # guessing that a stray photograph was in the way.
+    #
+    # Now the identity is already merged when this runs, so a refusal is a
+    # smaller loss than a lost undo: the row survives, every query folds it
+    # into the survivor, and the next merge of the same pair finishes it.
+    kept = False
+    try:
+        ports.shelves.delete_shelf(library, absorbed.id)
+        wrote[f"shelves:{absorbed.id}"] = None
+    except (ShelfNotEmpty, ShelfHasAliases):
+        kept = True
 
-    alias = ShelfAlias(alias_id=absorbed.id, library_id=library.id,
-                       shelf_id=survivor.id, merged_at=clock.now_iso(),
-                       address=absorbed.address, label=absorbed.label)
-    # ⚠ What it ACTUALLY re-pointed, not what the plan expected to. The two
-    # differ exactly when somebody merged something else into the absorbed
-    # shelf between the plan and here — and the journal has to remember the
-    # rows the write moved, not the rows a read a moment earlier saw.
-    moved = ports.shelves.absorb_shelf(library, alias)
-    wrote[f"aliases:{alias.alias_id}"] = alias
-    for identity in moved:
-        wrote[f"aliases:{identity.alias_id}"] = replace(
-            identity, shelf_id=survivor.id)
-
-    ports.shelves.delete_shelf(library, absorbed.id)
-    wrote[f"shelves:{absorbed.id}"] = None
-
-    record(
-        journal, ports.map_store, ports.shelves, library,
-        kind="merge_shelves",
-        # ⚠ A tag nothing in `CONTINUES` names, so a merge never coalesces
-        # with anything. Two merges into one survivor are two decisions, and
-        # `record all, undo the head` is what makes the second one takeable
-        # back on its own.
-        tag=f"merge:{absorbed.id}->{survivor.id}",
-        restore=_inverse(absorbed, survivor, todo, moved),
-        wrote=wrote,
-    )
+    entry = None
+    if not resumed:
+        entry = record(
+            journal, ports.map_store, ports.shelves, library,
+            kind="merge_shelves",
+            # ⚠ A tag nothing in `CONTINUES` names, so a merge never coalesces
+            # with anything. Two merges into one survivor are two decisions,
+            # and `record all, undo the head` is what makes the second one
+            # takeable back on its own.
+            tag=f"merge:{absorbed.id}->{survivor.id}",
+            restore=_inverse(absorbed, deepened, todo, moved, kept=kept),
+            wrote=wrote,
+        )
     return MergeOutcome(
-        survivor=ports.shelves.get_shelf(library, survivor.id)
-        or todo.survivor,
-        plan=todo)
+        survivor=ports.shelves.get_shelf(library, survivor.id) or deepened,
+        plan=todo, already=resumed, undoable=entry is not None)
 
 
 def _inverse(
@@ -298,6 +371,8 @@ def _inverse(
     survivor: Shelf,
     todo: MergePlan,
     moved: tuple[ShelfAlias, ...],
+    *,
+    kept: bool,
 ) -> MapRestore:
     """The rows as they stood, and the three things that had no "before".
 
@@ -314,8 +389,12 @@ def _inverse(
                        for d in todo.was_decisions}
     asked_before = {(q.shelf_id, q.depth, q.book_key)
                     for q in todo.was_questions}
+    # ⚠ The absorbed shelf's row is remembered only if it actually WENT. A
+    # `delete_shelf` refused by something that landed mid-merge leaves the row
+    # standing, and an undo that "restored" it would upsert a row it never
+    # removed — over whatever arrived on it since.
     return MapRestore(
-        shelves=(absorbed, survivor),
+        shelves=(survivor,) if kept else (absorbed, survivor),
         copies=todo.was_copies,
         captures=todo.was_captures,
         decisions=todo.was_decisions,

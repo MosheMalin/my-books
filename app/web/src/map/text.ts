@@ -259,6 +259,7 @@ export interface MapText {
   merge_refused: string
   merge_already: string
   merged_into: (name: string) => string
+  undo_merged: (books: number) => string
   own_depth: string
   photos_attached: string
   photos_are_captures: string
@@ -406,8 +407,8 @@ const HE: MapText = {
     ].filter(Boolean).join(' ו')}. אפשר למחוק אותם קודם.`,
   remove_site_confirm: (name, floors) =>
     `להסיר את ${name} ו${floors === 1 ? 'את הקומה שבו' : `-${floors} הקומות שבו`}?`,
-  site_removed: (name) => `${name} הוסר.`,
-  site_added: (name) => `${name} נוסף — הלוח ריק, אפשר להתחיל לצייר.`,
+  site_removed: (name) => `אתר הוסר: ${name}`,
+  site_added: (name) => `נוסף אתר: ${name} — הלוח ריק, אפשר להתחיל לצייר.`,
   overview_of: (site) => `כל הקומות של ${site} — צפייה בלבד, אי אפשר לערוך`,
   floor: 'קומה',
   floor_menu: 'תפריט הקומות',
@@ -598,7 +599,8 @@ const HE: MapText = {
   // ⚠ Our words first, then the two names. `unicode-bidi: plaintext` resolves
   // a paragraph from its FIRST strong character, so a Hebrew sentence opening
   // with a Latin-initial shelf name flips whole.
-  merge_would_move: (name, here) => `מיזוג ${name} לתוך ${here} יעביר:`,
+  merge_would_move: (name, here) =>
+    `מיזוג המדף שבחרתם (${name}) לתוך המדף שבתא הזה (${here}) יעביר:`,
   merge_books: (n) => (n === 1 ? 'ספר אחד' : `${n} ספרים`),
   merge_photos: (n) => (n === 1 ? 'תמונה אחת' : `${n} תמונות`),
   merge_answers: (n) =>
@@ -614,13 +616,25 @@ const HE: MapText = {
     n === 1 ? 'תשובה אחת ניתנה בשני המקומות; התשובה החדשה יותר תנצח.'
             : `${n} תשובות ניתנו בשני המקומות; החדשות יותר ינצחו.`,
   merge_strip: 'איזה חצי של המדף שמאלי?',
-  merge_strip_absorbed_first: (name) => `התמונות של ${name} ראשונות`,
-  merge_strip_survivor_first: (name) => `התמונות של ${name} ראשונות`,
+  // ⚠ **The two say which SHELF, not only which name**, and that is a
+  // measurement rather than a nicety: on the owner's own library both shelves
+  // were unnamed, so both radios announced *"התמונות של מדף ללא שם ראשונות"*
+  // — one accessible name on two controls, and the question unanswerable —
+  // in the control that decides an ordering §5.7 says nothing can detect.
+  // Naming the ROLE makes them distinct even when the owner has given two
+  // shelves the same label, which is the case a fallback cannot fix.
+  merge_strip_absorbed_first: (name) =>
+    `התמונות של המדף שבחרתם (${name}) ראשונות`,
+  merge_strip_survivor_first: (name) =>
+    `התמונות של המדף שבתא הזה (${name}) ראשונות`,
   merge_confirm: 'מיזוג',
   merge_cancel: 'ביטול',
   merge_refused: 'אי אפשר למזג:',
   merge_already: 'שני המדפים כבר מאוחדים.',
   merged_into: (name) => `מוזג לתוך המדף הזה: ${name}`,
+  undo_merged: (books) => (books === 1
+    ? 'המיזוג בוטל. ספר אחד חזר למדף שלו.'
+    : `המיזוג בוטל. ${books} ספרים חזרו למדף שלהם.`),
   own_depth: 'העומק שלו',
   photos_attached: 'תמונות מצורפות',
   photos_are_captures:
@@ -739,8 +753,8 @@ const EN: MapText = {
     ].filter(Boolean).join(' and ')}. Delete them first.`,
   remove_site_confirm: (name, floors) =>
     `Remove ${name} and ${floors === 1 ? 'its floor' : `its ${floors} floors`}?`,
-  site_removed: (name) => `${name} removed.`,
-  site_added: (name) => `${name} added — an empty board, ready to draw.`,
+  site_removed: (name) => `Site removed: ${name}`,
+  site_added: (name) => `Site added: ${name} — an empty board, ready to draw.`,
   overview_of: (site) => `Every floor of ${site} — viewing only, nothing can be edited`,
   floor: 'Floor',
   floor_menu: 'Floor menu',
@@ -895,7 +909,8 @@ const EN: MapText = {
     `Option ${n}: ${name} — ${enHolds(books, photos)}`,
   merge_reading: 'Working out what would move…',
   merge_read_failed: 'We could not work out what would move. Nothing was touched.',
-  merge_would_move: (name, here) => `Merging ${name} into ${here} would move:`,
+  merge_would_move: (name, here) =>
+    `Merging the shelf you picked (${name}) into the shelf in this cell (${here}) would move:`,
   merge_books: (n) => (n === 1 ? '1 book' : `${n} books`),
   merge_photos: (n) => (n === 1 ? '1 photo' : `${n} photos`),
   merge_answers: (n) =>
@@ -911,13 +926,18 @@ const EN: MapText = {
     n === 1 ? '1 answer was given in both places; the newer one wins.'
             : `${n} answers were given in both places; the newer ones win.`,
   merge_strip: 'Which half of the shelf is on the left?',
-  merge_strip_absorbed_first: (name) => `${name}'s photographs come first`,
-  merge_strip_survivor_first: (name) => `${name}'s photographs come first`,
+  merge_strip_absorbed_first: (name) =>
+    `The photographs of the shelf you picked (${name}) come first`,
+  merge_strip_survivor_first: (name) =>
+    `The photographs of the shelf in this cell (${name}) come first`,
   merge_confirm: 'Merge',
   merge_cancel: 'Cancel',
   merge_refused: 'Cannot merge:',
   merge_already: 'These two shelves are already one.',
   merged_into: (name) => `Merged into this shelf: ${name}`,
+  undo_merged: (books) => (books === 1
+    ? 'The merge was taken back. 1 book went back to its own shelf.'
+    : `The merge was taken back. ${books} books went back to their own shelf.`),
   own_depth: 'Its own depth',
   photos_attached: 'Photos attached',
   photos_are_captures:

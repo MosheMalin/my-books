@@ -564,6 +564,10 @@ class MemoryReadStore:
         rows.sort(key=lambda r: (r.started_at or "", r.id), reverse=True)
         return tuple(rows)
 
+    def has_running_read(self, library: LibraryRef, shelf_id: str) -> bool:
+        return any(r.shelf_id == shelf_id and not r.status.is_terminal
+                   for r in self._r(library).values())
+
     def list_all_reads(self, library: LibraryRef) -> tuple[Read, ...]:
         rows = list(self._r(library).values())
         rows.sort(key=lambda r: (r.started_at or "", r.id), reverse=True)
@@ -612,6 +616,13 @@ class MemoryDecisionStore:
                 if d.shelf_id == shelf_id and d.depth == depth]
         rows.sort(key=lambda d: d.book_key)
         return tuple(rows)
+
+    def decisions_at_shelf(
+        self, library: LibraryRef, shelf_id: str,
+    ) -> tuple[Decision, ...]:
+        return tuple(sorted(
+            (d for d in self._d(library).values() if d.shelf_id == shelf_id),
+            key=lambda d: (d.depth, d.book_key)))
 
     def delete_decision(
         self, library: LibraryRef, shelf_id: str, depth: int, book_key: str,

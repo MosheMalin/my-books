@@ -41,7 +41,11 @@ const MOVES: MergePreview = {
 
 const section = (id: string): Section => ({
   id, columnLevels: [1], gaps: [], defaultLevels: 1, defaultDepth: 1,
-  shelves: [{ col: 0, level: 0, depth: 1, photos: 0, books: 0,
+  // ⚠ `photos: 3`, and it was 0. The flagship *declared, never detected*
+  // test lives on this cell, and with the survivor holding no photographs
+  // both orderings produce a byte-identical strip — so the one test pinning
+  // §5.7 was pinning a question with a single answer.
+  shelves: [{ col: 0, level: 0, depth: 1, photos: 3, books: 0,
               id: 'sh-1', label: 'המדף העליון' }],
 })
 
@@ -67,6 +71,30 @@ const actions = (over: Partial<Actions> = {}): Actions => ({
   bindShelf: vi.fn(), unbindShelf: vi.fn(),
   previewMerge: vi.fn(async () => MOVES), mergeShelf: vi.fn(),
   ...over,
+})
+
+const unnamedPlan = (): Plan => ({
+  ...plan(),
+  cases: [{
+    ...newBookcase('c1', 'ארון', { x: 1, y: 0, w: 4, h: 1 }, 'S', 'r1', 'f1', 1),
+    sections: [{
+      ...section('s1'),
+      shelves: [{ col: 0, level: 0, depth: 1, photos: 3, books: 0,
+                  id: 'sh-1', label: '' }],
+    }],
+  }],
+})
+
+const emptyStripPlan = (): Plan => ({
+  ...plan(),
+  cases: [{
+    ...newBookcase('c1', 'ארון', { x: 1, y: 0, w: 4, h: 1 }, 'S', 'r1', 'f1', 1),
+    sections: [{
+      ...section('s1'),
+      shelves: [{ col: 0, level: 0, depth: 1, photos: 0, books: 0,
+                  id: 'sh-1', label: 'המדף העליון' }],
+    }],
+  }],
 })
 
 const CELL: Selection = {
@@ -163,6 +191,31 @@ describe('the panel offers a merge, and shows what it would cost', () => {
       'ph-1', 'sh-1', 'survivor_first', 'ספרי בישול')
   })
 
+  it('asks nothing about order when only ONE side has photographs', async () => {
+    // Both orderings produce a byte-identical strip when the survivor holds
+    // nothing — measured in the domain. A required answer to that is a
+    // required answer to nothing, and it is what the client used to demand,
+    // because it counted the absorbed shelf's photographs alone.
+    const acts = actions()
+    const user = userEvent.setup()
+    render(
+      <I18nProvider>
+        <Inspector doc={{ plan: emptyStripPlan(), seq: 0 }} floorId="f1"
+                   selection={CELL} actions={acts} renaming={null}
+                   onRenamed={() => {}} />
+      </I18nProvider>,
+    )
+    await user.click(screen.getByRole('button',
+      { name: HE.merge_a_shelf_here }))
+    await user.click(await screen.findByRole('button',
+      { name: HE.merge_pick_option(1, 'ספרי בישול', 22, 2) }))
+
+    await screen.findByText(HE.merge_books(22))
+    expect(screen.queryAllByRole('radio')).toEqual([])
+    expect(screen.getByRole('button', { name: HE.merge_confirm }))
+      .toBeEnabled()
+  })
+
   it("says the SERVER's words for a refusal, and offers no ✓", async () => {
     // Six reasons, six different things to do next. This client has no better
     // sentence for *a read of this shelf is still running* than the one that
@@ -216,5 +269,108 @@ describe('the panel offers a merge, and shows what it would cost', () => {
       .filter((n) => n && n.includes(HE.shelf_unnamed))
     expect(new Set(names).size).toBe(names.length)
     expect(names.length).toBe(2)
+  })
+
+  it('survives the selection going from no cell to a cell', async () => {
+    // ⚠⚠ The transition NOTHING tested, and it is the ordinary one: select a
+    // bookcase, then tap a cell. `ShelfPanel` returns early when no cell is
+    // chosen, so a hook called below that return is a CONDITIONAL hook — and
+    // React answers with *"a change in the order of Hooks called by
+    // ShelfPanel"*, then *"Should have a queue"*, then *"Internal React
+    // error"*. Measured in a real browser on the owner's own library while
+    // the whole ring was green, because every other test in this file MOUNTS
+    // the panel already pointing at a cell.
+    const noises: unknown[] = []
+    const spy = vi.spyOn(console, 'error')
+      .mockImplementation((...a) => { noises.push(a[0]) })
+    try {
+      const acts = actions()
+      const caseOnly: Selection = { rooms: [], cases: ['c1'], cells: [] }
+      const view = (selection: Selection) => (
+        <I18nProvider>
+          <Inspector doc={{ plan: plan(), seq: 0 }} floorId="f1"
+                     selection={selection} actions={acts} renaming={null}
+                     onRenamed={() => {}} />
+        </I18nProvider>
+      )
+      const { rerender } = render(view(caseOnly))
+      // ⚠ Re-wrapped, not `rerender(<Inspector …/>)`: a bare one throws
+      // "useI18n outside <I18nProvider>", which reads as a screen bug.
+      rerender(view(CELL))
+
+      expect(screen.getByRole('button', { name: HE.merge_a_shelf_here }))
+        .toBeInTheDocument()
+      expect(noises.filter((n) => typeof n === 'string'
+        && /order of Hooks|Should have a queue|Internal React error/.test(n)))
+        .toEqual([])
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('tells the two radios apart when NEITHER shelf has a name', async () => {
+    // ⚠ Measured on the owner's own library, which is the only reason this
+    // case exists: both shelves were unnamed, both radios fell back to
+    // *מדף ללא שם*, and the control that decides an ordering §5.7 says
+    // nothing can detect announced ONE accessible name twice. The fixture
+    // above hid it by naming both shelves — which is not the state a
+    // household is in, since the photo-born half of the population is
+    // unnamed by default.
+    const acts = actions({
+      shelvesOffTheMap: vi.fn(async () => [
+        { id: 'ph-1', label: '', capture_count: 2, book_count: 22 },
+      ]),
+    })
+    const user = userEvent.setup()
+    render(
+      <I18nProvider>
+        <Inspector doc={{ plan: unnamedPlan(), seq: 0 }} floorId="f1"
+                   selection={CELL} actions={acts} renaming={null}
+                   onRenamed={() => {}} />
+      </I18nProvider>,
+    )
+    await user.click(screen.getByRole('button',
+      { name: HE.merge_a_shelf_here }))
+    await user.click(await screen.findByRole('button',
+      { name: HE.merge_pick_option(1, HE.shelf_unnamed, 22, 2) }))
+
+    const named = (await screen.findAllByRole('radio'))
+      .map((r) => r.getAttribute('aria-label')
+        || (r as HTMLInputElement).labels?.[0]?.textContent)
+    expect(new Set(named).size, `two radios announcing ${named[0]}`).toBe(2)
+  })
+
+  it('brings the ✓ into view, because the panel is 251px tall', async () => {
+    // ⚠ Measured: with the account of what would move rendered, the confirm
+    // sat at y=978 inside a `.map-side` whose window ends around y=812 — off
+    // screen, reachable only by scrolling a panel nothing says is scrollable.
+    // What is out of sight is the confirmation of the one gesture in this
+    // pillar that moves books.
+    const into = vi.fn()
+    ;(Element.prototype as unknown as { scrollIntoView: unknown })
+      .scrollIntoView = into
+    const frames: FrameRequestCallback[] = []
+    const raf = vi.spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((cb) => { frames.push(cb); return 0 })
+    try {
+      const acts = actions()
+      const user = await openPicker(acts)
+      // ⚠ CLEARED here, and a mutation is why: `useCellInView` one fold up
+      // scrolls the whole panel into view when a cell is selected, so a bare
+      // "was it called" is satisfied by that call and the assertion below
+      // survived deleting the line it is about.
+      into.mockClear()
+      await user.click(await screen.findByRole('button',
+        { name: HE.merge_pick_option(1, 'ספרי בישול', 22, 2) }))
+      await screen.findByRole('button', { name: HE.merge_confirm })
+      expect(into, 'nothing was scrolled after the preview arrived')
+        .not.toHaveBeenCalled()
+      frames.forEach((cb) => cb(0))
+      expect(into).toHaveBeenCalled()
+    } finally {
+      raf.mockRestore()
+      delete (Element.prototype as unknown as { scrollIntoView?: unknown })
+        .scrollIntoView
+    }
   })
 })

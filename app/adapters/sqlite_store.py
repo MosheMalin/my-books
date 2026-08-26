@@ -971,6 +971,16 @@ class SqliteReadStore(_SqliteStore):
             ).fetchall()
             return tuple(_load_read(conn, r) for r in rows)
 
+    def has_running_read(self, library: LibraryRef, shelf_id: str) -> bool:
+        # No claims, no rows — `EXISTS` over an indexed pair. The point of the
+        # method is that it does not hydrate the archive; see the port.
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT 1 FROM reads WHERE library_id = ? AND shelf_id = ?"
+                " AND status = ? LIMIT 1",
+                (library.id, shelf_id, ReadStatus.RUNNING.value),
+            ).fetchone() is not None
+
     def list_all_reads(self, library: LibraryRef) -> tuple[Read, ...]:
         with self._connect() as conn:
             rows = conn.execute(
@@ -1065,6 +1075,16 @@ class SqliteDecisionStore(_SqliteStore):
                 " AND depth = ? ORDER BY book_key",
                 (library.id, shelf_id, depth),
             ).fetchall()
+        return tuple(_load_decision(r) for r in rows)
+
+    def decisions_at_shelf(
+        self, library: LibraryRef, shelf_id: str,
+    ) -> tuple[Decision, ...]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM decisions WHERE library_id = ?"
+                " AND shelf_id = ? ORDER BY depth, book_key",
+                (library.id, shelf_id)).fetchall()
         return tuple(_load_decision(r) for r in rows)
 
     def delete_decision(

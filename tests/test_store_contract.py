@@ -4988,6 +4988,39 @@ def rewriting_aliases_refuses_a_survivor_that_is_not_a_live_shelf(shelves):
 
 
 @shelf_contract
+def absorbing_narrows_every_statement_to_this_library(shelves):
+    """H2 on the RE-POINT, which is a raw UPDATE with nothing else to lean on.
+
+    ⚠ A security review dropped `library_id = ?` from `absorb_shelf`'s UPDATE
+    and from three of its lookups and the whole ring stayed green — because
+    `shelves.id` is a GLOBAL primary key, so the collision those queries would
+    need is unrepresentable. Redundant enforcement, correctly. But that is a
+    property of a table two files away, not of these methods, and rule 7 says
+    to ask *what else enforces this?* rather than to rest on it silently.
+    """
+    for lib in (LIB, OTHER):
+        for i in ("A", "B", "C"):
+            shelves.save_shelf(lib, new_shelf(id=f"{lib.id}-{i}",
+                                              library_id=lib.id))
+    shelves.save_alias(LIB, _absorb(alias_id=f"{LIB.id}-A",
+                                    into=f"{LIB.id}-B"))
+    shelves.save_alias(OTHER, _absorb(alias_id=f"{OTHER.id}-A",
+                                      into=f"{OTHER.id}-B",
+                                      lib=OTHER))
+
+    shelves.absorb_shelf(LIB, _absorb(alias_id=f"{LIB.id}-B",
+                                      into=f"{LIB.id}-C"))
+
+    assert [(a.alias_id, a.shelf_id) for a in shelves.list_aliases(OTHER)] == [
+        (f"{OTHER.id}-A", f"{OTHER.id}-B")], (
+        "the re-point reached across the library boundary")
+    shelves.rewrite_aliases(OTHER, remove=(f"{OTHER.id}-A",))
+    assert shelves.list_aliases(OTHER) == ()
+    assert len(shelves.list_aliases(LIB)) == 2, (
+        "a removal in one library took a row out of another")
+
+
+@shelf_contract
 def an_alias_may_not_name_a_shelf_of_another_library(shelves):
     """H2, at the one door the composite primary key does not stand in.
 
@@ -5783,7 +5816,7 @@ def test_a_v18_database_gains_the_binding_column_and_keeps_its_rows():
 # counts, which is the same silent gap wearing a different hat.
 SUITES = (
     (CONTRACT, IMPLEMENTATIONS, 42),
-    (SHELF_CONTRACT, SHELF_IMPLEMENTATIONS, 34),
+    (SHELF_CONTRACT, SHELF_IMPLEMENTATIONS, 35),
     (READ_CONTRACT, READ_IMPLEMENTATIONS, 17),
     (DECISION_CONTRACT, DECISION_IMPLEMENTATIONS, 8),
     (DUPLICATE_CONTRACT, DUPLICATE_IMPLEMENTATIONS, 9),

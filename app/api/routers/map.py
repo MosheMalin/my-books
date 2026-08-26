@@ -149,11 +149,16 @@ from app.ports.duplicates import DuplicateQueue
 from app.ports.map import MapStore
 from app.ports.store import (
     BookStore,
+    DuplicateCaptureSlot,
     DuplicateSectionOrdinal,
     DuplicateShelfSlot,
     ReadStore,
+    ShelfHasAliases,
+    ShelfNotEmpty,
     ShelfStore,
     UnknownParent,
+    UnknownShelf,
+    WrongLibrary,
 )
 
 router = APIRouter(prefix="/map", tags=["map"])
@@ -229,6 +234,17 @@ def _translated():
     except (NotOnThisFloor, NotEmpty, TooManySlots, SlotsOccupied,
             SlotTaken, CellIsGap, AlreadyOnTheMap, ShelfWasMerged,
             VirtualShelfHasNoDepth,
+            # ⚠ The whole `StoreError` family, not the three this tuple
+            # happened to name. `StoreError` subclasses bare `Exception`, so
+            # the `DomainError` fall-through below never caught the others —
+            # and a security review measured `ShelfNotEmpty` escaping a merge
+            # as a **500** on a mutating LAN route, which the client then
+            # classifies as *dropped* and invites the owner to retry forever.
+            # Every one of these sentences is already owner-readable and every
+            # one means *there is something here you have not dealt with*,
+            # which is a 409.
+            ShelfNotEmpty, ShelfHasAliases, UnknownShelf,
+            DuplicateCaptureSlot, WrongLibrary,
             DuplicateSectionOrdinal, DuplicateShelfSlot) as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     except DomainError as exc:
@@ -1081,7 +1097,15 @@ def preview_merge(
     """
     absorbed, survivor = _both(shelves, library, shelf_id, body.into)
     ports = _ports(store, shelves, books, reads, decisions, duplicates)
-    if resolve(absorbed.id, shelves.list_aliases(library)) == survivor.id:
+    # ⚠ `absorbed.id != survivor.id` FIRST. `resolve` answers with the id it
+    # was handed when nothing has absorbed it, so *A already resolves to B* is
+    # trivially true for A == B — and this route answered 200 `already: true`
+    # for a merge the write refuses with 409. A preview that promises a state
+    # the write will not produce is the one thing the shared `gather` exists
+    # to prevent, and the same `resolve` trap 5cd19fb fixed one function over.
+    if (absorbed.id != survivor.id
+            and resolve(absorbed.id,
+                        shelves.list_aliases(library)) == survivor.id):
         return MergePreviewDTO(absorbed_id=absorbed.id,
                                survivor_id=survivor.id, already=True,
                                depth=survivor.depth_count)
@@ -1089,6 +1113,8 @@ def preview_merge(
         plan = preview(ports, library, absorbed, survivor,
                        strip=_strip(body.strip))
     except MergeRefused as exc:
+        if exc.reason == "other_library":
+            raise _gone("shelf") from exc
         return MergePreviewDTO(
             absorbed_id=absorbed.id, survivor_id=survivor.id,
             depth=survivor.depth_count,
@@ -1141,6 +1167,16 @@ def merge_shelves(
                          strip=_strip(body.strip), journal=journal,
                          clock=clock)
         except MergeRefused as exc:
+            if exc.reason == "other_library":
+                # ⚠ **404, never a named refusal.** `_both` already scopes both
+                # lookups, so this is a safety net — and a security review
+                # measured what the net answers if the lookup is ever widened
+                # (resolving `into` through the alias table is a natural P6.4e
+                # move): a REAL shelf of another library answered
+                # `other_library` while a fictional one answered 404, which is
+                # exactly the distinction §4.2 exists to abolish. Foreign and
+                # fictional are the same answer, at every door.
+                raise _gone("shelf") from exc
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
                 {"reason": exc.reason, "say": str(exc)}) from exc

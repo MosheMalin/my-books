@@ -55,6 +55,8 @@ export type MapSource = {
    */
   undoOffer?: () => Promise<{
     reason?: string
+    /** Which edit it was. A merge's *what came back* is not a shelf count. */
+    kind?: string
     restores?: Record<string, number>
     changed?: string[]
   }>
@@ -521,7 +523,8 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
       setSaved('saving')
       await inflight.current
 
-      let offer: { restores?: Record<string, number> } | undefined
+      let offer: { kind?: string;
+                   restores?: Record<string, number> } | undefined
       try {
         offer = await source.api.post('/map/undo', undefined)
       } catch (err) {
@@ -573,8 +576,14 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
 
       // It worked. NOW the re-derive is owed: the server has changed rows
       // this session's document knows nothing about.
-      const restored = offer?.restores?.shelves ?? 0
-      announce(T.undo_done(restored), 9000)
+      // ⚠ Not `restores.shelves` for a MERGE, where that number is the
+      // constant 2 — the absorbed shelf and the survivor — for an operation
+      // that put back a population of copies, two capture strips, N standing
+      // answers and an identity. "2 shelves are back in place" is true and
+      // useless, and it is the only sentence the owner sees.
+      announce(offer?.kind === 'merge_shelves'
+        ? T.undo_merged(offer?.restores?.copies ?? 0)
+        : T.undo_done(offer?.restores?.shelves ?? 0), 9000)
       startOver()
     })()
   }, [announce, source, startOver, T])
@@ -599,6 +608,20 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
    */
   const slotWrite = useCallback((
     work: (api: Api) => Promise<unknown>, said: string,
+    /**
+     * Refusals this caller would rather SAY than translate into *the drawing
+     * has changed*.
+     *
+     * ⚠ A merge's 409 is not a stale drawing. It is *a read of this shelf is
+     * still running*, or *the wishlist stands nowhere*, or *that shelf has
+     * itself been absorbed* — six different things to do next, carried in
+     * `detail.reason` with the sentence beside it precisely so no client has
+     * to parse English. Mapping them all to `slot_moved_on` told the owner to
+     * *try again*, which for a running read will fail identically until it
+     * finishes: the exact "a wrong stated reason is worse than none" failure
+     * the block below records fixing for 401/403/429.
+     */
+    own = false,
   ) => {
     void (async () => {
       setNotice(null)
@@ -607,7 +630,13 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
       try {
         await work(source.api)
       } catch (err) {
-        const e = err as { status?: number; detail?: string; message?: string }
+        // ⚠ `detail` is `unknown` here, not `string`. Every other route in
+        // the map router sends a string; the merge sends an OBJECT, because
+        // its refusals carry a stable `reason` beside the sentence. Typing
+        // it narrowly is how a client renders `[object Object]`.
+        const e = err as {
+          status?: number; detail?: unknown; message?: string
+        }
         // ⚠ OUR words for the refusals that MEAN the drawing moved, and the
         // server's for everything else. The client only offers a bind into a
         // slot it was told was free, for a shelf it was told stood nowhere,
@@ -622,12 +651,18 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
         // Every one of those is a lie, and "try again" is an instruction that
         // will fail identically forever. A wrong stated reason is worse than
         // none.
-        const moved = e?.status === 400 || e?.status === 404
-          || e?.status === 409
-        setNotice(moved
+        const spoken = own && e?.status === 409
+          && typeof (e?.detail as { say?: unknown })?.say === 'string'
+        const moved = !spoken && (e?.status === 400 || e?.status === 404
+          || e?.status === 409)
+        setNotice(spoken
+          ? { kind: 'refused',
+              detail: (e.detail as { say: string }).say }
+          : moved
           ? { kind: 'refused', say: (T) => T.slot_moved_on }
           : { kind: typeof e?.status === 'number' ? 'refused' : 'dropped',
-              detail: e?.detail || e?.message || T.save_failed_hint })
+              detail: (typeof e?.detail === 'string' ? e.detail : '')
+                || e?.message || T.save_failed_hint })
         setSaved('saved')
         startOver(true)
         return
@@ -674,7 +709,7 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
         (api) => api.post(
           `/map/shelves/${encodeURIComponent(absorbedId)}/merge`,
           { into: survivorId, strip }),
-        T.merged_into(name)),
+        T.merged_into(name), true),
     [slotWrite, T])
 
   const bindShelf = useCallback(

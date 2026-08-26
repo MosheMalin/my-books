@@ -872,6 +872,13 @@
    one question §3.12 says must be ANSWERED rather than defaulted. */
 .mapscreen .merge-open {
   margin-top: 8px;
+  /* ⚠ And a margin BELOW it. Measured on a phone: this button ends at y=767
+     and *take off the map* — 34px tall, and the destructive one — began at
+     y=767. Zero pixels between a full-width control and a destructive one is
+     a mis-tap waiting to happen, and it is a gap this item introduced by
+     putting a wide button directly above it. (The 34px itself is P6.5's
+     touch-floor sweep, not this item's.) */
+  margin-bottom: 12px;
   width: 100%;
   min-height: 44px;
 }
@@ -900,7 +907,12 @@
    `disabled` alone leaves a full-strength danger button that swallows taps
    in silence. */
 .mapscreen .merge-preview button[disabled] { opacity: 0.45; }
-.mapscreen .merge-preview .danger,
+/* ⚠ And they do not TOUCH. Measured on a phone: the ✓ ended at y=768 and
+   *cancel* began at y=768 — zero pixels between the control that merges two
+   identities and the one that abandons it. The same gap this sheet puts under
+   `.merge-open`, and for the sharper reason: here the two are pressed in the
+   same breath. */
+.mapscreen .merge-preview .danger { min-height: 44px; margin-bottom: 10px; }
 .mapscreen .merge-preview .linkish { min-height: 44px; }
 
 /* While the document is being re-derived (P6.4c). The editor STAYS on

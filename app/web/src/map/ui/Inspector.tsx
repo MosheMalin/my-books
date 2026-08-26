@@ -526,6 +526,15 @@ function ShelfPanel({
 }) {
   const T = mapText(useI18n().lang)
   const sel = onlyCell(selection)
+  // ⚠⚠ **ABOVE the early returns, and it was below them.** `useCellInView`
+  // holds a `useRef` and a `useEffect`, so calling it after `return <p>` made
+  // it a CONDITIONAL hook: the moment the selection went from *no cell* to
+  // *a cell*, React logged *"a change in the order of Hooks called by
+  // ShelfPanel — 2. undefined → useRef"*, then *"Should have a queue"*, then
+  // *"Internal React error: Expected static flag was missing"*. Measured in a
+  // real browser on the owner's own library; the whole ring stayed green,
+  // because jsdom re-mounts between tests and never walks that transition.
+  const box = useCellInView(sel && sel.caseId === bc.id ? sel : null)
   if (!sel || sel.caseId !== bc.id) {
     return <p className="note">{T.pick_a_cell}</p>
   }
@@ -538,7 +547,7 @@ function ShelfPanel({
     bc.sections.length > 1 ? `${T.section_n(sectionIndex(bc, sec.id) + 1)} · ` : ''
   const name = shelf.label || T.shelf_unnamed
   return (
-    <fieldset className="shelf-panel" ref={useCellInView(sel)}>
+    <fieldset className="shelf-panel" ref={box}>
       <legend>
         {shelf.free
           ? T.empty_cell_legend(where, shelf.col + 1, shelf.level + 1)
@@ -593,7 +602,7 @@ function ShelfPanel({
             // longer on screen.
             <MergeHere key={`m:${sec.id}:${shelf.col}:${shelf.level}`}
                        survivorId={shelf.id} survivorName={name}
-                       actions={actions} />
+                       survivorPhotos={shelf.photos} actions={actions} />
           )}
           {shelf.id && (
             <button
@@ -780,10 +789,26 @@ function EmptyCell({
 function MergeHere({
   survivorId,
   survivorName,
+  survivorPhotos,
   actions,
 }: {
   survivorId: string
   survivorName: string
+  /**
+   * ⚠ The SURVIVOR's photographs, and they were missing.
+   *
+   * The preview's `photos` is `MergePlan.photos_per_depth`, filtered to the
+   * ABSORBED shelf — so the condition below asked *does the shelf I picked
+   * have any?* while the question it gates is *which of the two halves is on
+   * the left*. With photographs on one side only, both orderings produce a
+   * byte-identical strip (measured), and the client still showed two radios
+   * and refused the ✓ until one was chosen: a required answer to a question
+   * with one answer. The comment right below claimed the opposite, which is
+   * the kind of wrong stated reason that makes the next reader delete the
+   * guard — and the flagship *declared, never detected* test was set up in
+   * exactly that scenario, so it pinned §5.7 over nothing.
+   */
+  survivorPhotos: number
   actions: Actions
 }) {
   const { t, lang } = useI18n()
@@ -795,6 +820,16 @@ function MergeHere({
   // that failed must not read as a merge that moves nothing.
   const [seen, setSeen] = useState<MergePreview | 'failed' | null>(null)
   const [strip, setStrip] = useState<StripOrder | null>(null)
+  /**
+   * ⚠ The preview appears BELOW the picker inside `.map-side`, which is
+   * **251px tall on a 375×812 phone**. Measured: with the account of what
+   * would move rendered, the ✓ sat at y=978 in a window whose bottom edge is
+   * around y=812 — off screen, reachable only by scrolling a panel nothing
+   * says is scrollable. Same shape as the finding P6.4c already paid for one
+   * fold up, and worse here: what is out of sight is the confirmation of the
+   * one gesture in this pillar that moves books.
+   */
+  const foot = useRef<HTMLDivElement | null>(null)
 
   const read = () => {
     setList(null)
@@ -810,7 +845,14 @@ function MergeHere({
     // answers, depth) is the same either way; only the ORDER differs, and
     // that is the one thing the owner declares.
     void actions.previewMerge(shelf.id, survivorId, 'survivor_first')
-      .then(setSeen)
+      .then((answer) => {
+        setSeen(answer)
+        // After the paint, not before it: the account of what would move is
+        // what pushes the ✓ out of the window, so scrolling to where it USED
+        // to be scrolls to the wrong place.
+        requestAnimationFrame(
+          () => foot.current?.scrollIntoView?.({ block: 'nearest' }))
+      })
       .catch(() => setSeen('failed'))
   }
 
@@ -879,6 +921,10 @@ function MergeHere({
   const books = seen && seen !== 'failed' ? seen.books : 0
   const photos = seen && seen !== 'failed'
     ? seen.photos.reduce((n, p) => n + p.count, 0) : 0
+  // Order exists only when BOTH halves have something to order. Shelf-level
+  // rather than per-depth, which is the grain `_restrip` actually works at —
+  // the honest ninety per cent, and the wording the legend uses.
+  const ordered = photos > 0 && survivorPhotos > 0
   return (
     <div className="merge-preview">
       {seen === null ? (
@@ -936,7 +982,7 @@ function MergeHere({
               photographs on one side or none at all, "which half is on the
               left" is a question about nothing — and a required answer to it
               would be a required answer to nothing. */}
-          {photos > 0 && (
+          {ordered && (
             <fieldset className="merge-strip">
               <legend>{T.merge_strip}</legend>
               <label className="field inline">
@@ -960,7 +1006,7 @@ function MergeHere({
           <button
             type="button"
             className="danger"
-            disabled={photos > 0 && strip === null}
+            disabled={ordered && strip === null}
             onClick={() => {
               actions.mergeShelf(chosen.id, survivorId,
                                  // Nothing to order, so the declaration is
@@ -974,9 +1020,11 @@ function MergeHere({
           </button>
         </>
       )}
-      <button type="button" className="linkish" onClick={close}>
-        {T.merge_cancel}
-      </button>
+      <div ref={foot}>
+        <button type="button" className="linkish" onClick={close}>
+          {T.merge_cancel}
+        </button>
+      </div>
     </div>
   )
 }

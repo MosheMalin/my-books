@@ -34,6 +34,7 @@ from app.adapters.memory_store import (  # noqa: E402
     MemoryShelfStore,
 )
 from app.domain import (  # noqa: E402
+    Capture,
     Decision,
     DecisionKind,
     DuplicateQuestion,
@@ -172,29 +173,63 @@ def census(ports):
     file over a library whose locations have silently moved — this is the
     check no constraint can perform, and the one that catches the real bug.
 
-    ⚠ **The last line is the point.** *Zero rows naming a shelf id that is
-    neither a live shelf nor an alias.* Everything above it can be true of a
-    library that has quietly lost half its locations.
+    ⚠⚠ **It digested two of those four.** `decisions` and
+    `duplicate_questions` were absent, which made the one test that meets the
+    JSON codec through a real merge blind to a lost human answer — measured by
+    breaking the undo's decision restore, which only the memory test noticed,
+    and only through its own separate assertion. And the orphan line, which
+    the docstring calls *the point*, was structurally inert: photographs were
+    gathered by iterating the shelves already known, so a capture naming an
+    unknown one could never appear in the set it was checked against.
+
+    Every location folds through ``resolve``, so this is comparable
+    before-merge to after-merge as well as across an undo — which is what
+    MAP_PLAN asks of it and what it could not do while ``photo_slots`` carried
+    raw, unresolved shelf ids.
     """
     live = {s.id for s in ports.shelves.list_shelves(LIB, include_virtual=True)}
     aliases = ports.shelves.list_aliases(LIB)
     known = live | {a.alias_id for a in aliases}
     books = ports.books.list(LIB, limit=999).items
     copies = [(b.id, c) for b in books for c in b.copies]
-    photos = [c for shelf_id in known
+    # ⚠ Over `known` AND over every shelf a row actually names, so a
+    # photograph filed under an id nothing answers for is FOUND rather than
+    # skipped. The old version iterated `known` alone, which made the orphan
+    # check unable to see the one thing it exists for.
+    named_shelves = ({c.shelf_id for _, c in copies if c.shelf_id}
+                     | {a.shelf_id for a in aliases})
+    photos = [c for shelf_id in known | named_shelves
               for c in ports.shelves.list_captures(LIB, shelf_id)]
-    named = [c.shelf_id for _, c in copies if c.shelf_id] + \
-            [c.shelf_id for c in photos] + \
-            [a.shelf_id for a in aliases]
+    decisions = [d for shelf_id in known | named_shelves
+                 for d in ports.decisions.decisions_at_shelf(LIB, shelf_id)]
+    questions = [q for shelf_id in known | named_shelves
+                 for q in ports.duplicates.list_open_questions(
+                     LIB, shelf_id=shelf_id)]
+    named = ([c.shelf_id for _, c in copies if c.shelf_id]
+             + [c.shelf_id for c in photos]
+             + [d.shelf_id for d in decisions]
+             + [q.shelf_id for q in questions]
+             + [a.shelf_id for a in aliases])
+    at = lambda shelf_id: resolve(shelf_id, aliases)
     return {
         "books": len(books),
         "copies": len(copies),
         "located": len([c for _, c in copies if c.shelf_id]),
-        "at": sorted((resolve(c.shelf_id, aliases), c.depth)
+        "at": sorted((at(c.shelf_id), c.depth)
                      for _, c in copies if c.shelf_id),
-        "photos": sorted((resolve(c.shelf_id, aliases), c.depth, c.image_id)
+        "photos": sorted((at(c.shelf_id), c.depth, c.image_id)
                          for c in photos),
-        "photo_slots": sorted(c.slot for c in photos),
+        # Resolved, so this compares before-merge to after-merge too.
+        "photo_slots": sorted((at(c.shelf_id), c.depth, c.order)
+                              for c in photos),
+        # §3.13's load-bearing table, and §5.4's queue beside it. Every
+        # `(depth, book_key)` decided at either side must still be decided at
+        # the survivor — which is what folding the shelf through `resolve`
+        # says, in the one place both sides can be compared.
+        "decided": sorted((at(d.shelf_id), d.depth, d.book_key, d.kind.value)
+                          for d in decisions),
+        "asked": sorted((at(q.shelf_id), q.depth, q.book_key)
+                        for q in questions),
         "provenance": sorted(
             (b.id, c.id, p.sighting) for b in books for c in b.copies
             for p in c.provenance),
@@ -702,3 +737,509 @@ def test_a_merge_and_its_undo_survive_a_real_database_file():
             assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+# --- what a data-integrity review measured --------------------------------
+
+def test_the_identity_is_written_before_a_single_book_moves():
+    """⚠ **The CRITICAL, and the whole ordering argument.**
+
+    With the books moved first, a concurrent `DELETE /api/v1/shelves/{id}` on
+    the survivor left copies naming a shelf that was neither live nor an alias
+    — the census's headline invariant, `foreign_key_check` clean, and no
+    journal entry to take it back. And the survivor is the LIKELY one to be
+    deletable: §3.11's own example is a photo-born shelf absorbed into a DRAWN
+    slot, and a drawn slot is empty by construction.
+
+    Once `A -> B` exists, every row still naming A is reachable through
+    `identities()`, so nothing below can orphan anything.
+    """
+    ports, journal = _world()
+    survivor = _drawn(ports).shelves[0]
+    absorbed = _photo_born(ports)
+    for n in range(3):
+        _book(ports, id=f"b{n}", title=f"ספר {n}", shelf_id=absorbed.id)
+
+    seen: list[tuple[str, ...]] = []
+    real = ports.books.save
+
+    def watched(library, book):
+        seen.append(tuple(a.alias_id for a in
+                          ports.shelves.list_aliases(library)))
+        real(library, book)
+
+    ports.books.save = watched  # type: ignore[method-assign]
+    try:
+        _merge(ports, journal, absorbed, survivor)
+    finally:
+        ports.books.save = real  # type: ignore[method-assign]
+
+    assert seen and all(absorbed.id in s for s in seen), (
+        "a book moved before the identity was written, so an interruption "
+        "there leaves it naming a shelf nothing answers for")
+    assert census(ports)["orphans"] == []
+
+
+def test_a_stray_photograph_arriving_mid_merge_does_not_wedge_the_library():
+    """MAJOR: `delete_shelf` raising AFTER the alias was committed left a LIVE
+    shelf and an alias for the same id, permanently, with no journal entry and
+    a retry that re-raised forever.
+
+    Now the identity is already merged when the delete runs, so a refusal is
+    the smaller loss: the row survives, every query folds it into the
+    survivor, and the merge is still takeable back.
+    """
+    ports, journal = _world()
+    survivor = _drawn(ports).shelves[0]
+    absorbed = _photo_born(ports)
+    real = ports.shelves.save_capture
+
+    def arrive(library, capture):
+        # One photograph lands on the absorbed shelf while the merge runs.
+        real(library, capture)
+        ports.shelves.save_capture = real  # type: ignore[method-assign]
+        real(library, new_capture(absorbed, id="late", depth=1, order=9))
+
+    _photo(ports, absorbed, id="a0", order=0)
+    ports.shelves.save_capture = arrive  # type: ignore[method-assign]
+    try:
+        out = _merge(ports, journal, absorbed, survivor)
+    finally:
+        ports.shelves.save_capture = real  # type: ignore[method-assign]
+
+    assert ports.shelves.get_shelf(LIB, absorbed.id) is not None, (
+        "the shelf was deleted with a photograph still on it")
+    assert resolve(absorbed.id, ports.shelves.list_aliases(LIB)) == survivor.id
+    assert out.undoable is True, (
+        "the merge became un-takeable-back because its last step refused")
+    assert offer(journal, ports.map_store, ports.shelves, LIB).available
+
+
+def test_a_rename_during_a_merge_is_not_reverted_by_it():
+    """MAJOR: the survivor was written back WHOLE from a row read before the
+    merge began, so a label typed in another tab vanished — and invisibly,
+    because `wrote` reports the stale row as this edit's own work. That is the
+    silently-wrong undo `wrote` exists to abolish, reappearing because the
+    merge was itself the destroyer."""
+    ports, journal = _world()
+    survivor = _drawn(ports).shelves[0]
+    absorbed = _photo_born(ports, depth_count=2)
+    from app.domain import rename_shelf
+    real = ports.shelves.list_captures
+
+    def meanwhile(library, shelf_id, **kw):
+        ports.shelves.list_captures = real  # type: ignore[method-assign]
+        ports.shelves.save_shelf(library, rename_shelf(
+            ports.shelves.get_shelf(library, survivor.id), "מדף הסלון"))
+        return real(library, shelf_id, **kw)
+
+    ports.shelves.list_captures = meanwhile  # type: ignore[method-assign]
+    try:
+        _merge(ports, journal, absorbed, survivor)
+    finally:
+        ports.shelves.list_captures = real  # type: ignore[method-assign]
+
+    after = ports.shelves.get_shelf(LIB, survivor.id)
+    assert after.label == "מדף הסלון", "the merge reverted a rename"
+    assert after.depth_count == 2, "and it forgot to deepen"
+
+
+def test_a_second_merge_never_shallows_the_survivor_under_its_books():
+    """§3.12: *"shallowing never happens here"*. It did — two merges
+    interleaved, and the outer one wrote back a `depth_count` read before the
+    inner one deepened it, leaving books at depth 3 on a shelf declaring one
+    row. `check_depth(3)` then raised for every screen that asked."""
+    ports, journal = _world()
+    survivor = _drawn(ports, depth=1).shelves[0]
+    first = _photo_born(ports, id="ph-1", depth_count=1)
+    second = _photo_born(ports, id="ph-2", depth_count=3)
+
+    real = ports.books.books_on_shelf
+    done = []
+
+    def interleave(library, ids):
+        if not done:
+            done.append(True)
+            _merge(ports, journal, second, survivor)
+        return real(library, ids)
+
+    ports.books.books_on_shelf = interleave  # type: ignore[method-assign]
+    try:
+        _merge(ports, journal, first, survivor)
+    finally:
+        ports.books.books_on_shelf = real  # type: ignore[method-assign]
+
+    assert ports.shelves.get_shelf(LIB, survivor.id).depth_count == 3, (
+        "the outer merge shallowed the survivor under the inner one's rows")
+
+
+def test_a_rejection_at_a_depth_the_shelf_no_longer_declares_still_moves():
+    """§3.13's load-bearing table, at a depth nobody could enumerate.
+
+    A REJECTED decision leaves nothing standing, and the depth patch floors at
+    `deepest_occupied_depths` — which counts copies and photographs, not
+    answers. So a shelf shallowed after a rejection held a row the merge's
+    gather could not see, and it was left behind at an id about to stop
+    existing. Deepen the survivor later and the next read re-adds the phantom.
+    """
+    ports, journal = _world()
+    survivor = _drawn(ports).shelves[0]
+    absorbed = _photo_born(ports, depth_count=1)
+    ports.decisions.save_decision(LIB, Decision(
+        library_id=LIB.id, shelf_id=absorbed.id, depth=3,
+        book_key="עגנון|רוח רפאים", kind=DecisionKind.REJECTED,
+        decided_at="2026-02-01T00:00:00Z"))
+
+    _merge(ports, journal, absorbed, survivor)
+
+    assert [d.book_key for d in
+            ports.decisions.decisions_at_shelf(LIB, survivor.id)] == [
+        "עגנון|רוח רפאים"]
+    assert ports.decisions.decisions_at_shelf(LIB, absorbed.id) == ()
+
+
+def test_an_absorbed_question_does_not_land_on_a_key_already_answered():
+    """The forbidden pair, from the direction the first test did not walk: the
+    SURVIVOR's own standing answer, rather than one this merge is moving."""
+    ports, journal = _world()
+    survivor = _drawn(ports).shelves[0]
+    absorbed = _photo_born(ports)
+    ports.decisions.save_decision(LIB, Decision(
+        library_id=LIB.id, shelf_id=survivor.id, depth=1,
+        book_key="עגנון|תמול שלשום", kind=DecisionKind.REJECTED,
+        decided_at="2026-01-01T00:00:00Z"))
+    ports.duplicates.save_question(LIB, DuplicateQuestion(
+        id="q1", library_id=LIB.id, shelf_id=absorbed.id, depth=1,
+        book_key="עגנון|תמול שלשום", read_id="r", spine_id="s",
+        claim_title="תמול שלשום", claim_author="עגנון",
+        existing_book_id="b1", opened_at="2026-05-01T00:00:00Z"))
+
+    _merge(ports, journal, absorbed, survivor)
+
+    assert ports.duplicates.list_open_questions(
+        LIB, shelf_id=survivor.id) == (), (
+        "a question stands open at a key the survivor decided long ago")
+
+
+def test_an_untouched_photograph_does_not_refuse_a_later_undo():
+    """The fingerprint's other failure mode: a key that changes for an
+    innocent reason. `ABSORBED_FIRST` wrote — and REMEMBERED — the survivor's
+    rows at depths the absorbed shelf never had, a shift of zero, so
+    re-photographing an untouched depth refused a legitimate undo."""
+    ports, journal = _world()
+    survivor = _drawn(ports, depth=2).shelves[0]
+    absorbed = _photo_born(ports, depth_count=2)
+    _photo(ports, absorbed, id="a0", depth=1, order=0)
+    _photo(ports, survivor, id="s1", depth=1, order=0)
+    _photo(ports, survivor, id="s2", depth=2, order=0)
+
+    _merge(ports, journal, absorbed, survivor, StripOrder.ABSORBED_FIRST)
+    entry = journal.store.recent(LIB, limit=1)[0]
+    assert "captures:s2" not in entry.fingerprint, (
+        "a photograph at a depth the merge never touched is being watched")
+
+    survived = ports.shelves.get_capture(LIB, "s2")
+    from dataclasses import replace as _r
+    ports.shelves.save_capture(LIB, _r(survived, image_id="img-new"))
+    assert offer(journal, ports.map_store, ports.shelves, LIB).available, (
+        "an untouched photograph refused the undo")
+
+
+def test_a_read_that_started_before_the_merge_finishes_at_the_survivor():
+    """§3.11 promised this in words and did not have it in code.
+
+    *"`apply_diff` resolves through the alias so a read that started at A
+    finishes at B rather than raising 'shelf no longer exists; nothing to
+    apply' and discarding a whole diff."* The settle path swallows that
+    exception, so the ENTIRE diff was discarded in silence while the read was
+    stored DONE with a summary claiming books it never added.
+    """
+    from app.domain import Claim, ClaimTier, Diff, OutcomeKind, ClaimOutcome
+    from app.reconcile_apply import apply_diff
+
+    ports, journal = _world()
+    survivor = _drawn(ports).shelves[0]
+    absorbed = _photo_born(ports)
+    _merge(ports, journal, absorbed, survivor)
+
+    claim = Claim(id="sp-1", spine_id="sp-1", capture_id="cap-1",
+                  title="תמול שלשום", author="עגנון", tier=ClaimTier.MANUAL)
+    diff = Diff(library_id=LIB.id, shelf_id=absorbed.id, depth=1,
+                read_id="r-1",
+                added=(ClaimOutcome(claim=claim, kind=OutcomeKind.ADDED),))
+    apply_diff(diff, library=LIB, books=ports.books, shelves=ports.shelves,
+               decisions=ports.decisions, clock=StubClock(90),
+               ids=SeqIdGen("new"))
+
+    landed = ports.books.books_on_shelf(LIB, (survivor.id,))
+    assert [b.title for b in landed] == ["תמול שלשום"], (
+        "the diff was discarded because the shelf it named had been merged")
+    assert landed[0].copies[0].shelf_id == survivor.id
+
+
+# --- what a quality review found unpinned ---------------------------------
+
+def test_the_questions_half_of_the_inverse_is_a_real_inverse():
+    """⚠ THREE independent mutants survived here, all one table over from a
+    killed sibling: `_inverse`'s `minted_questions`, `_replay_ledger`'s
+    re-open, and `_ledger`'s digest. `duplicate_questions` is one of the six
+    tables §3.13 names and it had no undo coverage and no fingerprint coverage
+    at all — so an undone merge left a duplicate open §5.4 question standing
+    at the survivor, and moving one afterwards did not refuse the undo."""
+    ports, journal = _world()
+    survivor = _drawn(ports).shelves[0]
+    absorbed = _photo_born(ports)
+    ports.duplicates.save_question(LIB, DuplicateQuestion(
+        id="q1", library_id=LIB.id, shelf_id=absorbed.id, depth=1,
+        book_key="עגנון|תמול שלשום", read_id="r", spine_id="s",
+        claim_title="תמול שלשום", claim_author="עגנון",
+        existing_book_id="b1", opened_at="2026-05-01T00:00:00Z"))
+    before = census(ports)
+
+    _merge(ports, journal, absorbed, survivor)
+    assert [q.shelf_id for q in ports.duplicates.list_open_questions(LIB)] == [
+        survivor.id]
+
+    undo(journal, ports.map_store, ports.shelves, ports.books, LIB)
+
+    assert census(ports) == before, (
+        "the question did not go home — an undone merge left it at the "
+        "survivor, where nothing opened it")
+    assert [q.shelf_id for q in ports.duplicates.list_open_questions(LIB)] == [
+        absorbed.id]
+
+
+def test_a_question_moved_after_the_merge_refuses_the_undo():
+    """The fingerprint's half. `_ledger` digests questions, and nothing said
+    so: deleting that digest passed every ring."""
+    ports, journal = _world()
+    survivor = _drawn(ports).shelves[0]
+    absorbed = _photo_born(ports)
+    ports.duplicates.save_question(LIB, DuplicateQuestion(
+        id="q1", library_id=LIB.id, shelf_id=absorbed.id, depth=1,
+        book_key="עגנון|תמול שלשום", read_id="r", spine_id="s",
+        claim_title="תמול שלשום", claim_author="עגנון",
+        existing_book_id="b1", opened_at="2026-05-01T00:00:00Z"))
+
+    _merge(ports, journal, absorbed, survivor)
+    ports.duplicates.delete_question(LIB, survivor.id, 1, "עגנון|תמול שלשום")
+
+    said = offer(journal, ports.map_store, ports.shelves, LIB)
+    assert said.available is False, "the undo did not notice the answer went"
+    assert f"questions:{survivor.id}:1:עגנון|תמול שלשום" in said.changed
+
+
+def test_the_fingerprint_is_digested_from_what_the_MERGE_wrote():
+    """CLAUDE.md's own trap, on this item's four new key families.
+
+    ⚠ Every `wrote[…]` a merge writes could be deleted with the whole ring
+    green. `wrote` is the fix for the widest window in `map_undo` — recording
+    happens after the edit, so a re-READ digests somebody else's work as this
+    edit's own — and the harness that gates it for `map_edit` has no sibling
+    here, because a merge's keys go through `_ledger` rather than `load_map`.
+    """
+    ports, journal = _world()
+    drawn = _drawn(ports, columns=2)
+    survivor, elsewhere = drawn.shelves[0], drawn.shelves[1]
+    absorbed = _photo_born(ports)
+    _book(ports, id="b1", title="בית", shelf_id=absorbed.id)
+    _photo(ports, absorbed, id="a0", order=0)
+
+    real = ports.books.books_on_shelf
+    seen = []
+
+    def interloping(library, ids):
+        # ⚠ Inside the read the JOURNAL makes, which is the window. The first
+        # call is the merge's own `gather`; the second is `_ledger` digesting
+        # what the edit left behind, and a change committed between them is
+        # what `wrote` must overrule.
+        seen.append(True)
+        if len(seen) == 2:
+            from app.domain import refile_copy
+            ports.books.save(library, refile_copy(
+                ports.books.get(library, "b1"), "c-b1",
+                shelf_id=elsewhere.id, depth=1))
+        return real(library, ids)
+
+    ports.books.books_on_shelf = interloping  # type: ignore[method-assign]
+    try:
+        _merge(ports, journal, absorbed, survivor)
+    finally:
+        ports.books.books_on_shelf = real  # type: ignore[method-assign]
+
+    said = offer(journal, ports.map_store, ports.shelves, LIB)
+    assert said.available is False, (
+        "the journal wrote down another tab's work as its own, so the undo "
+        "would revert it without a word")
+    assert "copies:c-b1" in said.changed, said.changed
+
+
+def test_a_chained_merge_can_be_taken_back():
+    """Four survivors described one hole: two merges are performed by a test
+    and neither is ever undone — the one path where `rewrite_aliases`' chain
+    refusal, the alias digest and the replay order all matter at once."""
+    ports, journal = _world()
+    drawn = _drawn(ports, columns=2)
+    first = drawn.shelves[0]
+    oldest = _photo_born(ports, id="ph-0", label="הראשון")
+    middle = _photo_born(ports, id="ph-1", label="האמצעי")
+    _book(ports, id="b1", title="בית", shelf_id=oldest.id)
+
+    _merge(ports, journal, oldest, middle)
+    after_first = census(ports)
+    _merge(ports, journal, ports.shelves.get_shelf(LIB, middle.id), first)
+
+    assert offer(journal, ports.map_store, ports.shelves, LIB).available
+    undo(journal, ports.map_store, ports.shelves, ports.books, LIB)
+
+    assert census(ports) == after_first, (
+        "undoing the second merge did not restore the first one's state")
+    assert [(a.alias_id, a.shelf_id) for a in
+            ports.shelves.list_aliases(LIB)] == [("ph-0", "ph-1")]
+    assert ports.shelves.get_shelf(LIB, middle.id) is not None
+
+
+def test_the_ladder_counts_what_actually_STANDS_on_either_shelf():
+    """§3.12 spells it `max(A.depth, B.depth, deepest_occupied(A),
+    deepest_occupied(B))` and only the first two halves were pinned.
+
+    ⚠ Reachable, not theoretical: `new_book` and `refile_copy` do not check a
+    copy's depth against the shelf, so a copy CAN stand deeper than its shelf
+    declares. Taking the declarations alone then leaves it with nowhere to be,
+    and `check_depth` raises for every screen that asks."""
+    ports, journal = _world()
+    survivor = _drawn(ports, depth=1).shelves[0]
+    absorbed = _photo_born(ports, depth_count=1)
+    _book(ports, id="b1", title="בית", shelf_id=absorbed.id, depth=3)
+
+    out = _merge(ports, journal, absorbed, survivor)
+
+    assert out.survivor.depth_count >= 3, (
+        "a book stands at depth 3 on a shelf declaring fewer rows")
+    assert out.survivor.check_depth(3) == 3
+
+
+def test_the_ladder_counts_photographs_too():
+    ports, journal = _world()
+    survivor = _drawn(ports, depth=1).shelves[0]
+    absorbed = _photo_born(ports, depth_count=3)
+    _photo(ports, absorbed, id="a0", depth=3, order=0)
+    shallow = ports.shelves.get_shelf(LIB, absorbed.id)
+    from dataclasses import replace as _r
+    ports.shelves.save_shelf(LIB, _r(shallow, depth_count=1))
+
+    out = _merge(ports, journal, ports.shelves.get_shelf(LIB, absorbed.id),
+                 survivor)
+    assert out.survivor.depth_count >= 3
+
+
+def test_a_read_running_on_the_SURVIVOR_refuses_the_merge_too():
+    """The name says *either identity*; the test started a read on one. The
+    survivor is arguably the more dangerous half — it keeps existing while its
+    depth and its capture strip change under a running read."""
+    ports, journal = _world()
+    survivor = _drawn(ports).shelves[0]
+    absorbed = _photo_born(ports)
+    shot = _photo(ports, survivor, id="s0", order=0)
+    ports.reads.save_read(LIB, new_read(
+        survivor, (shot,), id="r1", depth=1, mode="llmpage",
+        started_at="2026-08-26T09:00:00Z"))
+
+    assert _raises(MergeRefused, _merge, ports, journal, absorbed,
+                   survivor).reason == "read_running"
+
+
+def test_two_identities_may_not_remember_one_former_slot():
+    """Owner, 2026-08-23: the address→survivor lookup must have exactly one
+    answer. The store enforces it too — but by then a merge has already moved
+    books, so the refusal has to arrive BEFORE the first write and with a
+    sentence rather than a driver error."""
+    ports, journal = _world()
+    drawn = _drawn(ports, columns=2)
+    survivor, other = drawn.shelves[0], drawn.shelves[1]
+    where = other.address
+    ports.shelves.delete_shelf(LIB, other.id)
+    first = _photo_born(ports, id="ph-1", address=where)
+    _merge(ports, journal, first, survivor)
+    # A second identity is bound into the very cell the first one vacated…
+    second = _photo_born(ports, id="ph-2")
+    from app.map_edit import bind_shelf_to_slot
+    section = ports.map_store.get_section(LIB, drawn.sections[0].id)
+    bind_shelf_to_slot(ports.map_store, ports.shelves, LIB, second, section,
+                       where)
+
+    exc = _raises(MergeRefused, _merge, ports, journal,
+                  ports.shelves.get_shelf(LIB, second.id), survivor)
+    assert exc.reason == "address_taken"
+    assert ports.shelves.get_shelf(LIB, second.id) is not None
+
+
+def test_a_shelf_is_never_merged_into_itself_by_the_PREVIEW_either():
+    """A preview that promises a state the write refuses is the one thing the
+    shared `gather` exists to prevent."""
+    ports, _ = _world()
+    survivor = _drawn(ports).shelves[0]
+    exc = _raises(MergeRefused, preview, ports, LIB, survivor, survivor,
+                  strip=StripOrder.SURVIVOR_FIRST)
+    assert exc.reason == "same_shelf"
+
+
+def test_the_preview_counts_distinct_BOOKS_not_copies():
+    """The number a person recognises. Every fixture held one copy per book,
+    so `len(was_copies)` passed — and two copies of one work on one shelf
+    would have printed the wrong number on the screen that exists to make the
+    ✓ informed."""
+    ports, _ = _world()
+    survivor = _drawn(ports).shelves[0]
+    absorbed = _photo_born(ports)
+    book = _book(ports, id="b1", title="בית", shelf_id=absorbed.id)
+    from app.domain import add_copy
+    ports.books.save(LIB, add_copy(book, copy_id="c2", shelf_id=absorbed.id,
+                                   depth=1))
+
+    seen = preview(ports, LIB, absorbed, survivor,
+                   strip=StripOrder.SURVIVOR_FIRST)
+    assert seen.books == 1, "two copies of one work counted as two books"
+    assert seen.copies_per_depth == {1: 2}
+
+
+def test_the_preview_counts_only_the_photographs_that_MOVE():
+    """Under `ABSORBED_FIRST` the survivor's own strip is rewritten, so
+    without the filter the preview reports the survivor's photographs as
+    moving — on the screen whose whole job is to say what it costs."""
+    ports, _ = _world()
+    survivor = _drawn(ports).shelves[0]
+    absorbed = _photo_born(ports)
+    _photo(ports, survivor, id="s0", order=0)
+    _photo(ports, survivor, id="s1", order=1)
+    _photo(ports, absorbed, id="a0", order=0)
+
+    seen = preview(ports, LIB, absorbed, survivor,
+                   strip=StripOrder.ABSORBED_FIRST)
+    assert seen.photos_per_depth == {1: 1}
+
+
+def test_a_union_of_two_restores_keeps_the_replay_ORDER():
+    """`merge_restores` is a pure function and nothing coalesces a merge, so
+    this branch is exercised by nothing — and it was wrong.
+
+    ⚠ `MapRestore.captures` says the sequence is part of the inverse, not a
+    detail of writing it: `(shelf, depth, order)` is unique, so a replay in
+    the wrong order lands on a slot whose occupant has not moved yet. A dict
+    union built from the NEWER bag reordered it, which is exactly the
+    sequence `_replay_ledger` says leaves an entry dead forever.
+    """
+    from app.domain.map_undo import MapRestore, merge_restores
+
+    def cap(cap_id, order):
+        return Capture(id=cap_id, shelf_id="sh", library_id=LIB.id, depth=1,
+                       order=order)
+
+    older = MapRestore(captures=(cap("a", 0), cap("b", 1), cap("c", 2)))
+    newer = MapRestore(captures=(cap("c", 9), cap("d", 3)))
+
+    both = merge_restores(older, newer)
+    assert [c.id for c in both.captures] == ["a", "b", "c", "d"], (
+        "the union reordered the replay, which is the one thing this bag "
+        "promises to preserve")
+    assert both.captures[2].order == 2, "older wins on a collision"
