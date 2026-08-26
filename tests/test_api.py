@@ -5983,9 +5983,14 @@ def test_every_map_path_answers_404_for_another_library_with_its_own_methods():
              {"into": "sh-also-nope", "strip": "survivor_first"}),
             ("post", "/api/v1/map/shelves/sh-nope/merge/preview",
              {"into": "sh-also-nope", "strip": "survivor_first"}),
+            # P6.5b's read, and the first map GET that names an object.
+            ("get", "/api/v1/map/where/sh-nope"),
         ]
         for method, path, *rest in probes:
             call = getattr(theirs, method)
+            if method == "get":
+                assert call(path).status_code == 404, path
+                continue
             # ⚠ A VALID body where the route requires one. An empty `{}` on the
             # slot-depth patch answers 422 before the resolver is reached, and
             # a probe that accepts 422 is a probe that would accept an
@@ -6023,9 +6028,22 @@ def test_every_map_path_answers_404_for_another_library_with_its_own_methods():
     # capability meta-test and sailed past THIS one. P6.4c's two routes were
     # missing from the list for exactly that reason.
     #
-    # GET is excluded for the same reason as there: a read that answers 404
-    # for a foreign library is gated by `current_library` itself, and every
-    # write is what can move a row.
+    # ⚠ GET is no longer excluded WHOLESALE, and the reason it was is the
+    # reason it had to stop being: *"a read that answers 404 for a foreign
+    # library is gated by `current_library` itself"* was true while every map
+    # read named nothing — `current_library` refuses a foreign library HEADER,
+    # not a foreign object id in a PATH. `GET /map/where/{shelf_id}` (P6.5b)
+    # is the first map read that carries one, and it inherited an exclusion
+    # whose stated reason no longer covered it. A data-integrity review
+    # measured the cost: an unscoped second lookup added to that route leaked
+    # another library's shelf id, its owner-typed label and its depth, and the
+    # whole 1230-test ring stayed green.
+    #
+    # So the exclusion is now exactly what the old reason described: a GET
+    # whose path template names no object id. That is the same correction
+    # CLAUDE.md records for the dead-key scan and the counted strings — a
+    # guard that covers one SHAPE of the thing it names passes, and is not
+    # looking.
     from app.api.routers import map as map_router
 
     import re
@@ -6034,7 +6052,7 @@ def test_every_map_path_answers_404_for_another_library_with_its_own_methods():
         (method.lower(), "/api/v1" + route.path)
         for route in map_router.router.routes
         for method in getattr(route, "methods", set())
-        if method.lower() != "get"
+        if method.lower() != "get" or "{" in route.path
     }
 
     def matches(template: str, concrete: str) -> bool:
@@ -7814,3 +7832,118 @@ def test_where_is_404_for_a_fictional_shelf():
     before any capability check."""
     with TestClient(_app()) as client:
         assert client.get("/api/v1/map/where/nope").status_code == 404
+
+def test_where_for_another_librarys_shelf_is_the_same_answer_as_fiction():
+    """§4.2 on the one map READ that names an object.
+
+    ⚠ ONE SHARED store, which is the half a second `_app()` cannot gate: two
+    apps have separate memory stores AND separate id generators, so a probe
+    across them tests "absent → 404" and never "present, but not yours".
+
+    A data-integrity review measured what the missing gate cost: adding a
+    second, unscoped `get_shelf` to the route leaked another library's shelf
+    id, its owner-typed Hebrew label and its `depth_count` on a 200 — and the
+    entire ring stayed green. The behaviour was already right; nothing held it
+    there.
+
+    Both ids are probed: one drawn shelf, and one that library has since
+    ABSORBED — because the route resolves through the alias, which is a second
+    lookup and a second chance to answer with something other than 404.
+    """
+    shelves = MemoryShelfStore()
+    maps = MemoryMapStore()
+    other = StubPrincipal(library=LibraryRef("lib-other", "\u05d0\u05d7\u05e8"))
+    with TestClient(_app(shelves=shelves, maps=maps)) as mine, \
+            TestClient(_app(other, shelves=shelves, maps=maps)) as theirs:
+        _drawn_map(mine, columns=1, levels=2)
+        drawn = [s for s in mine.get("/api/v1/shelves").json() if s["address"]]
+        survivor, absorbed = drawn[0], drawn[1]
+        mine.patch(f"/api/v1/shelves/{absorbed['id']}",
+                   json={"label": "\u05e1\u05e4\u05e8\u05d9 \u05d1\u05d9\u05e9\u05d5\u05dc \u05e9\u05dc \u05de\u05e9\u05d4"})
+        done = mine.post(f"/api/v1/map/shelves/{absorbed['id']}/merge",
+                         json={"into": survivor["id"],
+                               "strip": "survivor_first"})
+        assert done.status_code == 200, done.text
+
+        fiction = theirs.get("/api/v1/map/where/no-such-shelf")
+        assert fiction.status_code == 404
+        for name, shelf_id in (("drawn", survivor["id"]),
+                               ("absorbed", absorbed["id"])):
+            got = theirs.get(f"/api/v1/map/where/{shelf_id}")
+            assert got.status_code == 404, (name, got.status_code, got.text)
+            # Byte-identical, so the shape of the refusal teaches nothing.
+            assert got.json() == fiction.json(), name
+        # …and it still answers for its OWN library, or the probe above would
+        # pass against a route that 404s for everybody.
+        assert mine.get(
+            f"/api/v1/map/where/{absorbed['id']}").status_code == 200
+
+
+def test_where_refuses_to_print_an_address_the_drawing_no_longer_has():
+    """The shelf's COORDINATES and the section's SHAPE come from two reads
+    with no transaction between them, and `address_parts` suppresses the
+    column when the section has one — so a structural edit landing in that
+    window can produce a location that was true at no instant.
+
+    Measured by a review, both directions:
+
+    - **3 columns → 1**: a shelf at column 3 answered *\u05e1\u05dc\u05d5\u05df \u00b7 \u05d4\u05db\u05d5\u05e0\u05e0\u05d9\u05ea \u00b7
+      \u05d2\u05d5\u05d1\u05d4 1* — which is a DIFFERENT, live shelf's address, holding
+      different books, while the shelf asked about in fact stood nowhere;
+    - **a gapped cell**: 200 with an address naming a cell the drawing does
+      not have, rendered by no screen and listed by no picker.
+
+    The window is not a test artefact: the two reads are separate SQLite
+    connections, and the router's own docstring says a plan is edited *"in
+    bursts of tiny changes"*. One person on the map editor and one phone with
+    a book drawer open is the whole scenario.
+
+    ⚠ This test forces the state rather than the race, which is the honest
+    way to gate it: what it pins is that a shelf whose address is not a slot
+    of its section answers *nowhere*, whatever put it in that state.
+    """
+    shelves = MemoryShelfStore()
+    with TestClient(_app(shelves=shelves)) as client:
+        _drawn_map(client, columns=1, levels=2)
+        shelf = [s for s in client.get("/api/v1/shelves").json()
+                 if s["address"]][0]
+        at = f"/api/v1/map/where/{shelf['id']}"
+        assert client.get(at).json()["address"] is not None
+
+        # Move it out of the drawing's extent without touching the section:
+        # exactly the state a column shrink leaves for one instant.
+        from dataclasses import replace as _replace
+        stored = shelves.get_shelf(TEST_LIBRARY, shelf["id"])
+        assert stored is not None and stored.address is not None
+        shelves.save_shelf(TEST_LIBRARY, _replace(
+            stored, address=_replace(stored.address, col=9)))
+
+        got = client.get(at)
+        assert got.status_code == 200, got.text
+        assert got.json()["address"] is None, (
+            "an address the drawing does not have was printed as a location"
+        )
+
+
+def test_where_never_names_a_row_the_shelf_does_not_have():
+    """`ge=1` bounded `depth` below and nothing bounded it above, so
+    `?depth=999` on a flat shelf answered 200 with *\u05e9\u05d5\u05e8\u05d4 999* and the \u00a75.7
+    note saying the row in front has to be moved.
+
+    Inert from the product — every write validates a copy's depth through
+    `Shelf.check_depth` — and reachable from any caller, on the one route
+    whose whole job is to say where something is. A stated location that
+    cannot exist is the *"wrong stated reason"* rule applied to a place.
+    """
+    with TestClient(_app()) as client:
+        _drawn_map(client, columns=1, levels=1, depth=2)
+        shelf = [s for s in client.get("/api/v1/shelves").json()
+                 if s["address"]][0]
+        at = f"/api/v1/map/where/{shelf['id']}"
+
+        assert client.get(at, params={"depth": 2}).json()["address"]["depth"] \
+            == 2
+        assert client.get(at, params={"depth": 3}).json()["address"]["depth"] \
+            is None, "a row past the shelf's own depth is not a location"
+        # Below is still refused by the schema, not clamped.
+        assert client.get(at, params={"depth": 0}).status_code == 422

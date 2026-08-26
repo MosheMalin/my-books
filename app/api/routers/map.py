@@ -329,8 +329,16 @@ def where_is(
     is tens of rows. A dedicated query per level would be four round trips to
     save a few hundred bytes, and a fifth the day a level is added.
     """
-    here = resolve(shelf_id, shelves.list_aliases(library))
-    shelf = shelves.get_shelf(library, here)
+    # ⚠ The LIVE row first, the alias table only on a miss. Reading the
+    # aliases first and resolving against them is one snapshot older than the
+    # `shelves` read that follows, so a merge landing between the two answers
+    # 404 for an id that resolves a millisecond later — measured. In this
+    # order there is no interleaving where both are absent: either the merge
+    # has not happened (the live row is there) or it has (the alias is).
+    shelf = shelves.get_shelf(library, shelf_id)
+    if shelf is None:
+        shelf = shelves.get_shelf(
+            library, resolve(shelf_id, shelves.list_aliases(library)))
     if shelf is None:
         raise _gone("shelf")
 
@@ -351,6 +359,27 @@ def where_is(
         # extent alone rather than cascading, so this is reachable; answering
         # "nowhere" is the truth and is what the unaddressed branch says.
         return out
+    # ⚠ **The address has to still BE a slot of the section as loaded.**
+    # `shelf.address` and this `Section` come from two different reads with no
+    # transaction between them, and `address_parts` suppresses the column when
+    # the section has one — so a structural edit landing in that window
+    # produces a location that was true at no instant. Both measured by a
+    # review, against a section edited mid-request:
+    #
+    #   3 columns → 1: a shelf at column 3 answered *סלון · הכוננית ·
+    #   גובה 1* — which is a DIFFERENT, live shelf's address, holding
+    #   different books, while the shelf asked about in fact stood nowhere;
+    #   a cell gapped: 200 with an address naming a cell the drawing does not
+    #   have — rendered by no screen, listed by no picker.
+    #
+    # `addresses` excludes gapped cells and anything outside the extent, and
+    # is the property every destructive and creative path already goes
+    # through. Failing it means *not on the map yet*, which is the truth and
+    # which every caller already has a sentence for. Same family as the undo
+    # journal's lesson: a fingerprint over rows must also watch the SHAPE they
+    # land in.
+    if shelf.address not in section.addresses:
+        return out
     case = next((b for b in plan.bookcases if b.id == section.bookcase_id),
                 None)
     if case is None:
@@ -370,7 +399,15 @@ def where_is(
         section_count=sum(1 for s in plan.sections
                           if s.bookcase_id == case.id),
         address=shelf.address,
-        depth=depth,
+        # ⚠ Clamped to what the shelf actually HAS. `ge=1` bounds it below
+        # and nothing bounded it above, so `?depth=999` on a flat shelf
+        # answered 200 with *שורה 999* and the §5.7 note saying the row in
+        # front has to be moved. Inert from the product — every write
+        # validates a copy's depth through `Shelf.check_depth` — and reachable
+        # from any caller, on the one route whose whole job is to say where
+        # something is. `depth_count` is already in the reply, so the clamp
+        # costs nothing.
+        depth=depth if depth and depth <= shelf.depth_count else None,
     )
     return out.model_copy(update={"site": site,
                                   "address": AddressPartsDTO.of(parts)})

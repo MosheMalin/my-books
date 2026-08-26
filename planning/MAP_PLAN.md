@@ -952,6 +952,40 @@ so the four parts each took a full line; and P6.5a's touch floor lasted about
 an hour — the new *open its shelf* link landed at 81×24 and the book surface's
 own eight controls had never been measured on a phone.
 
+**What the data-integrity review found**, all fixed:
+
+- **the shelf's COORDINATES and the section's SHAPE came from two reads with
+  no transaction between them**, and `address_parts` suppresses the column
+  when the section has one — so a structural edit landing in that window
+  produced a location that was true at no instant. Measured both ways: a
+  section shrunk 3 columns → 1 made a shelf at column 3 answer with *a
+  different, live shelf's address*, holding different books, while the shelf
+  asked about in fact stood nowhere; and a gapped cell answered 200 naming a
+  cell the drawing does not have. The fix is two lines — the address has to
+  still be in `section.addresses` — and it is the same lesson the undo journal
+  already carries: a fingerprint over rows must also watch the SHAPE they land
+  in;
+- **nothing in 1230 tests stopped the route answering with another library's
+  shelf.** The router's 404 completeness meta-test excluded GET on a stated
+  reason — *"a read that answers 404 for a foreign library is gated by
+  `current_library` itself"* — which was true while every map read named
+  nothing: `current_library` refuses a foreign library HEADER, not a foreign
+  object id in a PATH. This is the first map GET that carries one, and it
+  inherited an exclusion whose reason no longer covered it. Measured: an
+  unscoped second lookup leaked another library's shelf id, its owner-typed
+  label and its depth on a 200, and the whole ring stayed green. The
+  behaviour was already right; nothing held it there. The exclusion is now
+  what its old reason described, and there is a shared-store test;
+- **reading the alias table before the live row** answered 404 for an id that
+  resolved a millisecond later, if a merge landed between the two — and the
+  client renders that as *couldn't find out* and never retries. The live row
+  is read first now: either the merge has not happened (the row is there) or
+  it has (the alias is), and there is no order in which both are absent;
+- **`depth` was unbounded above**, so `?depth=999` on a flat shelf answered
+  200 with *שורה 999* and §5.7's note that the row in front has to be moved.
+  Inert from the product, reachable from any caller, on the one route whose
+  whole job is to say where something is.
+
 ⚠ **Measured, and it is a product finding rather than a bug**: **all 11
 bookcases in the owner's library are unnamed**, so every address reads
 «סלון · כוננית ללא שם · עמודה 2 · גובה 2». The fallback is honest and
