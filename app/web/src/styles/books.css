@@ -83,6 +83,10 @@
  * in one language only. */
 .botnav {
   display: flex;
+  /* From the token, so the space reserved for this bar and the bar itself are
+     the same number. Without it the height came from `button`'s own 48 plus a
+     border, and `--botnav-h` was a reservation nothing consumed. */
+  min-height: var(--botnav-h);
   position: fixed;
   inset-inline: 0;
   bottom: 0;
@@ -124,16 +128,6 @@
   color: var(--muted);
   min-height: 44px;
   min-width: 44px;
-}
-.langswitch button {
-  font-size: 12.5px;
-  padding: 6px 10px;
-  background: var(--panel);
-  color: var(--muted);
-}
-.langswitch button.on {
-  background: var(--accent);
-  color: #fff;
 }
 
 /* The library switcher (P3.1, UI_PLAN §1). Tokens only, like every other

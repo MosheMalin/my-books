@@ -175,9 +175,16 @@
    absolutely positioned INSIDE the select, so the floor has to move both: the
    toggle takes the field's full height and the field's start padding grows to
    match. 760px is `app/web`'s breakpoint (`lib/narrow.ts`), and this sheet is
-   consumed as source by both clients, so the number is stated once per sheet
-   and the two must not drift — `styles/touch.test.ts` reads every sheet,
-   including this one, and fails on any control floor below 44px. */
+   consumed as source by BOTH clients, so the number must not drift from the
+   shell's.
+
+   ⚠ Two guards, and the second exists because the first was named here and
+   does not do this: `app/web/src/styles/touch.test.ts` reads every sheet
+   including this one, but it checks HEIGHTS — a review moved this 760 to 900
+   and both rings stayed green. `app/web/src/lib/narrow.test.tsx`'s *"is the
+   one the SHARED sheet uses too"* is the one that watches the NUMBER. If this
+   sheet ever needs a second phone breakpoint, that test is where the decision
+   gets made. */
 @media (max-width: 760px) {
   .sortwrap select {
     min-height: 44px;

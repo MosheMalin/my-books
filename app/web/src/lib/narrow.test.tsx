@@ -26,8 +26,18 @@ import { book, fakeServer, renderApp } from '../test/harness'
 import { userEvent } from '../test/user'
 import { NARROW_QUERY } from './narrow'
 
-const SHEET = readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), '../styles/books.css'), 'utf8')
+const HERE = dirname(fileURLToPath(import.meta.url))
+/** ⚠ Comments stripped at the door. A review measured the cost of not doing
+ *  it: with the scan confused, the failure named a 620px block that reserves
+ *  nothing, because the word `botnav` appeared in its PROSE. `scoping.test.ts`
+ *  has stripped comments before scanning since it was written. */
+const sheet = (path: string) =>
+  readFileSync(join(HERE, path), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+
+const SHEET = sheet('../styles/books.css')
+/** The shared package, consumed as SOURCE by both clients — and the third
+ *  place the breakpoint is spelled. */
+const SHARED = sheet('../../../ui/src/styles/ui.css')
 
 const A_BOOK = book({ id: 'b1', title: 'היער השיכור', author: "ג'ראלד דארל" })
 
@@ -103,20 +113,47 @@ describe('the navigation a phone gets', () => {
   })
 })
 
+/** The one number, taken from the hook rather than written down again. */
+const WANT = Number(/max-width:\s*(\d+)px/.exec(NARROW_QUERY)?.[1])
+
 describe('the breakpoint', () => {
   it('is the one the sheet reserves room for', () => {
-    const want = Number(/max-width:\s*(\d+)px/.exec(NARROW_QUERY)?.[1])
+    const want = WANT
     expect(want).toBeGreaterThan(0)
 
     // Every media block in the sheet that mentions the bottom bar — by its
     // class or by the token that reserves its height — must be that width.
+    //
+    // ⚠ The disjunct that stood here also tested for `.appbar .nav`, which
+    // `books.css` has never contained: the product styles it as a bare `.nav`,
+    // and `.appbar .nav { display: none }` is the MOCK's selector — the
+    // CSS-hide approach this item deliberately rejected in favour of
+    // unmounting. A branch that can never fire, implying coverage of a
+    // mechanism that does not exist.
     const blocks = [...SHEET.matchAll(
       /@media\s*\(max-width:\s*(\d+)px\)\s*\{([\s\S]*?)[\r\n]\}/g)]
-    const reserving = blocks.filter(
-      (m) => m[2]!.includes('botnav') || m[2]!.includes('.appbar .nav'))
+    const reserving = blocks.filter((m) => m[2]!.includes('botnav'))
     expect(reserving.length,
            'no breakpoint in books.css makes room for the bottom bar')
       .toBeGreaterThan(0)
     for (const m of reserving) expect(Number(m[1])).toBe(want)
+  })
+
+  it('is the one the SHARED sheet uses too', () => {
+    // ⚠ Third copy of the number, and it was the one with no guard — behind a
+    // comment in `ui.css` asserting there was one. A review changed it from
+    // 760 to 900 and both rings stayed green. `touch.test.ts` reads that
+    // sheet, but it checks HEIGHTS, never the breakpoint: "if a comment names
+    // a guard, open the guard" (CLAUDE.md).
+    //
+    // The rule is that `ui.css` has ONE phone breakpoint and it is the
+    // shell's, because a shared control that becomes thumb-sized at a
+    // different width than the page around it is two designs. The day it
+    // genuinely needs a second, this line is where that gets decided.
+    const widths = [...SHARED.matchAll(/@media[^{]*max-width:\s*(\d+)px/g)]
+      .map((m) => Number(m[1]))
+    expect(widths.length, 'the shared sheet has no phone breakpoint at all')
+      .toBeGreaterThan(0)
+    expect([...new Set(widths)]).toEqual([WANT])
   })
 })

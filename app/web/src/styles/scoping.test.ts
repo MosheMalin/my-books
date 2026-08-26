@@ -202,15 +202,27 @@ describe('the plan is a workspace, and a workspace needs a definite height', () 
     // `.section-defaults` 28px). Same lesson as the test above, one rule
     // along, which is why this one asserts the ORDER rather than a string:
     // a floor is only a floor if nothing after it says otherwise.
-    const floor = map.lastIndexOf('.map-side.map-side')
+    // ⚠ ONE string for both sides of the comparison. The first cut took
+    // `floor` from the raw sheet and each rule's position from
+    // `map.indexOf(rule[0])` on the comment-STRIPPED text — and `[^{}]+`
+    // starts a selector immediately after the previous `}`, so any rule with
+    // a comment in that gap does not occur verbatim in the raw sheet,
+    // `indexOf` answers -1, and `-1 > floor` silently drops it. A review
+    // measured it: the misordering this test exists for reports 6 offenders,
+    // and reports ONE once a single comment line sits above each. `map.css`
+    // is 45% comment by byte and prose above a rule is this sheet's house
+    // style, so the guard was passing on luck. `matchAll` already hands back
+    // the index, in the coordinates of the string it scanned.
+    const bare = map.replace(/\/\*[\s\S]*?\*\//g, '')
+    const floor = bare.lastIndexOf('.map-side.map-side')
     expect(floor, 'no doubled panel-wide floor in map.css')
       .toBeGreaterThan(0)
 
     // Every pixel min-height the sheet sets on a control INSIDE the panel.
     // Anything below the floor that is declared after it wins over it.
     const later: string[] = []
-    for (const rule of map.replace(/\/\*[\s\S]*?\*\//g, '')
-      .matchAll(/([^{}]+)\{([^{}]*min-height:\s*(\d+)px[^{}]*)\}/g)) {
+    for (const rule of bare.matchAll(
+      /([^{}]+)\{([^{}]*min-height:\s*(\d+)px[^{}]*)\}/g)) {
       const at = rule[1]!.trim().replace(/\s+/g, ' ')
       if (at.includes('.map-side.map-side')) continue
       if (!/(button|input|select)\b/.test(at)) continue
@@ -218,7 +230,7 @@ describe('the plan is a workspace, and a workspace needs a definite height', () 
       // `.floor-badge` sits over the CANVAS, not in the panel, and has its
       // own 44px phone override; `.readonly-bar` likewise.
       if (/floor-badge|readonly-bar/.test(at)) continue
-      if (map.indexOf(rule[0]!) > floor) later.push(`${at} — ${rule[3]}px`)
+      if (rule.index > floor) later.push(`${at} — ${rule[3]}px`)
     }
     expect(later, 'declared after the floor, so they beat it').toEqual([])
   })
