@@ -365,10 +365,16 @@
      axis. The panel is 38% of a phone, so this is where a fat finger meets
      the one control that changes the shelf count. */
   .mapscreen .elev-cell.elev-cell { min-height: 44px; }
-  .mapscreen .elev-col-foot.elev-col-foot button { min-height: 40px; }
-  .mapscreen .elevation-cols button { min-height: 40px; }
   .mapscreen .toolbar { gap: 5px; padding: 5px 6px; }
   .mapscreen .toolbar button { padding: 6px 9px; font-size: 12px; }
+  /* ⚠ …but not below the floor. The rule above says the toolbar "gives its
+     space back to the canvas rather than the other way round", and it was
+     written in the map lab about SIZE, not about reach: measured at 375x812 it
+     left the four tool icons at 36x34 and the three mode buttons at 34 tall.
+     Four of them switch what a drag DOES — draw a room, draw a bookcase, move,
+     select — so a miss is not a no-op, it is the wrong gesture on a drawing.
+     The floor costs ten pixels of a 370px canvas. */
+  .mapscreen .toolbar button { min-height: 44px; min-width: 44px; }
   .mapscreen .brand { display: none; }
   .mapscreen .saved { font-size: 10px; }
   .mapscreen .slider input { width: 60px; }
@@ -414,7 +420,7 @@
  * with the rule present. Two bare chevrons 47px apart, one of which changes
  * the whole board, on the device this product is for. */
 @media (max-width: 640px) {
-  .mapscreen .floor-badge .menu > button { min-height: 40px; min-width: 40px; }
+  .mapscreen .floor-badge .menu > button { min-height: 44px; min-width: 44px; }
 }
 
 .mapscreen .hint {
@@ -948,3 +954,31 @@
 
 .mapscreen .elevation-cols { display: flex; gap: 6px; margin-top: 8px; }
 .mapscreen .elevation-cols button { flex: 1; }
+
+/* ================= the touch floor =================
+ *
+ * ONE floor for every control in the panel, rather than a rule per control as
+ * each was noticed. P6.4c's UX review counted **37 of 96 under 44px** here and
+ * the answer was three named rules at FORTY — close enough to look fixed, and
+ * not the floor. Re-measured at 375x812 on the owner's library once the app bar
+ * stopped overflowing the document: still 12 of 22, the smallest a 46x28
+ * *apply to every column*, both number inputs at 28px and the bookcase's own
+ * *delete* at 34.
+ *
+ * ⚠ LAST in the sheet, and DOUBLED. Both are load-bearing, and the first cut
+ * had neither: written inside the layout breakpoint two thirds up, it lost to
+ * eight later rules at equal specificity — `.section-head button` at 26px,
+ * `.elev-col-foot button` at 26, `.section-defaults` at 28 — which is the
+ * exact failure `scoping.test.ts` was already written to catch, one rule
+ * along. Equal specificity, later wins; this sheet has taught that twice.
+ *
+ * The elevation's cells keep their own rule in the layout block because theirs
+ * is a GRID row height, and the tight axis there was never the one the grid
+ * governed. */
+@media (max-width: 640px) {
+  .mapscreen .map-side.map-side button,
+  .mapscreen .map-side.map-side input,
+  .mapscreen .map-side.map-side select {
+    min-height: 44px;
+  }
+}

@@ -787,8 +787,128 @@ this pillar.**
 | **P6.3.2** | **Gaps** — a cell of the elevation can be switched off (a television, a desk niche) and switched back on, with the extent untouched (§3.10a). Two items: **a** the model, schema **v21** and the route; **b** the editor's multi-cell selection and the hole it draws. Arrived mid-pillar, from the owner using the ported editor. | M | ✅ 
 | **P6.3.3** | **The plan tab on a phone** — the drawing surface measured 375x**0**: `#root` had a `min-height` where a definite height was meant, so the settings panel became the whole page and no pillar-6 flow had ever been walked on a phone. Two flex minimums and two dead thumb-size rules came with it. Arrived from P6.3.2b's UX review, and taken BEFORE P6.4 (owner) so four more items would not land unverified on the device this catalogue is used from. | S | ✅ |
 | **P6.4** | **Binding and merge** — photo-born shelves bind into drawn slots; several identities merge into one physical shelf, with aliases. ⚠ THREE schema steps now, and **b ran before a**: **v22** the undo journal, **v23** its sequence (the head could not be decided by a clock with second resolution — see P6.4b), **v24** the alias. P6.3.2a spent v21. | L | |
-| **P6.5** | **The map as navigation** — three drill levels, "where is it" incl. depth, stale-depth surfacing, capture handoff. ⚠ Carries two measured phone defects from P6.4c's ux review: the app bar **overflows 375px by 109px**, putting the language toggle and the account menu entirely off-screen (`books.css`'s note about the bottom bar was written when the bar had two tabs; it now has three plus a library switcher), and **37 of 96 controls** in the bookcase panel are under the 44px touch floor, the smallest being a 26×29px *destructive* one. | L | |
+| **P6.5** | **The map as navigation** — three drill levels, "where is it" incl. depth, stale-depth surfacing, capture handoff. Decomposed into **a/b/c** below; the two measured phone defects it carried are P6.5a's. | L | |
 | **P6.6** | *Optional:* bookcase photo → proposed levels via `segment.py`, confirmed by hand. | S | |
+
+### P6.5 — the map as navigation  *(decomposed)*
+
+One L row hiding three landable changes, so it runs as three. The drill levels
+themselves largely EXIST — as *editing*: the plan selects a bookcase, the
+elevation selects a cell, and `#/map/<shelfId>` has been level 3 since P2.8.
+What is missing are the navigation VERBS and the device.
+
+| # | Item | Size | Reviewers |
+|---|---|---|---|
+| **P6.5a** | ✅ **The phone shell** — the app bar cannot hold six controls, so the tabs move to a fixed bottom bar below 760px and the bar stops being sticky; a 44px touch floor across the map panel, the Books toolbar and the shared sort control. Taken FIRST because every other item in this pillar is verified at 375×812 and the map was 109px wider than the phone. | M | quality, ux |
+| **P6.5b** | ✅ **Where is it** — `GET /map/where/{shelf}?depth=`, the address in PARTS, and the book surface's location section (absent by design since P1.0, waiting on the map). Resolves through the alias; three distinct empty states. | M | quality, data-integrity, ux |
+| **P6.5c** | **The drill, both ways** — *open this shelf* from an elevation cell, *show it on the map* from the shelf screen (a plan deep-link that selects site, case and cell), and the selected cell's own depth + staleness so §7's *"3 rows, back two not read since March"* is answerable FROM the map. | M | quality, ux |
+
+#### P6.5a in detail
+
+The defect P6.4c's review filed, re-measured on the owner's library:
+`documentElement.scrollWidth` **484 against a clientWidth of 375**. Six
+controls need 472px in a 375px bar, and the overflow is not cosmetic — every
+fixed and percentage-sized surface below it then lays itself out in a 484px
+page. 109px of the plan canvas sat off-screen at rest and the bookcase panel's
+own *select this bookcase* button was at x=412.
+
+`books.css` had carried the answer as a COMMENT since P1.0 (*"the mock hides
+this at mobile width in favour of a `.botnav` bottom bar — not built here"*)
+and a rule further down the same sheet was written as though it HAD been
+built: `.toolbar { top: 0 }` inside that breakpoint, docking the Books tab's
+search-and-filter row underneath a still-sticky app bar. Measured while
+scrolled: 52 of its 153px hidden.
+
+`useNarrow` mounts ONE nav or the other rather than the sheet hiding a
+duplicate — both render the same three labels, and two buttons named
+ספרים in the accessibility tree is the collision CLAUDE.md records costing a
+*rename* control its only label, invisible to `getByRole` either way.
+
+Touch floor, before → after: bookcase panel **12/22 → 0/22** (37/96 at the
+original review), Books tab **13/48 → 0/48**, map toolbar **7/15 → 0/15** (costs
+13px of a 370px canvas), book surface **8 → 0**. Document 484 → 375 in both
+languages.
+
+**What the quality review found**, all fixed in the follow-up commit — and
+every one of them is a guard that was not looking:
+
+- `touch.test.ts`'s exemption list matched the whole selector, unanchored, so
+  `.floor-badge` exempted `.mapscreen .floor-badge .menu > button` — the
+  storey chevron, the one control `map.css` calls *"two bare chevrons 47px
+  apart, one of which changes the whole board"*, and the one this very item
+  had just raised from 40 to 44. Reverting it stayed green. `\b` ends a word
+  at a hyphen too, so `.note-field`, `.brand-btn` and `.note button` were
+  exempt as well. Now matched against the LAST simple selector, anchored;
+- the same guard read only `px` and only `height`/`min-height`, so
+  `min-height: 2rem` (32px) and `min-block-size: 20px` both passed — in
+  sheets already writing logical properties;
+- its tripwire (`watched > 2`) ran against six declarations in total, so
+  `map.css` could go entirely blind and it would still pass. Now a per-SHEET
+  minimum;
+- `scoping.test.ts`'s new ordering check took one index from the raw sheet and
+  the other from the comment-stripped one, so any rule with a comment above it
+  resolved to `-1` and was silently dropped: the misordering it exists for
+  reports **6** offenders, and **1** once a single comment line sits above
+  each. `map.css` is 45% comment by byte;
+- `narrow.test.tsx` tested for `.appbar .nav`, a selector `books.css` has
+  never contained (it is the MOCK's, i.e. the CSS-hide approach this item
+  rejected) — a branch that can never fire, implying coverage of a mechanism
+  that does not exist;
+- `ui.css` carried a comment saying `touch.test.ts` guarded its breakpoint. It
+  does not; it guards heights. Moving that 760 to 900 left both rings green.
+  `narrow.test.tsx` now watches the number, in the shared sheet too;
+- `--botnav-h` was declared **twice, byte for byte** (the scripted-double-write
+  signature), and `.botnav` declared no height at all — so the token reserved
+  56px against a rendered 49 and neither number moved the other. `--toolbar-h`
+  beside it had never had a consumer in any revision.
+
+⚠ **Filed, not fixed — a 120px seam.** The shell's phone breakpoint is 760
+(`narrow.ts`, `books.css`, `ui.css`); the MAP's is 640 (`map.css`, and
+`Inspector.tsx`'s own `onPhone`). Between 641 and 760 you get the bottom
+navigation with a mouse-sized map panel. The target device is 375 and 760 was
+chosen because `books.css` already spelled it, not from a measurement.
+
+⚠ **Filed, not fixed — a load-bearing 700ms.** `CaptureTab.test.tsx`'s
+*"a poll landing comfortably inside the interval can only be the
+visibilitychange handler"* fails under a loaded board (two reviewer worktrees
+plus the gate). Its own comment already anticipates the margin; the honest fix
+is an event gate rather than a time budget, and it belongs to the capture item.
+
+⚠ **Tab ORDER**, for the owner: the bottom bar carries Books / Capture / Map,
+inherited from the app bar. `UI_PLAN.md` §1 lists Books / **Map** / Capture. On
+a thumb-reached bar the order is a decision rather than a carry-over.
+
+#### P6.5b in detail
+
+`address_parts` already existed in `app/domain/place.py`, written for this
+item and called by nothing. The route is its first caller, and the rule about
+which parts appear stays there rather than forking into the client: a
+one-section case never says *section 1*, a one-column case never says *column
+1*, the front row is never called a row.
+
+Three decisions, each gated: **a shelf standing nowhere answers 200 with a
+null address**, because most shelves stand nowhere and a 404 would tell the
+book screen the shelf does not exist; **the id resolves through the alias
+first**, because a copy's `shelf_id` is a stored value and a book whose
+location silently became *nowhere* is the phantom this catalogue exists not to
+produce; **the site sits beside the address, never inside it** (§3.7), and
+only once there is a second one (§3.9).
+
+Four things the browser found that no ring could: a separator LEADING its
+segment wrapped as «· גובה 2» at a line start (a dot there reads as a
+bullet); gluing the pair with `nowrap` then removed the only break
+opportunity, so the address overflowed its column and pushed the document to
+393px; `.seg` was already the Books tab's list/grid toggle, `display: flex`,
+so the four parts each took a full line; and P6.5a's touch floor lasted about
+an hour — the new *open its shelf* link landed at 81×24 and the book surface's
+own eight controls had never been measured on a phone.
+
+⚠ **Measured, and it is a product finding rather than a bug**: **all 11
+bookcases in the owner's library are unnamed**, so every address reads
+«סלון · כוננית ללא שם · עמודה 2 · גובה 2». The fallback is honest and
+it cannot discriminate between two unnamed cases in one room. An address is
+only ever as good as the drawing's names — which is what makes P6.5c's *show
+it on the map* the half that closes it, not a convenience.
 
 **Standing per-epic requirements** (owner, 2026-08-16 — *"use all reviewers to
 verify the code and quality along the way"*): every item runs `review-quality`;

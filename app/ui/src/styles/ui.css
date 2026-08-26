@@ -170,6 +170,33 @@
   color: var(--ui-accent);
   z-index: 1;
 }
+/* ⚠ A phone. At 22x22 this is the smallest control in the product, and it
+   is not a decoration — it is the only thing that reverses the sort. It is
+   absolutely positioned INSIDE the select, so the floor has to move both: the
+   toggle takes the field's full height and the field's start padding grows to
+   match. 760px is `app/web`'s breakpoint (`lib/narrow.ts`), and this sheet is
+   consumed as source by BOTH clients, so the number must not drift from the
+   shell's.
+
+   ⚠ Two guards, and the second exists because the first was named here and
+   does not do this: `app/web/src/styles/touch.test.ts` reads every sheet
+   including this one, but it checks HEIGHTS — a review moved this 760 to 900
+   and both rings stayed green. `app/web/src/lib/narrow.test.tsx`'s *"is the
+   one the SHARED sheet uses too"* is the one that watches the NUMBER. If this
+   sheet ever needs a second phone breakpoint, that test is where the decision
+   gets made. */
+@media (max-width: 760px) {
+  .sortwrap select {
+    min-height: 44px;
+    padding-inline-start: 48px;
+  }
+  .sortdir {
+    inset-inline-start: 1px;
+    width: 44px;
+    height: 44px;
+  }
+}
+
 /* Only reads as a wash because the resting state above is transparent:
    `background` is a shorthand, so over UA `ButtonFace` this REPLACED a filled
    grey instead of washing over it — barely visible in light mode, and a jump

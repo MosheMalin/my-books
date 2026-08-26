@@ -127,7 +127,14 @@ describe('map.css', () => {
     // does not merely restyle the product's buttons — reading an undefined
     // custom property is invalid at computed-value time, and the declaration
     // resolves to `unset` rather than to the product's own rule.
-    for (const line of css.split(/\r?\n/))
+    // ⚠ Comments stripped first, like `selectors()` above already does. This
+    // one did not, and it fired on a PROSE line whose wrapped text happened to
+    // begin with the word "select" — a guard reporting a defect in an
+    // explanation of a rule. Nothing real can hide inside `/* */`, so the
+    // strip costs it no reach; the crudeness that makes it valuable is the
+    // indentation-blindness, not the comment-blindness.
+    const bare = css.replace(/\/\*[\s\S]*?\*\//g, '')
+    for (const line of bare.split(/\r?\n/))
       expect(line).not.toMatch(/^\s*(button|input|select|fieldset|legend)[\s.:[{]/)
   })
 })
@@ -184,6 +191,47 @@ describe('the plan is a workspace, and a workspace needs a definite height', () 
     // which is the only way back from a gap.
     const phone = map.slice(map.indexOf('@media (max-width: 640px)'))
     expect(phone).toContain('.elev-cell.elev-cell')
-    expect(phone).toContain('.elev-col-foot.elev-col-foot')
+  })
+
+  it('puts the panel-wide touch floor after every rule it has to beat', () => {
+    // ⚠ P6.5a replaced three named 40px rules with ONE 44px floor over the
+    // whole panel, and the first cut wrote it inside the layout breakpoint
+    // two thirds up the sheet — where it lost, at equal specificity, to eight
+    // later rules that size the very controls it was added for
+    // (`.section-head button` 26px, `.elev-col-foot button` 26px,
+    // `.section-defaults` 28px). Same lesson as the test above, one rule
+    // along, which is why this one asserts the ORDER rather than a string:
+    // a floor is only a floor if nothing after it says otherwise.
+    // ⚠ ONE string for both sides of the comparison. The first cut took
+    // `floor` from the raw sheet and each rule's position from
+    // `map.indexOf(rule[0])` on the comment-STRIPPED text — and `[^{}]+`
+    // starts a selector immediately after the previous `}`, so any rule with
+    // a comment in that gap does not occur verbatim in the raw sheet,
+    // `indexOf` answers -1, and `-1 > floor` silently drops it. A review
+    // measured it: the misordering this test exists for reports 6 offenders,
+    // and reports ONE once a single comment line sits above each. `map.css`
+    // is 45% comment by byte and prose above a rule is this sheet's house
+    // style, so the guard was passing on luck. `matchAll` already hands back
+    // the index, in the coordinates of the string it scanned.
+    const bare = map.replace(/\/\*[\s\S]*?\*\//g, '')
+    const floor = bare.lastIndexOf('.map-side.map-side')
+    expect(floor, 'no doubled panel-wide floor in map.css')
+      .toBeGreaterThan(0)
+
+    // Every pixel min-height the sheet sets on a control INSIDE the panel.
+    // Anything below the floor that is declared after it wins over it.
+    const later: string[] = []
+    for (const rule of bare.matchAll(
+      /([^{}]+)\{([^{}]*min-height:\s*(\d+)px[^{}]*)\}/g)) {
+      const at = rule[1]!.trim().replace(/\s+/g, ' ')
+      if (at.includes('.map-side.map-side')) continue
+      if (!/(button|input|select)\b/.test(at)) continue
+      if (Number(rule[3]) >= 44) continue
+      // `.floor-badge` sits over the CANVAS, not in the panel, and has its
+      // own 44px phone override; `.readonly-bar` likewise.
+      if (/floor-badge|readonly-bar/.test(at)) continue
+      if (rule.index > floor) later.push(`${at} — ${rule[3]}px`)
+    }
+    expect(later, 'declared after the floor, so they beat it').toEqual([])
   })
 })

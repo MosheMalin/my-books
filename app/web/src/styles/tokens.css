@@ -11,10 +11,11 @@
      React rebuild's new/invented rules (states, modal footer, etc.) to draw
      from instead of inventing fresh numbers. Rules ported directly from the
      mock keep their literal px values for pixel fidelity — see books.css.
-   - --appbar-h / --toolbar-h, replacing the mock's `top: 55px` /
-     `top: 112px` magic numbers on sticky elements with named values so a
-     future appbar height change doesn't silently break the toolbar's
-     sticky offset. */
+   - --appbar-h, replacing the mock's `top: 55px` magic number on the sticky
+     toolbar with a named value, so a future appbar height change doesn't
+     silently break the offset. (A `--toolbar-h` was defined beside it and
+     `git log -S` shows it never had a single consumer, in any revision. It
+     is gone.) */
 
 :root {
   /* ---- surfaces & ink ---- */
@@ -72,7 +73,20 @@
      future appbar change (e.g. a wrapped brand row on narrow desktop) only
      needs to update one variable. */
   --appbar-h: 55px;
-  --toolbar-h: 57px;
+  /* The phone's bottom navigation (P6.5a). Named because THREE rules need to
+     agree on it, and all three now DO: the bar's own `min-height`, the
+     reading padding that keeps a page's last row above it, and the plan
+     workspace's definite height — which is `100%` of a box the bar sits
+     inside, so a workspace that did not subtract it would put its bottom
+     56px under an opaque bar.
+
+     ⚠ A review found this block written TWICE, byte for byte, and the bar
+     itself declaring no height at all — so the token reserved 56px while
+     `.botnav button`'s own 48 + a border rendered 49, and changing either
+     number moved nothing at the other end. That is the drift the token was
+     named to prevent, present on the day it was introduced. The duplicate is
+     gone and `.botnav` now takes its height FROM here. */
+  --botnav-h: 56px;
 }
 
 @media (prefers-color-scheme: dark) {
