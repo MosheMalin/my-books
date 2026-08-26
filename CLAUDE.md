@@ -145,7 +145,8 @@ app/
   adapters/  sqlite_store (WAL, conn per op), disk_blobs, memory_store,
              migrations (PRAGMA user_version), legacy_import,
              booksnap_reader, queued_jobs, merge_library
-  reconcile_apply.py / blob_lifecycle.py  the two port-only top-level modules
+  reconcile_apply.py / blob_lifecycle.py / map_edit.py / map_undo.py /
+             map_merge.py   the five port-only top-level modules
   api/       FastAPI /api/v1 (:8757) — THIN routers, DTOs, deps.py resolver,
              policy.py enforcement; openapi.json committed+generated
              auth: magic link + Google/Apple (OIDC code flow, PKCE);
@@ -469,6 +470,34 @@ different world — the product never reads it.
   COALESCED entry must take its first half's keys from the first half's own
   entry — recomputing the union from a live read reopens the widest window in
   the module, inside the commonest entry there is.
+- **When there is no transaction, the ORDER is the safety argument — and it
+  runs identity first.** P6.4d's merge moved books before writing the alias,
+  so a concurrent delete of the (empty, drawn) survivor left copies naming a
+  shelf that was neither live nor an alias, `foreign_key_check` clean and no
+  journal entry. Write the row that makes everything else REACHABLE first;
+  then every interruption is a retry rather than a loss.
+- **A refusal class that subclasses bare `Exception` never reaches a
+  `DomainError` handler.** `_translated`'s 409 tuple named three of the
+  `StoreError` family, so the rest escaped a mutating LAN route as **500** —
+  and the client classifies 500 as *dropped* and invites the retry that can
+  never succeed. Catch the family, not the members you happened to meet.
+- **A doc that promises a behaviour in words has not implemented it.** §3.11
+  said `apply_diff` resolves through the alias; `grep` found four resolver
+  call sites and none in the apply path, and the settle handler swallows the
+  exception — so a read settling across a merge discarded its whole diff in
+  silence while reporting books it never added. Same family as the docstring
+  asserting a test exists.
+- **A guard that enumerates from a LIST is the same bug wearing a fourth
+  hat.** The name-first RTL check listed two keys; reading the TYPE instead
+  found two live defects two items older. `(name: string) => string` in the
+  interface IS the declaration — the counted-string guard beside it already
+  worked that way, and P6.4c widened a third one for the same reason.
+- **A hook below an early return is a hook that changes order.** `ShelfPanel`
+  called `useCellInView` after two `return`s, so *select a bookcase, then tap
+  a cell* printed *"a change in the order of Hooks"*, *"Should have a queue"*
+  and *"Internal React error"* in a real browser while the ring stayed green:
+  every test mounted the panel already pointing at a cell. Walk the
+  TRANSITION, not the destination.
 - **Reviewers get DETACHED worktrees, never a shared branch.**
   `git worktree add -f <dir> <branch>` four times puts one ref in four trees,
   so a commit in the primary moves it under all of them — three reviews
