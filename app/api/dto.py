@@ -584,10 +584,22 @@ class ShelfOverviewDTO(BaseModel):
 
     @classmethod
     def of(cls, shelf: Shelf, *, capture_count: int,
-           depths: list[DepthStatusDTO]) -> "ShelfOverviewDTO":
+           depths: list[DepthStatusDTO], book_count: int = 0,
+           formerly: tuple[ShelfAlias, ...] = ()) -> "ShelfOverviewDTO":
+        """⚠ `formerly` and `book_count` are here because THIS is the route
+        the shelf screen reads. `ShelfDTO.of` has four construction sites and
+        only `_dto` carried them, so *the shelf says what it was* — the
+        headline of P6.4e — shipped inert: the field was populated on
+        `GET /shelves` and `GET /shelves/{id}`, which that screen does not
+        call. A review caught it; the client ring was green because the
+        harness built the overview body by hand and injected the field the
+        server never sent.
+        """
         freshest = max((d.last_read_at for d in depths if d.last_read_at),
                        default=None)
-        return cls(shelf=ShelfDTO.of(shelf, capture_count=capture_count),
+        return cls(shelf=ShelfDTO.of(shelf, capture_count=capture_count,
+                                     book_count=book_count,
+                                     formerly=formerly),
                    depths=depths, last_read_at=freshest)
 
 

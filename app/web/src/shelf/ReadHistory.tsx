@@ -57,14 +57,14 @@ export function ReadHistory({ reads, loading }: ReadHistoryProps) {
                 </div>
                 {r.diff_summary && (
                   <div className="chiprow diffbits">
-                    <span className="g">+{r.diff_summary.added} {t.read_added}</span>
+                    <span className="g">+{t.read_added(r.diff_summary.added)}</span>
                     {r.diff_summary.corrected > 0 && (
                       <span className="m">
-                        {r.diff_summary.corrected} {t.read_corrected}
+                        {t.read_corrected(r.diff_summary.corrected)}
                       </span>
                     )}
                     <span className="m">
-                      {r.diff_summary.unchanged} {t.read_unchanged}
+                      {t.read_unchanged(r.diff_summary.unchanged)}
                     </span>
                     {r.diff_summary.not_seen > 0 && (
                       <span className="r">{t.read_unseen(r.diff_summary.not_seen)}</span>

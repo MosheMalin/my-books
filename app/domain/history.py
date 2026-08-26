@@ -28,6 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Sequence
 
+from app.domain.alias import ShelfAlias
 from app.domain.book import Copy
 from app.domain.read import Read, ReadStatus
 
@@ -47,7 +48,7 @@ def not_seen_streak(
     shelf_id: str,
     depth: int,
     reads: Sequence[Read],
-    identities: Sequence[str] = (),
+    aliases: Sequence[ShelfAlias] = (),
 ) -> int:
     """How many of the most recent finished reads of ``(shelf_id, depth)``
     did NOT reconfirm this copy — the count behind §5.6's soft badge
@@ -60,55 +61,62 @@ def not_seen_streak(
     no library-wide state needs reconstructing, and there is nothing here
     that could ever remove the copy (see the module docstring).
 
-    ``reads`` is scoped to ``(shelf_id, depth)`` by the caller (the natural
-    result of ``ReadStore.list_reads(..., depth=depth)``, §5.7 #1's own
-    scoping) — any read that does not match is ignored defensively rather
-    than raised on, since a caller that already narrowed by depth has no way
-    to pass a foreign one except by a wiring bug this function is not the
-    place to diagnose.
+    ``reads`` is scoped to ``(shelf_id, depth)`` by the caller — plus, since
+    P6.4e, the reads of every identity this shelf answers for. Any read that
+    matches neither is ignored defensively rather than raised on.
 
     A read that happened BEFORE this copy ever stood at this location tells
     us nothing about it and does not count against it — otherwise a copy
     added yesterday would inherit a "not seen in 40 reads" streak from
     photographs taken long before it existed here.
 
-    ⚠⚠ **`identities` is §3.16, and without it a merge silently zeroes every
+    ⚠⚠ **`aliases` is §3.16, and without it a merge silently zeroes every
     badge it touches.** Nothing is rewritten when two shelves become one
     (§3.11), so a copy that arrived with the absorbed identity still names IT
     in its provenance — and this function, asked about the survivor, found no
-    sighting at all and took the `not sighted_run_ids` branch. Measured: a
-    book last actually seen in January reported the same 0 as one seen this
-    morning, on the day the owner was reorganising, because 0 means BOTH
-    *reconfirmed by the most recent read* and *never sighted here at all*.
+    sighting at all and returned 0. Measured: a book last actually seen in
+    January reported the same 0 as one seen this morning, on the day the owner
+    was reorganising, because 0 means BOTH *reconfirmed by the most recent
+    read* and *never sighted here at all*.
 
-    Pass ``app.domain.alias.identities(shelf_id, aliases)`` and the reads of
-    every one of them. Two halves of what the owner has just declared to be
-    one piece of wood then report staleness from the same evidence.
+    Pass ``ShelfStore.aliases_of(shelf_id)`` and the reads of every identity
+    in the closure.
 
-    ⚠ **And the walk STOPS at the first read it cannot vouch for**, which is
-    the other half of §3.16 and the reason this is not a naive union. Two
-    photo-born identities merged into one slot are usually two halves of one
-    shelf, and a read of the left half never covered the right: counting it as
-    a miss INFLATES the streak, which is a false claim about the owner's
-    books rather than a missing one. So a read of an identity this copy has
-    never been sighted at ends the count instead of adding to it.
+    **What makes a read EVIDENCE about this copy**, which is the whole of
+    §3.16 and took two reviews to get right:
 
-    It reduces exactly to the old behaviour when the closure is one shelf —
-    every read then belongs to the one identity, so the stop condition can
-    never fire.
+      - a read of the identity this copy most recently stood at — its own
+        wood. Not *any* identity it has ever stood at: a copy photographed on
+        the left half in January and on the right half since February is not
+        answerable to the left half's later reads, and counting them
+        manufactures evidence of absence, which is the failure §3.16 is
+        named after. Measured at three units of it;
+      - **any read of the survivor from the merge onwards.** After a merge
+        the captures are refiled, so a read of the survivor covers the whole
+        merged shelf by construction — including the half this copy came
+        from. Without this clause the badge FROZE at the merge: every future
+        read is a survivor read, none of them vouched, and the number stayed
+        0 forever. Measured — the fix survived exactly until the owner
+        re-photographed the shelf they had just merged, which is the next
+        thing they do.
+
+    Anything else is SKIPPED, not counted and not fatal. §3.16's wording is
+    *"stops at the first read whose coverage cannot be vouched for"*, and a
+    literal stop was the first implementation: because ``relevant`` is newest
+    first, it threw away every older read that WAS evidence, which is how the
+    freeze above happened. Skipping is what the sentence means — a read of the
+    other half is not evidence either way.
+
+    It reduces exactly to the pre-P6.4e behaviour when the closure is one
+    shelf: every read then belongs to that shelf, which is both the survivor
+    and the copy's home, so nothing is ever skipped.
     """
-    closure = tuple(identities) or (shelf_id,)
+    closure = (shelf_id,) + tuple(a.alias_id for a in aliases)
+    joined = {a.alias_id: a.merged_at for a in aliases}
     at_depth = [p for p in copy.provenance
                 if p.location is not None and p.location[1] == depth
                 and p.location[0] in closure]
     sighted_run_ids = {p.run_id for p in at_depth}
-    # Which identities this copy has actually been photographed at. A read of
-    # any OTHER one is a read of wood this copy was not standing on.
-    vouched = {p.location[0] for p in at_depth if p.location is not None}
-    first_sighted_at = min(
-        (p.captured_at for p in at_depth if p.captured_at is not None),
-        default=None,
-    )
     if not sighted_run_ids:
         # Never confirmed at THIS exact (shelf, depth) at all — the real
         # caller (`shelf_books`) only ever asks about a copy it already
@@ -117,6 +125,16 @@ def not_seen_streak(
         # reporting one anyway would blame the copy for reads that happened
         # at a location it was never placed at in the first place.
         return 0
+
+    # ⚠ The identity it MOST RECENTLY stood at, not every one it has visited.
+    # A `captured_at` of `None` sorts first, so a dated sighting always wins.
+    home = max(at_depth, key=lambda p: (p.captured_at or "",)).location[0]
+    # From this moment on, a read of the survivor covers this copy's half too.
+    since = _instant(joined.get(home)) if home != shelf_id else ""
+    first_sighted_at = min(
+        (p.captured_at for p in at_depth if p.captured_at is not None),
+        default=None,
+    )
 
     relevant = sorted(
         (r for r in reads
@@ -134,13 +152,29 @@ def not_seen_streak(
             break  # this read predates the copy ever standing here
         if r.id in sighted_run_ids:
             break  # reconfirmed — the streak resets to 0 as of this read
-        if r.shelf_id not in vouched:
-            # §3.16: a read of the other half of the merged shelf never
-            # covered this copy. Counting it would INFLATE the streak, and an
-            # inflated one is a false claim about the owner's books.
-            break
+        covered = r.shelf_id == home or (
+            r.shelf_id == shelf_id and _instant(when) >= since)
+        if not covered:
+            # A read of the other half of the merged shelf, from before the
+            # merge. It never covered this copy, so it is not evidence —
+            # neither of presence nor of absence.
+            continue
         streak += 1
     return streak
+
+
+def _instant(value: str | None) -> str:
+    """A timestamp in a form two of them can be compared in.
+
+    ⚠ `merged_at` comes from ``Clock.now_iso`` (``+00:00``) while a read's
+    time may carry ``Z`` from an import or a fixture, and ``"…+00:00" <
+    "…Z"`` for the very same instant. Only the two forms are normalised: a
+    NAIVE timestamp is left alone and therefore sorts before both, so a read
+    carrying one is treated as older than the merge — which makes it
+    unvouched and skipped rather than counted. Conservative in the direction
+    §3.16 cares about, and stated rather than pretended away.
+    """
+    return (value or "").replace("Z", "+00:00")
 
 
 @dataclass(frozen=True)

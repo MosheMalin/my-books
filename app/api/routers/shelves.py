@@ -49,7 +49,7 @@ from app.api.dto import (
     ShelfPatch,
 )
 from app.api.policy import require
-from app.domain.alias import ShelfAlias, identities
+from app.domain.alias import ShelfAlias, identities, resolve
 from app.domain import (
     Capability,
     Book,
@@ -97,7 +97,19 @@ captures = APIRouter(prefix="/captures", tags=["captures"])
 
 
 def _load(store: ShelfStore, library: LibraryRef, shelf_id: str) -> Shelf:
+    """The shelf this id names, THROUGH the alias (§3.11).
+
+    ⚠ An id whose shelf was absorbed is not gone; it is answered for. A
+    bookmarked `#/map/<id>`, a phone mid-upload and a queued §5.4 question all
+    hold ids from before a merge, and §3.11 records the alias precisely so
+    none of them 404s — a sentence `reads.py`'s own loader already carried
+    while five of the six routes this screen touches answered 404. Measured in
+    a browser: *"Shelf not found"* on a URL taken the day before.
+    """
     shelf = store.get_shelf(library, shelf_id)
+    if shelf is None:
+        shelf = store.get_shelf(
+            library, resolve(shelf_id, store.list_aliases(library)))
     if shelf is None:
         # Absent and foreign are the same answer, deliberately (§4.2).
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no such shelf")
@@ -125,12 +137,44 @@ def _dto(store: ShelfStore, library: LibraryRef, shelf: Shelf,
     every shelf and wrong for the one that was merged into — so both callers
     that show a shelf DO ask.
     """
-    where = ([a for a in aliases if a.shelf_id == shelf.id]
-             if aliases is not None else [])
-    return ShelfDTO.of(shelf,
-                       capture_count=len(store.list_captures(library, shelf.id)),
-                       book_count=(books or {}).get(shelf.id, 0),
-                       formerly=tuple(where))
+    mine = ([a for a in aliases if a.shelf_id == shelf.id]
+            if aliases is not None else [])
+    # ⚠ Counted over the CLOSURE, like the books list one route down. A review
+    # measured the card saying 1 beside a list of 2, in the state P6.4d makes
+    # reachable: the merge writes the alias FIRST, so a copy can stand at an
+    # absorbed identity while the shelf answering for it is the survivor.
+    here = (shelf.id,) + tuple(a.alias_id for a in mine)
+    return ShelfDTO.of(
+        shelf,
+        capture_count=sum(len(store.list_captures(library, one))
+                          for one in here),
+        book_count=sum((books or {}).get(one, 0) for one in here),
+        formerly=tuple(mine))
+
+
+def _closure(store: ShelfStore, library: LibraryRef, shelf: Shelf):
+    """Every identity this shelf answers for, and the aliases behind them.
+
+    ⚠ ONE copy of *the reads of the closure*, because there are now four
+    screens that need it — the books list, the overview, the read history and
+    the streak — and a review measured what two copies cost before the third
+    existed: the books list counted an absorbed identity's reads for the badge
+    while the header beside it said *this shelf has never been read* and the
+    history panel below was empty. Two halves of one screen contradicting each
+    other is worse than the uniform 0 the item replaced.
+    """
+    aliases = store.aliases_of(library, shelf.id)
+    return identities(shelf.id, store.list_aliases(library)), aliases
+
+
+def _reads_across(reads: ReadStore, library: LibraryRef, where, *,
+                  depth: int | None = None):
+    """The reads of every identity in the closure, newest first."""
+    got = [r for one in where
+           for r in reads.list_reads(library, one, depth=depth)]
+    got.sort(key=lambda r: (r.finished_at or r.started_at or "", r.id),
+             reverse=True)
+    return tuple(got)
 
 
 def _next_order(store: ShelfStore, library: LibraryRef, shelf_id: str,
@@ -327,18 +371,29 @@ def shelf_overview(
     library: LibraryRef = Depends(require(Capability.BROWSE)),
     store: ShelfStore = Depends(get_shelf_store),
     reads: ReadStore = Depends(get_read_store),
+    books: BookStore = Depends(get_book_store),
 ) -> ShelfOverviewDTO:
     """Declared depth, plus the soft staleness line (UI_PLAN §3: *"rows 2, 3
     not read since 11.3.2026"*) — every declared row, whether or not it was
     ever read, so the depth bar can show ALL of them (§5.7: always visible,
     even at ``depth_count`` 1)."""
     shelf = _load(store, library, shelf_id)
-    all_reads = reads.list_reads(library, shelf_id)  # every depth, not narrowed
+    where, aliases = _closure(store, library, shelf)
+    # ⚠ Every identity, and not only for the *formerly* line: this route
+    # answers *when was this shelf last read* while the books list one screen
+    # over computes its badges from the closure's reads. A review measured the
+    # two contradicting each other — the header said *this shelf has never
+    # been read* beside a badge counting three of them.
+    all_reads = _reads_across(reads, library, where)  # every depth
     statuses = [DepthStatusDTO.of(s)
                for s in depth_staleness(shelf.depth_count, all_reads)]
     return ShelfOverviewDTO.of(
-        shelf, capture_count=len(store.list_captures(library, shelf_id)),
-        depths=statuses,
+        shelf,
+        capture_count=sum(len(store.list_captures(library, one))
+                          for one in where),
+        book_count=sum(books.copies_per_shelf(library).get(one, 0)
+                       for one in where),
+        depths=statuses, formerly=aliases,
     )
 
 
@@ -394,7 +449,7 @@ def shelf_books(
     # copy that arrived with an absorbed identity still names it — and its
     # reads are still filed under the shelf as it was THEN, which is the
     # precedent `list_reads_for_capture` set one level down.
-    where = identities(shelf.id, store.list_aliases(library))
+    where, aliases = _closure(store, library, shelf)
     all_books = books.list(library, limit=_FULL_LIBRARY_SCAN_LIMIT).items
     here: list[tuple[Book, Copy]] = [
         (b, c) for b in all_books for c in b.copies
@@ -407,11 +462,10 @@ def shelf_books(
     # for. §3.16: a naive union INFLATES the streak, because two identities
     # merged into one slot are usually two halves of one shelf and a read of
     # the left half never covered the right.
-    shelf_reads = tuple(r for one in where
-                        for r in reads.list_reads(library, one, depth=depth))
+    shelf_reads = _reads_across(reads, library, where, depth=depth)
     return [
         BookDTO.of(b, streaks={c.id: not_seen_streak(
-            c, shelf.id, depth, shelf_reads, identities=where)})
+            c, shelf.id, depth, shelf_reads, aliases)})
         for b, c in here
     ]
 

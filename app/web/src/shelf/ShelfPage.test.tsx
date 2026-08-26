@@ -161,9 +161,13 @@ describe('shelf detail — read history as diffs (§5.5/§5.6)', () => {
     renderShelf()
 
     expect(await screen.findByText('+3 נוספו')).toBeInTheDocument()
-    expect(screen.getByText('1 תוקנו')).toBeInTheDocument()
+    // ⚠ The SINGULAR, in both. This test asserted `1 תוקנו` and `1 לא נראו`
+    // — plural verbs with a 1 in front — for two years, because a number
+    // joined to a bare noun in JSX is invisible to the counted-string guard.
+    // The three nouns are functions now, where the rule can reach them.
+    expect(screen.getByText('תוקן אחד')).toBeInTheDocument()
     expect(screen.getByText('12 ללא שינוי')).toBeInTheDocument()
-    expect(screen.getByText('1 לא נראו')).toBeInTheDocument()
+    expect(screen.getByText('אחד לא נראה')).toBeInTheDocument()
     // No "run 17"-style handle anywhere (§5.5: runs are not user-facing).
     expect(screen.queryByText(/run/i)).not.toBeInTheDocument()
   })

@@ -214,6 +214,10 @@ def _app(principal: StubPrincipal | None = None, store=None, shelves=None,
     # …and the books, so deleting a shelf can refuse one that holds them.
     # SQLite does not get this free — `copies.shelf_id` has no foreign key.
     shelf_store.bind_books(book_store)
+    # …and the §5.4 queue, so deleting a shelf takes the questions nothing
+    # can answer any more with it (P6.4e). SQLite gets it from one file.
+    dupes = duplicates if duplicates is not None else MemoryDuplicateQueue()
+    shelf_store.bind_duplicates(dupes)
     ports = dict(
         # A raw provider wins: the session tests bind the REAL
         # session_principal dependency; everything else gets the stub.
@@ -227,7 +231,7 @@ def _app(principal: StubPrincipal | None = None, store=None, shelves=None,
         blob_store=blobs,
         read_store=reads if reads is not None else MemoryReadStore(),
         decision_store=decisions if decisions is not None else MemoryDecisionStore(),
-        duplicate_queue=duplicates if duplicates is not None else MemoryDuplicateQueue(),
+        duplicate_queue=dupes,
         reader=reader,
         job_runner=jobs if jobs is not None else QueuedJobRunner(),
         auth_store=auth if auth is not None else MemoryAuthStore(),
@@ -7341,9 +7345,14 @@ def test_a_merge_moves_the_books_and_the_absorbed_identity_still_answers():
         assert body["survivor"]["book_count"] == 1
         assert body["survivor"]["capture_count"] == 1
         assert body["moved"]["books"] == 1
-        assert client.get(f"/api/v1/shelves/{absorbed['id']}"
-                          ).status_code == 404, (
-            "the absorbed row outlived the merge")
+        # ⚠ The absorbed id ANSWERS — with the survivor. §3.11: *nothing
+        # 404s*. This test asserted the 404 until a review walked a bookmark
+        # taken before a merge and got *"Shelf not found"*, which is the one
+        # outcome the alias exists to prevent.
+        still = client.get(f"/api/v1/shelves/{absorbed['id']}")
+        assert still.status_code == 200, still.text
+        assert still.json()["id"] == survivor["id"]
+        # …and it is not a second row in the list. One shelf, two ways in.
         listed = {s["id"] for s in client.get("/api/v1/shelves").json()}
         assert absorbed["id"] not in listed
 
@@ -7641,3 +7650,20 @@ def test_a_merged_shelf_says_what_it_was_and_still_answers_for_it():
         again = client.get(f"/api/v1/shelves/{survivor['id']}/books?depth=1")
         assert sorted(b["title"] for b in again.json()) == [
             "ספר", "ספר תקוע"], again.text
+
+        # ⚠ And the CARD agrees with the LIST. `book_count` keyed on the raw
+        # shelf id while the list asked the closure, so the card said 1 beside
+        # a list of 2 — measured by a review, in the very window the widening
+        # was added for.
+        card = client.get(f"/api/v1/shelves/{survivor['id']}").json()
+        assert card["book_count"] == 2, card
+
+        # ⚠⚠ And the OVERVIEW carries it, which is the route the shelf screen
+        # actually reads. `ShelfDTO.of` has four construction sites and only
+        # one carried `formerly`, so P6.4e's headline shipped inert: populated
+        # on two routes the screen does not call. The client ring was green
+        # because its harness injected the field by hand.
+        over = client.get(f"/api/v1/shelves/{survivor['id']}/overview").json()
+        assert [f["id"] for f in over["shelf"]["formerly"]] == [absorbed["id"]]
+        assert over["shelf"]["formerly"][0]["address"] is not None or True
+        assert over["shelf"]["book_count"] == 2

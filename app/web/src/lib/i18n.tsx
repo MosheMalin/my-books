@@ -27,8 +27,14 @@ const HE = {
     status: 'סטטוס',
     clear: 'ניקוי סינון',
     by_author: 'מאת',
+    // ⚠ The singular, in the app's most-read sentence. `1 ספרים` / `1 books`
+    // shipped live in both languages — the SEVENTH instance of this defect,
+    // and it survived because the guard that ends the class reads only the
+    // MAP's string table. It reads every table now.
     count: (shown: number, total: number) =>
-      shown >= total ? `${total} ספרים` : `${shown} מתוך ${total} ספרים`,
+      shown >= total
+        ? (total === 1 ? 'ספר אחד' : `${total} ספרים`)
+        : `${shown} מתוך ${total === 1 ? 'ספר אחד' : `${total} ספרים`}`,
     count_none: 'אין ספרים',
     empty: 'לא נמצאו ספרים',
     empty_hint: 'נסו לנקות את הסינון',
@@ -122,10 +128,15 @@ const HE = {
     review_now: 'מה נמצא — אישור מהיר',
     review_hint: 'אישור כאן הוא רק קיצור דרך. המדף הוא הבית של הספרים והיסטוריית הקריאות.',
     apply_to_shelf: 'החלה על המדף',
-    read_added: 'נוספו',
-    read_corrected: 'תוקנו',
-    read_unchanged: 'ללא שינוי',
-    read_unseen: (n: number) => `${n} לא נראו`,
+    // ⚠ FUNCTIONS, and they were three bare nouns joined to a number in
+    // JSX — which is the one shape the counted-string guard cannot see,
+    // because there is no parameter to declare. `1 תוקנו` and `+1 נוספו`
+    // were live in the read history. A number and its noun belong in the
+    // same string, where the rule can reach them.
+    read_added: (n: number) => (n === 1 ? 'נוסף אחד' : `${n} נוספו`),
+    read_corrected: (n: number) => (n === 1 ? 'תוקן אחד' : `${n} תוקנו`),
+    read_unchanged: (n: number) => (n === 1 ? 'אחד ללא שינוי' : `${n} ללא שינוי`),
+    read_unseen: (n: number) => (n === 1 ? 'אחד לא נראה' : `${n} לא נראו`),
     claim_unmatched: 'לא זוהה',
     tier_auto: 'זוהה',
     tier_review: 'לבדיקה',
@@ -160,13 +171,20 @@ const HE = {
     // its first strong character, so a Latin-initial shelf name would flip the
     // whole line. The same rule the map's own flashes carry.
     shelf_formerly: (name: string) => `היה גם: ${name}`,
+    // The fallback for an unnamed shelf: the address is what a person reads
+    // off the drawing, and §3.11 records it rather than deriving it for
+    // exactly this moment.
+    shelf_formerly_at: (col: number, level: number) =>
+      `המדף שהיה בעמודה ${col} · גובה ${level}`,
     stale_since: (row: string, date: string) => `${row} — לא נקרא מאז ${date}`,
     stale_never: (row: string) => `${row} — מעולם לא נקרא`,
     depth_bar_label: 'שורות המדף',
     shelf_books_title: 'הספרים בשורה זו',
     shelf_books_empty: 'אין ספרים ידועים בשורה הזו',
     not_seen_streak_one: 'לא נראה בקריאה האחרונה — עדיין שם?',
-    not_seen_streak_n: (n: number) => `לא נראה ב-${n} הקריאות האחרונות — עדיין שם?`,
+    not_seen_streak_n: (n: number) => (n === 1
+      ? 'לא נראה בקריאה האחרונה — עדיין שם?'
+      : `לא נראה ב-${n} הקריאות האחרונות — עדיין שם?`),
     shelf_history_title: 'היסטוריית קריאות',
     shelf_history_empty: 'אין עדיין קריאות למדף הזה',
     read_failed_short: 'נכשלה',
@@ -202,7 +220,7 @@ const HE = {
     alt_use: 'בחירה',
     raw_read: 'מה שנקרא:',
     read_removed: 'הוסרו',
-    run_findings: (n: number) => `${n} ממצאים`,
+    run_findings: (n: number) => (n === 1 ? 'ממצא אחד' : `${n} ממצאים`),
     add_book_found: 'הקריאה הזו כבר מצאה:',
     finding_split: 'פיצול לכרכים',
     finding_split_short: 'פיצול',
@@ -222,8 +240,9 @@ const HE = {
     run_busy: 'קריאה כבר רצה',
     stage_reading: (done: number, total: number) =>
       `קורא את התמונה… ${done}/${total}`,
-    stage_page_read: (n: number) => `נקראו ${n} ספרים מהתמונה`,
-    stage_segmented: (n: number) => `זוהו ${n} שדרות`,
+    stage_page_read: (n: number) => (n === 1
+      ? 'נקרא ספר אחד מהתמונה' : `נקראו ${n} ספרים מהתמונה`),
+    stage_segmented: (n: number) => (n === 1 ? 'זוהתה שדרה אחת' : `זוהו ${n} שדרות`),
     stage_ocr: (done: number, total: number) => `קורא שדרות… ${done}/${total}`,
     stage_matching: (done: number, total: number) =>
       `מזהה ספרים בקטלוג… ${done}/${total}`,
@@ -308,7 +327,9 @@ const EN: Strings = {
     clear: 'Clear filters',
     by_author: 'by',
     count: (shown: number, total: number) =>
-      shown >= total ? `${total} books` : `${shown} of ${total} books`,
+      shown >= total
+        ? (total === 1 ? '1 book' : `${total} books`)
+        : `${shown} of ${total === 1 ? '1 book' : `${total} books`}`,
     count_none: 'No books',
     empty: 'No books found',
     empty_hint: 'Try clearing the filters',
@@ -398,9 +419,9 @@ const EN: Strings = {
     review_now: 'What we found — quick confirm',
     review_hint: 'Confirming here is a shortcut. The shelf is the durable home for these books and their history.',
     apply_to_shelf: 'Apply to shelf',
-    read_added: 'added',
-    read_corrected: 'corrected',
-    read_unchanged: 'unchanged',
+    read_added: (n: number) => (n === 1 ? '1 added' : `${n} added`),
+    read_corrected: (n: number) => (n === 1 ? '1 corrected' : `${n} corrected`),
+    read_unchanged: (n: number) => (n === 1 ? '1 unchanged' : `${n} unchanged`),
     read_unseen: (n: number) => `${n} not seen`,
     claim_unmatched: 'Unmatched',
     tier_auto: 'Auto',
@@ -433,13 +454,17 @@ const EN: Strings = {
     shelf_last_read: (date: string) => `Last read ${date}`,
     shelf_never_read: 'This shelf has never been read',
     shelf_formerly: (name: string) => `Formerly also: ${name}`,
+    shelf_formerly_at: (col: number, level: number) =>
+      `the shelf that was at column ${col} · level ${level}`,
     stale_since: (row: string, date: string) => `${row} — not read since ${date}`,
     stale_never: (row: string) => `${row} — never read`,
     depth_bar_label: 'Shelf rows',
     shelf_books_title: 'Books on this row',
     shelf_books_empty: 'No known books on this row',
     not_seen_streak_one: 'Not seen in the last read — still there?',
-    not_seen_streak_n: (n: number) => `Not seen in the last ${n} reads — still there?`,
+    not_seen_streak_n: (n: number) => (n === 1
+      ? 'Not seen in the last read — still there?'
+      : `Not seen in the last ${n} reads — still there?`),
     shelf_history_title: 'Read history',
     shelf_history_empty: 'No reads of this shelf yet',
     read_failed_short: 'failed',
@@ -475,7 +500,7 @@ const EN: Strings = {
     alt_use: 'Use this',
     raw_read: 'Read as:',
     read_removed: 'removed',
-    run_findings: (n: number) => `${n} findings`,
+    run_findings: (n: number) => (n === 1 ? '1 finding' : `${n} findings`),
     add_book_found: 'This read already found:',
     finding_split: 'Split into volumes',
     finding_split_short: 'Split',
@@ -490,8 +515,9 @@ const EN: Strings = {
     run_busy: 'A read is already running',
     stage_reading: (done: number, total: number) =>
       `Reading the photo… ${done}/${total}`,
-    stage_page_read: (n: number) => `Read ${n} books off the photo`,
-    stage_segmented: (n: number) => `Found ${n} spines`,
+    stage_page_read: (n: number) => (n === 1
+      ? 'Read 1 book off the photo' : `Read ${n} books off the photo`),
+    stage_segmented: (n: number) => (n === 1 ? 'Found 1 spine' : `Found ${n} spines`),
     stage_ocr: (done: number, total: number) => `Reading spines… ${done}/${total}`,
     stage_matching: (done: number, total: number) =>
       `Matching against the catalogue… ${done}/${total}`,
@@ -570,7 +596,15 @@ const EN: Strings = {
  * day both are served from one origin, one key would mean switching language
  * in the console silently switched the household's app too.
  */
+/** Both tables, so a guard can read every string rather than one table.
+ *
+ *  ⚠ Exported for `i18n.test.tsx`, which enforces the counted-string and
+ *  name-first rules over BOTH — the map's own table has carried those guards
+ *  since P6.3.2 and this one had neither, which is how `1 books` reached a
+ *  real browser in the most-read sentence in the product. */
+export const STRINGS = { he: HE, en: EN }
+
 export const { I18nProvider, useI18n } = createI18n<Strings>(
-  { he: HE, en: EN },
+  STRINGS,
   { storageKey: 'booksnap.lang' },
 )

@@ -112,11 +112,32 @@ export function ShelfPage({ shelfId, onBack, onOpen }: ShelfPageProps) {
                       household's name for the absorbed shelf — a shelf is
                       "the one with the cookbooks" long after the drawing has
                       been rearranged. */}
-                  {(state.shelf.formerly ?? []).map((was) => (
-                    <p className="tiny muted rtl-safe" key={was.id}>
-                      {t.shelf_formerly(was.label || t.unassigned)}
-                    </p>
-                  ))}
+                  {/* ⚠ Label, else ADDRESS, else NOTHING — and the third
+                      branch is the one a review measured. On the owner's
+                      library **0 of 154 shelves carry a label**, so
+                      `label || t.unassigned` rendered *"היה גם: לא משויך"*
+                      three times over for three merges: N identical panels
+                      for one cause, saying nothing anybody can act on. An
+                      unnamed shelf that also stood nowhere has nothing to
+                      say, and silence is better than a line that says so.
+                      ⚠ Newest first. `list_aliases` orders by `alias_id`,
+                      which is uuid4 — random to a person reading *what this
+                      shelf was*. */}
+                  {[...(state.shelf.formerly ?? [])]
+                    .sort((a, b) => (b.merged_at || '').localeCompare(
+                      a.merged_at || ''))
+                    .map((was) => {
+                      const said = was.label
+                        || (was.address
+                          ? t.shelf_formerly_at(was.address.col,
+                                                was.address.level)
+                          : '')
+                      return said ? (
+                        <p className="tiny muted rtl-safe" key={was.id}>
+                          {t.shelf_formerly(said)}
+                        </p>
+                      ) : null
+                    })}
                 </div>
               </div>
 
