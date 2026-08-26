@@ -243,6 +243,63 @@ describe('a shelf that answers for another identity (P6.4e, §3.11)', () => {
     expect(await screen.findByText('היה גם: ספרי בישול')).toBeInTheDocument()
   })
 
+  it('falls back to the ADDRESS when the absorbed shelf had no name', async () => {
+    // ⚠ Measured on the owner's library: **0 of 154 shelves carry a label**,
+    // so `label || t.unassigned` rendered *"היה גם: לא משויך"* — one identical
+    // panel per merge, saying nothing anybody can act on. The former address
+    // is what §3.11 records rather than derives, for exactly this moment: it
+    // is what a person reads off the drawing.
+    fakeShelfServer({
+      shelf: fakeShelf({
+        formerly: [{ id: 'sh-old', label: '', merged_at: '2026-08-26T10:00:00Z',
+                     address: { section_id: 'se', col: 2, level: 4 } }],
+      }),
+      depths: [{ depth: 1, last_read_at: null, is_stale: false }],
+    })
+    renderShelf()
+
+    expect(await screen.findByText(/עמודה 2 · גובה 4/)).toBeInTheDocument()
+    expect(screen.queryByText(/לא משויך/)).toBeNull()
+  })
+
+  it('says nothing when the absorbed shelf had neither name nor address', async () => {
+    // The commonest case on a real library, and silence beats a line that
+    // says *"formerly also: unassigned"*.
+    fakeShelfServer({
+      shelf: fakeShelf({
+        formerly: [{ id: 'sh-old', label: '', merged_at: '2026-08-26T10:00:00Z',
+                     address: null }],
+      }),
+      depths: [{ depth: 1, last_read_at: null, is_stale: false }],
+    })
+    renderShelf()
+
+    await screen.findByRole('button', { name: 'שורה 1' })
+    expect(screen.queryByText(/היה גם/)).toBeNull()
+  })
+
+  it('puts the most recent identity first', async () => {
+    // `list_aliases` orders by `alias_id`, which is uuid4 — random to a person
+    // reading a list of *what this shelf was*.
+    fakeShelfServer({
+      shelf: fakeShelf({
+        formerly: [
+          { id: 'a', label: 'הישן', merged_at: '2026-01-01T00:00:00Z',
+            address: null },
+          { id: 'b', label: 'החדש', merged_at: '2026-08-01T00:00:00Z',
+            address: null },
+        ],
+      }),
+      depths: [{ depth: 1, last_read_at: null, is_stale: false }],
+    })
+    renderShelf()
+
+    await screen.findByText('היה גם: החדש')
+    const said = [...document.querySelectorAll('p')]
+      .map((p) => p.textContent).filter((t) => t && t.startsWith('היה גם'))
+    expect(said).toEqual(['היה גם: החדש', 'היה גם: הישן'])
+  })
+
   it('says nothing at all for a shelf nothing was merged into', async () => {
     // Which is almost every shelf. An empty `formerly` renders nothing — not
     // a heading with no rows under it.
