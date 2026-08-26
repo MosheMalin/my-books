@@ -49,6 +49,7 @@ from app.api.dto import (
     ShelfPatch,
 )
 from app.api.policy import require
+from app.domain.alias import ShelfAlias, identities
 from app.domain import (
     Capability,
     Book,
@@ -111,13 +112,25 @@ def _load_capture(store: ShelfStore, library: LibraryRef, cap_id: str) -> Captur
 
 
 def _dto(store: ShelfStore, library: LibraryRef, shelf: Shelf,
-         books: Mapping[str, int] | None = None) -> ShelfDTO:
+         books: Mapping[str, int] | None = None,
+         aliases: tuple[ShelfAlias, ...] | None = None) -> ShelfDTO:
     """⚠ `books` is the WHOLE library's counts, passed in by a caller that
     asked once. Per-shelf it would be a query per row — the shelf list is the
-    screen this feeds, and it renders every shelf a household has."""
+    screen this feeds, and it renders every shelf a household has. `aliases`
+    is the same shape for the same reason (P6.4e): one `list_aliases` serves a
+    whole listing, and a household's merges are counted in tens.
+
+    ⚠ `None` means *nobody asked*, and that is not the same as `()`. A caller
+    which has not fetched them gets an empty `formerly` — correct for almost
+    every shelf and wrong for the one that was merged into — so both callers
+    that show a shelf DO ask.
+    """
+    where = ([a for a in aliases if a.shelf_id == shelf.id]
+             if aliases is not None else [])
     return ShelfDTO.of(shelf,
                        capture_count=len(store.list_captures(library, shelf.id)),
-                       book_count=(books or {}).get(shelf.id, 0))
+                       book_count=(books or {}).get(shelf.id, 0),
+                       formerly=tuple(where))
 
 
 def _next_order(store: ShelfStore, library: LibraryRef, shelf_id: str,
@@ -161,7 +174,8 @@ def list_shelves(
     """Every shelf, named ones first and alphabetically, then unnamed ones
     oldest-first. Not paged — a personal library has tens of shelves."""
     counts = books.copies_per_shelf(library)
-    return [_dto(store, library, s, counts)
+    aliases = store.list_aliases(library)
+    return [_dto(store, library, s, counts, aliases)
             for s in store.list_shelves(library, include_virtual=include_virtual)]
 
 
@@ -208,7 +222,7 @@ def get_shelf(
     route. One grouped query, the same one the list pays.
     """
     return _dto(store, library, _load(store, library, shelf_id),
-                books.copies_per_shelf(library))
+                books.copies_per_shelf(library), store.list_aliases(library))
 
 
 @router.patch("/{shelf_id}", response_model=ShelfDTO)
@@ -375,16 +389,29 @@ def shelf_books(
     except UnknownDepth as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
 
+    # ⚠ EVERY identity this shelf answers for (§3.11), for the books and for
+    # the reads alike. Nothing is rewritten when two shelves become one, so a
+    # copy that arrived with an absorbed identity still names it — and its
+    # reads are still filed under the shelf as it was THEN, which is the
+    # precedent `list_reads_for_capture` set one level down.
+    where = identities(shelf.id, store.list_aliases(library))
     all_books = books.list(library, limit=_FULL_LIBRARY_SCAN_LIMIT).items
     here: list[tuple[Book, Copy]] = [
         (b, c) for b in all_books for c in b.copies
-        if c.location == (shelf_id, depth)
+        if c.location is not None and c.location[1] == depth
+        and c.location[0] in where
     ]
     here.sort(key=lambda pair: _physical_order_key(*pair))
 
-    shelf_reads = reads.list_reads(library, shelf_id, depth=depth)
+    # ⚠ The union, and `not_seen_streak` decides which of them it can vouch
+    # for. §3.16: a naive union INFLATES the streak, because two identities
+    # merged into one slot are usually two halves of one shelf and a read of
+    # the left half never covered the right.
+    shelf_reads = tuple(r for one in where
+                        for r in reads.list_reads(library, one, depth=depth))
     return [
-        BookDTO.of(b, streaks={c.id: not_seen_streak(c, shelf_id, depth, shelf_reads)})
+        BookDTO.of(b, streaks={c.id: not_seen_streak(
+            c, shelf.id, depth, shelf_reads, identities=where)})
         for b, c in here
     ]
 

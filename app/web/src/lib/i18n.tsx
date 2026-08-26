@@ -156,6 +156,10 @@ const HE = {
     shelf_untitled_photo_alt: 'תמונת המדף',
     shelf_last_read: (date: string) => `נקרא לאחרונה ב-${date}`,
     shelf_never_read: 'המדף הזה עדיין לא נקרא',
+    // ⚠ Our words FIRST — `unicode-bidi: plaintext` resolves a paragraph from
+    // its first strong character, so a Latin-initial shelf name would flip the
+    // whole line. The same rule the map's own flashes carry.
+    shelf_formerly: (name: string) => `היה גם: ${name}`,
     stale_since: (row: string, date: string) => `${row} — לא נקרא מאז ${date}`,
     stale_never: (row: string) => `${row} — מעולם לא נקרא`,
     depth_bar_label: 'שורות המדף',
@@ -428,6 +432,7 @@ const EN: Strings = {
     shelf_untitled_photo_alt: 'Shelf photo',
     shelf_last_read: (date: string) => `Last read ${date}`,
     shelf_never_read: 'This shelf has never been read',
+    shelf_formerly: (name: string) => `Formerly also: ${name}`,
     stale_since: (row: string, date: string) => `${row} — not read since ${date}`,
     stale_never: (row: string) => `${row} — never read`,
     depth_bar_label: 'Shelf rows',

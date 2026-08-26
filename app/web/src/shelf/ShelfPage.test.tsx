@@ -218,3 +218,37 @@ describe('shelf detail — an absent shelf', () => {
     expect(await screen.findByText('המדף לא נמצא')).toBeInTheDocument()
   })
 })
+
+describe('a shelf that answers for another identity (P6.4e, §3.11)', () => {
+  it('says what it was, so the household name survives the merge', async () => {
+    // ⚠ A merge destroys the absorbed shelf's row, and with it the name the
+    // household calls it by — *"the one with the cookbooks"* long after the
+    // drawing has been rearranged. §3.11 records the label and the former
+    // ADDRESS precisely so the library can still answer, and this is the one
+    // screen that says it out loud.
+    fakeShelfServer({
+      shelf: fakeShelf({
+        formerly: [{ id: 'sh-old', label: 'ספרי בישול',
+                     merged_at: '2026-08-26T10:00:00Z',
+                     address: { section_id: 'se', col: 1, level: 3 } }],
+      }),
+      depths: [{ depth: 1, last_read_at: null, is_stale: false }],
+    })
+    renderShelf()
+
+    expect(await screen.findByText('היה גם: ספרי בישול')).toBeInTheDocument()
+  })
+
+  it('says nothing at all for a shelf nothing was merged into', async () => {
+    // Which is almost every shelf. An empty `formerly` renders nothing — not
+    // a heading with no rows under it.
+    fakeShelfServer({
+      shelf: fakeShelf(),
+      depths: [{ depth: 1, last_read_at: null, is_stale: false }],
+    })
+    renderShelf()
+
+    await screen.findByRole('button', { name: 'שורה 1' })
+    expect(screen.queryByText(/היה גם/)).toBeNull()
+  })
+})

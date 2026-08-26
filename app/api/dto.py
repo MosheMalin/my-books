@@ -20,6 +20,7 @@ from typing import Mapping
 
 from pydantic import BaseModel, Field
 
+from app.domain.alias import ShelfAlias
 from app.domain import (
     MergePlan,
     DEFAULT_COLUMNS,
@@ -441,6 +442,31 @@ class ShelfAddressDTO(BaseModel):
                    level=address.level)
 
 
+class FormerIdentityDTO(BaseModel):
+    """One identity this shelf answers for, and where it used to stand.
+
+    §3.11's own sentence, made visible: *"the shelf that was at section 1,
+    column 2, level 3"* is a question the library can still answer after the
+    wood has been re-identified — and the address is the half that survives in
+    someone's memory when the id does not.
+
+    ⚠ ``label`` is the household's name for the absorbed shelf, which the
+    merge would otherwise destroy. A shelf is *"the one with the cookbooks"*
+    long after the drawing has been rearranged.
+    """
+
+    id: str
+    label: str = ""
+    merged_at: str = ""
+    address: ShelfAddressDTO | None = Field(
+        default=None,
+        description="Where it USED to stand. Historical: §3.10a leaves the "
+                    "extent untouched, so the cell may since have become a "
+                    "gap and that is fine — this answers *the shelf that "
+                    "was*, not *the shelf that is*.",
+    )
+
+
 class ShelfDTO(BaseModel):
     """A shelf's identity, and — since P6.1 — where it stands, if anywhere."""
 
@@ -477,10 +503,26 @@ class ShelfDTO(BaseModel):
                     "P6.4's job rather than a precondition.",
     )
 
+    formerly: list[FormerIdentityDTO] = Field(
+        default_factory=list,
+        description="Identities absorbed into this shelf (§3.11). Empty for "
+                    "almost every shelf, and never null: a screen that has to "
+                    "ask whether the list exists before asking whether it is "
+                    "empty gets it wrong once.",
+    )
+
     @classmethod
     def of(cls, shelf: Shelf, *, capture_count: int,
-           book_count: int = 0) -> "ShelfDTO":
+           book_count: int = 0,
+           formerly: tuple[ShelfAlias, ...] = ()) -> "ShelfDTO":
         return cls(
+            formerly=[FormerIdentityDTO(
+                id=a.alias_id, label=a.label, merged_at=a.merged_at,
+                address=(ShelfAddressDTO(section_id=a.address.section_id,
+                                         col=a.address.col,
+                                         level=a.address.level)
+                         if a.address else None))
+                for a in formerly],
             id=shelf.id, label=shelf.label, depth_count=shelf.depth_count,
             virtual=shelf.virtual, created_at=shelf.created_at,
             capture_count=capture_count,

@@ -104,6 +104,19 @@ export function ShelfPage({ shelfId, onBack, onOpen }: ShelfPageProps) {
                       : t.shelf_never_read}
                   </p>
                   {stale && <p className="tiny stalenote">{stale}</p>}
+                  {/* ⚠ §3.11's last promise, and the ADDRESS half is the one
+                      worth having: *"the shelf that was at section 1, column
+                      2, level 3"* is what a person reads off a drawing, and
+                      it is the half that survives in someone's memory when
+                      the id does not. A merge would otherwise destroy the
+                      household's name for the absorbed shelf — a shelf is
+                      "the one with the cookbooks" long after the drawing has
+                      been rearranged. */}
+                  {(state.shelf.formerly ?? []).map((was) => (
+                    <p className="tiny muted rtl-safe" key={was.id}>
+                      {t.shelf_formerly(was.label || t.unassigned)}
+                    </p>
+                  ))}
                 </div>
               </div>
 

@@ -7592,3 +7592,52 @@ def test_the_undo_says_what_it_PUT_BACK_and_not_what_is_left():
         # back, which after this is nothing.
         assert done.json()["restores"] == {}
         assert done.json()["available"] is False
+
+
+def test_a_merged_shelf_says_what_it_was_and_still_answers_for_it():
+    """§3.11's last promise: *nothing 404s, and the shelf says formerly …*.
+
+    The address half is the one worth having — *"the shelf that was at
+    section 1, column 2, level 3"* is what a person reads off a drawing, and
+    it is the half that survives in someone's memory when the id does not.
+    """
+    books = MemoryBookStore()
+    with TestClient(_app(store=books)) as client:
+        _drawn_map(client, columns=2, levels=1)
+        survivor = [s for s in client.get("/api/v1/shelves").json()
+                    if s["address"]][0]
+        absorbed = client.post("/api/v1/shelves",
+                               json={"label": "ספרי בישול"}).json()
+        books.save(TEST_LIBRARY, new_book(
+            id="bk-f", library_id=TEST_LIBRARY.id, title="ספר", author="מחבר",
+            copy_id="cp-f", shelf_id=absorbed["id"], depth=1))
+        client.post(f"/api/v1/map/shelves/{absorbed['id']}/merge",
+                    json={"into": survivor["id"], "strip": "survivor_first"})
+
+        said = client.get(f"/api/v1/shelves/{survivor['id']}").json()
+        assert [f["label"] for f in said["formerly"]] == ["ספרי בישול"]
+        assert said["formerly"][0]["id"] == absorbed["id"]
+        # …and the list says it too, so the shelf screen never has to ask
+        # twice for a fact the listing already knows.
+        listed = {s["id"]: s for s in client.get("/api/v1/shelves").json()}
+        assert listed[survivor["id"]]["formerly"][0]["id"] == absorbed["id"]
+        assert listed[survivor["id"]]["formerly"][0]["merged_at"]
+        # An ordinary shelf carries an empty list, never null: a screen that
+        # has to ask whether the list exists before asking whether it is
+        # empty gets it wrong once.
+        other = [s for s in listed.values() if s["id"] != survivor["id"]][0]
+        assert other["formerly"] == []
+
+        # And the books it absorbed are listed at the survivor, through the
+        # identity that brought them — including one that has NOT been
+        # refiled, which is the state an interrupted merge leaves and the
+        # reason the filter asks under every identity rather than one.
+        here = client.get(f"/api/v1/shelves/{survivor['id']}/books?depth=1")
+        assert [b["title"] for b in here.json()] == ["ספר"], here.text
+        books.save(TEST_LIBRARY, new_book(
+            id="bk-stuck", library_id=TEST_LIBRARY.id, title="ספר תקוע",
+            author="מחבר", copy_id="cp-stuck", shelf_id=absorbed["id"],
+            depth=1))
+        again = client.get(f"/api/v1/shelves/{survivor['id']}/books?depth=1")
+        assert sorted(b["title"] for b in again.json()) == [
+            "ספר", "ספר תקוע"], again.text

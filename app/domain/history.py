@@ -47,6 +47,7 @@ def not_seen_streak(
     shelf_id: str,
     depth: int,
     reads: Sequence[Read],
+    identities: Sequence[str] = (),
 ) -> int:
     """How many of the most recent finished reads of ``(shelf_id, depth)``
     did NOT reconfirm this copy — the count behind §5.6's soft badge
@@ -70,12 +71,42 @@ def not_seen_streak(
     us nothing about it and does not count against it — otherwise a copy
     added yesterday would inherit a "not seen in 40 reads" streak from
     photographs taken long before it existed here.
+
+    ⚠⚠ **`identities` is §3.16, and without it a merge silently zeroes every
+    badge it touches.** Nothing is rewritten when two shelves become one
+    (§3.11), so a copy that arrived with the absorbed identity still names IT
+    in its provenance — and this function, asked about the survivor, found no
+    sighting at all and took the `not sighted_run_ids` branch. Measured: a
+    book last actually seen in January reported the same 0 as one seen this
+    morning, on the day the owner was reorganising, because 0 means BOTH
+    *reconfirmed by the most recent read* and *never sighted here at all*.
+
+    Pass ``app.domain.alias.identities(shelf_id, aliases)`` and the reads of
+    every one of them. Two halves of what the owner has just declared to be
+    one piece of wood then report staleness from the same evidence.
+
+    ⚠ **And the walk STOPS at the first read it cannot vouch for**, which is
+    the other half of §3.16 and the reason this is not a naive union. Two
+    photo-born identities merged into one slot are usually two halves of one
+    shelf, and a read of the left half never covered the right: counting it as
+    a miss INFLATES the streak, which is a false claim about the owner's
+    books rather than a missing one. So a read of an identity this copy has
+    never been sighted at ends the count instead of adding to it.
+
+    It reduces exactly to the old behaviour when the closure is one shelf —
+    every read then belongs to the one identity, so the stop condition can
+    never fire.
     """
-    here = (shelf_id, depth)
-    sighted_run_ids = {p.run_id for p in copy.provenance if p.location == here}
+    closure = tuple(identities) or (shelf_id,)
+    at_depth = [p for p in copy.provenance
+                if p.location is not None and p.location[1] == depth
+                and p.location[0] in closure]
+    sighted_run_ids = {p.run_id for p in at_depth}
+    # Which identities this copy has actually been photographed at. A read of
+    # any OTHER one is a read of wood this copy was not standing on.
+    vouched = {p.location[0] for p in at_depth if p.location is not None}
     first_sighted_at = min(
-        (p.captured_at for p in copy.provenance
-         if p.location == here and p.captured_at is not None),
+        (p.captured_at for p in at_depth if p.captured_at is not None),
         default=None,
     )
     if not sighted_run_ids:
@@ -89,7 +120,7 @@ def not_seen_streak(
 
     relevant = sorted(
         (r for r in reads
-         if r.shelf_id == shelf_id and r.depth == depth
+         if r.shelf_id in closure and r.depth == depth
          and r.status in _COUNTS_AS_EVIDENCE),
         key=lambda r: (_when(r) or "", r.id),
         reverse=True,
@@ -103,6 +134,11 @@ def not_seen_streak(
             break  # this read predates the copy ever standing here
         if r.id in sighted_run_ids:
             break  # reconfirmed — the streak resets to 0 as of this read
+        if r.shelf_id not in vouched:
+            # §3.16: a read of the other half of the merged shelf never
+            # covered this copy. Counting it would INFLATE the streak, and an
+            # inflated one is a false claim about the owner's books.
+            break
         streak += 1
     return streak
 
