@@ -428,6 +428,29 @@ export function fakeServer(initial: FakeBookRecord[] = []): FakeServer {
       return respond(updated)
     }
 
+    // --- the shelf screen (P2.8), enough of it to mount ------------------
+    // ⚠ Minimal on purpose: `ShelfPage`'s own ring has a richer harness. What
+    // this serves is what the screen needs to REACH `ready`, so a test about
+    // the book drawer over it, or about the address line on it, can exist at
+    // all.
+    if (u.pathname.startsWith('/api/v1/shelves/') && method === 'GET') {
+      const id = decodeURIComponent(u.pathname.split('/')[4] ?? '')
+      const tail = u.pathname.split('/').slice(5).join('/')
+      const shelf = {
+        id, label: '', depth_count: 1, virtual: false, created_at: null,
+        capture_count: 0, book_count: 0, address: null, formerly: [],
+      }
+      if (tail === 'overview')
+        return respond({ shelf, depths: [{ depth: 1, last_read_at: null,
+                                           is_stale: false }],
+                         last_read_at: null })
+      if (tail === 'books')
+        return respond(server.books.filter(
+          (b) => b.copies.some((c) => c.shelf_id === id)))
+      if (tail === 'captures') return respond([])
+      if (tail === 'reads') return respond([])
+    }
+
     // --- where is it (P6.5b) ---------------------------------------------
     if (u.pathname.startsWith('/api/v1/map/where/') && method === 'GET') {
       const id = decodeURIComponent(u.pathname.split('/').pop() ?? '')

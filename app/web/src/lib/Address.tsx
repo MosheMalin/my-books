@@ -75,7 +75,7 @@ interface Segment {
   typed: boolean
 }
 
-export function addressSegments(
+function addressSegments(
   where: ShelfWhere,
   t: ReturnType<typeof useI18n>['t'],
 ): Segment[] {
@@ -83,7 +83,15 @@ export function addressSegments(
   if (!at) return []
   const out: Segment[] = []
   if (where.site) out.push({ key: 'site', text: where.site, typed: true })
-  if (at.place) out.push({ key: 'place', text: at.place, typed: true })
+  // ⚠ A room with no name still gets a segment, by the SAME argument the
+  // bookcase below carries — and the asymmetry was measured: 20 of the
+  // owner's 152 addressed shelves stand on bookcases attached to no room at
+  // all, and printed «כוננית ללא שם · עמודה 1 · גובה 4», which
+  // identifies nothing in a two-storey house. Omitting the case says the room
+  // has one bookcase; omitting the room says the building has one room.
+  out.push(at.place
+    ? { key: 'place', text: at.place, typed: true }
+    : { key: 'place', text: t.where_room_unnamed, typed: false })
   // An unnamed case still gets a segment: without one the line reads
   // "סלון · עמודה 2", which says the room has exactly one bookcase — and
   // that is a claim, not an omission. Naming a case is optional exactly as
@@ -105,7 +113,25 @@ export function Address({ where, note = true, onMap = false }: AddressProps) {
   const { t } = useI18n()
   const parts = addressSegments(where, t)
   if (parts.length === 0)
-    return <p className="tiny muted whereline">{t.where_nowhere}</p>
+    return (
+      <>
+        <p className="tiny muted whereline">{t.where_nowhere}</p>
+        {/* ⚠ The state that needs an ACTION was the one state with no
+            control on it, while the state that needs none had one. Measured
+            on the owner's library: every one of the 22 books that stand on a
+            shelf stand on the ONE shelf that is not on the drawing, so this
+            sentence — not the address — is what this feature actually shows
+            today. The remedy exists (the plan's empty-cell picker lists every
+            shelf standing nowhere) and nothing named it, so a household
+            member reading *not on the map yet* had no way to learn that the
+            answer is one tab away. */}
+        {onMap && (
+          <a className="linkish" href={planHash()}>
+            {t.where_put_on_map}
+          </a>
+        )}
+      </>
+    )
 
   const behind = note && where.address?.depth != null && where.address.depth > 1
 
@@ -139,7 +165,7 @@ export function Address({ where, note = true, onMap = false }: AddressProps) {
       </p>
       {behind && <p className="tiny muted">{t.where_behind}</p>}
       {onMap && (
-        <a className="linkish show-on-map" href={planHash(where.shelf_id)}>
+        <a className="linkish" href={planHash(where.shelf_id)}>
           {t.where_show_on_map}
         </a>
       )}

@@ -15,12 +15,10 @@ import { mapText } from '../text'
 
 import { useEffect, useRef, useState } from 'react'
 
-import { Select } from '@booksnap/ui'
+import { formatDate, Select } from '@booksnap/ui'
 
 import { Elevation } from './Elevation'
 import type { ShelfOverviewDTO } from '../../api/client'
-import { formatDate } from '@booksnap/ui'
-
 import { shelfHash } from '../../lib/route'
 import type { MergePreview, OffMapShelf, StripOrder } from '../useMapSync'
 import type { Cell, Doc, Selection } from './types'
@@ -704,19 +702,24 @@ function ReadState({ shelfId, actions }: { shelfId: string; actions: Actions }) 
   // fact, it is furniture. Measured on the owner's library.
   if (!state.last_read_at && stale === 0) return null
   return (
-    <div className="field inline read-state">
-      <span>{T.last_read}</span>
-      <strong>
-        {state.last_read_at
-          ? formatDate(state.last_read_at, lang)
-          : t.shelf_never_read}
-        {stale > 0 && (
-          <span className="stale-dot" title={T.rows_stale(stale)}>
-            {' ●'}
-          </span>
-        )}
-      </strong>
-    </div>
+    <>
+      <div className="field inline read-state">
+        <span>{T.last_read}</span>
+        <strong>
+          {state.last_read_at
+            ? formatDate(state.last_read_at, lang)
+            : t.shelf_never_read}
+        </strong>
+      </div>
+      {/* ⚠ A SENTENCE, not a dot with a tooltip. The first cut was a 7x17px
+          ● inside the date's own `<strong>`, so it read as punctuation on the
+          date — and its only explanation was a `title`: no hover on a phone,
+          so the words were unreachable by tap on the device this product is
+          for, and the span carried no role, so a screen reader met them only
+          in read-all mode. VISION §7's clause was delivered on desktop only.
+          Same words; they are on the screen now. */}
+      {stale > 0 && <p className="note warn">{T.rows_stale(stale)}</p>}
+    </>
   )
 }
 
@@ -739,7 +742,19 @@ function useCellInView(cell: Cell | null) {
     // ⚠ Guarded, like `onPhone`'s `matchMedia` two folds up: jsdom has no
     // `scrollIntoView`, and a missing one must mean "cannot scroll", not a
     // crash that takes the whole panel down with it.
-    if (at) box.current?.scrollIntoView?.({ block: 'nearest' })
+    if (!at) return
+    // ⚠⚠ **The CELL first, then the panel** — and on a phone the cell is the
+    // one that matters. Scrolling only the fieldset was measured at 375x812
+    // arriving from `#/plan/<shelfId>`: the panel's 219px pane opened at
+    // `scrollTop: 644` with the highlighted cell **409px above the fold** and
+    // no scrollbar to say so. P6.5c's whole case for that link is *"a
+    // highlighted cell can tell two unnamed bookcases apart"*, and the
+    // highlight was off-screen. Marking the cell LAST wins when both cannot
+    // fit, which is exactly the phone.
+    box.current?.scrollIntoView?.({ block: 'nearest' })
+    box.current?.closest('.map-side')
+      ?.querySelector('.elev-cell.selected')
+      ?.scrollIntoView?.({ block: 'nearest' })
   }, [at])
   return box
 }

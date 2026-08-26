@@ -49,7 +49,12 @@ function saved(bc: ReturnType<typeof newBookcase>) {
     ...bc,
     sections: bc.sections.map((sec) => ({
       ...sec,
-      shelves: sec.shelves.map((sh) => ({ ...sh, id: `${bc.id}-shelf` })),
+      // ⚠ DISTINCT per cell, like `toPlan` mints them. One id for every shelf
+      // in the section made the id-bearing assertions blind to WHICH cell was
+      // being described: a review made the panel show the section's last
+      // shelf instead of the selected one and this file stayed green.
+      shelves: sec.shelves.map((sh) => ({
+        ...sh, id: `${sec.id}-${sh.col}-${sh.level}`, label: '' })),
     })),
   }
 }
@@ -121,7 +126,15 @@ describe('the way down: a cell opens its shelf', () => {
     editor(upstairsCell)
     const open = await screen.findByRole('link',
                                          { name: 'פתחו את המדף הזה →' })
-    expect(open).toHaveAttribute('href', '#/map/cB-shelf')
+    // The id is percent-encoded on the way into the hash, which is
+    // `shelfHash`'s own job and worth seeing here.
+    expect(open).toHaveAttribute('href', '#/map/cB%3As1-0-0')
+    // ⚠ …and the read line is ABSENT for the default fixture, which has
+    // never been read and has no stale row. 152 of the owner's 153 shelves
+    // are in exactly that state, so a row saying *last read: never* would
+    // print on almost every cell anyone taps. The rule had no gate at all
+    // until a review deleted it and the whole ring stayed green.
+    expect(screen.queryByText('נקרא לאחרונה')).not.toBeInTheDocument()
   })
 
   it('says when the cell was last read, and marks a stale row', async () => {
@@ -132,9 +145,14 @@ describe('the way down: a cell opens its shelf', () => {
     // it twice out of two string tables is how one rule becomes two.
     editor(upstairsCell, OVERVIEW(2, '2026-03-11T10:00:00+00:00'))
     await screen.findByText('נקרא לאחרונה')
-    const dot = await screen.findByTitle(
-      '2 שורות לא נקראו מזמן — פתחו את המדף כדי לראות אילו')
-    expect(dot).toBeInTheDocument()
+    // ⚠ On the SCREEN, not in a `title`. The first cut was a 7x17px ● whose
+    // only explanation was a tooltip — no hover on a phone, so the sentence
+    // was unreachable by tap on the device this is for, and a review measured
+    // §7's clause as delivered on desktop only. Asserting the visible text is
+    // what makes that irreversible.
+    expect(await screen.findByText(
+      '2 שורות לא נקראו מזמן — פתחו את המדף כדי לראות אילו'))
+      .toBeInTheDocument()
   })
 
   it('asks the server ONCE for a cell, not once per render', async () => {
@@ -173,7 +191,7 @@ describe('the way down: a cell opens its shelf', () => {
 
     await screen.findByText('נקרא לאחרונה')
     expect(ask).toHaveBeenCalledTimes(1)
-    expect(ask).toHaveBeenCalledWith('cB-shelf')
+    expect(ask).toHaveBeenCalledWith('cB:s1-0-0')
 
     await userEvent.click(screen.getByRole('button', { name: 'bump 0' }))
     await screen.findByRole('button', { name: 'bump 1' })

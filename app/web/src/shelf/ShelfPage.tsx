@@ -87,6 +87,20 @@ export function ShelfPage({ shelfId, onBack, onOpen }: ShelfPageProps) {
 
       {state.kind === 'loading' && <p className="loading">{t.loading}</p>}
       {state.kind === 'missing' && <p className="empty">{t.shelf_not_found}</p>}
+      {/* ⚠ A refusal and a failure are two sentences, and one of them has a
+          BUTTON. "Absent is not unknown" is the rule the sibling item cites;
+          here the cost of collapsing them is that a dropped connection reads
+          as *your shelf is gone*. */}
+      {state.kind === 'failed' && (
+        <div className="errorbox" role="alert">
+          <p>{t.shelf_unreachable}</p>
+          <p className="tiny muted">{state.why}</p>
+          <button type="button" className="btn ghost"
+                  onClick={() => void shelfDetail.reload()}>
+            {t.retry}
+          </button>
+        </div>
+      )}
 
       {state.kind === 'ready' && (
         <>

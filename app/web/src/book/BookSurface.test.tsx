@@ -217,9 +217,14 @@ describe('the destructive actions', () => {
     fakeServer([DURRELL])
     renderApp(<App />)
     const drawer = await openDrawer()
-    const buttons = within(drawer).getAllByRole('button')
+    // ⚠ Links as well as buttons: the widened check still passed if the
+    // control shipped as an `<a>`, and P6.5b then put a real anchor into this
+    // very surface. A guard that names "a control" must enumerate the roles a
+    // control can have.
+    const named = [...within(drawer).getAllByRole('button'),
+                   ...within(drawer).queryAllByRole('link')]
       .map((b) => b.getAttribute('aria-label') || b.textContent || '')
-    expect(buttons.filter((name) => /מדף|shelf/i.test(name))).toEqual([])
+    expect(named.filter((name) => /מדף|shelf/i.test(name))).toEqual([])
   })
 })
 

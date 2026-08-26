@@ -15,6 +15,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
+  ApiError,
   addShelfDepth,
   getShelfBooks,
   getShelfOverview,
@@ -29,6 +30,18 @@ import {
 export type ShelfState =
   | { kind: 'loading' }
   | { kind: 'missing' }
+  /**
+   * The lookup FAILED — which is not the same as "no such shelf", and was
+   * being reported as it.
+   *
+   * ⚠ Measured with the API killed: the shelf screen said *המדף לא
+   * נמצא* with no alert, no retry and no mention of the network. It was
+   * survivable while the screen was reached only by a typed URL; P6.5b/c made
+   * it a DESTINATION in a chain — *its shelf*, *open this shelf* — so a phone
+   * losing its connection for a second now tells the owner that a catalogue
+   * built not to produce phantoms has lost their shelf.
+   */
+  | { kind: 'failed'; why: string }
   | { kind: 'ready'; shelf: Shelf; depths: DepthStatusDTO[]; lastReadAt: string | null }
 
 export function useShelfDetail(shelfId: string) {
@@ -59,8 +72,11 @@ export function useShelfDetail(shelfId: string) {
       const o = await getShelfOverview(shelfId)
       setState({ kind: 'ready', shelf: o.shelf, depths: o.depths,
                 lastReadAt: o.last_read_at ?? null })
-    } catch {
-      setState({ kind: 'missing' })
+    } catch (err: unknown) {
+      // 404 is the shelf answering; anything else is the ASKING failing.
+      setState(err instanceof ApiError && err.status === 404
+        ? { kind: 'missing' }
+        : { kind: 'failed', why: String(err) })
     }
   }, [shelfId])
 
@@ -122,6 +138,8 @@ export function useShelfDetail(shelfId: string) {
   return {
     state, depth, setDepth, photoImageId, books, booksLoading, booksError,
     history, historyLoading, addRowBehind, addingRow,
+    /** Ask again — what a failed lookup needs and a 404 does not. */
+    reload: loadOverview,
   }
 }
 

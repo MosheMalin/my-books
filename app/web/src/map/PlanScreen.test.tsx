@@ -43,6 +43,11 @@ function fakeMapServer() {
     places: [] as { id: string; floor_id: string; name: string;
                     rect: { x: number; y: number; w: number; h: number };
                     order: number }[],
+    /** P6.5c: a drawn bookcase, its one section, and the shelves standing
+     *  in it. Empty by default, so every existing test is untouched. */
+    bookcases: [] as Record<string, unknown>[],
+    sections: [] as Record<string, unknown>[],
+    shelves: [] as Record<string, unknown>[],
     /** Refuse the next POST with this status, the way a 409 arrives. */
     refuseNext: null as number | null,
     /**
@@ -98,7 +103,8 @@ function fakeMapServer() {
         sites: state.sites.map((s) => ({ ...s })),
         floors: state.floors.map((f) => ({ ...f })),
         places: state.places.map((p) => ({ ...p })),
-        bookcases: [], sections: [],
+        bookcases: state.bookcases.map((b) => ({ ...b })),
+        sections: state.sections.map((x) => ({ ...x })),
       })
     }
     if (method === 'DELETE' && path.startsWith('/map/sites/')) {
@@ -118,7 +124,17 @@ function fakeMapServer() {
       state.floors = state.floors.filter((f) => f.site_id !== id)
       return respond(null, 204)
     }
-    if (method === 'GET' && path === '/shelves') return respond([])
+    if (method === 'GET' && path === '/shelves')
+      return respond(state.shelves.map((x) => ({ ...x })))
+    if (method === 'GET' && path.startsWith('/shelves/')
+        && path.endsWith('/overview')) {
+      return respond({
+        shelf: { id: path.split('/')[2], label: '', depth_count: 1,
+                 virtual: false, created_at: null, capture_count: 0,
+                 book_count: 0, address: null, formerly: [] },
+        depths: [], last_read_at: null,
+      })
+    }
     // P6.4b's two routes. The GET is read only AFTER a refusal, and it is
     // what decides WHICH refusal the owner is shown — so the fake honours
     // `undoReason` rather than answering one shape for every case, which is
@@ -181,6 +197,29 @@ function fakeMapServer() {
   })
 
   return state
+}
+
+/**
+ * Draw one bookcase with one 1x1 section on `floorId`, and stand a shelf in
+ * it — the smallest world in which `#/plan/<shelfId>` has anything to point
+ * at. Returns the shelf's id.
+ */
+function drawOne(state: ReturnType<typeof fakeMapServer>,
+                 floorId: string, tag: string): string {
+  state.bookcases.push({
+    id: `bc-${tag}`, floor_id: floorId, place_id: null, name: '',
+    front: 'S', rect: { x: 0, y: 0, w: 4, h: 1 }, order: 0,
+  })
+  state.sections.push({
+    id: `sec-${tag}`, bookcase_id: `bc-${tag}`, ordinal: 1,
+    column_levels: [1], gaps: [], default_levels: 1, default_depth: 1,
+  })
+  state.shelves.push({
+    id: `sh-${tag}`, label: '', depth_count: 1, virtual: false,
+    created_at: null, capture_count: 0, book_count: 0, formerly: [],
+    address: { section_id: `sec-${tag}`, col: 1, level: 1 },
+  })
+  return `sh-${tag}`
 }
 
 let server: ReturnType<typeof fakeMapServer>
@@ -789,5 +828,130 @@ describe('taking back the last destructive map edit', () => {
     const said = await saidIn('alert', 'מאז')
     expect(said).not.toContain(HE.undo_already)
     expect(said).not.toContain(HE.undo_nothing)
+  })
+})
+
+describe('pointing the drawing at a shelf (P6.5c)', () => {
+  /**
+   * ⚠ This whole block exists because a quality review deleted the feature
+   * six different ways and the 407-test ring stayed green: the link could be
+   * removed, pointed at a bare `#/plan`, made never to apply, dropped out of
+   * the remount key, made to return a cell WITHOUT its bookcase (the exact
+   * defect the item's own commit message says was found in two places at
+   * once), or made to re-apply on every load. The only verification was a
+   * browser walk, which is not repeatable — and this is the headline feature
+   * of the item, the thing that makes an address usable at all on a library
+   * whose bookcases are all unnamed.
+   */
+  const openAt = (shelf: string | null) => render(
+    <I18nProvider>
+      <PlanScreen library="lib-test" focusShelf={shelf} />
+    </I18nProvider>,
+  )
+
+  it('selects the shelf’s bookcase AND its cell', async () => {
+    // ⚠ Both. `pickCell` keeps `cases` because the shelf panel is drawn
+    // INSIDE the bookcase panel, so a selection carrying only cells opens the
+    // editor on the right storey and then reads "nothing selected".
+    server.sites.push({ id: 'st1', name: '\u05d4\u05d1\u05d9\u05ea', order: 0 })
+    server.floors.push({ id: 'f1', site_id: 'st1', name: '\u05e7\u05e8\u05e7\u05e2', order: 0 })
+    const shelf = drawOne(server, 'f1', 'a')
+
+    openAt(shelf)
+
+    // The bookcase panel is what carries the shelf panel.
+    await screen.findByRole('link', { name: HE.open_this_shelf }, WAIT)
+    expect(screen.getByRole('button',
+                            { name: '\u05de\u05d3\u05e3, \u05e2\u05de\u05d5\u05d3\u05d4 1, \u05d2\u05d5\u05d1\u05d4 1' }))
+      .toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('opens the storey the shelf is on, not the one last looked at',
+     async () => {
+    server.sites.push({ id: 'st1', name: '\u05d4\u05d1\u05d9\u05ea', order: 0 })
+    server.floors.push({ id: 'f1', site_id: 'st1', name: '\u05e7\u05e8\u05e7\u05e2', order: 0 })
+    server.floors.push({ id: 'f2', site_id: 'st1', name: '\u05e2\u05dc\u05d9\u05d5\u05e0\u05d4', order: 1 })
+    drawOne(server, 'f1', 'down')
+    const upstairs = drawOne(server, 'f2', 'up')
+    globalThis.localStorage.setItem('booksnap.map.floor.st1', 'f1')
+
+    openAt(upstairs)
+
+    await screen.findByRole('link', { name: HE.open_this_shelf }, WAIT)
+    expect(screen.getByText('\u05e2\u05dc\u05d9\u05d5\u05e0\u05d4')).toBeInTheDocument()
+  })
+
+  it('switches SITE for a shelf drawn in another one', async () => {
+    // `toPlan` builds one site at a time, so a shelf in the parents' place is
+    // simply not in the document on screen. The screen asks the server which
+    // site owns it and switches — the same call the picker makes.
+    server.sites.push({ id: 'st1', name: '\u05d4\u05d1\u05d9\u05ea', order: 0 })
+    server.sites.push({ id: 'st2', name: '\u05d4\u05d5\u05e8\u05d9\u05dd', order: 1 })
+    server.floors.push({ id: 'f1', site_id: 'st1', name: '\u05e7\u05e8\u05e7\u05e2', order: 0 })
+    server.floors.push({ id: 'f2', site_id: 'st2', name: '\u05e7\u05e8\u05e7\u05e2', order: 0 })
+    const theirs = drawOne(server, 'f2', 'theirs')
+    globalThis.localStorage.setItem('booksnap.map.site.lib-test', 'st1')
+
+    openAt(theirs)
+
+    await screen.findByRole('link', { name: HE.open_this_shelf }, WAIT)
+    expect(screen.getByRole('button',
+                            { name: '\u05de\u05d3\u05e3, \u05e2\u05de\u05d5\u05d3\u05d4 1, \u05d2\u05d5\u05d1\u05d4 1' }))
+      .toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('re-points at a second shelf without a fresh mount', async () => {
+    // ⚠ The route change this feature actually arrives by. Following
+    // *הצגה על השרטוט* from the shelf screen changes the hash inside a
+    // MOUNTED app, so `PlanScreen` re-renders rather than remounting — and
+    // `MapScreen` reads `initialSelection` in a `useState` initialiser, which
+    // is consumed once. The focus is part of the remount key for that reason,
+    // and a review deleted the key and every test stayed green, because they
+    // all mount fresh. A rerender is what reproduces the real journey.
+    server.sites.push({ id: 'st1', name: 'הבית', order: 0 })
+    server.floors.push({ id: 'f1', site_id: 'st1', name: 'קרקע', order: 0 })
+    const first = drawOne(server, 'f1', 'one')
+    const second = drawOne(server, 'f1', 'two')
+
+    const view = render(
+      <I18nProvider>
+        <PlanScreen library="lib-test" focusShelf={first} />
+      </I18nProvider>,
+    )
+    await screen.findByRole('link', { name: HE.open_this_shelf }, WAIT)
+    expect(screen.getByRole('link', { name: HE.open_this_shelf }))
+      .toHaveAttribute('href', `#/map/${first}`)
+
+    view.rerender(
+      <I18nProvider>
+        <PlanScreen library="lib-test" focusShelf={second} />
+      </I18nProvider>,
+    )
+
+    await waitFor(() =>
+      expect(screen.getByRole('link', { name: HE.open_this_shelf }))
+        .toHaveAttribute('href', `#/map/${second}`), WAIT)
+  })
+
+  it('lands quietly when the shelf it names stands nowhere', async () => {
+    // The link is only ever offered when there IS an address, so this is a
+    // hand-typed URL. Nothing is selected and nothing is announced — an alert
+    // about a shelf the owner did not ask about would be noise on the screen
+    // they did ask for. What is asserted is that it does not CRASH and does
+    // not raise the editor's banner.
+    server.sites.push({ id: 'st1', name: '\u05d4\u05d1\u05d9\u05ea', order: 0 })
+    server.floors.push({ id: 'f1', site_id: 'st1', name: '\u05e7\u05e8\u05e7\u05e2', order: 0 })
+    server.shelves.push({
+      id: 'sh-free', label: '', depth_count: 1, virtual: false,
+      created_at: null, capture_count: 0, book_count: 0, formerly: [],
+      address: null,
+    })
+
+    openAt('sh-free')
+
+    await screen.findByRole('radio', { name: HE.arrow }, WAIT)
+    expect(screen.queryByRole('link', { name: HE.open_this_shelf }))
+      .not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 })

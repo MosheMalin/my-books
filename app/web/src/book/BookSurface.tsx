@@ -51,7 +51,14 @@ import { CopyBadges, StatusBadge } from '../books/Feed'
  * population); a lookup that FAILED says it could not find out. Collapsing
  * the last two would report a server error as a fact about the furniture.
  */
-function CopyWhere({ copy }: { copy: Copy }) {
+function CopyWhere({ copy, onLeave, here }: {
+  copy: Copy
+  /** Called as the shelf link is followed. The drawer supplies its own
+   *  `onClose` — see the ⚠ below. */
+  onLeave?: (() => void) | undefined
+  /** The shelf this surface is being read FROM, if any. */
+  here?: string | undefined
+}) {
   const { t } = useI18n()
   const shelfId = copy.shelf_id ?? null
   const { data, loading, error } = useShelfWhere(shelfId, copy.depth ?? undefined)
@@ -65,16 +72,48 @@ function CopyWhere({ copy }: { copy: Copy }) {
         ) : loading ? (
           <span className="muted">{t.loading}</span>
         ) : error || !data ? (
-          <span className="muted">{t.where_unknown}</span>
+          <>
+            <span className="muted">{t.where_unknown}</span>
+            {/* ⚠ The link stays. It needs no lookup — `copy.shelf_id` is in
+                hand and the shelf route resolves it — so dropping it made a
+                failed ADDRESS lookup also take away the way to the shelf,
+                which is the one thing still knowable. */}
+            {shelfId !== here && (
+              <a className="linkish" href={shelfHash(shelfId)}
+                 onClick={() => onLeave?.()}>
+                {t.where_open_shelf}
+              </a>
+            )}
+          </>
         ) : (
           <>
             <Address where={data} />
             {/* The drill the other way: UI_PLAN §3's level 3 is the shelf
                 screen, and this is the link into it that the Books tab never
-                had. `#/map/<shelfId>` is that route's own shape. */}
-            <a className="linkish" href={shelfHash(data.shelf_id)}>
-              {t.where_open_shelf}
-            </a>
+                had. `#/map/<shelfId>` is that route's own shape.
+
+                ⚠⚠ **It closes the drawer as it goes.** This surface's default
+                mount is the DRAWER, and `App.tsx` clears `drawerId` only when
+                the route becomes a BOOK — so a route change to `#/map/<id>`
+                left a focus-trapped overlay over the screen it had just
+                navigated to. Measured: the shelf screen loaded invisible
+                behind `.drawer.on` and a scrim, `elementFromPoint` at the
+                middle of the viewport returned the book drawer's body, and
+                recovery was two taps. `promote()` twenty lines up exists for
+                exactly this reason and already says so — the first anchor
+                this file has ever carried walked straight into it.
+
+                ⚠ And it is ABSENT on the shelf screen it would point at: a
+                link back to the page you are reading is a control that moves
+                nothing, on the surface where it is most likely to be pressed.
+                (`onClick` rather than replacing the href, so a middle-click
+                or a copied link still behaves like the place it is.) */}
+            {data.shelf_id !== here && (
+              <a className="linkish" href={shelfHash(data.shelf_id)}
+                 onClick={() => onLeave?.()}>
+                {t.where_open_shelf}
+              </a>
+            )}
           </>
         )}
       </span>
@@ -86,6 +125,12 @@ export interface BookSurfaceProps {
   book: Book
   /** Full page rather than drawer. Changes the wrapper, never the content. */
   full?: boolean
+  /** Close whatever this surface is mounted IN, because a link inside it is
+   *  about to navigate. Supplied by the drawer; the full page needs none. */
+  onLeave?: (() => void) | undefined
+  /** The shelf whose screen is showing this book, if any — so the surface
+   *  does not offer to go where it already is. */
+  here?: string | undefined
   onAuthor: (authorKey: string) => void
   onPromote?: (() => void) | undefined
   onDeleted: () => void
@@ -97,6 +142,8 @@ export function BookSurface({
   onAuthor,
   onPromote,
   onDeleted,
+  onLeave,
+  here,
 }: BookSurfaceProps) {
   const { t, lang } = useI18n()
   const books = useBooks()
@@ -456,7 +503,7 @@ export function BookSurface({
                       </span>
                     </div>
                   )}
-                  <CopyWhere copy={copy} />
+                  <CopyWhere copy={copy} onLeave={onLeave} here={here} />
                   <div className="kv">
                     <span className="k">{t.lending}</span>
                     <span>
