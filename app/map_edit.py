@@ -54,6 +54,7 @@ from app.domain.alias import resolve
 from app.domain.map_undo import MapRestore
 from app.map_undo import Journal, record
 from app.ports import Clock, IdGen
+from app.ports.duplicates import DuplicateQueue
 from app.ports.map import MapStore
 from app.ports.store import (
     BookStore,
@@ -229,8 +230,9 @@ def apply_slot_change(
     while the map was open on a laptop.
     """
     was = map_store.get_section(library, change.section.id)
-    removal, before = _release(shelves, books, library,
-                               _losing(shelves, library, change))
+    removal, before, asked = _release(shelves, books, library,
+                               _losing(shelves, library, change),
+                               duplicates=journal.duplicates)
     map_store.save_section(library, change.section)
     # The WHOLE address set, not just `change.added` — `_fill` is idempotent
     # by address, so this costs nothing extra and heals a section whose slots
@@ -246,8 +248,8 @@ def apply_slot_change(
     if before:
         _record(journal, map_store, shelves, library, kind="remove_column",
                 tag=f"section:{change.section.id}", was=was,
-                shelves_before=before, created=made,
-                wrote=_wrote(removal, before, made, change.section, ()))
+                shelves_before=before, created=made, questions=asked,
+                wrote=_wrote(removal, before, made, change.section, (), asked))
     return removal
 
 
@@ -351,8 +353,9 @@ def apply_gaps(
     # the delete are one query apart — see `_release`, where a review measured
     # a label typed in that window being destroyed outright.
     was = map_store.get_section(library, change.section.id)
-    removal, before = _release(shelves, books, library, losing,
-                               protect=declared)
+    removal, before, asked = _release(shelves, books, library, losing,
+                               protect=declared,
+                               duplicates=journal.duplicates)
     map_store.save_section(library, change.section)
     made = _fill(shelves, library, change.section, change.section.addresses,
                  ids=ids, clock=clock)
@@ -364,8 +367,8 @@ def apply_gaps(
     if before:
         _record(journal, map_store, shelves, library, kind="gaps",
                 tag=f"section:{change.section.id}", was=was,
-                shelves_before=before, created=made,
-                wrote=_wrote(removal, before, made, change.section, ()))
+                shelves_before=before, created=made, questions=asked,
+                wrote=_wrote(removal, before, made, change.section, (), asked))
     return removal
 
 
@@ -386,14 +389,15 @@ def clear_bookcase_slots(
     emptied the slots itself would be the silent data-loss path MAP_PLAN §2
     predicted for this exact item.
     """
-    removal, before = _release(
+    removal, before, asked = _release(
         shelves, books, library,
-        _standing_in_bookcase(map_store, shelves, library, bookcase_id))
+        _standing_in_bookcase(map_store, shelves, library, bookcase_id),
+        duplicates=journal.duplicates)
     # Tagged by the BOOKCASE, which is what makes this and the delete that
     # follows it one undo — see `app.domain.map_undo.coalesces_with`.
     _record(journal, map_store, shelves, library, kind="clear_bookcase",
-            tag=f"bookcase:{bookcase_id}", shelves_before=before,
-            wrote=_wrote(removal, before, (), None, ()))
+            tag=f"bookcase:{bookcase_id}", shelves_before=before, questions=asked,
+            wrote=_wrote(removal, before, (), None, (), asked))
     return removal
 
 
@@ -413,12 +417,13 @@ def clear_section_slots(
     implementing *"remove the hutch"* by clearing the case would detach or
     delete every shelf in the base as well.
     """
-    removal, before = _release(
+    removal, before, asked = _release(
         shelves, books, library,
-        shelves.list_shelves_in_section(library, section_id))
+        shelves.list_shelves_in_section(library, section_id),
+        duplicates=journal.duplicates)
     _record(journal, map_store, shelves, library, kind="clear_section",
-            tag=f"section:{section_id}", shelves_before=before,
-            wrote=_wrote(removal, before, (), None, ()))
+            tag=f"section:{section_id}", shelves_before=before, questions=asked,
+            wrote=_wrote(removal, before, (), None, (), asked))
     return removal
 
 
@@ -521,6 +526,7 @@ def _wrote(
     created: tuple[Shelf, ...],
     section: Section | None,
     gone: tuple,
+    asked: tuple[DuplicateQuestion, ...] = (),
 ) -> dict:
     """What this edit LEFT BEHIND, keyed as the fingerprint keys it.
 
@@ -545,6 +551,13 @@ def _wrote(
         wrote[f"shelves:{shelf.id}"] = shelf
     for name, record_id in gone:
         wrote[f"{name}:{record_id}"] = None
+    # ⚠ The §5.4 questions that went with their shelves. ABSENT for every one
+    # — a question at a shelf that is gone is gone — and the keys have to be
+    # here, or the entry watches a scope its own restore names, which
+    # `fingerprint` now raises on rather than quietly narrowing.
+    for question in asked:
+        wrote[f"questions:{question.shelf_id}:{question.depth}:"
+              f"{question.book_key}"] = None
     return wrote
 
 
@@ -624,7 +637,8 @@ def _release(
     losing: Iterable[Shelf],
     *,
     protect=None,
-) -> tuple[SlotRemoval, tuple[Shelf, ...]]:
+    duplicates: DuplicateQueue,
+) -> tuple[SlotRemoval, tuple[Shelf, ...], tuple[DuplicateQuestion, ...]]:
     """Let go of a set of slots: detach what is occupied, delete what is not.
 
     The one place either half happens, so the rule cannot be half-applied by
@@ -649,6 +663,33 @@ def _release(
 
     A protected shelf is DETACHED, exactly like an occupied one — the same
     smaller loss, and the same reason: half-applying the edit is worse.
+
+    ⚠ **The third return value is the questions that went with the wood**, and
+    it exists because §3.15 says every destructive edit records its own
+    inverse. §3.10a's third orphaned kind is closed by ``delete_shelf``
+    itself — an open §5.4 question at a shelf that no longer exists is listed
+    in ``GET /duplicates``, counted on the Books tab, and both *answer* and
+    *skip* 404 forever, with the queue's own stale-cleanup DOWNSTREAM of that
+    404 so it cannot even be dismissed. Visible, permanent, unactionable.
+
+    But a cleanup with no inverse is a broken promise one level up: a review
+    measured ``offer`` answering ``available: true`` with an empty ``changed``
+    and then restoring the shelf WITHOUT its pending human ask. So they are
+    read here, before the store destroys them, and the caller journals them.
+
+    ⚠ Read BEFORE the delete for the same reason the shelf rows are: once the
+    store has run there is nothing left to write down, and an id is not a
+    question.
+
+    ⚠ A standing DECISION is left alone, and the reason in an earlier draft of
+    this note was WRONG — it said a shelf id is never reused, which P6.4b's
+    own undo falsifies by restoring the row under its original id. The true
+    reason is narrower and checkable: every decision in this codebase is read
+    shelf-scoped (`list_decisions`, `decisions_at_shelf`), no route enumerates
+    them library-wide, and `reconcile()` raises if a decision's `(shelf,
+    depth)` disagrees with the shelf it was called for. So a row at a dead
+    shelf is INERT — and if the shelf comes back, the human's answer comes
+    back with it, intact. Clearing it would be the only lossy half.
     """
     losing = list(losing)
     occupied = deepest_occupied_depths(shelves, books, library, losing)
@@ -663,6 +704,14 @@ def _release(
     # the stale row back over work nobody asked it to touch. The fingerprint
     # cannot catch that one, because it is taken after this point and agrees
     # with itself.
+    # ⚠ BEFORE the loop, because `delete_shelf` destroys them (that is where
+    # §3.10a's orphan is actually closed, so no door can bypass it) and an id
+    # is not a question. Read for every shelf that MIGHT go, not only the ones
+    # the planner scheduled: the loop below re-decides, and a shelf it
+    # detaches instead simply contributes nothing.
+    asked = tuple(q for shelf in losing
+                  for q in duplicates.list_open_questions(
+                      library, shelf_id=shelf.id))
     fresh: dict[str, Shelf] = {}
     for section_id in {s.address.section_id for s in losing if s.address}:
         fresh.update({sh.id: sh for sh in
@@ -714,7 +763,13 @@ def _release(
             # propagating, which is what left a half-applied edit behind.
             shelves.save_shelf(library, unbind_shelf(current))
             detached.append(shelf_id)
-    return SlotRemoval(deleted=tuple(deleted), detached=tuple(detached)), before
+    # ⚠ Only the shelves that actually WENT. `asked` was read for every shelf
+    # that might, because the loop above re-decides — and a question at a
+    # shelf it DETACHED instead is still answerable, so putting it in the
+    # inverse would make an undo re-open something nobody closed.
+    gone = set(deleted)
+    return (SlotRemoval(deleted=tuple(deleted), detached=tuple(detached)),
+            before, tuple(q for q in asked if q.shelf_id in gone))
 
 
 def bind_shelf_to_slot(

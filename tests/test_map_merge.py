@@ -84,9 +84,11 @@ def _world():
     shelves = MemoryShelfStore()
     maps = MemoryMapStore()
     books = MemoryBookStore()
+    duplicates = MemoryDuplicateQueue()
     maps.bind_shelves(shelves)
     shelves.bind_map(maps)
     shelves.bind_books(books)
+    shelves.bind_duplicates(duplicates)
     maps.save_site(LIB, new_site(id="st", library_id=LIB.id, name="הבית"))
     maps.save_floor(LIB, new_floor(id="fl", library_id=LIB.id, site_id="st",
                                    name="קרקע"))
@@ -94,7 +96,7 @@ def _world():
                                    rect=Rect(0, 0, 12, 9), name="סלון"))
     ports = Shelves(map_store=maps, shelves=shelves, books=books,
                     reads=MemoryReadStore(), decisions=MemoryDecisionStore(),
-                    duplicates=MemoryDuplicateQueue())
+                    duplicates=duplicates)
     journal = Journal(store=MemoryMapUndoStore(), ids=SeqIdGen("u"),
                       clock=StubClock(), books=books,
                       decisions=ports.decisions, duplicates=ports.duplicates)
@@ -1243,3 +1245,301 @@ def test_a_union_of_two_restores_keeps_the_replay_ORDER():
         "the union reordered the replay, which is the one thing this bag "
         "promises to preserve")
     assert both.captures[2].order == 2, "older wins on a collision"
+
+
+# --- P6.4e: history across the seam ---------------------------------------
+
+def _read_of(ports, shelf, *, id, when, sighted=()):
+    """One finished read of a shelf, and the copies it reconfirmed."""
+    from app.domain import finish_read
+
+    # ⚠ Each read gets its OWN photograph — `(shelf, depth, order)` is
+    # unique, so reusing order 0 collides on the second read.
+    shot = _photo(ports, shelf, id=f"cap-{id}",
+                  order=len(ports.shelves.list_captures(LIB, shelf.id)))
+    read = new_read(shelf, (shot,), id=id, depth=1, mode="llmpage",
+                    started_at=when)
+    ports.reads.save_read(LIB, finish_read(read, finished_at=when))
+    for book_id, copy_id in sighted:
+        book = ports.books.get(LIB, book_id)
+        from app.domain import Provenance, relink_copy
+        ports.books.save(LIB, relink_copy(book, copy_id, Provenance(
+            run_id=id, spine_id=copy_id, shelf_id=shelf.id, depth=1,
+            captured_at=when)))
+    return read
+
+
+def test_a_merged_copys_streak_survives_the_seam():
+    """§3.16, and the number it replaces was **0**.
+
+    Nothing is rewritten when two shelves become one, so a copy that arrived
+    with the absorbed identity still names IT in its provenance — and
+    `not_seen_streak`, asked about the survivor, found no sighting at all and
+    took its *never sighted here* branch. That branch also returns 0, which is
+    what *reconfirmed by the most recent read* returns: a book last actually
+    seen in January reported the same as one seen this morning, on the day the
+    owner was reorganising.
+    """
+    from app.domain import not_seen_streak
+    from app.domain.alias import identities
+
+    ports, journal = _world()
+    survivor = _drawn(ports).shelves[0]
+    absorbed = _photo_born(ports)
+    _book(ports, id="b1", title="בית", shelf_id=absorbed.id)
+    _read_of(ports, absorbed, id="r0", when="2026-01-01T00:00:00Z",
+             sighted=[("b1", "c-b1")])
+    for n in (1, 2, 3):
+        _read_of(ports, absorbed, id=f"r{n}", when=f"2026-0{n + 1}-01T00:00:00Z")
+
+    before = not_seen_streak(ports.books.get(LIB, "b1").copies[0],
+                             absorbed.id, 1,
+                             ports.reads.list_reads(LIB, absorbed.id, depth=1))
+    assert before == 3, before
+
+    _merge(ports, journal, absorbed, survivor)
+
+    where = identities(survivor.id, ports.shelves.list_aliases(LIB))
+    reads = tuple(r for one in where
+                  for r in ports.reads.list_reads(LIB, one, depth=1))
+    aliases = ports.shelves.aliases_of(LIB, survivor.id)
+    after = not_seen_streak(ports.books.get(LIB, "b1").copies[0],
+                            survivor.id, 1, reads, aliases)
+    assert after == 3, (
+        f"the badge read {after} after the merge — 0 means both *seen this "
+        "morning* and *never sighted here*, and every moved copy took the "
+        "second branch")
+
+    # ⚠⚠ AND IT KEEPS GROWING. The first implementation STOPPED at a read it
+    # could not vouch for, and after a merge every new read is a survivor read
+    # — unvouched, because this copy has no sighting there — so the walk
+    # terminated at index 0 and the badge went back to 0 on the very next
+    # photograph. Measured: the fix survived exactly until the owner
+    # re-photographed the shelf they had just merged.
+    survivor = ports.shelves.get_shelf(LIB, survivor.id)
+    _read_of(ports, survivor, id="s1", when="2026-09-01T00:00:00Z")
+    reads = tuple(r for one in where
+                  for r in ports.reads.list_reads(LIB, one, depth=1))
+    grown = not_seen_streak(ports.books.get(LIB, "b1").copies[0],
+                            survivor.id, 1, reads, aliases)
+    assert grown == 4, (
+        f"the badge read {grown} after one read of the merged shelf — a read "
+        "of the survivor AFTER the merge covers the whole wood, because the "
+        "captures were refiled")
+
+
+def test_a_read_of_the_other_half_stops_the_walk_rather_than_inflating_it():
+    """§3.16's other half, and the one a naive union gets wrong.
+
+    Two photo-born identities merged into one slot are usually two halves of
+    one shelf, and a read of the left half never covered the right — so
+    counting it as a miss INFLATES the streak, which is a false claim about
+    the owner's books rather than a missing one.
+    """
+    from app.domain import not_seen_streak
+    from app.domain.alias import identities
+
+    ports, journal = _world()
+    survivor = _drawn(ports).shelves[0]
+    absorbed = _photo_born(ports)
+    _book(ports, id="b1", title="בית", shelf_id=absorbed.id)
+    _read_of(ports, absorbed, id="r0", when="2026-01-01T00:00:00Z",
+             sighted=[("b1", "c-b1")])
+    _read_of(ports, absorbed, id="r1", when="2026-02-01T00:00:00Z")
+    # …and three reads of the SURVIVOR's own half, after the copy was sighted.
+    for n in (1, 2, 3):
+        _read_of(ports, survivor, id=f"s{n}", when=f"2026-0{n + 2}-01T00:00:00Z")
+
+    _merge(ports, journal, absorbed, survivor)
+
+    where = identities(survivor.id, ports.shelves.list_aliases(LIB))
+    reads = tuple(r for one in where
+                  for r in ports.reads.list_reads(LIB, one, depth=1))
+    said = not_seen_streak(ports.books.get(LIB, "b1").copies[0],
+                           survivor.id, 1, reads,
+                           ports.shelves.aliases_of(LIB, survivor.id))
+    # ⚠ ONE, not zero and not four. `r1` read this copy's OWN half and did not
+    # find it, so it is evidence and it counts. The three survivor reads are
+    # from BEFORE the merge — they never covered this half — so they are
+    # skipped. An earlier version of this test asserted 0, which enshrined the
+    # `break` that threw away `r1` along with them.
+    assert said == 1, (
+        f"counted {said}: the pre-merge reads of the OTHER half are not "
+        "evidence about this copy — counting them is §3.16's named failure, "
+        "and discarding its own half's read with them is how the badge froze")
+
+
+def test_the_streak_is_unchanged_when_the_closure_is_one_shelf():
+    """§3.16: *"It reduces exactly to today's behaviour when the closure is
+    one shelf."* Every read then belongs to the one identity, so the stop
+    condition can never fire."""
+    from app.domain import not_seen_streak
+
+    ports, _ = _world()
+    shelf = _photo_born(ports)
+    _book(ports, id="b1", title="בית", shelf_id=shelf.id)
+    _read_of(ports, shelf, id="r0", when="2026-01-01T00:00:00Z",
+             sighted=[("b1", "c-b1")])
+    for n in (1, 2):
+        _read_of(ports, shelf, id=f"r{n}", when=f"2026-0{n + 1}-01T00:00:00Z")
+
+    copy = ports.books.get(LIB, "b1").copies[0]
+    reads = ports.reads.list_reads(LIB, shelf.id, depth=1)
+    assert not_seen_streak(copy, shelf.id, 1, reads) == 2
+    assert not_seen_streak(copy, shelf.id, 1, reads,
+                           ports.shelves.aliases_of(LIB, shelf.id)) == 2
+
+
+def test_a_destroyed_slot_takes_its_unanswerable_questions_with_it():
+    """§3.10a's third orphaned kind, closed.
+
+    An open §5.4 question is keyed `(library, shelf, depth, book_key)` with no
+    foreign key, so a deleted shelf left it standing in the queue and in the
+    Books tab count while *answer* and *skip* both 404 forever — and the
+    queue's own stale-cleanup is downstream of that 404, so it could not even
+    be dismissed. Visible, permanent, and nothing the owner can act on.
+    """
+    from app.map_edit import clear_section_slots
+
+    ports, journal = _world()
+    drawn = _drawn(ports, columns=2)
+    empty, keeps = drawn.shelves[0], drawn.shelves[1]
+    _book(ports, id="b1", title="בית", shelf_id=keeps.id)
+    for shelf in (empty, keeps):
+        ports.duplicates.save_question(LIB, DuplicateQuestion(
+            id=f"q-{shelf.id}", library_id=LIB.id, shelf_id=shelf.id, depth=1,
+            book_key="עגנון|תמול שלשום", read_id="r", spine_id="s",
+            claim_title="תמול שלשום", claim_author="עגנון",
+            existing_book_id="b1", opened_at="2026-05-01T00:00:00Z"))
+
+    removal = clear_section_slots(ports.map_store, ports.shelves, ports.books,
+                                  LIB, drawn.sections[0].id, journal=journal)
+
+    assert empty.id in removal.deleted and keeps.id in removal.detached
+    standing = {q.shelf_id for q in ports.duplicates.list_open_questions(LIB)}
+    assert empty.id not in standing, (
+        "a question stands at a shelf that no longer exists; nothing can "
+        "answer it and nothing can dismiss it")
+    assert keeps.id in standing, (
+        "a DETACHED shelf still exists, so its question is still answerable "
+        "— clearing it would be destroying an ask nobody asked to destroy")
+
+    # ⚠ And the JOURNAL carries only what actually went. `_release` reads the
+    # questions of every shelf that MIGHT go, because the loop re-decides —
+    # writing all of them into the inverse would make an undo re-open an ask
+    # at a shelf it merely detached, which nobody closed.
+    entry = journal.store.recent(LIB, limit=1)[0]
+    assert [q.shelf_id for q in entry.restore.questions] == [empty.id], (
+        "the inverse names a question at a shelf that still exists")
+
+
+def test_a_shelf_lists_the_books_of_every_identity_it_answers_for():
+    """`books_on_shelf`'s own argument, applied to the shelf screen.
+
+    ⚠ Reachable, and not only in theory: the merge writes the alias FIRST (see
+    `app/map_merge.py` — a copy that has not moved yet is then still
+    reachable), so between that write and the refile a copy stands at the
+    absorbed identity while the shelf that answers for it is the survivor.
+    Filtering on the survivor's own id alone loses it for exactly as long as
+    that window is open, and forever if the process dies inside it.
+    """
+    from app.domain.alias import ShelfAlias, identities
+
+    ports, _ = _world()
+    survivor = _drawn(ports).shelves[0]
+    absorbed = _photo_born(ports)
+    _book(ports, id="b1", title="בית", shelf_id=absorbed.id)
+    # The state an interrupted merge leaves: the identity has moved, the books
+    # have not.
+    ports.shelves.absorb_shelf(LIB, ShelfAlias(
+        alias_id=absorbed.id, library_id=LIB.id, shelf_id=survivor.id,
+        merged_at="2026-08-26T10:00:00+00:00"))
+
+    where = identities(survivor.id, ports.shelves.list_aliases(LIB))
+    assert [b.id for b in ports.books.books_on_shelf(LIB, where)] == ["b1"]
+    assert [b.id for b in ports.books.books_on_shelf(LIB, (survivor.id,))] == [], (
+        "this is the state the widening exists for; if the narrow query "
+        "already finds it, the fixture is not in that state")
+
+
+def test_a_merge_does_not_manufacture_evidence_of_absence():
+    """§3.16's title, and the code that claimed to honour it produced three
+    units of it.
+
+    ⚠ `vouched` was *ever sighted at*, not *stands at*. A copy photographed on
+    the left half in January and on the right half since February was vouched
+    for BOTH, so every later read of the left half — which correctly did not
+    find it, because it had moved — counted as a miss. Measured: the badge
+    read 0 before the merge and 3 after it, with no read in between. The merge
+    alone manufactured the evidence.
+    """
+    from app.domain import not_seen_streak
+
+    ports, journal = _world()
+    survivor = _drawn(ports).shelves[0]
+    absorbed = _photo_born(ports)
+    _book(ports, id="b1", title="בית", shelf_id=absorbed.id)
+    _read_of(ports, absorbed, id="r-jan", when="2026-01-01T00:00:00Z",
+             sighted=[("b1", "c-b1")])
+    # It moves to the survivor's half, and is photographed there.
+    from app.domain import refile_copy
+    ports.books.save(LIB, refile_copy(ports.books.get(LIB, "b1"), "c-b1",
+                                      shelf_id=survivor.id, depth=1))
+    _read_of(ports, survivor, id="r-feb", when="2026-02-01T00:00:00Z",
+             sighted=[("b1", "c-b1")])
+    # …and the LEFT half is read three more times, never seeing it again.
+    for n in (3, 4, 5):
+        _read_of(ports, absorbed, id=f"r-{n}", when=f"2026-0{n}-01T00:00:00Z")
+
+    before = not_seen_streak(ports.books.get(LIB, "b1").copies[0],
+                             survivor.id, 1,
+                             ports.reads.list_reads(LIB, survivor.id, depth=1))
+    assert before == 0, before
+
+    _merge(ports, journal, absorbed, survivor)
+
+    from app.domain.alias import identities
+    where = identities(survivor.id, ports.shelves.list_aliases(LIB))
+    reads = tuple(r for one in where
+                  for r in ports.reads.list_reads(LIB, one, depth=1))
+    after = not_seen_streak(ports.books.get(LIB, "b1").copies[0],
+                            survivor.id, 1, reads,
+                            ports.shelves.aliases_of(LIB, survivor.id))
+    assert after == 0, (
+        f"the merge alone changed the badge from 0 to {after}. It stands on "
+        "the survivor's half and was last seen there; the other half's reads "
+        "were never about it")
+
+
+def test_an_undo_puts_back_the_question_the_edit_destroyed():
+    """§3.15: the five that destroy or detach shelves record their own
+    INVERSE. P6.4e added a SIXTH kind of destruction and did not extend it.
+
+    ⚠ Measured by two reviews: the offer answered `available: true` with an
+    empty `changed`, the shelf came back, and the human's pending §5.4 ask did
+    not. A promise of full restoration that quietly does not deliver one is
+    worse than the orphan it replaced — and re-raising that question costs a
+    paid re-read.
+    """
+    from app.map_edit import clear_section_slots
+
+    ports, journal = _world()
+    drawn = _drawn(ports, columns=2)
+    empty = drawn.shelves[0]
+    ports.duplicates.save_question(LIB, DuplicateQuestion(
+        id="q1", library_id=LIB.id, shelf_id=empty.id, depth=1,
+        book_key="עגנון|תמול שלשום", read_id="r", spine_id="s",
+        claim_title="תמול שלשום", claim_author="עגנון",
+        existing_book_id="b1", opened_at="2026-05-01T00:00:00Z"))
+    before = census(ports)
+
+    clear_section_slots(ports.map_store, ports.shelves, ports.books, LIB,
+                        drawn.sections[0].id, journal=journal)
+    assert ports.duplicates.list_open_questions(LIB) == ()
+
+    assert offer(journal, ports.map_store, ports.shelves, LIB).available
+    undo(journal, ports.map_store, ports.shelves, ports.books, LIB)
+
+    assert [q.id for q in ports.duplicates.list_open_questions(LIB)] == ["q1"], (
+        "the drawing came back and the pending ask did not")
+    assert census(ports) == before

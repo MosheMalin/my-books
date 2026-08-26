@@ -1238,7 +1238,7 @@ The decomposition, each landing on `main` before the next:
 | **P6.4b** | **Undo for destructive map edits** (§3.15) — the journal, the inverse, and the invalidation rule. Covers remove column, remove section, delete bookcase, remove site, **and switching cells off** (P6.3.2, which arrived after §3.15 was written); the merge joins it in P6.4d. Fingerprint at undo time and no expiry; record all, undo the head; a minimal UI lands with it (owner, 2026-08-24). ⚠ Schema **v22** and **v23** — see the note below. | L | `review-migration` **before**, data-integrity, quality, ux | ✅ |
 | **P6.4c** | ✅ **Bind** — an unaddressed shelf gains an address, and loses one. No identities join; a taken slot is a 409 naming the occupant and offering the merge. Unbinding is journalled and binding is not; the panel gained a picker; two pre-existing journal bugs fell out of it. | S | data-integrity, security, quality, ux |
 | **P6.4d** | ✅ **Merge** — two identities become one, undoable. All three of P6.4a's named traps met: the captures move BEFORE the row goes, `absorb_shelf` re-points inside one transaction, and `DELETE /shelves/{id}` now catches `ShelfHasAliases` too (it was answering 500 for the first survivor a merge made). Four reviews found one critical, nine majors and a conditional React hook. | L | data-integrity, security, quality, ux | ✅ |
-| **P6.4e** | **History across the seam** — streaks, staleness and the *formerly* line resolve through the alias. ⚠ **Two thirds of this arrived early**, because a data-integrity review measured what deferring them cost: `apply_diff` and `_load_read`/`_load_shelf` now resolve, since without it a read settling across a merge had its ENTIRE diff discarded in silence (the settle path logs and does not re-raise) while the read was stored DONE with a summary claiming books it never added — and every §5.4 question a merge moved became permanently unanswerable, unevictable, and 404 forever. What is left is the STREAK (§3.16) and the *formerly* line. | M | data-integrity, quality, ux |
+| **P6.4e** | ✅ **History across the seam** — streaks, staleness and the *formerly* line resolve through the alias. Two thirds arrived with P6.4d (`apply_diff` and `_load_read`/`_load_shelf`), because a review measured what deferring it cost: a read settling across a merge lost its whole diff in silence. This item is §3.16's streak, `ShelfDTO.formerly`, and §3.10a's third orphaned kind. | M | data-integrity, quality, ux | ✅ |
 | **P6.4f** | *Optional:* **the proposal** — candidates from typed labels only, each an explicit ✓. | S | quality, ux, security |
 
 ⚠ **The order moved, and so did the numbering** (owner, 2026-08-23). **P6.4b
@@ -1708,6 +1708,98 @@ branch. It errs safely (a lost warning, never a lost book, and never §3.16's
 inflated streak, because the reads stay filed at the absorbed id) — but two
 halves of what the owner has just declared to be one piece of wood report
 different staleness from identical evidence.
+
+### P6.4e — history across the seam
+
+Three obligations, and the first is §3.16's.
+
+**The streak read 0, and 0 means two things.** `not_seen_streak` answers 0
+both for *reconfirmed by the most recent read* and for *never sighted at this
+(shelf, depth) at all* — and after a merge every moved copy takes the second
+branch, because nothing is rewritten (§3.11) so a copy that arrived with the
+absorbed identity still names IT in its provenance. Measured before this item:
+a book last actually seen in January reported the same as one seen this
+morning, on the day the owner was reorganising.
+
+It now walks the alias closure **and stops at the first read whose coverage it
+cannot vouch for** — a read of an identity this copy has never been sighted at
+ENDS the count rather than adding to it. That is the half a naive union gets
+wrong: two photo-born identities merged into one slot are usually two halves
+of one shelf, and a read of the left half never covered the right, so counting
+it inflates the streak. §3.16's own reduction test holds — with a closure of
+one shelf every read belongs to the one identity, so the stop condition cannot
+fire — and both halves are mutation-checked.
+
+**The shelf says what it was.** `ShelfDTO.formerly` carries each absorbed
+identity with its label and its former ADDRESS, which is the half §3.11 argues
+is worth recording rather than deriving. The shelf screen prints it under the
+*last read* line.
+
+`shelf_books` asks under every identity too, and not only because
+`books_on_shelf` makes that argument: P6.4d writes the alias FIRST, so between
+that write and the refile a copy stands at the absorbed identity while the
+shelf answering for it is the survivor. Filtering on one id loses it for as
+long as that window is open, and forever if the process dies inside it.
+
+**§3.10a's third orphaned kind is closed.** An open §5.4 question is keyed
+`(library, shelf, depth, book_key)` with no foreign key, so a deleted shelf
+left it standing in the queue and in the Books tab count while *answer* and
+*skip* both 404 forever — and the queue's own stale-cleanup is downstream of
+that 404, so it could not even be dismissed. `_release` now clears the
+questions of the shelves it DELETES, and only those: a detached shelf still
+exists, so its questions are still answerable.
+
+⚠ **A standing DECISION at a deleted shelf is left alone, deliberately.** The
+first draft gave the wrong reason — *a shelf id is uuid4 and never reused* —
+which P6.4b's own undo falsifies by restoring the row under its ORIGINAL id.
+The true reason is narrower and checkable: every decision in this codebase is
+read shelf-scoped, no route enumerates them library-wide, and `reconcile()`
+raises if one's `(shelf, depth)` disagrees with the shelf it was called for.
+So a row at a dead shelf is INERT — and because the id does come back, the
+human's answer comes back with it, intact. Clearing it would be the only lossy
+half. A question is different in kind: a pending ASK the owner can see and
+cannot dismiss.
+
+**What three reviews then found**, and the first defeats the item:
+
+- ⚠⚠ **the streak fix survived until the next photograph.** `break` on a read
+  it could not vouch for discarded every OLDER read with it, and after a merge
+  every new read is a survivor read — which a copy that has left is never
+  re-sighted by. Measured: 3 right after the merge, **0** after one read of
+  the merged shelf, 0 forever. Rebuilt around `merged_at`, which the alias
+  already carried and nothing used: a read of the survivor from the merge
+  onwards covers the whole wood, because the captures were refiled. §3.16's
+  *"stops at the first read whose coverage cannot be vouched for"* means SKIP,
+  and a literal stop is what threw the evidence away;
+- ⚠ **`vouched` was *ever sighted at*, not *stands at*** — so a copy that moved
+  between halves was answerable to both, and every later read of the half it
+  had LEFT counted as a miss. 0 before a merge, **3** after it, with no read
+  in between: §3.16's own title, produced by the code that claims to prevent
+  it;
+- ⚠ **the *formerly* line was dead on the only screen that renders it.**
+  `ShelfDTO` has eleven construction sites and two carried `formerly` —
+  neither of them the overview, which is the one the shelf screen reads. The
+  client ring was green because its harness echoes the shelf it is handed;
+- ⚠ **the undo did not put back what the edit destroyed.** A sixth kind of
+  destruction was added to `_release` and its inverse was not, so the offer
+  said `available: true` with an empty `changed` and the pending ask was gone;
+- the clearing moved to `ShelfStore.delete_shelf` — `_release` was one of four
+  doors, and `DELETE /api/v1/shelves/{id}` reached the identical orphan;
+- the card said 1 beside a list of 2; the header said *never read* above 22
+  books from four reads; `GET /shelves/{absorbed}` answered **404** for a
+  bookmark taken before a merge; the merge's own 200 answered `formerly: []`
+  about the alias it had just written;
+- ⚠ **on the owner's library 0 of 154 shelves carry a label**, so the line read
+  *"היה גם: לא משויך"* — one identical panel per merge, saying nothing. Label,
+  else the former ADDRESS, else silence.
+
+⚠ **And widening the counted-string guard to read EVERY string table rather
+than the map's found six live plurals**, in both languages — `1 books` in the
+most-read sentence in the product, and the not-seen badge this item is about.
+Three were a number joined to a bare noun in JSX, the one shape the guard
+cannot see; they are functions now. That is the fifth guard in this pillar
+that passed because it was enumerating from something narrower than the class
+it named.
 
 ## 6. What P6.1 must not repeat
 

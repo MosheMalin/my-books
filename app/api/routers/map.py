@@ -912,13 +912,23 @@ def delete_section(
 
 def _shelf_dto(shelves: ShelfStore, books: BookStore, library: LibraryRef,
                shelf: Shelf) -> ShelfDTO:
-    """One shelf, counted. The same two queries `set_shelf_depth` pays on the
-    slot next door: `copies_per_shelf` is the whole library in one grouped
-    pass, which is what the shelf list already costs."""
+    """One shelf, counted — over every identity it answers for.
+
+    ⚠ `formerly` too, and the merge route is the one with the strongest
+    reason to be right about it: a review measured `POST .../merge` answering
+    `formerly: []` about the alias row it had just written. Nothing renders
+    that field today, which makes it a wrong answer on the wire waiting for
+    whoever does.
+    """
+    aliases = shelves.aliases_of(library, shelf.id)
+    here = (shelf.id,) + tuple(a.alias_id for a in aliases)
+    counts = books.copies_per_shelf(library)
     return ShelfDTO.of(
         shelf,
-        capture_count=len(shelves.list_captures(library, shelf.id)),
-        book_count=books.copies_per_shelf(library).get(shelf.id, 0),
+        capture_count=sum(len(shelves.list_captures(library, one))
+                          for one in here),
+        book_count=sum(counts.get(one, 0) for one in here),
+        formerly=aliases,
     )
 
 

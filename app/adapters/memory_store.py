@@ -206,6 +206,8 @@ class MemoryShelfStore:
         #: memory store would ACCEPT an address the real database refuses,
         #: and the API ring (which runs on memory stores) would never see it.
         self._sections: "MemoryMapStore | None" = None
+        #: The §5.4 queue whose rows a shelf deletion must take with it.
+        self._duplicates: "MemoryDuplicateQueue | None" = None
         #: The books this store must ask about before deleting a shelf.
         #: SQLite does NOT get this one free — `copies.shelf_id` has no
         #: foreign key, it predates the `shelves` table by four schema
@@ -332,6 +334,13 @@ class MemoryShelfStore:
     ) -> tuple[ShelfAlias, ...]:
         return tuple(a for a in self.list_aliases(library)
                      if a.shelf_id == shelf_id)
+
+    def bind_duplicates(self, queue: "MemoryDuplicateQueue") -> None:
+        """Tell this store where the §5.4 queue is, so deleting a shelf can
+        take its unanswerable questions with it. SQLite gets it from one file;
+        this store has to be handed it, or the API ring — which runs on memory
+        stores — would never see the rule."""
+        self._duplicates = queue
 
     def bind_books(self, books: "MemoryBookStore") -> None:
         """Tell this store where the books are, so a shelf holding one cannot
@@ -483,6 +492,14 @@ class MemoryShelfStore:
                 "leave them with a location nothing can open (§5.6)"
             )
         del self._s(library)[shelf_id]
+        # ⚠ And its open §5.4 questions, which nothing else can now reach:
+        # both *answer* and *skip* resolve through the shelf. See the port.
+        if self._duplicates is not None:
+            for question in self._duplicates.list_open_questions(
+                library, shelf_id=shelf_id
+            ):
+                self._duplicates.delete_question(
+                    library, shelf_id, question.depth, question.book_key)
         return True
 
     # --- captures --------------------------------------------------------

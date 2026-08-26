@@ -822,6 +822,14 @@ class SqliteShelfStore(_SqliteStore):
                     "leave them with a location nothing can open (§5.6)"
                 )
             with conn:
+                # ⚠ And its open §5.4 questions, in the SAME transaction:
+                # nothing can reach them once the shelf is gone (both *answer*
+                # and *skip* resolve through it), and a crash between the two
+                # statements would re-create the orphan this closes. See the
+                # port for why it lives here rather than at one caller.
+                conn.execute(
+                    "DELETE FROM duplicate_questions WHERE library_id = ?"
+                    " AND shelf_id = ?", (library.id, shelf_id))
                 cur = conn.execute(
                     "DELETE FROM shelves WHERE id = ? AND library_id = ?",
                     (shelf_id, library.id),

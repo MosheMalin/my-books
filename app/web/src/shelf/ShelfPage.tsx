@@ -104,6 +104,40 @@ export function ShelfPage({ shelfId, onBack, onOpen }: ShelfPageProps) {
                       : t.shelf_never_read}
                   </p>
                   {stale && <p className="tiny stalenote">{stale}</p>}
+                  {/* ⚠ §3.11's last promise, and the ADDRESS half is the one
+                      worth having: *"the shelf that was at section 1, column
+                      2, level 3"* is what a person reads off a drawing, and
+                      it is the half that survives in someone's memory when
+                      the id does not. A merge would otherwise destroy the
+                      household's name for the absorbed shelf — a shelf is
+                      "the one with the cookbooks" long after the drawing has
+                      been rearranged. */}
+                  {/* ⚠ Label, else ADDRESS, else NOTHING — and the third
+                      branch is the one a review measured. On the owner's
+                      library **0 of 154 shelves carry a label**, so
+                      `label || t.unassigned` rendered *"היה גם: לא משויך"*
+                      three times over for three merges: N identical panels
+                      for one cause, saying nothing anybody can act on. An
+                      unnamed shelf that also stood nowhere has nothing to
+                      say, and silence is better than a line that says so.
+                      ⚠ Newest first. `list_aliases` orders by `alias_id`,
+                      which is uuid4 — random to a person reading *what this
+                      shelf was*. */}
+                  {[...(state.shelf.formerly ?? [])]
+                    .sort((a, b) => (b.merged_at || '').localeCompare(
+                      a.merged_at || ''))
+                    .map((was) => {
+                      const said = was.label
+                        || (was.address
+                          ? t.shelf_formerly_at(was.address.col,
+                                                was.address.level)
+                          : '')
+                      return said ? (
+                        <p className="tiny muted rtl-safe" key={was.id}>
+                          {t.shelf_formerly(said)}
+                        </p>
+                      ) : null
+                    })}
                 </div>
               </div>
 

@@ -520,6 +520,31 @@ class ShelfStore(Protocol):
         """
 
     def delete_shelf(self, library: LibraryRef, shelf_id: str) -> bool:
+        """(see below) — and it takes the shelf's OPEN §5.4 QUESTIONS with it.
+
+        ⚠ §3.10a's third orphaned kind, closed where every door meets it
+        rather than at one of them (P6.4e). A question is keyed ``(library,
+        shelf, depth, book_key)`` with no foreign key, so a deleted shelf left
+        it standing in ``GET /duplicates`` and counted on the Books tab while
+        *answer* and *skip* both 404 forever — and the queue's own
+        stale-cleanup is DOWNSTREAM of that 404, so it could not even be
+        dismissed. Visible, permanent, unactionable.
+
+        It was first fixed in ``app.map_edit._release``, which is ONE of four
+        doors: a review then walked `DELETE /api/v1/shelves/{id}` — the
+        plainest route in the router — and produced the identical state. This
+        method's own neighbour makes the argument: *"a rule enforced at one
+        door is one caller away from being bypassed."*
+
+        ⚠ It does NOT touch standing DECISIONS, and that asymmetry is the
+        point rather than an oversight. A question is a pending ASK the owner
+        can see and cannot dismiss; a decision is an ANSWER that is merely
+        inert — every read of it is shelf-scoped, no route enumerates them
+        library-wide, and `reconcile()` raises if one's `(shelf, depth)`
+        disagrees with the shelf it was called for. And P6.4b's undo restores
+        a deleted shelf under its ORIGINAL id, so the answer comes back with
+        it, intact. Clearing it would be the only lossy half.
+        """
         """Remove a shelf that holds **nothing**. Returns False if absent.
 
         Raises :class:`ShelfNotEmpty` when captures exist **or when copies are

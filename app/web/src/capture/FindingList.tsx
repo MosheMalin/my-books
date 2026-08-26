@@ -117,14 +117,14 @@ export function FindingList({
   return (
     <>
       <div className="chiprow diffbits">
-        <span className="g">+{diff.added.filter(mine).length} {t.read_added}</span>
+        <span className="g">+{t.read_added(diff.added.filter(mine).length)}</span>
         {diff.corrected.filter(mine).length > 0 && (
           <span className="m">
-            {diff.corrected.filter(mine).length} {t.read_corrected}
+            {t.read_corrected(diff.corrected.filter(mine).length)}
           </span>
         )}
         <span className="m">
-          {diff.unchanged.filter(mine).length} {t.read_unchanged}
+          {t.read_unchanged(diff.unchanged.filter(mine).length)}
         </span>
         {pending.length > 0 && (
           <span className="p">{pending.length} {t.read_pending}</span>

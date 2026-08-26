@@ -2328,6 +2328,9 @@ def _memory_shelf_store():
     # spec in the map group pins across both.
     shelves = MemoryShelfStore()
     shelves.bind_books(MemoryBookStore())
+    # …and a §5.4 queue, because deleting a shelf now takes its unanswerable
+    # questions with it (P6.4e). SQLite gets it from one file.
+    shelves.bind_duplicates(MemoryDuplicateQueue())
     yield shelves
 
 
@@ -4988,6 +4991,57 @@ def rewriting_aliases_refuses_a_survivor_that_is_not_a_live_shelf(shelves):
 
 
 @shelf_contract
+def deleting_a_shelf_takes_its_unanswerable_questions_with_it(shelves):
+    """§3.10a's third orphaned kind, closed where every door meets it.
+
+    ⚠ It was first closed in `app.map_edit._release`, which is ONE of four
+    doors — and a review then walked `DELETE /api/v1/shelves/{id}`, the
+    plainest route in the router, to the identical state: the question listed
+    in `GET /duplicates`, counted on the Books tab, and both *answer* and
+    *skip* answering 404 forever, with the queue's own stale-cleanup
+    downstream of that 404 so it could not even be dismissed.
+
+    ⚠ Standing DECISIONS are NOT touched, and the asymmetry is the rule. A
+    question is a pending ask the owner can see and cannot dismiss; a decision
+    is an answer that is merely inert — every read of one is shelf-scoped, no
+    route enumerates them library-wide, and P6.4b's undo restores a deleted
+    shelf under its ORIGINAL id, so the answer comes back with it.
+    """
+    from app.domain import Decision, DecisionKind, DuplicateQuestion
+
+    # ⚠ The store's OWN queue where it has one (the memory pair is composed,
+    # like `bind_books`); SQLite shares one file, so a queue opened on the
+    # same path IS the same table — which is the point of one spec over both.
+    queue = getattr(shelves, "_duplicates", None)
+    decisions = MemoryDecisionStore()
+    if queue is None:
+        queue = SqliteDuplicateQueue(shelves.path)
+        decisions = SqliteDecisionStore(shelves.path)
+    _two_shelves(shelves)
+    for shelf_id in ("sh-old", "sh-new"):
+        queue.save_question(LIB, DuplicateQuestion(
+            id=f"q-{shelf_id}", library_id=LIB.id, shelf_id=shelf_id, depth=1,
+            book_key="עגנון|תמול שלשום", read_id="r", spine_id="s",
+            claim_title="תמול שלשום", claim_author="עגנון",
+            existing_book_id="b1", opened_at="2026-05-01T00:00:00Z"))
+    decisions.save_decision(LIB, Decision(
+        library_id=LIB.id, shelf_id="sh-old", depth=1,
+        book_key="עגנון|רוח רפאים", kind=DecisionKind.REJECTED,
+        decided_at="2026-02-01T00:00:00Z"))
+
+    assert shelves.delete_shelf(LIB, "sh-old") is True
+
+    assert [q.shelf_id for q in queue.list_open_questions(LIB)] == ["sh-new"], (
+        "a question stands at a shelf that no longer exists; nothing can "
+        "answer it and nothing can dismiss it")
+    assert [d.book_key for d in
+            decisions.decisions_at_shelf(LIB, "sh-old")] == ["עגנון|רוח רפאים"], (
+        "the human's standing answer was destroyed with the shelf — it is "
+        "inert, not in the way, and an undo brings the shelf back under the "
+        "same id")
+
+
+@shelf_contract
 def absorbing_narrows_every_statement_to_this_library(shelves):
     """H2 on the RE-POINT, which is a raw UPDATE with nothing else to lean on.
 
@@ -5816,7 +5870,7 @@ def test_a_v18_database_gains_the_binding_column_and_keeps_its_rows():
 # counts, which is the same silent gap wearing a different hat.
 SUITES = (
     (CONTRACT, IMPLEMENTATIONS, 42),
-    (SHELF_CONTRACT, SHELF_IMPLEMENTATIONS, 35),
+    (SHELF_CONTRACT, SHELF_IMPLEMENTATIONS, 36),
     (READ_CONTRACT, READ_IMPLEMENTATIONS, 17),
     (DECISION_CONTRACT, DECISION_IMPLEMENTATIONS, 8),
     (DUPLICATE_CONTRACT, DUPLICATE_IMPLEMENTATIONS, 9),

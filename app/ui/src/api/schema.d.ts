@@ -2798,6 +2798,35 @@ export interface components {
             /** Order */
             order?: number | null;
         };
+        /**
+         * FormerIdentityDTO
+         * @description One identity this shelf answers for, and where it used to stand.
+         *
+         *     §3.11's own sentence, made visible: *"the shelf that was at section 1,
+         *     column 2, level 3"* is a question the library can still answer after the
+         *     wood has been re-identified — and the address is the half that survives in
+         *     someone's memory when the id does not.
+         *
+         *     ⚠ ``label`` is the household's name for the absorbed shelf, which the
+         *     merge would otherwise destroy. A shelf is *"the one with the cookbooks"*
+         *     long after the drawing has been rearranged.
+         */
+        FormerIdentityDTO: {
+            /** @description Where it USED to stand. Historical: §3.10a leaves the extent untouched, so the cell may since have become a gap and that is fine — this answers *the shelf that was*, not *the shelf that is*. */
+            address?: components["schemas"]["ShelfAddressDTO"] | null;
+            /** Id */
+            id: string;
+            /**
+             * Label
+             * @default
+             */
+            label: string;
+            /**
+             * Merged At
+             * @default
+             */
+            merged_at: string;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -3597,6 +3626,11 @@ export interface components {
              * @description Rows front-to-back, declared by the owner — never detected (§5.7). 1 unless a row behind was added.
              */
             depth_count: number;
+            /**
+             * Formerly
+             * @description Identities absorbed into this shelf (§3.11). Empty for almost every shelf, and never null: a screen that has to ask whether the list exists before asking whether it is empty gets it wrong once.
+             */
+            formerly?: components["schemas"]["FormerIdentityDTO"][];
             /** Id */
             id: string;
             /**
