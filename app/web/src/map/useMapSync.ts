@@ -230,6 +230,16 @@ export type MapSync = {
    */
   unbindShelf: (shelfId: string, sectionId: string, col: number, level: number,
                 name: string) => void
+  /**
+   * Swap a section with the one above or below it (P6.7a).
+   *
+   * A `slotWrite`, for the same reason the bind and the unbind are: what it
+   * changes is `ordinal`, which no document op carries — `planDiff` knows
+   * how to add, remove and reshape a section and has never had a word for
+   * *these two are the wrong way round*. So it writes, then re-derives.
+   */
+  moveSection: (sectionId: string, direction: 'up' | 'down',
+                label: string) => void
   /** The plan as the server last confirmed it — the editor's starting doc. */
   initial: Plan | null
   /** Hand the current document over; the hook works out what to send. */
@@ -748,6 +758,15 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
         T.unbound_shelf(name)),
     [slotWrite, T])
 
+  const moveSection = useCallback(
+    (sectionId: string, direction: 'up' | 'down', label: string) =>
+      slotWrite(
+        (api) => api.post(
+          `/map/sections/${encodeURIComponent(sectionId)}/move`,
+          { direction }),
+        T.section_moved(label)),
+    [slotWrite, T])
+
   const record = useCallback((plan: Plan) => {
     setSaved('saving')
     // ⚠ SERIALISED, and the diff is computed INSIDE the task.
@@ -872,6 +891,7 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
     mergeShelf,
     bindShelf,
     unbindShelf,
+    moveSection,
     initial,
     record,
     reload: startOver,

@@ -70,6 +70,7 @@ const actions = (): Actions => ({
   resizeCase: vi.fn(), setCaseRoom: vi.fn(), turnCase: vi.fn(), setGaps: vi.fn(),
   setColumnCount: vi.fn(), setColumnLevels: vi.fn(), setDefaultLevels: vi.fn(),
   applyDefaultLevels: vi.fn(), setDefaultDepth: vi.fn(), applyDefaultDepth: vi.fn(),
+  moveSection: vi.fn(),
   setShelfDepth: vi.fn(), addSection: vi.fn(), removeSection: vi.fn(),
   deleteSelection: vi.fn(), copySelection: vi.fn(), paste: vi.fn(), select: vi.fn(),
   shelvesOffTheMap: vi.fn(async () => []), bindShelf: vi.fn(),

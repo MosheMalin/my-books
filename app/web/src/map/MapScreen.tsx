@@ -132,6 +132,10 @@ export type MapScreenProps = {
                    strip: StripOrder) => Promise<MergePreview>
     merge: (absorbedId: string, survivorId: string, strip: StripOrder,
             name: string) => void
+    /** P6.7a — swap two sections of one bookcase. A server write: `ordinal`
+     *  is not something `planDiff` can express. */
+    moveSection: (sectionId: string, direction: 'up' | 'down',
+                  label: string) => void
     /**
      * What this shelf's own screen knows about it (P6.5c): when it was last
      * read, and whether any row front-to-back is stale.
@@ -608,6 +612,22 @@ export default function MapScreen(props: MapScreenProps) {
       }
     },
     addSection: (id, where) => growCase(id, (bc) => addSection(bc, where)),
+    /**
+     * P6.7a — straight through to the server, like the bind and the unbind:
+     * `ordinal` is not something `planDiff` can express, and a document edit
+     * here would be an optimistic reorder with nothing to roll it back.
+     *
+     * ⚠ The label is the section's number BEFORE the swap, because that is
+     * the control the owner pressed. Naming it by where it landed would say
+     * *"section 1 moved"* about the button labelled 2.
+     */
+    moveSection: (sectionId, direction) => {
+      const owner = doc.plan.cases.find(
+        (c) => c.sections.some((s) => s.id === sectionId))
+      const index = owner
+        ? owner.sections.findIndex((s) => s.id === sectionId) : -1
+      props.shelves.moveSection(sectionId, direction, T.section_n(index + 1))
+    },
     removeSection: (id, sid) => {
       mapCase(id, (bc) => removeSection(bc, sid))
       // The selected cell may have been inside it. Dropping the shelf while

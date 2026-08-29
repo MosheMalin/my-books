@@ -116,6 +116,7 @@ const openEditor = () =>
         site={ONE_SITE}
         shelves={{ offTheMap: async () => [], bind: () => {},
                    unbind: () => {}, merge: () => {},
+                   moveSection: () => {},
                    previewMerge: async () => ({
                      absorbed_id: 'a', survivor_id: 'b', refused: null,
                      already: false, depth: 1, books: 0, copies: [],

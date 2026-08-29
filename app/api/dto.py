@@ -1458,6 +1458,30 @@ class SectionPatch(BaseModel):
     default_depth: int | None = Field(default=None, ge=1, le=MAX_DEPTH)
 
 
+class SectionMove(BaseModel):
+    """Swap a section with the neighbour above or below it (P6.7a)."""
+
+    direction: str = Field(
+        pattern="^(up|down)$",
+        description="In FURNITURE terms, never screen terms: `up` means "
+                    "towards the ceiling, a higher ordinal. The elevation "
+                    "draws top-down, so the arrow pointing up on screen "
+                    "sends `up`.",
+    )
+
+
+class SectionOrderDTO(BaseModel):
+    """A bookcase's sections after a reorder, bottom-first.
+
+    The WHOLE stack, not the one section that moved: `ordinal` is unique per
+    bookcase and a swap renumbers two of them, so answering with one would
+    leave the client holding a stack that has two sections claiming the same
+    number until it reloaded.
+    """
+
+    sections: list[SectionDTO]
+
+
 class SectionGapPatch(BaseModel):
     """Switch cells off, or back on. One instruction, with its sign.
 

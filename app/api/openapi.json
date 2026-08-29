@@ -2858,6 +2858,39 @@
         "title": "SectionGapPatch",
         "type": "object"
       },
+      "SectionMove": {
+        "description": "Swap a section with the neighbour above or below it (P6.7a).",
+        "properties": {
+          "direction": {
+            "description": "In FURNITURE terms, never screen terms: `up` means towards the ceiling, a higher ordinal. The elevation draws top-down, so the arrow pointing up on screen sends `up`.",
+            "pattern": "^(up|down)$",
+            "title": "Direction",
+            "type": "string"
+          }
+        },
+        "required": [
+          "direction"
+        ],
+        "title": "SectionMove",
+        "type": "object"
+      },
+      "SectionOrderDTO": {
+        "description": "A bookcase's sections after a reorder, bottom-first.\n\nThe WHOLE stack, not the one section that moved: `ordinal` is unique per\nbookcase and a swap renumbers two of them, so answering with one would\nleave the client holding a stack that has two sections claiming the same\nnumber until it reloaded.",
+        "properties": {
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/SectionDTO"
+            },
+            "title": "Sections",
+            "type": "array"
+          }
+        },
+        "required": [
+          "sections"
+        ],
+        "title": "SectionOrderDTO",
+        "type": "object"
+      },
       "SectionPatch": {
         "description": "Change the grid, or the defaults. Both halves report what happened to\nthe shelves, because a column removed is real shelves removed.",
         "properties": {
@@ -5799,6 +5832,59 @@
           }
         },
         "summary": "Apply Levels",
+        "tags": [
+          "map"
+        ]
+      }
+    },
+    "/api/v1/map/sections/{section_id}/move": {
+      "post": {
+        "description": "Swap a section with the one above or below it (P6.7a).\n\nThe owner's bookcase was recorded with its tall unit on the floor and a\nsingle-shelf strip on top of it — the other way round from the furniture.\nSections have always carried an order; nothing could change it.\n\n⚠ **This detaches nothing and destroys nothing**, which is why it takes\nno ``Journal``. Shelf addresses hold ``section_id``, and ids are untouched\nhere; what moves is the NUMBER an address prints. Pressing the other\narrow is a complete undo, and §3.15 is about the edits for which that is\nnot true.\n\n⚠ It writes the whole stack in ONE ``save_sections`` call, because\n``(bookcase, ordinal)`` is a unique index and a swap always passes\nthrough a collision. That adapter parks the ordinals negative first; a\nroute that wrote the two rows itself, in either order, would hit the\nindex halfway.",
+        "operationId": "move_section_route_api_v1_map_sections__section_id__move_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "section_id",
+            "required": true,
+            "schema": {
+              "title": "Section Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SectionMove"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SectionOrderDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Move Section Route",
         "tags": [
           "map"
         ]

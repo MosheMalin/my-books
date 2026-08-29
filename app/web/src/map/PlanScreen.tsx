@@ -383,6 +383,7 @@ export function PlanScreen({ library, focusShelf = null }: {
           unbind: sync.unbindShelf,
           previewMerge: sync.previewMerge,
           merge: sync.mergeShelf,
+          moveSection: sync.moveSection,
           /* ⚠ The imported function ITSELF, not an arrow around it. An
              arrow here is a new identity every render, and the panel's
              effect depends on it: measured at 375x812, selecting one cell

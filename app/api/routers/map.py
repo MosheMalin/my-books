@@ -90,6 +90,8 @@ from app.api.dto import (
     SectionDTO,
     SectionEditDTO,
     SectionGapPatch,
+    SectionMove,
+    SectionOrderDTO,
     SectionPatch,
     ShelfAddressDTO,
     ShelfDTO,
@@ -132,6 +134,7 @@ from app.domain import (
     new_floor,
     new_place,
     new_section,
+    move_section,
     new_site,
     next_section,
     renumber_sections,
@@ -141,7 +144,7 @@ from app.domain import (
     with_default_levels,
     with_gaps,
 )
-from app.domain.place import NotOnThisFloor
+from app.domain.place import NoNeighbourSection, NotOnThisFloor
 from app.map_edit import (
     apply_depth_default,
     deepest_occupied_depths,
@@ -247,6 +250,7 @@ def _translated():
     except UnknownParent as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
     except (NotOnThisFloor, NotEmpty, TooManySlots, SlotsOccupied,
+            NoNeighbourSection,
             SlotTaken, CellIsGap, AlreadyOnTheMap, ShelfWasMerged,
             VirtualShelfHasNoDepth,
             # ⚠ The whole `StoreError` family, not the three this tuple
@@ -893,6 +897,40 @@ def patch_section(
         return SectionEditDTO(section=SectionDTO.of(section))
     return _edit(store, shelves, books, library, change, journal=journal,
                  ids=ids, clock=clock)
+
+
+@router.post("/sections/{section_id}/move", response_model=SectionOrderDTO)
+def move_section_route(
+    section_id: str,
+    body: SectionMove,
+    library: LibraryRef = Depends(require(EDIT)),
+    store: MapStore = Depends(get_map_store),
+) -> SectionOrderDTO:
+    """Swap a section with the one above or below it (P6.7a).
+
+    The owner's bookcase was recorded with its tall unit on the floor and a
+    single-shelf strip on top of it — the other way round from the furniture.
+    Sections have always carried an order; nothing could change it.
+
+    ⚠ **This detaches nothing and destroys nothing**, which is why it takes
+    no ``Journal``. Shelf addresses hold ``section_id``, and ids are untouched
+    here; what moves is the NUMBER an address prints. Pressing the other
+    arrow is a complete undo, and §3.15 is about the edits for which that is
+    not true.
+
+    ⚠ It writes the whole stack in ONE ``save_sections`` call, because
+    ``(bookcase, ordinal)`` is a unique index and a swap always passes
+    through a collision. That adapter parks the ordinals negative first; a
+    route that wrote the two rows itself, in either order, would hit the
+    index halfway.
+    """
+    section = _section(store, library, section_id)
+    with _translated():
+        siblings = [s for s in store.load_map(library).sections
+                    if s.bookcase_id == section.bookcase_id]
+        settled = move_section(siblings, section_id, body.direction)
+        store.save_sections(library, settled)
+    return SectionOrderDTO(sections=[SectionDTO.of(s) for s in settled])
 
 
 @router.patch("/sections/{section_id}/shelves/{col}/{level}",
