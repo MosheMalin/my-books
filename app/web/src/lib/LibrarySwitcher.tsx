@@ -98,7 +98,7 @@ export function LibrarySwitcher() {
   if (libraries.length <= 1) {
     return (
       <div className="libswitch">
-        <span className="libswitch-label rtl-safe" title={shown}>
+        <span className="libswitch-label rtl-safe" dir="auto" title={shown}>
           {shown}
         </span>
       </div>
@@ -112,10 +112,23 @@ export function LibrarySwitcher() {
         className="libswitch-btn rtl-safe"
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label={t.library_switch}
+        // ⚠ The NAME is in the label, not only "switch library". A review
+        // measured a screen reader hearing only the verb: `aria-label`
+        // overrides the visible text, so which collection you are looking at
+        // — the question the control exists to answer — was never announced.
+        aria-label={`${t.library_switch}: ${shown}`}
+        title={shown}
         onClick={() => (open ? close() : setOpen(true))}
       >
-        <span className="rtl-safe">{shown}</span>
+        {/* ⚠ `dir="auto"`, not only `rtl-safe`. `unicode-bidi: plaintext`
+            resolves the PARAGRAPH's direction and leaves the box's own
+            `direction` alone — and `text-overflow` clips at the box's
+            direction end. Measured with the 14ch cap this bar now applies: a
+            Latin name in the Hebrew UI read *"tion Downstairs"* and a Hebrew
+            name in the English UI read the last three words, with no ellipsis
+            drawn either time. `dir="auto"` sets the direction from the string,
+            so the clip lands at the string's end. */}
+        <span className="rtl-safe" dir="auto">{shown}</span>
         <span className="libswitch-caret" aria-hidden="true" />
       </button>
 

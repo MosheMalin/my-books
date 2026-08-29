@@ -78,7 +78,7 @@ describe('accepting an invite (P4.3)', () => {
     // The switcher now exists (two libraries) and shows the JOINED one —
     // absorb() selects what just opened up.
     expect(
-      await screen.findByRole('button', { name: 'החלפת ספרייה' }),
+      await screen.findByRole('button', { name: /החלפת ספרייה/ }),
     ).toBeInTheDocument()
     await screen.findByText('של ההורים')
     expect(location.hash).toBe('#/library')

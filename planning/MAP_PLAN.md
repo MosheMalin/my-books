@@ -997,6 +997,70 @@ chain; the storey menu's items (including *remove the storey*) were 34px, and
 the members panel, the add-a-book modal and the capture tab's *Run* between 21
 and 37 — the surfaces the first touch-floor pass never opened.
 
+#### What P6.5a's UX review found, late
+
+It walked the tabs the item's own verification did not, and the two worst are
+one item's overflow amplified by the next item's decision.
+
+- **The capture tab still measured `scrollWidth` 658 against a clientWidth of
+  375**, 297ms after paint — because a capture re-attached from the server
+  carries its `image_id` as its name, a 64-character SHA-256, and `.caprow
+  .fn` declared no `overflow-wrap`. An unbreakable 68-character token has a
+  min-content width of 462px. P6.5a's claim was *"document width 484 → 375,
+  both languages"*; true on Books, false here. And because P6.5a moved the
+  ONLY navigation into a `position: fixed` bar, that residual overflow turned
+  *some controls are off-screen* into **no bottom bar on screen at all** — it
+  laid out at x=-283. P6.5a's own commit predicted the mechanism and did not
+  walk the tab where it still happens. The members panel was a victim of the
+  same page, not a defect: `.modal` is `inset: 0`, so `min(480px, 100%)`
+  resolved against 658 and put the dialog at x=-194.
+- **`.capture .btn` matched nothing.** The word `capture` is a className in
+  ZERO components — the screen is `capturelayout / intakecol / runactions /
+  modeopts`. So the phone floor added by the P6.5 review fold was inert, and
+  its own comment named *Run, the one control that spends money, at 37px* as
+  the thing it fixed. Measured after: still 37. A follow-up that reports a fix
+  and lands a selector matching nothing is the same failure as a docstring
+  naming a guard that does not exist. `.memberspanel` was the same shape.
+  ✅ `styles/touch.test.ts` now fails on a floor selector carrying a class no
+  component renders — and its first cut asked whether ANY class was rendered,
+  which `.btn` rescued, so it asks about every one.
+- **Landscape.** At 667×375 the bottom bar took 56px and `.mapscreen`'s 320px
+  MINIMUM refused to shrink, so 64px of the inspector sat permanently behind
+  the bar — including *delete this bookcase*. The floor predates the bar and
+  used to overflow into empty space. ⚠ The fix had to go at the END of
+  `map.css` and at **760**, not 640: this sheet is imported last so its base
+  rule beats a media rule in `books.css` (written there first, it computed
+  320px in a browser while looking right in the diff), and the bar is the
+  shell's, which appears at 760. The 120px seam is no longer only theoretical.
+- **The switcher's new ellipsis clipped the wrong end.** `unicode-bidi:
+  plaintext` resolves a paragraph's direction and leaves the box's
+  `direction` alone, and `text-overflow` clips at the box's end — measured, a
+  Latin name in the Hebrew UI read *"tion Downstairs"*, with no ellipsis
+  drawn. `dir="auto"` fixes the clip end; and `aria-label` was overriding the
+  visible text, so a screen reader heard *switch library* and never which
+  collection.
+- **The item was NOT inert above 760px**, contrary to its claim: the
+  `.langswitch` floor went into the base rule, growing the desktop app bar
+  57 → 65px while `--appbar-h` stayed 55 — leaving the sticky toolbar **1px**
+  of clearance where it had had 9. That is exactly the drift that token's
+  docstring exists to prevent. Floor moved into the breakpoint; measured 57px
+  and 29px of clearance after.
+
+⚠ **Declined, with the reason.** *The non-sticky app bar removes the only
+statement of which library you are writing into.* True, and conditional on
+having two or more libraries — with one the switcher is a plain label and
+nothing is lost, which is the state the owner is in. The remedy (putting the
+collection's name into the sticky Books toolbar) changes a screen's layout on
+a judgement about a state nobody is in yet, so it is the owner's call rather
+than a fold-in. Recorded here so it is a decision, not an oversight.
+
+⚠ **Filed, not fixed**: the capture tab issues **161 requests on every mount
+and every return-to-tab** (`/shelves` + 80 × `captures` + 80 × `reads`, last
+response at 2.83s) — which is also why the overflow above landed 300ms after
+the page looked settled. `touch.test.ts`'s `SHEETS` is still a hand-written
+list of five files. And 812×375 landscape is above 760, so it takes the
+desktop shell on a phone — the same seam again, from the other side.
+
 #### P6.5b in detail
 
 `address_parts` already existed in `app/domain/place.py`, written for this

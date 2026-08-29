@@ -20,7 +20,7 @@
  * Those are found by measuring a real browser at 375x812, which is what every
  * item in pillar 6 does before it claims a flow works.
  */
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
@@ -143,6 +143,73 @@ function floorsInPhoneBlocks(css: string): { at: string; px: number }[] {
  * deliberate change and belongs in this list's diff.
  */
 const MUST_WATCH = ['map.css', 'books.css', '@booksnap/ui — ui.css']
+
+/**
+ * Every class name this client's components actually render.
+ *
+ * ⚠ Read from the SOURCE, not listed: the failure this catches is a floor
+ * selector that matches nothing, and a list of "classes we know about" would
+ * be the same mistake one level up.
+ */
+function renderedClasses(): Set<string> {
+  const out = new Set<string>()
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name)
+      if (entry.isDirectory()) { walk(full); continue }
+      if (!/\.tsx?$/.test(entry.name)) continue
+      const src = readFileSync(full, 'utf8')
+      // ⚠ The whole EXPRESSION, then every word in it. A first cut stopped at
+      // the first quote or backtick and missed
+      // ``className={`sortdir${asc ? '' : ' desc'}`}`` — a real class, on the
+      // smallest control in the product. Over-collecting is the safe
+      // direction: a word that is not a class can only fail to rescue a
+      // selector that has another one.
+      for (const m of src.matchAll(
+        /className\s*=\s*(\{[^}]*\}?|"[^"]*"|'[^']*')/g))
+        for (const word of m[1]!.split(/[^\w-]+/))
+          if (word) out.add(word)
+      // `class="..."` turns up in the shared package's own markup.
+      for (const m of src.matchAll(/class\s*=\s*"([^"]*)"/g))
+        for (const word of m[1]!.split(/\s+/)) if (word) out.add(word)
+    }
+  }
+  walk(join(HERE, '..'))
+  walk(join(HERE, '../../../ui/src'))
+  return out
+}
+
+describe('a floor rule that matches nothing', () => {
+  it('is not a floor rule', () => {
+    // ⚠ This exists because a review measured exactly that: a follow-up
+    // commit added `.capture .btn` to the phone floor, named *Run — the one
+    // control that spends money* in its own comment, and the word `capture`
+    // is a className in ZERO components. The rule was inert, the control
+    // stayed at 37px, and every guard in this file passed it: they read
+    // DECLARATIONS and never ask whether a selector reaches anything.
+    //
+    // The check is deliberately crude — one class of the selector has to be
+    // rendered somewhere — because the alternative is a DOM, and the point is
+    // to catch a name that exists nowhere, not to resolve the cascade.
+    const rendered = renderedClasses()
+    const dead: string[] = []
+    for (const [name, css] of SHEETS) {
+      for (const { at } of floorsInPhoneBlocks(css)) {
+        if (!isPressed(at)) continue
+        for (const one of at.split(',').map((p) => p.trim())) {
+          // ⚠ EVERY class, not "at least one". The first cut asked whether
+          // any part of the selector was rendered — and `.capture .btn` was
+          // rescued by `.btn`, which is on half the buttons in the product.
+          // The dead half is the one that decides whether the rule matches,
+          // so an unknown name anywhere in the compound is the defect.
+          for (const c of [...one.matchAll(/\.([\w-]+)/g)].map((m) => m[1]!))
+            if (!rendered.has(c)) dead.push(`${name}: ${one} — .${c}`)
+        }
+      }
+    }
+    expect(dead, 'no component renders any of these').toEqual([])
+  })
+})
 
 describe('a control a phone has to press', () => {
   it('is never given a min-height below the touch floor', () => {
