@@ -120,9 +120,24 @@
   flex: 1;
   min-width: 0;
 }
+/* ⚠⚠ `overflow-wrap`, and it is not cosmetic. A capture re-attached from the
+   server carries its `image_id` as its name — a 64-character SHA-256 — and an
+   unbreakable 68-character token has a MIN-CONTENT width of 462px. Measured at
+   375x812 with one photo queued: `documentElement.scrollWidth` **658 against a
+   clientWidth of 375**, 297ms after paint. `min-width: 0` on the cell around
+   it cannot help; only a break opportunity inside the token can.
+
+   ⚠ What made it critical rather than ugly is one item old: P6.5a moved the
+   ONLY navigation into a `position: fixed` bar, which then laid itself out in
+   that 658px page at **x=-283** — no bottom bar on screen at all, and no way
+   to leave the capture tab. P6.5a's own commit predicted the mechanism
+   ("every fixed and percentage-sized surface below it then lays itself out in
+   a 484px page") and did not walk this tab. `.wshead .fn` beside it has
+   carried this exact declaration since P2.10. */
 .caprow .fn {
   font-size: 13px;
   font-weight: 550;
+  overflow-wrap: anywhere;
 }
 .caprow-assign {
   display: flex;

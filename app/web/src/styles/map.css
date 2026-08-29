@@ -1025,3 +1025,31 @@
     min-height: 44px;
   }
 }
+
+/* ⚠ The editor has to accept the box the shell gives it, and the SHELL's
+   breakpoint is 760 — not this sheet's 640.
+   `.mapscreen` carries a 320px MINIMUM (P6.3) which refuses to shrink, so the
+   `height: calc(100% - var(--botnav-h))` that `books.css` reserves for the
+   bottom bar did nothing: measured at 667x375, `#root` was 319 and
+   `.mapscreen` 320, leaving **64px of the inspector permanently behind the
+   bar**. Scrolling the page its whole range did not clear it, and
+   `elementFromPoint` in that band returned the bar's own button; with a
+   bookcase selected the control down there is *delete this bookcase*.
+
+   ⚠ It is HERE rather than in `books.css` for the reason `scoping.test.ts`
+   already records twice: this sheet is imported LAST, so at equal specificity
+   its base rule beats a media rule in the other one. Written there first, it
+   lost — and computed `320px` in a browser while looking correct in the diff.
+
+   ⚠ `min-height: 0`, not `min(320px, 100%)`: the percentage resolves against
+   a parent whose own height comes from this flex layout, which is cyclic, so
+   it falls back to `auto` and the whole `min()` is a flat 320. `#root` above
+   already reserves the bar's space; there is nothing left for a floor to
+   protect.
+
+   ⚠ 760, not 640, is also why the 120px seam MAP_PLAN records is not
+   cosmetic: between 641 and 760 the bar is present and this sheet's own phone
+   rules are not. */
+@media (max-width: 760px) {
+  .mapscreen { min-height: 0; }
+}

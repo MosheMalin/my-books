@@ -122,12 +122,18 @@
      `.langswitch button` below never applied to it and these two carried no
      padding at all. Measured at 375x812: the language toggle 21x25 and the
      account menu 40x25, the two smallest controls in the product, both under
-     the 44px floor by a factor of two. */
+     the 44px floor by a factor of two.
+
+     ⚠ The FLOOR moved into the phone breakpoint (see below); only the
+     padding is unconditional. It was written here, and P6.5a claimed the item
+     was inert above 760px — a review measured the app bar growing 57 → 65px on
+     a 961px desktop while `--appbar-h` stayed 55, leaving the sticky toolbar
+     **1px** of clearance where it had had 9. That token's own docstring says
+     it exists so a future app-bar height change cannot silently break the
+     offset; the change that grew the bar did not touch it. */
   padding: 6px 10px;
   font-size: 12.5px;
   color: var(--muted);
-  min-height: 44px;
-  min-width: 44px;
 }
 
 /* The library switcher (P3.1, UI_PLAN §1). Tokens only, like every other
@@ -349,6 +355,7 @@
      blanket `.page button` would also stretch every inline chip inside a book
      row — badges and copy tags that are not pressed — and a list whose rows
      are 60% whitespace is its own kind of unusable. */
+  .langswitch,
   .filterbar .chip,
   .seg button,
   .toolbar .btn,
@@ -386,11 +393,34 @@
   .modal .btn,
   .modal input,
   .modal select,
-  .memberspanel .btn,
-  .memberspanel select,
   .acctmenu-list button,
-  .capture .btn,
-  .capture input[type="radio"] + span,
+  /* ⚠ The CAPTURE tab's real class names. What stood here was
+     `.capture .btn` and `.capture input[type="radio"] + span` — and the word
+     `capture` is a className in **zero** components; the screen is
+     `capturelayout / runactions / modeopts / modeopt`. So the rule matched
+     nothing, and the comment above it named *Run — the one control that
+     spends money — at 37px* as the thing it fixed. Measured after: still 37,
+     computed `min-height: auto`, and the three reading-mode radios 13x13.
+     A follow-up that reports a fix and lands an inert selector is the
+     failure this repo already records for a docstring naming a guard that
+     does not exist. `.memberspanel` was the same shape and is gone too: that
+     panel renders `.modal`/`.modalbox` and clears the floor only because the
+     rules above happen to cover it.
+     ⚠ `styles/touch.test.ts` now fails on a floor selector whose classes no
+     component renders — which is how this one is meant to be caught next. */
+  .runactions .btn,
+  .modeopt,
+  .modeopt input[type="radio"],
+  .intakecol .btn,
+  /* …and the rest of that tab, measured once the selectors above were made
+     to match anything at all: the three intake chips at 24px, the per-photo
+     select-toggle at **13x13**, the shelf assignment `<select>` at 26 and
+     *what is in the photo* at 24. The checkbox is the one that decides which
+     photos a paid read runs over. */
+  .intakeactions .linkish,
+  .caprow > input[type="checkbox"],
+  .caprow .uisel select,
+  .caprow .linkish,
   .authorlink,
   .dhead .btn {
     min-height: 44px;
@@ -1119,7 +1149,15 @@
   }
 }
 
+/* ⚠ A dialog cannot be pushed off-screen by a page that overflows.
+   Measured on the capture tab at its 658px worst: `.modal` is
+   `position: fixed; inset: 0`, so `min(480px, 100%)` resolved against
+   658 and put the box at x=-194 with its role selects and *remove*
+   off-screen left. The panel was correct; the page under it was not —
+   and a control that depends on every other screen being right is a
+   control that fails on somebody else's bug. */
 .modalbox {
+  max-width: 100vw;
   background: var(--panel);
   border-radius: 14px;
   box-shadow: var(--shadow);

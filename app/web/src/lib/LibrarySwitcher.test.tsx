@@ -46,19 +46,44 @@ describe('the library switcher', () => {
     // says the class is asserted, because a missing one is invisible until
     // someone looks at a mixed-script name.
     expect(label).toHaveClass('rtl-safe')
-    expect(screen.queryByRole('button', { name: 'החלפת ספרייה' }))
+    expect(screen.queryByRole('button', { name: /החלפת ספרייה/ }))
       .not.toBeInTheDocument()
     expect(screen.queryByText('+ ספרייה חדשה')).not.toBeInTheDocument()
   })
+
+
+describe('the name in the bar', () => {
+  it('is in the accessible name too, not only in the pixels', async () => {
+    // ⚠ `aria-label` OVERRIDES the visible text, so *החלפת ספרייה*
+    // alone meant a screen reader heard the verb and never the collection —
+    // the one question this control exists to answer. And the narrow-width
+    // rule caps it at 14ch and clips it, so the `title` is the only way a
+    // long name can be read in full from the bar at all.
+    const server = fakeServer([A_BOOK])
+    server.libraries = [HOME, OFFICE]
+    renderApp(<App />)
+
+    const button = await screen.findByRole('button',
+                                           { name: /החלפת ספרייה/ })
+    expect(button).toHaveAccessibleName(expect.stringContaining('משפחת מלין'))
+    expect(button).toHaveAttribute('title', 'משפחת מלין')
+    // ⚠ `dir="auto"` on the span, not just `.rtl-safe`: `unicode-bidi:
+    // plaintext` resolves the PARAGRAPH and leaves the box's `direction`
+    // alone, and `text-overflow` clips at the box's direction end — measured,
+    // a Latin name in the Hebrew UI showed *"tion Downstairs"*, its wrong end,
+    // with no ellipsis drawn.
+    expect(button.querySelector('span[dir="auto"]')).toBeTruthy()
+  })
+})
 
   it('lists this account\'s libraries with their roles', async () => {
     const server = fakeServer([A_BOOK])
     server.libraries = [HOME, OFFICE]
     renderApp(<App />)
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'החלפת ספרייה' }))
+      expect(screen.getByRole('button', { name: /החלפת ספרייה/ }))
         .toHaveTextContent('משפחת מלין'))
-    await userEvent.click(screen.getByRole('button', { name: 'החלפת ספרייה' }))
+    await userEvent.click(screen.getByRole('button', { name: /החלפת ספרייה/ }))
     const items = await screen.findAllByRole('menuitemradio')
     expect(items.map((i) => i.textContent)).toEqual(
       ['משפחת מלין' + 'ניהול', 'המשרד' + 'עריכה'])
@@ -78,7 +103,7 @@ describe('the library switcher', () => {
     server.libraries = [HOME, OFFICE]
     renderApp(<App />)
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'החלפת ספרייה' }))
+      expect(screen.getByRole('button', { name: /החלפת ספרייה/ }))
         .toHaveTextContent('משפחת מלין'))
 
     // A book the loaded list does not contain, so `useBookRecord` really goes
@@ -101,7 +126,7 @@ describe('the library switcher', () => {
     await screen.findByText('היער השיכור')
 
     server.books = [book({ id: 'b9', title: 'ספר של המשרד' })]
-    await userEvent.click(screen.getByRole('button', { name: 'החלפת ספרייה' }))
+    await userEvent.click(screen.getByRole('button', { name: /החלפת ספרייה/ }))
     await userEvent.click(screen.getByRole('menuitemradio', { name: /המשרד/ }))
 
     expect(await screen.findByText('ספר של המשרד')).toBeInTheDocument()
@@ -114,7 +139,7 @@ describe('the library switcher', () => {
     server.libraries = [HOME, OFFICE]
     const first = renderApp(<App />)
     await screen.findByText('היער השיכור')
-    await userEvent.click(screen.getByRole('button', { name: 'החלפת ספרייה' }))
+    await userEvent.click(screen.getByRole('button', { name: /החלפת ספרייה/ }))
     await userEvent.click(screen.getByRole('menuitemradio', { name: /המשרד/ }))
     await waitFor(() => expect(server.libraryHeaders.at(-1)).toBe('lib-2'))
     first.unmount()
@@ -151,7 +176,7 @@ describe('the library switcher', () => {
     await screen.findByText('היער השיכור')
 
     server.books = []
-    await userEvent.click(screen.getByRole('button', { name: 'החלפת ספרייה' }))
+    await userEvent.click(screen.getByRole('button', { name: /החלפת ספרייה/ }))
     await userEvent.click(screen.getByRole('menuitem', { name: '+ ספרייה חדשה' }))
     // The rule is stated where the choice is made: what a separate library
     // IS (another household's collection), and what it is not (a room).
@@ -164,7 +189,7 @@ describe('the library switcher', () => {
     await userEvent.click(screen.getByRole('button', { name: 'יצירה' }))
 
     await waitFor(() => expect(server.libraryHeaders.at(-1)).toBe('lib-3'))
-    expect(await screen.findByRole('button', { name: 'החלפת ספרייה' }))
+    expect(await screen.findByRole('button', { name: /החלפת ספרייה/ }))
       .toHaveTextContent('הורים')
   })
 
@@ -176,8 +201,8 @@ describe('the library switcher', () => {
     server.libraries = [HOME, OFFICE]
     globalThis.location.hash = '#/book/b1'
     renderApp(<App />)
-    await screen.findByRole('button', { name: 'החלפת ספרייה' })
-    await userEvent.click(screen.getByRole('button', { name: 'החלפת ספרייה' }))
+    await screen.findByRole('button', { name: /החלפת ספרייה/ })
+    await userEvent.click(screen.getByRole('button', { name: /החלפת ספרייה/ }))
     await userEvent.click(screen.getByRole('menuitemradio', { name: /המשרד/ }))
     expect(globalThis.location.hash).toBe('#/library')
   })
@@ -192,13 +217,13 @@ describe('the library switcher', () => {
     server.libraries = [HOME, OFFICE]
     renderApp(<App />)
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'החלפת ספרייה' }))
+      expect(screen.getByRole('button', { name: /החלפת ספרייה/ }))
         .toHaveTextContent('משפחת מלין'))
 
     const csv = screen.getByRole('link', { name: /CSV/ })
     expect(csv).toHaveAttribute('href', expect.stringContaining('library=lib-test'))
 
-    await userEvent.click(screen.getByRole('button', { name: 'החלפת ספרייה' }))
+    await userEvent.click(screen.getByRole('button', { name: /החלפת ספרייה/ }))
     await userEvent.click(screen.getByRole('menuitemradio', { name: /המשרד/ }))
     await waitFor(() =>
       expect(screen.getByRole('link', { name: /CSV/ }))
