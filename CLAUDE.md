@@ -447,6 +447,56 @@ different world — the product never reads it.
   was closed. Forwarding it turned an *existing* test red, which was a second
   bug: a room's bookcases SURVIVE its deletion and were being written down as
   gone. Same family as the docstring below: check the wire, not the intent.
+  ⚠ It happened again one pillar later, one layer up: `create_app` took
+  `band_finder=…` and never passed it to `bind_ports`. Every ring stayed
+  green — the API tests bind through `bind_ports` directly — and the first
+  request in a browser answered *500: no BandFinder bound*. There is now a
+  meta-test reading both SIGNATURES and the call site, because the next port
+  will be added by somebody who has not read this line.
+- **A guard that reads DECLARATIONS never asks whether a selector matches
+  anything.** `.capture .btn` was added to the phone touch floor with a
+  comment naming *Run — the one control that spends money — at 37px* as the
+  thing it fixed; the word `capture` is a className in **zero** components, so
+  the rule was inert and the control stayed at 37. `styles/touch.test.ts` now
+  fails on a floor selector carrying a class no component renders — and its
+  first cut asked whether ANY class was rendered, which `.btn` rescued.
+- **`min-height` does not apply to a non-replaced inline box.** The identical
+  44px rule measured 44 inside a flex parent (which blockifies its children)
+  and **21** inside a plain div. Two links, one rule, one silently exempt —
+  and no sheet-reading guard can see it, because the declaration IS 44.
+- **A canvas must CLIP.** Furniture drawn outside the view still contributes
+  to the document's width — lazily, only once something makes the browser
+  account for it: `documentElement.scrollWidth` 424 against a 375 viewport
+  with a bookcase selected, and 375 with nothing selected, which is why five
+  pillars of walking the map never met it.
+- **Multipart must bypass `client.ts:send()`.** It sets `Content-Type:
+  application/json` and `JSON.stringify`s its body, so a `FormData` goes out
+  as `{}` and answers 422 — with the client printing *"we could not read that
+  photo"* for a photo the server never saw. `uploadImage` says this in a
+  comment; the second such call still inherited the wrong one.
+- **Resolving in an effect is one render too late when the child reads it in a
+  `useState` initialiser.** `MapScreen` consumes `initialSelection` at MOUNT,
+  so `#/plan/<shelfId>` opened with nothing selected. Compute during render,
+  and put the thing that changes into the remount `key` — a route change
+  inside a mounted app re-renders rather than remounts, which is also why the
+  gate for it has to be a RERENDER: every other test mounts fresh.
+- **An unstable function identity is a fetch per render.** `MapScreen` rebuilds
+  its `actions` bag every render and `PlanScreen` wrapped a fetch in a fresh
+  arrow — one selected cell asked the server four times. Hold the function in
+  a ref so the effect depends on WHAT to fetch and nothing else; the rule
+  belongs where that is decided, not on two callers being careful.
+- **A selection carrying only `cells` renders "nothing selected"** — `pickCell`
+  keeps `cases` because the shelf panel is drawn inside the bookcase panel.
+- **Two reads with no transaction must not be combined into one claim.** A
+  shelf's COORDINATES and its section's SHAPE came from separate reads, and a
+  column shrink landing between them answered with a DIFFERENT live shelf's
+  address, holding different books; a gapped cell answered with a cell the
+  drawing does not have. The address has to still be in `section.addresses`.
+- **A meta-test that excuses a whole METHOD outlives its reason.** The map
+  router's 404 completeness check excluded GET because "a read is gated by
+  `current_library` itself" — true while every map read named nothing, false
+  the day one took an object id in its path. An unscoped lookup then leaked
+  another library's shelf label on a 200 with 1230 tests green.
 - **A guard that covers one SHAPE of the thing it names passes, and is not
   looking.** The counted-string test matched `(n: number) => string` exactly,
   so three two-argument strings shipped `1 תמונות` to a real browser — and
