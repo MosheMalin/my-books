@@ -745,6 +745,11 @@
 .mapscreen legend { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.06em; }
 
 .mapscreen .inspector > button.danger { width: 100%; }
+/* P6.7b moved the bookcase's delete up, between the details fold and the
+   grid. It needs air on both sides: flush against the fold it reads as part
+   of it, and flush against the elevation it reads as a control OF the
+   elevation — which is the confusion the move was made to end. */
+.mapscreen .inspector > button.case-delete { margin: 4px 0 12px; }
 
 /* --- elevation ----------------------------------------------------------- */
 

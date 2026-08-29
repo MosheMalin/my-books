@@ -401,6 +401,29 @@ function CasePanel({
         </p>
       </Fold>
 
+      {/*
+        ⚠ ABOVE the elevation since P6.7b, and the move is the whole item.
+        It used to be the last control in the panel — below the grid and the
+        shelf panel — and the owner walking his own library reported that
+        while editing cells the only delete he could find destroyed CELLS.
+        It did work; it was two panel-heights down, past two other
+        destructive controls, on a bookcase whose grid is 38 cells.
+
+        ⚠ It stays ONE control with ONE name. A second *delete this
+        bookcase* beside the first is the accessible-name collision
+        CLAUDE.md records, and duplicating a destructive control is the
+        worst place to earn one.
+
+        ⚠ And it stays behind `delete_cases_confirm`, which counts the
+        shelves and photographs that would go with it — moving a destructive
+        control closer to the thumb is only safe while the sentence in front
+        of it still says what it costs.
+      */}
+      <button type="button" className="danger case-delete"
+              onClick={actions.deleteSelection}>
+        {T.delete_case}
+      </button>
+
       <Elevation
         bc={bc}
         selection={selection}
@@ -422,10 +445,6 @@ function CasePanel({
       />
 
       <ShelfPanel bc={bc} selection={selection} actions={actions} />
-
-      <button type="button" className="danger" onClick={actions.deleteSelection}>
-        {T.delete_case}
-      </button>
     </div>
   )
 }
