@@ -788,7 +788,73 @@ this pillar.**
 | **P6.3.3** | **The plan tab on a phone** — the drawing surface measured 375x**0**: `#root` had a `min-height` where a definite height was meant, so the settings panel became the whole page and no pillar-6 flow had ever been walked on a phone. Two flex minimums and two dead thumb-size rules came with it. Arrived from P6.3.2b's UX review, and taken BEFORE P6.4 (owner) so four more items would not land unverified on the device this catalogue is used from. | S | ✅ |
 | **P6.4** | **Binding and merge** — photo-born shelves bind into drawn slots; several identities merge into one physical shelf, with aliases. ⚠ THREE schema steps now, and **b ran before a**: **v22** the undo journal, **v23** its sequence (the head could not be decided by a clock with second resolution — see P6.4b), **v24** the alias. P6.3.2a spent v21. | L | |
 | **P6.5** | **The map as navigation** — three drill levels, "where is it" incl. depth, stale-depth surfacing, capture handoff. Decomposed into **a/b/c** below; the two measured phone defects it carried are P6.5a's. | L | |
-| **P6.6** | *Optional:* bookcase photo → proposed levels via `segment.py`, confirmed by hand. | S | |
+| **P6.6** | ✅ *Optional:* bookcase photo → proposed levels via `segment.py`, confirmed by hand. ⚠ Shipped UNMEASURED on its target input — see below. | S | |
+
+### P6.6 — levels proposed from a photograph  *(landed)*
+
+VISION §7's approach B where it is strongest, and UI_PLAN §3's own sentence:
+`segment.py` already detects horizontal shelf bands — deterministically,
+locally, free, tuned on this owner's shelves — so the levels of a case can be
+proposed from one photo and confirmed by hand.
+
+`POST /api/v1/map/propose-levels` takes a photograph and answers a count and
+the bands as FRACTIONS of the image's height. It **writes nothing**: no shelf,
+no section, and not the photograph, which never reaches the blob store. §3.14
+— *the map may propose; only a ✓ binds* — so the control fills in the level
+field that already existed and stops; *apply* is pressed by a person who has
+read the number.
+
+⚠ **§3.14's ban on proposing from image content is about IDENTITY** — which
+shelf a photo is of — because nothing in a picture says that. How many
+horizontal surfaces a bookcase has is the one thing a picture does say, which
+is why VISION §7 singles it out. The two are not in tension and the code says
+so at both ends.
+
+A new port (`app/ports/bands.py`) rather than a method on `Reader`: a read is
+a queued, rate-capped, chargeable JOB that can produce a Book; this is a
+synchronous free measurement that can produce nothing. Folding it in would put
+it behind a bounded pool and a 30/hr account cap and make every future
+cost-metering hook count it.
+
+⚠⚠ **Shipped UNMEASURED on the input it is for, and that is the honest
+headline.** `shelf_bands` answers **1 band on all 11 of the owner's full-size
+photographs** — the correct answer, because every one of them is a single
+shelf. A whole-bookcase photograph does not exist in this library, so the
+detector's ACCURACY on the input this feature exists for is not measured
+anywhere, and `tools/sweep.py` cannot help (it replays reads; this is not a
+read). `tests/test_bands.py` says so in its own docstring: its fixture is
+SYNTHETIC — N drawn rules → N+1 bands — which proves the signal path and the
+shape of the answer and nothing about furniture in a room. Beside it is the
+self-skipping test over `work/`, in the MPO lesson's shape, which records what
+the real photographs say so the day a bookcase photo lands there it starts
+saying something.
+
+⚠ **One is a real answer and the UI says so.** A photo with no horizontal
+rule across it is a photo of a single shelf; without that sentence the feature
+would read as broken on the commonest picture in the library. It also does NOT
+fill in the field for 1 — a single-shelf photo must not quietly set a case to
+one level.
+
+Two defects found by walking it, both already recorded traps:
+
+- **an argument accepted and not forwarded.** `create_app(band_finder=…)` took
+  the port and never passed it to `bind_ports`; `app/main.py` supplied a real
+  one, every ring stayed green (the API tests bind through `bind_ports`
+  directly), and the first request in a browser answered **500: no BandFinder
+  bound**. CLAUDE.md records this exact shape from P6.4b's `_record`. There is
+  now a structural gate reading both SIGNATURES and the call site;
+- **the multipart body went out as JSON.** `send()` sets
+  `Content-Type: application/json` and `JSON.stringify`s its body, which turns
+  a `FormData` into `{}` — 422, with the client printing *"we could not read
+  that photo"* for a photo the server never saw. `uploadImage` bypasses
+  `send()` for exactly this reason and says so; this is the second multipart
+  call in the product and had to make the same choice rather than inherit the
+  wrong one.
+
+And the counted-string guard earned its keep again, catching «נספרו 1
+מדפים» the moment it was written — which turned into one key with a
+singular branch rather than two keys, because the singular is not just grammar
+here: counting one band means the photo showed a single shelf.
 
 ### P6.5 — the map as navigation  *(decomposed)*
 

@@ -271,6 +271,18 @@ export interface MapText {
   last_read: string
   rows_stale: (n: number) => string
   open_this_shelf: string
+  // --- levels proposed from a photo (P6.6) ---
+  propose_levels: string
+  propose_levels_hint: string
+  proposing_levels: string
+  /** ⚠ ONE key, with its own singular branch — not a second key beside it.
+   *  The counted-string guard reads the TYPE, so `(n: number) => string`
+   *  is a declaration that this string agrees with a number, and it
+   *  caught «נספרו 1 מדפים» the moment it was written. The singular
+   *  is not just grammar here: counting one band means the photo showed a
+   *  single shelf, which is worth saying rather than merely conjugating. */
+  proposed_levels: (n: number) => string
+  propose_failed: string
   photos_are_captures: string
   shelf_depth: string
   // chrome
@@ -666,6 +678,14 @@ const HE: MapText = {
     ? 'שורה אחת לא נקראה מזמן — פתחו את המדף כדי לראות איזו'
     : `${n} שורות לא נקראו מזמן — פתחו את המדף כדי לראות אילו`),
   open_this_shelf: 'פתחו את המדף הזה →',
+  propose_levels: 'הצעה מתמונה',
+  propose_levels_hint:
+    'צלמו את כל הכוננית — נספור את המדפים ונציע מספר. התמונה לא נשמרת, ולא משתנה כלום עד שתלחצו החלה.',
+  proposing_levels: 'סופרים…',
+  proposed_levels: (n) => (n === 1
+    ? 'נספר מדף אחד — אם צילמתם מדף בודד, צלמו את כל הכוננית'
+    : `נספרו ${n} מדפים בתמונה`),
+  propose_failed: 'לא הצלחנו לקרוא את התמונה הזאת',
   photos_are_captures:
     'תמונות מגיעות מצילום המדף, לא מכאן. אפשר לצלם כמה תמונות לאותו מדף, ולכל אחת העומק שלה.',
   shelf_depth: 'עומק המדף הזה',
@@ -985,6 +1005,17 @@ const EN: MapText = {
     ? 'One row has not been read in a while — open the shelf to see which'
     : `${n} rows have not been read in a while — open the shelf to see which`),
   open_this_shelf: 'Open this shelf →',
+  propose_levels: 'Propose from a photo',
+  propose_levels_hint:
+    'Photograph the WHOLE bookcase — we count the shelves and suggest a '
+    + 'number. The photo is not stored, and nothing changes until you press '
+    + 'apply.',
+  proposing_levels: 'Counting…',
+  proposed_levels: (n) => (n === 1
+    ? 'Counted one shelf — if that was a photo of a single shelf, photograph '
+      + 'the whole bookcase'
+    : `Counted ${n} shelves in the photo`),
+  propose_failed: "Couldn't read that photo",
   photos_are_captures:
     'Photos arrive by photographing the shelf, not from here. A shelf can have several, each with its own depth.',
   shelf_depth: "this shelf's depth",

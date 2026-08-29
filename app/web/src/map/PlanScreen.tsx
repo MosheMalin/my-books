@@ -22,6 +22,7 @@ import {
   getMap,
   getShelfOverview,
   getUndoOffer,
+  proposeLevels,
   listShelves,
   mapDelete,
   mapPatch,
@@ -387,6 +388,8 @@ export function PlanScreen({ library, focusShelf = null }: {
              effect depends on it: measured at 375x812, selecting one cell
              fetched its overview FOUR times. */
           overview: getShelfOverview,
+          proposeLevels: async (photo: File) =>
+            (await proposeLevels(photo)).levels,
         }}
       />
     </>

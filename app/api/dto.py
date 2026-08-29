@@ -1583,6 +1583,38 @@ class MergeRefusalDTO(BaseModel):
     say: str
 
 
+class BandDTO(BaseModel):
+    """One horizontal shelf surface a photograph shows, as fractions of its
+    height. Fractions because the client draws them over an image it has
+    scaled to fit a phone."""
+
+    top: float = Field(ge=0, le=1)
+    bottom: float = Field(ge=0, le=1)
+
+
+class LevelProposalDTO(BaseModel):
+    """What one photograph of a bookcase suggests its level count is (P6.6).
+
+    ⚠ A PROPOSAL, and the word is load-bearing. §3.14: *the map may propose;
+    only a ✓ binds*. This route writes nothing — no shelf, no section, no
+    image, not even the photograph, which is never stored. Applying the number
+    is a separate, explicit call to the section's own levels route.
+
+    ⚠ ``levels`` is a count of BANDS in a picture, which is not the same
+    statement as *this bookcase has N shelves*. A photo that shows part of a
+    case answers about that part; a photo of a single shelf answers **1**,
+    which is what all eleven of the owner's photographs measured on the day
+    this shipped. The client says which of the two it is showing.
+    """
+
+    levels: int = Field(
+        ge=1, description="How many bands the photo shows — `len(bands)`, "
+                          "restated so a caller that only wants the number "
+                          "does not have to count a list.",
+    )
+    bands: list[BandDTO]
+
+
 class AddressPartsDTO(BaseModel):
     """A shelf's address as PARTS, never as a sentence.
 

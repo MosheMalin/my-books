@@ -61,6 +61,9 @@ export type Actions = {
   shelvesOffTheMap: () => Promise<OffMapShelf[]>
   /** When this shelf was last read, and whether a row is stale (P6.5c). */
   shelfOverview: (shelfId: string) => Promise<ShelfOverviewDTO>
+  /** How many shelves one photograph of a bookcase shows (P6.6). Optional:
+   *  a host that cannot ask renders no control. */
+  proposeLevels?: ((photo: File) => Promise<number>) | undefined
   bindShelf: (shelfId: string, sectionId: string, col: number, level: number,
               name: string) => void
   unbindShelf: (shelfId: string, sectionId: string, col: number,
@@ -406,6 +409,7 @@ function CasePanel({
         onColumnLevels={(sectionId, col, n) => actions.setColumnLevels(bc.id, sectionId, col, n)}
         onColumnCount={(sectionId, n) => actions.setColumnCount(bc.id, sectionId, n)}
         onDefaultLevels={(sectionId, n) => actions.setDefaultLevels(bc.id, sectionId, n)}
+        onProposeLevels={actions.proposeLevels}
         onDefaultDepth={(sectionId, n) => actions.setDefaultDepth(bc.id, sectionId, n)}
         onApplyDefaultLevels={(sectionId) => actions.applyDefaultLevels(bc.id, sectionId)}
         onApplyDefaultDepth={(sectionId) => actions.applyDefaultDepth(bc.id, sectionId)}
