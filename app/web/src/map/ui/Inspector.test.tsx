@@ -145,6 +145,31 @@ describe('the case panel on a phone', () => {
     expect(note!.textContent).not.toContain(`ב${HE.unnamed}`)
   })
 
+  it('puts the bookcase’s own delete ABOVE the grid, not below it (P6.7b)', () => {
+    // The owner, walking his own library: *"while editing cells/shelves,
+    // clicking delete can only delete cells, not the entire bookcase."* It
+    // could — the control was the LAST thing in the panel, below a
+    // 38-cell grid and the shelf panel, past two other destructive buttons.
+    // A control nobody can find is not a control.
+    //
+    // Asserted as document ORDER, because that is the claim. Anything else
+    // (it exists, it is labelled, it calls the action) was already true on
+    // the day the owner could not find it.
+    show({ rooms: [], cases: ['c1'], cells: [] })
+    const remove = screen.getByRole('button', { name: HE.delete_case })
+    const grid = screen.getByText(HE.col_head(1))
+    expect(remove.compareDocumentPosition(grid)
+      & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('never offers a SECOND control by that name', () => {
+    // Moving a destructive control is safe; duplicating one is the
+    // accessible-name collision CLAUDE.md records, in the worst place to
+    // earn it.
+    show({ rooms: [], cases: ['c1'], cells: [] })
+    expect(screen.getAllByRole('button', { name: HE.delete_case })).toHaveLength(1)
+  })
+
   it('leaves the fold open on anything bigger', () => {
     show({ rooms: [], cases: ['c1'], cells: [] })
     expect(screen.getByRole('button', { name: new RegExp(HE.case_details) }))
