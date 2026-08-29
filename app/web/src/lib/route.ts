@@ -29,7 +29,7 @@ import { useCallback } from 'react'
 // The `hashchange` subscription itself is shared (`@booksnap/ui`); the ROUTE
 // TABLE below is not, and deliberately: a union of both apps' routes would let
 // one link to a screen it does not have.
-import { backOr, navigateHash, useHash } from '@booksnap/ui'
+import { backOr, navigateHash, stampHash, useHash } from '@booksnap/ui'
 
 export type Route =
   | { name: 'library' }
@@ -81,6 +81,28 @@ export function shelfHash(id: string): string {
 /** The drawing, optionally pointing at one shelf. */
 export function planHash(shelfId?: string): string {
   return shelfId ? `#/plan/${encodeURIComponent(shelfId)}` : PLAN_HASH
+}
+
+/**
+ * Record what the map has selected, so BACK can come back to it (P6.7c).
+ *
+ * The owner: *"I started from a specific bookcase — I want to return to it,
+ * not to the map."* `back()` was already right; it is `history.back()`. What
+ * was wrong is that the entry it returns to said only `#/plan`, because the
+ * editor holds its selection in React state and nothing wrote it down.
+ *
+ * ⚠ A STAMP, never a navigation. It fires no `hashchange`, so the editor is
+ * not remounted by its own selection — `PlanScreen` keys `MapScreen` on this
+ * very id, and a real navigation here would tear the drawing down on every
+ * tap. See `stampHash`.
+ *
+ * ⚠ The id is OPAQUE, exactly as `parseHash` treats it — the same rule the
+ * admin console follows for `#/accounts/<id>`. A shelf, a bookcase and a room
+ * all stamp the same way and are told apart by LOOKUP, at the far end, against
+ * a document that knows what it holds.
+ */
+export function stampPlan(id: string | null): void {
+  stampHash(id ? planHash(id) : PLAN_HASH)
 }
 
 export const LIBRARY_HASH = '#/library'

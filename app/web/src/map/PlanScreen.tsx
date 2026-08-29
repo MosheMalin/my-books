@@ -10,11 +10,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { useI18n } from '../lib/i18n'
+import { stampPlan } from '../lib/route'
 
 import MapScreen from './MapScreen'
 import type { Plan } from './core/model'
 import type { Selection } from './ui/types'
-import { EMPTY } from './ui/types'
+import { EMPTY, selectCase, selectRoom } from './ui/types'
 import { mapText, type MapText } from './text'
 import type { MapSource } from './useMapSync'
 import { useMapSync } from './useMapSync'
@@ -41,18 +42,29 @@ import {
 const SITE_KEY = (library: string) => `booksnap.map.site.${library}`
 
 /**
- * The cell one shelf stands in, anywhere in this document.
+ * What `#/plan/<id>` points at, anywhere in this document.
  *
- * Returns null when the shelf is not on this SITE's drawing — which is not
- * an error and not "nowhere": `toPlan` builds one site at a time, so a shelf
- * in the parents' place is simply not in the document on screen. The caller
+ * ⚠ **The id is opaque** — the same rule `parseHash` follows, and the same
+ * one the admin console follows for `#/accounts/<id>`. It may name a shelf, a
+ * bookcase or a room, and which it is comes from the LOOKUP rather than from
+ * the URL. P6.7c widened this from shelves alone so that returning from a
+ * shelf screen lands on the bookcase the owner started from: *"I started from
+ * a specific bookcase — I want to return to it, not to the map."*
+ *
+ * Returns null when the id is not on this SITE's drawing — which is not an
+ * error and not "nowhere": `toPlan` builds one site at a time, so a shelf in
+ * the parents' place is simply not in the document on screen. The caller
  * switches site and asks again.
+ *
+ * ⚠ Shelves are searched FIRST. A shelf id and a bookcase id cannot collide
+ * (both are uuid4), so the order is not about correctness — it is about the
+ * commonest case being the one that does not walk every section twice.
  */
-function cellOf(plan: Plan, shelfId: string): Selection | null {
+function focusOf(plan: Plan, id: string): Selection | null {
   for (const bc of plan.cases)
     for (const sec of bc.sections)
       for (const shelf of sec.shelves)
-        if (shelf.id === shelfId)
+        if (shelf.id === id)
           // ⚠ The CASE as well as the cell. `pickCell` keeps `cases`
           // (`ui/types.ts`) because the shelf panel is drawn INSIDE the
           // bookcase panel — a selection carrying only cells opens the editor
@@ -60,6 +72,34 @@ function cellOf(plan: Plan, shelfId: string): Selection | null {
           return { rooms: [], cases: [bc.id],
                    cells: [{ caseId: bc.id, sectionId: sec.id,
                              col: shelf.col, level: shelf.level }] }
+  if (plan.cases.some((c) => c.id === id)) return selectCase(id)
+  if (plan.rooms.some((r) => r.id === id)) return selectRoom(id)
+  return null
+}
+
+/**
+ * The one id that stands for a selection, or null for one that does not.
+ *
+ * ⚠ The MOST SPECIFIC thing selected, because that is what the owner will
+ * want back: a cell answers with the shelf standing in it, and only falls back
+ * to its bookcase when the cell is empty — a slot this session just drew has
+ * no shelf row, and stamping nothing would lose the bookcase too.
+ *
+ * ⚠ Null for a MULTI-selection on purpose. Three bookcases marked for
+ * deletion is a working state, not a place, and one id could only name a third
+ * of it.
+ */
+function stampOf(plan: Plan, s: Selection): string | null {
+  if (s.cells.length === 1) {
+    const cell = s.cells[0]!
+    const shelf = plan.cases
+      .find((c) => c.id === cell.caseId)?.sections
+      .find((x) => x.id === cell.sectionId)?.shelves
+      .find((sh) => sh.col === cell.col && sh.level === cell.level)
+    if (shelf?.id) return shelf.id
+  }
+  if (s.cases.length === 1 && s.rooms.length === 0) return s.cases[0]!
+  if (s.rooms.length === 1 && s.cases.length === 0) return s.rooms[0]!
   return null
 }
 
@@ -204,7 +244,7 @@ export function PlanScreen({ library, focusShelf = null }: {
    * `#/plan/<shelf>` with nothing selected — the editor had already been
    * mounted with the empty selection the effect was about to replace.
    */
-  const focusCell = plan && focusShelf ? cellOf(plan, focusShelf) : null
+  const focusCell = plan && focusShelf ? focusOf(plan, focusShelf) : null
   // Narrow deps: `sync` is rebuilt every render, so an effect that
   // depended on the whole object would re-run on every one of them.
   const { siteId, chooseSite } = sync
@@ -353,7 +393,15 @@ export function PlanScreen({ library, focusShelf = null }: {
           focusCell && focused.current !== focusShelf
             ? focusCell : selection.current
         }
-        onSelectionChange={(s) => { selection.current = s }}
+        onSelectionChange={(s) => {
+          selection.current = s
+          // ⚠ A STAMP, not a navigation — it fires no `hashchange`, so this
+          // does not remount the editor whose `key` it is writing. What it
+          // buys is the whole item: the history entry now names what is
+          // selected, so `history.back()` from a shelf screen returns to the
+          // bookcase the owner opened it from (P6.7c).
+          stampPlan(stampOf(live.plan, s))
+        }}
         onChange={sync.record}
         saved={sync.saved}
         onReload={sync.reload}
