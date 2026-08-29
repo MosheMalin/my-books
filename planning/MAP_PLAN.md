@@ -789,6 +789,51 @@ this pillar.**
 | **P6.4** | **Binding and merge** — photo-born shelves bind into drawn slots; several identities merge into one physical shelf, with aliases. ⚠ THREE schema steps now, and **b ran before a**: **v22** the undo journal, **v23** its sequence (the head could not be decided by a clock with second resolution — see P6.4b), **v24** the alias. P6.3.2a spent v21. | L | |
 | **P6.5** | **The map as navigation** — three drill levels, "where is it" incl. depth, stale-depth surfacing, capture handoff. Decomposed into **a/b/c** below; the two measured phone defects it carried are P6.5a's. | L | |
 | **P6.6** | ✅ *Optional:* bookcase photo → proposed levels via `segment.py`, confirmed by hand. ⚠ Shipped UNMEASURED on its target input — see below. | S | |
+| **P6.7** | **What the owner found walking it** (2026-08-30) — eight points from the first real session with the finished pillar. Decomposed **a–h** below. Not a new pillar: every one of them is a hole in something P6.0–P6.6 shipped. | M | |
+
+### P6.7 — the eight points, and what each one actually is
+
+The owner ran the finished pillar against his own house and came back with
+eight points. They are recorded here **before** any of them is built, because
+three turned out to be questions with answers rather than defects, and the
+difference is the interesting part.
+
+⚠ **The library has moved since P6.6 landed.** 13 bookcases, all 13 named;
+8 places; 141 shelves, 139 addressed; 36 copies shelved. P6.4f was deferred
+on the measurement *"0 of 154 shelves labelled, 0 of 11 bookcases named"* —
+half of that is now false, and the deferral is worth re-deciding once P6.7
+lands.
+
+| # | Owner's point | What it is |
+|---|---|---|
+| **a** | *"in the סלון the order of the bookcase got the other way around"* | **A missing control.** Sections are ordered — `Section.ordinal`, 1-based, bottom-first, unique per bookcase — and `מרכזית` genuinely has the 8-column × 6-level unit at ordinal 1 and the 4-column × 1-level strip at ordinal 2. Add and remove exist; **move up/down does not.** |
+| **b** | *"clicking delete can only delete cells, not the entire bookcase"* | **Discoverability.** `T.delete_case` exists and works — it is the LAST control in the panel, below the elevation and the shelf panel, past two other destructive buttons. On a phone it is a long scroll to a control you have no reason to believe is there. |
+| **c** | *"click back from a shelf should go back to where we was"* | **The selection is not in the URL.** `back()` is `history.back()`, which is correct; the map holds its selection in React state, so `#/plan` restores nothing. `#/plan/<shelfId>` is the only deep link — which is exactly why *show it on the drawing* works and back does not. |
+| **d** | *"how do I attach an image to a shelf?"* | **Only through a read.** The Capture tab's shelf dropdown is the one path, and it spends money per photo. Owner's decision (2026-08-30): **file the photo, no read.** |
+| **e** | *"I'm missing an explicit save or export for the map"* | **Dropped in the port, deliberately, and the module is still here.** `persist.ts` says so in its own header. Owner's decision: the file is **a backup of THIS library**, so it carries identity. |
+| **f** | *"same for import… where have they gone?"* | Same answer. Owner's decision: **ask, name what gets unbound in numbers, and if he agrees, replace.** |
+| **g** | *"it got the number of shelves right, but missed a column"* | **Working as built.** `shelf_bands` finds HORIZONTAL rules and nothing else; the proposal has no column field to fill. The gap is real — a photograph shows vertical dividers as plainly as horizontal ones — but it is a new capability, not a bug. |
+| **h** | *"upon drawing a bookcase, the columns should be vertical to the shorter dimension"* | **Not reproduced.** `frontFor` picks the long side and outranks the flush-wall guess; `withRect` re-derives on a flip; `columnDividers` draws perpendicular to the front; all 13 of the owner's bookcases have a front consistent with their rectangle. Raised twice, so something is wrong — but guessing at it would be inventing a bug. **Watch him draw the one that comes out wrong.** |
+
+#### What e and f are blocked on, and it is not a button
+
+`parsePlan` **rebuilds section ids from array position.** That was safe in the
+lab, on the stated grounds that nothing outside the document referred to one.
+It stopped being safe the moment `shelves.section_id` existed — `place.py`'s
+`Section` docstring records the same trap from the other side. An import that
+renumbers by position **orphans every addressed shelf in the library**, and
+inserting a section at the bottom renumbers all of them.
+
+So the format gains identity BEFORE either half ships, and P6.7f is the most
+destructive edit in the product: it goes in the undo journal (§3.15) like
+every other one.
+
+#### The measurement problem, again (g)
+
+P6.6 shipped unmeasured on its target input because no whole-bookcase
+photograph existed in `work/`. The owner has now taken one — it is the photo
+that produced this point. **Ask for it before building g**, or the second
+column detector ships as blind as the first band detector did.
 
 ### P6.6 — levels proposed from a photograph  *(landed)*
 
