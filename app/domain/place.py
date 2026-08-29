@@ -217,6 +217,18 @@ class ShelfWasMerged(DomainError):
     """
 
 
+class NoNeighbourSection(DomainError):
+    """Asked to swap a section with a neighbour that is not there.
+
+    The bottom section has nothing below it and the top one nothing above,
+    and a bookcase of one section has neither. The editor absents the control
+    at both ends — the house rule is absent, not disabled — so reaching this
+    means the drawing on screen and the stack in the library disagree about
+    how many sections there are, which is another tab's edit. 409, not 400:
+    the request is well formed and the WORLD is what refuses it.
+    """
+
+
 class NotOnThisFloor(DomainError):
     """A room and the bookcase attaching to it are on different storeys.
 
@@ -884,12 +896,58 @@ def renumber_sections(sections: Iterable[Section]) -> tuple[Section, ...]:
     Needed after adding at the bottom or removing from the middle, because
     ``ordinal`` is unique per bookcase AND is what the address prints. Ids are
     untouched — they are the durable handle a shelf's address holds.
+
+    ⚠ **The order given, not the order sorted.** This function used to
+    re-sort its argument by the ordinals it was about to overwrite, which
+    made the docstring's first sentence false and the function unable to
+    express a REORDER at all — the one thing P6.7a needs. Every existing
+    caller already passes the list in the order it means (``create_section``
+    builds all three of its cases positionally), so they are unaffected;
+    ``bottom`` used to work only because Python's sort is stable and the new
+    section happened to be listed first, which is a property of the sort
+    rather than of the intent.
     """
     return tuple(
         replace(section, ordinal=i)
-        for i, section in enumerate(
-            sorted(sections, key=lambda s: s.ordinal), start=1)
+        for i, section in enumerate(sections, start=1)
     )
+
+
+def move_section(sections: Iterable[Section], section_id: str,
+                 direction: str) -> tuple[Section, ...]:
+    """Swap one section with the neighbour above or below it (P6.7a).
+
+    The owner built a bookcase whose tall unit was recorded standing on the
+    floor with a single-shelf strip on top of it, which is the other way
+    round from the furniture: *"it should be 1 shelf on the floor, and on top
+    of it the bigger section"*. Sections have always been ordered — ``ordinal``
+    is 1-based and bottom-first — and add and remove have always existed. The
+    only thing missing was a way to say *these two are the wrong way round*.
+
+    ⚠ **Nothing is destroyed and nothing is detached.** A shelf's address
+    holds ``section_id``, and ids are untouched here; what changes is the
+    NUMBER the address prints. That is why this edit is not in the undo
+    journal (§3.15, which covers the five that destroy or detach): pressing
+    the other arrow is a complete undo, and a journal entry for a gesture
+    that is its own inverse is a row that can only mislead.
+
+    ``direction`` is in FURNITURE terms — ``up`` means towards the ceiling,
+    a higher ordinal — never in screen terms. The elevation draws top-down
+    (``sectionsTopDown``), so the arrow that points up on screen sends
+    ``up`` and the two agree only because this sentence exists.
+    """
+    if direction not in ("up", "down"):
+        raise ValueError(f"direction is 'up' or 'down', not {direction!r}")
+    standing = sorted(sections, key=lambda s: s.ordinal)
+    at = next((i for i, s in enumerate(standing) if s.id == section_id), None)
+    if at is None:
+        raise NoNeighbourSection(f"no section {section_id!r} in this bookcase")
+    other = at + 1 if direction == "up" else at - 1
+    if other < 0 or other >= len(standing):
+        raise NoNeighbourSection(
+            f"section {section_id!r} has nothing {direction} of it")
+    standing[at], standing[other] = standing[other], standing[at]
+    return renumber_sections(standing)
 
 
 def check_bookcase_size(sections: Iterable[Section]) -> None:

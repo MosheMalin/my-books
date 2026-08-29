@@ -2665,6 +2665,76 @@ def test_a_new_section_copies_the_shape_of_the_one_it_stands_on():
     assert [s.ordinal for s in closed] == [1, 2, 3]
 
 
+def test_a_section_swaps_with_its_neighbour_and_nothing_is_detached():
+    """P6.7a, from the owner drawing his own סלון: the tall unit was recorded
+    standing on the floor with a single-shelf strip on top of it, which is the
+    other way round from the furniture. *"It should be 1 shelf on the floor,
+    and on top of it the bigger section."*
+
+    Two claims, and the second is the one that makes this safe to ship: the
+    ORDER changes, and the section IDS do not. A shelf's address holds
+    `section_id`, so a swap moves the number an address prints and detaches
+    nothing — which is why this edit is not in the undo journal.
+    """
+    from app.domain import move_section, new_section
+
+    def sec(name, ordinal, columns):
+        return new_section(id=name, library_id="lib", bookcase_id="bc",
+                           ordinal=ordinal, columns=columns,
+                           default_levels=5, default_depth=1)
+
+    # The owner's מרכזית: eight columns on the floor, a four-column strip
+    # above it.
+    big, strip = sec("big", 1, 8), sec("strip", 2, 4)
+
+    moved = move_section([big, strip], "strip", "down")
+    assert [s.id for s in moved] == ["strip", "big"]
+    assert [s.ordinal for s in moved] == [1, 2]
+    # Untouched: the handle every addressed shelf holds.
+    assert {s.id for s in moved} == {"big", "strip"}
+    assert [s.column_count for s in moved] == [4, 8], "the shapes travelled"
+
+    # The other arrow is a complete undo. Nothing else has to be, which is
+    # the whole argument for keeping this out of the journal.
+    assert [s.id for s in move_section(moved, "strip", "up")] == ["big", "strip"]
+
+    # Three sections, from the middle, both ways — an off-by-one here would
+    # swap with the wrong neighbour and still answer 200.
+    a, b, c = sec("a", 1, 1), sec("b", 2, 1), sec("c", 3, 1)
+    assert [s.id for s in move_section([a, b, c], "b", "up")] == ["a", "c", "b"]
+    assert [s.id for s in move_section([a, b, c], "b", "down")] == ["b", "a", "c"]
+
+
+def test_a_section_at_the_end_of_the_stack_refuses_rather_than_doing_nothing():
+    """Silently answering 200 having moved nothing is worse than refusing: the
+    editor absents the arrow at both ends (absent, not disabled), so a request
+    that arrives anyway means the drawing on screen and the stack in the
+    library disagree — another tab's edit — and the client has to be told."""
+    from app.domain import NoNeighbourSection, new_section
+
+    from app.domain import move_section
+
+    def sec(name, ordinal):
+        return new_section(id=name, library_id="lib", bookcase_id="bc",
+                           ordinal=ordinal, columns=1, default_levels=5,
+                           default_depth=1)
+
+    stack = [sec("bottom", 1), sec("top", 2)]
+    _raises(NoNeighbourSection, move_section, stack, "top", "up")
+    _raises(NoNeighbourSection, move_section, stack, "bottom", "down")
+    # A lone section has neither neighbour, in either direction.
+    _raises(NoNeighbourSection, move_section, [sec("only", 1)], "only", "up")
+    _raises(NoNeighbourSection, move_section, [sec("only", 1)], "only", "down")
+    # A section of another bookcase is not in this stack, and is the same
+    # answer — the way a foreign library and a fictional one are.
+    _raises(NoNeighbourSection, move_section, stack, "elsewhere", "up")
+    # ⚠ ValueError, not the domain refusal: a direction that is neither word
+    # is a caller that is broken, and the route's pattern refuses it at 422
+    # long before this. A DomainError here would answer 400 and read as "your
+    # bookcase cannot do that".
+    _raises(ValueError, move_section, stack, "top", "sideways")
+
+
 def test_the_depth_confirmation_can_say_how_many_shelves_it_would_change():
     """§3.3 requires the apply to be *"an explicit action, showing the count
     affected"*, so the count has to exist before the action does. The lab had

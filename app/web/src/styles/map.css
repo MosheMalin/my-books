@@ -765,6 +765,13 @@
 .mapscreen .section-name { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
 .mapscreen .section-where { color: var(--dim); text-transform: none; letter-spacing: 0; }
 .mapscreen .section-head button { min-height: 26px; padding: 2px 8px; }
+/* The reorder arrows (P6.7a). `margin-inline-start: auto` on the NAME, not
+   on the first button: the header is `space-between`, and three controls in
+   it would otherwise spread across the row with the destructive ✕ nowhere
+   predictable. They sit together, and ✕ stays last. */
+.mapscreen .section-head .section-move { color: var(--dim); }
+.mapscreen .section-head .section-move:hover { color: var(--ink); }
+.mapscreen .section-name { margin-inline-end: auto; }
 
 .mapscreen .section-add {
   width: 100%;

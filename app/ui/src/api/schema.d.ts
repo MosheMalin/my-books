@@ -1115,6 +1115,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/map/sections/{section_id}/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move Section Route
+         * @description Swap a section with the one above or below it (P6.7a).
+         *
+         *     The owner's bookcase was recorded with its tall unit on the floor and a
+         *     single-shelf strip on top of it — the other way round from the furniture.
+         *     Sections have always carried an order; nothing could change it.
+         *
+         *     ⚠ **This detaches nothing and destroys nothing**, which is why it takes
+         *     no ``Journal``. Shelf addresses hold ``section_id``, and ids are untouched
+         *     here; what moves is the NUMBER an address prints. Pressing the other
+         *     arrow is a complete undo, and §3.15 is about the edits for which that is
+         *     not true.
+         *
+         *     ⚠ It writes the whole stack in ONE ``save_sections`` call, because
+         *     ``(bookcase, ordinal)`` is a unique index and a swap always passes
+         *     through a collision. That adapter parks the ordinals negative first; a
+         *     route that wrote the two rows itself, in either order, would hit the
+         *     index halfway.
+         */
+        post: operations["move_section_route_api_v1_map_sections__section_id__move_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/map/sections/{section_id}/shelves/{col}/{level}": {
         parameters: {
             query?: never;
@@ -3704,6 +3740,30 @@ export interface components {
             gap: boolean;
         };
         /**
+         * SectionMove
+         * @description Swap a section with the neighbour above or below it (P6.7a).
+         */
+        SectionMove: {
+            /**
+             * Direction
+             * @description In FURNITURE terms, never screen terms: `up` means towards the ceiling, a higher ordinal. The elevation draws top-down, so the arrow pointing up on screen sends `up`.
+             */
+            direction: string;
+        };
+        /**
+         * SectionOrderDTO
+         * @description A bookcase's sections after a reorder, bottom-first.
+         *
+         *     The WHOLE stack, not the one section that moved: `ordinal` is unique per
+         *     bookcase and a swap renumbers two of them, so answering with one would
+         *     leave the client holding a stack that has two sections claiming the same
+         *     number until it reloaded.
+         */
+        SectionOrderDTO: {
+            /** Sections */
+            sections: components["schemas"]["SectionDTO"][];
+        };
+        /**
          * SectionPatch
          * @description Change the grid, or the defaults. Both halves report what happened to
          *     the shelves, because a column removed is real shelves removed.
@@ -5690,6 +5750,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SectionEditDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    move_section_route_api_v1_map_sections__section_id__move_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                section_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SectionMove"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SectionOrderDTO"];
                 };
             };
             /** @description Validation Error */

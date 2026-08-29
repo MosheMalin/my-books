@@ -26,7 +26,7 @@ import { nothingBound } from '../cost'
 import { whyNotGap } from '../limits'
 import type { Selection } from './types'
 
-type Props = {
+export type ElevationProps = {
   bc: Bookcase
   selection: Selection
   onSelectShelf: (sectionId: string, col: number, level: number, add: boolean) => void
@@ -43,6 +43,15 @@ type Props = {
   onApplyDefaultDepth: (sectionId: string) => void
   onAddSection: (where: 'top' | 'bottom') => void
   onRemoveSection: (sectionId: string) => void
+  /**
+   * Swap a section with the one above or below it (P6.7a).
+   *
+   * ⚠ `direction` is in FURNITURE terms — `up` is towards the ceiling, a
+   * higher ordinal. This grid draws TOP-first (`sectionsTopDown`), so the
+   * arrow that points up on screen is the one that sends `up` and the two
+   * agree only because both ends say so.
+   */
+  onMoveSection: (sectionId: string, direction: 'up' | 'down') => void
 }
 
 /**
@@ -111,7 +120,7 @@ function ProposeLevels({ sectionId, label, many, propose, onCount }: {
   )
 }
 
-export function Elevation(props: Props) {
+export function Elevation(props: ElevationProps) {
   const T = mapText(useI18n().lang)
   const { bc } = props
   const many = bc.sections.length > 1
@@ -150,7 +159,7 @@ function SectionBlock({
   many,
   selection,
   ...props
-}: Props & { sec: Section; many: boolean }) {
+}: ElevationProps & { sec: Section; many: boolean }) {
   const T = mapText(useI18n().lang)
   const cols = columnCount(sec)
   // The cells marked in THIS section. A set, since P6.3.2b: a television is
@@ -185,6 +194,34 @@ function SectionBlock({
             {label}
             <span className="section-where">{where}</span>
           </span>
+          {/* ⚠ ABSENT at the ends of the stack, not disabled — the house
+              rule, and here it is also the only thing that keeps the two
+              directions honest: the server answers 409 for a neighbour that
+              is not there, and a disabled button would invite the press
+              that earns it. Each arrow carries the SECTION's name, because
+              two sections both announcing "move up" collide. */}
+          {index < bc.sections.length - 1 && (
+            <button
+              type="button"
+              className="section-move"
+              aria-label={T.move_section_up(label)}
+              title={T.move_section_up(label)}
+              onClick={() => props.onMoveSection(sec.id, 'up')}
+            >
+              ▲
+            </button>
+          )}
+          {index > 0 && (
+            <button
+              type="button"
+              className="section-move"
+              aria-label={T.move_section_down(label)}
+              title={T.move_section_down(label)}
+              onClick={() => props.onMoveSection(sec.id, 'down')}
+            >
+              ▼
+            </button>
+          )}
           <button
             type="button"
             className="danger"

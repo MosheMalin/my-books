@@ -283,6 +283,10 @@ export interface MapText {
    *  single shelf, which is worth saying rather than merely conjugating. */
   proposed_levels: (n: number) => string
   propose_failed: string
+  // --- reordering a stack of sections (P6.7a) ---
+  move_section_up: (label: string) => string
+  move_section_down: (label: string) => string
+  section_moved: (label: string) => string
   photos_are_captures: string
   shelf_depth: string
   // chrome
@@ -686,6 +690,9 @@ const HE: MapText = {
     ? 'נספר מדף אחד — אם צילמתם מדף בודד, צלמו את כל הכוננית'
     : `נספרו ${n} מדפים בתמונה`),
   propose_failed: 'לא הצלחנו לקרוא את התמונה הזאת',
+  move_section_up: (label) => `העלאת ${label} שלב אחד`,
+  move_section_down: (label) => `הורדת ${label} שלב אחד`,
+  section_moved: (label) => `הוזזה ${label}`,
   photos_are_captures:
     'תמונות מגיעות מצילום המדף, לא מכאן. אפשר לצלם כמה תמונות לאותו מדף, ולכל אחת העומק שלה.',
   shelf_depth: 'עומק המדף הזה',
@@ -1016,6 +1023,9 @@ const EN: MapText = {
       + 'the whole bookcase'
     : `Counted ${n} shelves in the photo`),
   propose_failed: "Couldn't read that photo",
+  move_section_up: (label) => `Move ${label} up one`,
+  move_section_down: (label) => `Move ${label} down one`,
+  section_moved: (label) => `Moved ${label}`,
   photos_are_captures:
     'Photos arrive by photographing the shelf, not from here. A shelf can have several, each with its own depth.',
   shelf_depth: "this shelf's depth",

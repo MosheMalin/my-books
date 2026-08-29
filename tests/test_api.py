@@ -5958,6 +5958,8 @@ def test_every_map_path_answers_404_for_another_library_with_its_own_methods():
             ("delete", f"/api/v1/map/sections/{section['id']}/slots"),
             ("post", f"/api/v1/map/sections/{section['id']}/depth"),
             ("post", f"/api/v1/map/sections/{section['id']}/levels"),
+            ("post", f"/api/v1/map/sections/{section['id']}/move",
+             {"direction": "up"}),
             # ⚠ The per-slot depth patch was missing from this list — the one
             # route addressed by (section, col, level) rather than by id, and
             # the one that writes to a SHELF. Found by a review probing what
@@ -6226,6 +6228,122 @@ def test_a_section_can_go_back_where_it_was_in_the_middle_of_a_stack():
             base["id"], squeezed.json()["section"]["id"]
         ], "the new section did not land directly above the one it names"
         assert [s["ordinal"] for s in sections()] == [1, 2, 3, 4]
+
+
+def test_moving_a_section_reorders_the_stack_and_moves_no_shelf():
+    """P6.7a, from the owner's own סלון: `מרכזית` was recorded with its
+    eight-column unit on the floor and a single-shelf strip above it, which is
+    the other way round from the furniture.
+
+    ⚠ The claim that makes this safe is the SECOND one: the stack reorders and
+    every shelf keeps its `section_id`, its column and its level. `ordinal` is
+    what an address PRINTS, so the address changes — that is the whole point —
+    but no book moves and no slot is created or destroyed.
+    """
+    with TestClient(_app()) as client:
+        world = _drawn_map(client, columns=1, levels=2)
+        case_id = world["case"]["id"]
+        sections = lambda: [                                    # noqa: E731
+            s for s in client.get("/api/v1/map").json()["sections"]
+            if s["bookcase_id"] == case_id]
+        shelves = lambda: {                                     # noqa: E731
+            s["id"]: (s["address"]["section_id"], s["address"]["col"],
+                      s["address"]["level"])
+            for s in client.get("/api/v1/shelves").json()
+            if s.get("address")}
+
+        # ⚠ A DECOY, two sections tall, on another bookcase of the same
+        # library. The route filters `load_map().sections` by bookcase, and
+        # without this the filter is unobservable: one stack is every stack.
+        elsewhere = client.post("/api/v1/map/bookcases", json={
+            "floor_id": world["floor"]["id"],
+            "rect": {"x": 9, "y": 0, "w": 2, "h": 1},
+            "columns": 1, "levels": 1}).json()
+        client.post("/api/v1/map/sections", json={
+            "bookcase_id": elsewhere["id"]})
+        decoy = [s for s in client.get("/api/v1/map").json()["sections"]
+                 if s["bookcase_id"] == elsewhere["id"]]
+        assert len(decoy) == 2
+
+        base = sections()[0]
+        strip = client.post("/api/v1/map/sections", json={
+            "bookcase_id": case_id}).json()["section"]
+        assert [s["id"] for s in sections()] == [base["id"], strip["id"]]
+        before = shelves()
+        assert before, "the fixture drew no addressed shelves"
+
+        moved = client.post(f"/api/v1/map/sections/{strip['id']}/move",
+                            json={"direction": "down"})
+        assert moved.status_code == 200, moved.text
+        # The WHOLE stack, bottom-first — a swap renumbers two sections, and
+        # answering with one would leave the client holding two claiming the
+        # same number.
+        assert [s["id"] for s in moved.json()["sections"]] == [strip["id"],
+                                                               base["id"]]
+        assert [s["ordinal"] for s in moved.json()["sections"]] == [1, 2]
+        assert [s["id"] for s in sections()] == [strip["id"], base["id"]], (
+            "the reorder did not survive a re-read — it was never written"
+        )
+        assert shelves() == before, (
+            "a reorder moved a shelf; it may only move the NUMBER an address "
+            "prints"
+        )
+        assert [s for s in client.get("/api/v1/map").json()["sections"]
+                if s["bookcase_id"] == elsewhere["id"]] == decoy, (
+            "reordering one bookcase's stack renumbered another's"
+        )
+
+        # ⚠ And the number an address prints really does follow, which is the
+        # owner's actual complaint. `where` names the section the shelf stands
+        # in, and its ordinal is now 2.
+        shelf_id = next(k for k, v in before.items() if v[0] == base["id"])
+        where = client.get(f"/api/v1/map/where/{shelf_id}")
+        assert where.status_code == 200, where.text
+        # `address.section` IS the ordinal — the parts the screen prints, and
+        # the one place the rule about which parts appear at all lives.
+        assert where.json()["address"]["section"] == 2, (
+            "the shelf's printed address did not follow its section"
+        )
+
+
+def test_a_section_with_no_neighbour_that_way_is_a_409_and_writes_nothing():
+    """409, not 400: the request is well formed and the WORLD refuses it. The
+    editor absents the arrow at both ends (absent, not disabled), so a request
+    that arrives anyway is another tab's edit — and a client told "400" edits
+    the request instead of reloading.
+
+    ⚠ A 404 for a foreign or fictional section, before any of that: the same
+    answer §4.2 gives for a foreign library, and the reason the route resolves
+    through `_section` rather than reading `load_map` straight.
+    """
+    with TestClient(_app()) as client:
+        world = _drawn_map(client, columns=1, levels=1)
+        case_id = world["case"]["id"]
+        only = client.get("/api/v1/map").json()["sections"][0]
+
+        for direction in ("up", "down"):
+            refused = client.post(f"/api/v1/map/sections/{only['id']}/move",
+                                  json={"direction": direction})
+            assert refused.status_code == 409, (direction, refused.text)
+        assert client.get("/api/v1/map").json()["sections"][0] == only, (
+            "a refused move still wrote"
+        )
+
+        top = client.post("/api/v1/map/sections", json={
+            "bookcase_id": case_id}).json()["section"]
+        assert client.post(f"/api/v1/map/sections/{top['id']}/move",
+                           json={"direction": "up"}).status_code == 409
+        assert client.post(f"/api/v1/map/sections/{only['id']}/move",
+                           json={"direction": "down"}).status_code == 409
+
+        # Neither word, and never a 500: the pattern refuses it at the door.
+        assert client.post(f"/api/v1/map/sections/{top['id']}/move",
+                           json={"direction": "sideways"}).status_code == 422
+        assert client.post(f"/api/v1/map/sections/{top['id']}/move",
+                           json={}).status_code == 422
+        # Fictional, and a section of ANOTHER library, are one answer.
+        assert client.post("/api/v1/map/sections/nope/move",
+                           json={"direction": "up"}).status_code == 404
 
 
 def test_a_section_that_says_where_it_goes_twice_is_refused():
@@ -6718,6 +6836,7 @@ def test_every_write_in_the_map_router_needs_edit_map_and_says_so():
             ("delete", "/api/v1/map/sections/se", None),
             ("delete", "/api/v1/map/sections/se/slots", None),
             ("post", "/api/v1/map/sections/se/levels", None),
+            ("post", "/api/v1/map/sections/se/move", {"direction": "up"}),
             ("post", "/api/v1/map/sections/se/depth", None),
             ("patch", "/api/v1/map/sections/se/shelves/1/1", {"depth_count": 2}),
             ("patch", "/api/v1/map/sections/se/gaps",

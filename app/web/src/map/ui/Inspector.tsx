@@ -81,6 +81,9 @@ export type Actions = {
                name: string) => void
   addSection: (id: string, where: 'top' | 'bottom') => void
   removeSection: (id: string, sectionId: string) => void
+  /** P6.7a — swap two sections. A SERVER write like the bind and the
+   *  unbind: it changes no slot, so there is no document diff to carry it. */
+  moveSection: (sectionId: string, direction: 'up' | 'down') => void
   deleteSelection: () => void
   copySelection: () => void
   paste: () => void
@@ -415,6 +418,7 @@ function CasePanel({
         onApplyDefaultDepth={(sectionId) => actions.applyDefaultDepth(bc.id, sectionId)}
         onAddSection={(where) => actions.addSection(bc.id, where)}
         onRemoveSection={(sectionId) => actions.removeSection(bc.id, sectionId)}
+        onMoveSection={actions.moveSection}
       />
 
       <ShelfPanel bc={bc} selection={selection} actions={actions} />
