@@ -55,6 +55,30 @@ export function replaceHash(next: string): void {
 }
 
 /**
+ * Write where you are into the URL **without telling anybody** (P6.7c).
+ *
+ * `history.replaceState` is the one hash write that fires NO `hashchange`,
+ * which is exactly what separates it from `replaceHash` above — and here that
+ * silence is the feature, not an accident:
+ *
+ *  - the current history entry starts carrying the selection, so a later
+ *    `history.back()` from a detail screen returns to WHERE YOU WERE rather
+ *    than to the bare screen;
+ *  - and no listener re-renders, so the screen doing the stamping does not
+ *    tear itself down. The map keys its editor on the route, so a stamp that
+ *    fired `hashchange` would remount the whole drawing on every tap.
+ *
+ * ⚠ The consequence, stated because it will surprise somebody: `useHash`
+ * goes STALE after a stamp. That is fine for a breadcrumb — nothing reads the
+ * route to decide what is selected, the editor holds that itself — and it
+ * would not be fine for a real navigation. Use `navigateHash` for those.
+ */
+export function stampHash(next: string): void {
+  if (globalThis.location.hash === next) return
+  globalThis.history.replaceState(globalThis.history.state, '', next)
+}
+
+/**
  * Go back, or to `fallback` when there is nowhere to go.
  *
  * `history.back()` rather than navigating to the list, so returning from a

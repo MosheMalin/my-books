@@ -955,3 +955,124 @@ describe('pointing the drawing at a shelf (P6.5c)', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 })
+
+describe('coming back to where you were (P6.7c)', () => {
+  /**
+   * The owner, walking the finished pillar: *"click back from a shelf should
+   * go back to where we was. I started from a specific bookcase — I want to
+   * return to it, not to the map."*
+   *
+   * `back()` was never wrong: it is `history.back()`. What was wrong is that
+   * the entry it returns to said only `#/plan`, because the editor holds its
+   * selection in React state and nothing wrote it down. So the map now STAMPS
+   * what is selected into the current history entry — and the two halves of
+   * that (write it, read it back) are what this block pins.
+   */
+  const openAt = (focus: string | null) => render(
+    <I18nProvider>
+      <PlanScreen library="lib-test" focusShelf={focus} />
+    </I18nProvider>,
+  )
+
+  const world = () => {
+    server.sites.push({ id: 'st1', name: 'הבית', order: 0 })
+    server.floors.push({ id: 'f1', site_id: 'st1', name: 'קרקע', order: 0 })
+    return drawOne(server, 'f1', 'a')
+  }
+
+  it('opens on the BOOKCASE when the id names one, not just a shelf', async () => {
+    // The half that makes the journey work. `#/plan/<id>` has always taken a
+    // shelf; the id is opaque (`parseHash` never looks at it), so the same
+    // route now resolves a bookcase — which is what the owner started from
+    // and what he expects back.
+    world()
+
+    openAt('bc-a')
+
+    // The bookcase panel, with its elevation — the screen he left.
+    expect(await screen.findByRole('button',
+                                   { name: HE.delete_case }, WAIT))
+      .toBeInTheDocument()
+  })
+
+  it('writes the selection into the URL so BACK can find it', async () => {
+    // ⚠ The stamp is the whole feature. Without it the history entry says
+    // `#/plan`, and returning from a shelf screen lands on a map with nothing
+    // selected — which is exactly what the owner reported.
+    //
+    // The MOST SPECIFIC thing selected: a cell answers with the shelf
+    // standing in it, not with its bookcase.
+    const shelf = world()
+    globalThis.location.hash = '#/plan'
+
+    openAt(shelf)
+
+    await screen.findByRole('link', { name: HE.open_this_shelf }, WAIT)
+    await waitFor(
+      () => expect(globalThis.location.hash).toBe(`#/plan/${shelf}`), WAIT)
+  })
+
+  it('stamps a BOOKCASE when that is all that is selected', async () => {
+    // A slot this session just drew has no shelf row, and a bookcase selected
+    // on its own has no cell — stamping nothing there would lose the very
+    // thing the owner wants back.
+    world()
+    globalThis.location.hash = '#/plan'
+
+    openAt('bc-a')
+
+    await screen.findByRole('button', { name: HE.delete_case }, WAIT)
+    await waitFor(
+      () => expect(globalThis.location.hash).toBe('#/plan/bc-a'), WAIT)
+  })
+
+  it('does the same for a ROOM, which is also a place you came from', async () => {
+    // The third thing `#/plan/<id>` can name. Rooms are selectable and have
+    // a panel of their own, so leaving one and coming back is the same
+    // journey — and an untested branch is a branch that stops working.
+    world()
+    server.places.push({ id: 'pl1', floor_id: 'f1', name: 'סלון',
+                         rect: { x: 0, y: 0, w: 10, h: 8 }, order: 0 })
+    globalThis.location.hash = '#/plan'
+
+    openAt('pl1')
+
+    await screen.findByRole('button', { name: HE.delete_room }, WAIT)
+    await waitFor(
+      () => expect(globalThis.location.hash).toBe('#/plan/pl1'), WAIT)
+  })
+
+  it('stamps WITHOUT navigating, so the drawing is not torn down', async () => {
+    // ⚠⚠ The reason this uses `history.replaceState` and not `location.hash`
+    // or `location.replace`. Both of those fire `hashchange`; `PlanScreen`
+    // keys `MapScreen` on the focus id, so a real navigation here would
+    // REMOUNT the whole editor on every tap — and this file's header is about
+    // what a remount costs: it pushes its own starting document and can undo
+    // the session's work.
+    //
+    // Asserted at the MECHANISM, because that is the thing that must not
+    // change: the hash moves and no listener hears it.
+    const shelf = world()
+    globalThis.location.hash = '#/plan'
+    // ⚠ The EVENT's own `newURL`, never `location.hash` read at delivery.
+    // jsdom dispatches `hashchange` asynchronously, so the assignment two
+    // lines above arrives after the stamp has already happened — a listener
+    // that reads the live hash reports the stamped value for an event that
+    // was announcing something else, and the test fails for a reason that is
+    // not true. Measured, writing this.
+    const heard: string[] = []
+    const listener = (e: Event) =>
+      heard.push(new URL((e as HashChangeEvent).newURL).hash)
+    globalThis.addEventListener('hashchange', listener)
+    try {
+      openAt(shelf)
+      await screen.findByRole('link', { name: HE.open_this_shelf }, WAIT)
+      await waitFor(
+        () => expect(globalThis.location.hash).toBe(`#/plan/${shelf}`), WAIT)
+      expect(heard).not.toContain(`#/plan/${shelf}`)
+    } finally {
+      globalThis.removeEventListener('hashchange', listener)
+    }
+  })
+})
+
