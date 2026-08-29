@@ -145,6 +145,9 @@ export type MapScreenProps = {
      * says there is something to look at, the shelf screen says what.
      */
     overview: (shelfId: string) => Promise<ShelfOverviewDTO>
+    /** P6.6 — count the shelves in one photograph. Optional everywhere: a
+     *  host that does not offer it makes the control ABSENT. */
+    proposeLevels?: ((photo: File) => Promise<number>) | undefined
   }
 }
 
@@ -624,6 +627,7 @@ export default function MapScreen(props: MapScreenProps) {
     previewMerge: props.shelves.previewMerge,
     mergeShelf: props.shelves.merge,
     shelfOverview: props.shelves.overview,
+    proposeLevels: props.shelves.proposeLevels,
   }
 
   /** Double-click on the plan: select it and ask the panel to start editing. */

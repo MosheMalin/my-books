@@ -33,6 +33,7 @@ from app.api.deps import (
     get_mailer,
     get_principal,
     get_read_store,
+    get_band_finder,
     get_reader,
     get_journal,
     get_map_store,
@@ -62,6 +63,7 @@ from app.ports.jobs import JobRunner
 from app.map_undo import Journal
 from app.ports.map import MapStore
 from app.ports.map_undo import MapUndoStore
+from app.ports.bands import BandFinder
 from app.ports.reader import Reader
 from app.ports.store import BookStore, ReadStore, ShelfStore
 from app.ports.tenancy import TenancyStore
@@ -101,6 +103,7 @@ def bind_ports(
     decision_store: DecisionStore | None = None,
     duplicate_queue: DuplicateQueue | None = None,
     reader: Reader | None = None,
+    band_finder: BandFinder | None = None,
     job_runner: JobRunner | None = None,
     tenancy_store: TenancyStore | None = None,
     auth_store: AuthStore | None = None,
@@ -134,6 +137,7 @@ def bind_ports(
                       (get_decision_store, decision_store),
                       (get_duplicate_queue, duplicate_queue),
                       (get_reader, reader), (get_job_runner, job_runner),
+                      (get_band_finder, band_finder),
                       (get_tenancy_store, tenancy_store),
                       (get_auth_store, auth_store), (get_mailer, mailer),
                       (get_invite_store, invite_store),
@@ -181,6 +185,7 @@ def create_app(
     decision_store: DecisionStore | None = None,
     duplicate_queue: DuplicateQueue | None = None,
     reader: Reader | None = None,
+    band_finder: BandFinder | None = None,
     job_runner: JobRunner | None = None,
     tenancy_store: TenancyStore | None = None,
     auth_store: AuthStore | None = None,
@@ -250,6 +255,7 @@ def create_app(
         blob_store=blob_store,
         read_store=read_store, decision_store=decision_store,
         duplicate_queue=duplicate_queue, reader=reader,
+        band_finder=band_finder,
         job_runner=job_runner, tenancy_store=tenancy_store,
         auth_store=auth_store, mailer=mailer, invite_store=invite_store,
         oauth_state_store=oauth_state_store,

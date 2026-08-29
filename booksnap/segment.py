@@ -46,6 +46,37 @@ def _shelf_bands(gray: np.ndarray, cfg: SegmentConfig) -> list[tuple[int, int]]:
             if (b - a) > H * cfg.min_band_frac]
 
 
+def shelf_bands(path: str | Path,
+                cfg: SegmentConfig | None = None) -> list[tuple[float, float]]:
+    """Where the shelf bands are in this photo, as FRACTIONS of its height.
+
+    The public face of ``_shelf_bands``, added for the product (MAP_PLAN P6.6,
+    UI_PLAN §3: *"segment.py already detects horizontal shelf bands, so the
+    levels of a case can be proposed from one photo of it and confirmed by
+    hand"*). Nothing here is new detection — it is the same long-horizontal-line
+    signal stage 1 already runs, answered without cropping anything.
+
+    Fractions rather than pixels because the caller draws them over an image it
+    has scaled to fit a phone, and a pixel count is a fact about a file the
+    caller no longer has.
+
+    ⚠ This counts BANDS, which is a fact about one photograph. It is not a
+    shelf count and must never be written as one — MAP_PLAN §3.14: the map may
+    propose, and only an explicit ✓ binds. (§3.14's ban on proposing from
+    image content is about IDENTITY — which shelf a photo is of — because
+    nothing in a picture says that. How many horizontal surfaces a bookcase
+    has is the one thing a picture does say, which is why VISION §7 names this
+    as approach B's strongest use.)
+    """
+    img = cv2.imread(str(path))
+    if img is None:
+        raise ValueError(f"cannot read image: {path}")
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    height = gray.shape[0]
+    return [(a / height, b / height)
+            for a, b in _shelf_bands(gray, cfg or CONFIG.segment)]
+
+
 def _vertical_coverage(band_gray: np.ndarray) -> np.ndarray:
     """Fraction of band height covered by long vertical edges, per column."""
     H, W = band_gray.shape

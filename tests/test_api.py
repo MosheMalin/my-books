@@ -6070,7 +6070,11 @@ def test_every_map_path_answers_404_for_another_library_with_its_own_methods():
     # is refused 404 at the door by `deps.current_library`, which the tenancy
     # ring gates. Listed one at a time rather than pattern-matched: a THIRD
     # such route is worth a moment's thought, not a silent pass.
-    names_nothing = {("post", "/api/v1/map/sites"), ("post", "/api/v1/map/undo")}
+    names_nothing = {("post", "/api/v1/map/sites"), ("post", "/api/v1/map/undo"),
+                     # P6.6: a photograph and nothing else. There is no id of
+                     # anything in the path or the body, so "another
+                     # library's X" is not expressible in a call to it.
+                     ("post", "/api/v1/map/propose-levels")}
     unprobed = {
         (method, template) for method, template in on_the_wire - names_nothing
         if not any(m == method and matches(template, p) for m, p in probed)
@@ -6736,6 +6740,12 @@ def test_every_write_in_the_map_router_needs_edit_map_and_says_so():
              {"into": "sh2", "strip": "survivor_first"}),
             ("post", "/api/v1/map/shelves/sh/merge/preview",
              {"into": "sh2", "strip": "survivor_first"}),
+            # P6.6. It writes NOTHING — not even the photograph — and still
+            # needs EDIT_MAP, for the same reason the merge preview above
+            # does: the capability answers *whose job is this*, not *does
+            # this mutate*. A number that only the drawing's editor can apply
+            # is of no use to a reader who may not apply it.
+            ("post", "/api/v1/map/propose-levels", None),
         ]
         for method, path, body in writes:
             call = getattr(client, method)
@@ -8010,3 +8020,43 @@ def test_where_walks_to_the_shelfs_OWN_site_room_case_and_section():
         assert ours["address"]["section"] is None, (
             "the first bookcase has ONE section and must not name it"
         )
+
+def test_every_port_create_app_accepts_reaches_bind_ports():
+    """⚠ *An argument accepted and not forwarded is a fix that reports
+    success.*
+
+    CLAUDE.md records this exact failure from P6.4b — `_record` took `wrote`
+    and never passed it on, so a measured fix was inert for two items behind a
+    docstring saying the window was closed. It happened again immediately:
+    P6.6's `create_app(band_finder=…)` accepted the port, `app/main.py` passed
+    a real one, and `bind_ports` never saw it. Every ring stayed green — the
+    API tests bind through `bind_ports` directly — and the first request in a
+    real browser answered **500: no BandFinder bound**.
+
+    So the rule is structural: a port that `create_app` takes and `bind_ports`
+    also takes must be handed over. Read from the SIGNATURES and the call
+    site, never from a list, because a list is the thing that goes stale the
+    next time somebody adds a port.
+    """
+    import ast
+    import inspect
+    from app.api import app as app_module
+
+    shared = (set(inspect.signature(app_module.create_app).parameters)
+              & set(inspect.signature(app_module.bind_ports).parameters))
+    shared -= {"app"}
+    assert len(shared) > 8, f"the signatures stopped overlapping: {shared}"
+
+    tree = ast.parse(inspect.getsource(app_module.create_app))
+    forwarded = {
+        kw.arg
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and getattr(node.func, "id", None) == "bind_ports"
+        for kw in node.keywords if kw.arg
+    }
+    missing = sorted(shared - forwarded)
+    assert not missing, (
+        f"create_app accepts these and never passes them to bind_ports: "
+        f"{missing}"
+    )

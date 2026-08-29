@@ -161,6 +161,44 @@
         "title": "ApplyDiffRequest",
         "type": "object"
       },
+      "BandDTO": {
+        "description": "One horizontal shelf surface a photograph shows, as fractions of its\nheight. Fractions because the client draws them over an image it has\nscaled to fit a phone.",
+        "properties": {
+          "bottom": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Bottom",
+            "type": "number"
+          },
+          "top": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Top",
+            "type": "number"
+          }
+        },
+        "required": [
+          "top",
+          "bottom"
+        ],
+        "title": "BandDTO",
+        "type": "object"
+      },
+      "Body_propose_levels_api_v1_map_propose_levels_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "description": "One photo of a bookcase. NOT stored — read, measured, and dropped.",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_propose_levels_api_v1_map_propose_levels_post",
+        "type": "object"
+      },
       "Body_upload_image_api_v1_images_post": {
         "properties": {
           "file": {
@@ -1826,6 +1864,30 @@
           "is_out"
         ],
         "title": "LendingDTO",
+        "type": "object"
+      },
+      "LevelProposalDTO": {
+        "description": "What one photograph of a bookcase suggests its level count is (P6.6).\n\n⚠ A PROPOSAL, and the word is load-bearing. §3.14: *the map may propose;\nonly a ✓ binds*. This route writes nothing — no shelf, no section, no\nimage, not even the photograph, which is never stored. Applying the number\nis a separate, explicit call to the section's own levels route.\n\n⚠ ``levels`` is a count of BANDS in a picture, which is not the same\nstatement as *this bookcase has N shelves*. A photo that shows part of a\ncase answers about that part; a photo of a single shelf answers **1**,\nwhich is what all eleven of the owner's photographs measured on the day\nthis shipped. The client says which of the two it is showing.",
+        "properties": {
+          "bands": {
+            "items": {
+              "$ref": "#/components/schemas/BandDTO"
+            },
+            "title": "Bands",
+            "type": "array"
+          },
+          "levels": {
+            "description": "How many bands the photo shows — `len(bands)`, restated so a caller that only wants the number does not have to count a list.",
+            "minimum": 1.0,
+            "title": "Levels",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "levels",
+          "bands"
+        ],
+        "title": "LevelProposalDTO",
         "type": "object"
       },
       "LibraryCreate": {
@@ -5427,6 +5489,48 @@
           }
         },
         "summary": "Patch Place",
+        "tags": [
+          "map"
+        ]
+      }
+    },
+    "/api/v1/map/propose-levels": {
+      "post": {
+        "description": "How many shelf surfaces this photograph shows.\n\nVISION §7's approach B, and the one place it is strongest: `segment.py`\nalready detects horizontal shelf bands — deterministically, locally, for\nfree, tuned on this owner's own shelves — so *\"the levels of a case can be\nproposed from one photo of it and confirmed by hand\"* (UI_PLAN §3).\n\n⚠ **It writes nothing at all**: no shelf, no section, no blob, and not the\nphotograph, which never reaches the blob store. §3.14 — *the map may\npropose; only a ✓ binds* — and applying the number is a separate,\nexplicit call to the section's own levels route. A proposal that saved its\nevidence would be the first image in this product with no owner and no\nlifecycle.\n\n⚠ **EDIT_MAP, though it writes nothing.** The capability answers *whose\njob is this*, not *does this mutate*: this exists only to fill in a field\non the editor, and a viewer who cannot change the drawing has no use for a\nnumber they cannot apply. The preview beside it (`merge/preview`) is\nEDIT_MAP for the same reason.\n\n⚠ **What comes back is a fact about a PHOTOGRAPH.** A picture of half a\nbookcase answers about that half, and a picture of a single shelf answers\n**1** — which is what all eleven of the owner's photographs measured on\nthe day this shipped. The client says which it is showing; the server does\nnot guess.",
+        "operationId": "propose_levels_api_v1_map_propose_levels_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_propose_levels_api_v1_map_propose_levels_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LevelProposalDTO"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Propose Levels",
         "tags": [
           "map"
         ]
