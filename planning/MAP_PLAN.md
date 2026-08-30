@@ -789,7 +789,7 @@ this pillar.**
 | **P6.4** | **Binding and merge** — photo-born shelves bind into drawn slots; several identities merge into one physical shelf, with aliases. ⚠ THREE schema steps now, and **b ran before a**: **v22** the undo journal, **v23** its sequence (the head could not be decided by a clock with second resolution — see P6.4b), **v24** the alias. P6.3.2a spent v21. | L | |
 | **P6.5** | **The map as navigation** — three drill levels, "where is it" incl. depth, stale-depth surfacing, capture handoff. Decomposed into **a/b/c** below; the two measured phone defects it carried are P6.5a's. | L | |
 | **P6.6** | ✅ *Optional:* bookcase photo → proposed levels via `segment.py`, confirmed by hand. ⚠ Shipped UNMEASURED on its target input — see below. | S | |
-| **P6.7** | **What the owner found walking it** (2026-08-30) — eight points from the first real session with the finished pillar. Decomposed **a–h** below. Not a new pillar: every one of them is a hole in something P6.0–P6.6 shipped. | M | |
+| **P6.7** | **What the owner found walking it** (2026-08-30) — eight points from the first real session with the finished pillar. Decomposed **a–h** below. Not a new pillar: every one of them is a hole in something P6.0–P6.6 shipped. | M | ✅ a–h |
 
 ### P6.7 — the eight points, and what each one actually is
 
@@ -834,6 +834,31 @@ P6.6 shipped unmeasured on its target input because no whole-bookcase
 photograph existed in `work/`. The owner has now taken one — it is the photo
 that produced this point. **Ask for it before building g**, or the second
 column detector ships as blind as the first band detector did.
+
+⚠ **He was away when g was built, and the photo is not in `work/`** — the
+proposal route stores nothing, by design, so the picture that produced the
+point exists only on his phone. What was measured instead is the half that
+CAN be: the FALSE-column rate, on all ten of his full-size photographs, every
+one a single shelf full of books. Ten out of ten answered **1 column**. That
+is the failure that matters — a shelf of books is a picket fence of long
+vertical edges — and it is measured. Whether the dividers that ARE there get
+found is still synthetic-only, and every layer says so.
+
+### What P6.7 landed, item by item  *(2026-08-30)*
+
+All eight. `main` green after each, one branch per item, every decision
+mutation-checked and every file restored byte-exact.
+
+| # | Landed | The finding worth keeping |
+|---|---|---|
+| **a** | ▲/▼ on each section header; `POST /map/sections/{id}/move`; `move_section` in the domain. Not journalled — pressing the other arrow is a complete undo, and §3.15 is about the edits for which that is not true. | `renumber_sections` **sorted by the ordinals it was about to overwrite**, making its own docstring false and a reorder inexpressible. *Add at the bottom* had been landing correctly only because Python's sort is stable. |
+| **b** | *Delete this bookcase* moved above the elevation. | Measured on מרכזית at 375×812: the elevation is **1260px tall**, so the control sat ~1700px down an 1824px panel. It is at 103px now. ⚠ Not reproduced: with a cell selected, the toolbar's Edit ▸ Delete deletes the BOOKCASE, the opposite of the complaint. |
+| **c** | The map stamps its selection into the history entry; `#/plan/<id>` resolves a shelf, a bookcase or a room. | `history.replaceState` is load-bearing — `location.replace` fires `hashchange`, and the editor is keyed on that id, so a real navigation would remount the whole drawing on every tap. |
+| **d** | `AttachPhoto`, on the shelf screen and in the map panel. | **Nothing new on the server**: `POST /images` + `POST /captures` have filed a photo against a (shelf, depth) since P2.2. Making `slotWrite` return its promise broke eleven tests of the five callers that deliberately do not await it. |
+| **e** | Format **version 5** carries section and shelf ids, plus the library, site and day. *Plan ▸ save to a file*. | The condition `persist.ts` set five pillars ago, finally met. Measured on the real drawing: 43,885 bytes, 139 cells, **all 139 carrying their shelf id**, no `label`, no `free`. |
+| **f** | *Plan ▸ restore from a file*, costed by SHELF ID, confirmed, and **backed up first**. | The test caught a WRONG SENTENCE: the restore's push destroys things, so `record` offered *take back the last removal* — a promise the journal cannot keep for an import. `MapSync.replacing()` is the fix. And a zero-cost restore said *"0 bookcases go"*. |
+| **g** | `shelf_columns` — the same routine on the transpose. The proposal answers both axes; the column count is OFFERED and only when it grows. | Measured before built: **1 column on all ten real photographs**. The route had no body test at all before this. The mapping between the client call and the panel had nothing watching it — *an argument accepted and not forwarded*, for the third time. |
+| **h** | The bookcase panel says when its front is the short side. | **Reproduced by counting, not by reading code**: nine of thirteen bookcases have their columns dividing across the thin side — one unit of an eight-unit case, in five of them. §3.8 is applied by `frontFor` at draw and flip time and by nothing afterwards. |
 
 ### P6.6 — levels proposed from a photograph  *(landed)*
 

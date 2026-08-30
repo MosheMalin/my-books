@@ -453,6 +453,56 @@ different world — the product never reads it.
   request in a browser answered *500: no BandFinder bound*. There is now a
   meta-test reading both SIGNATURES and the call site, because the next port
   will be added by somebody who has not read this line.
+- **A function that sorts its argument cannot express a REORDER**, and
+  `renumber_sections`'s docstring said "in the order given" while the code
+  sorted by the ordinals it was about to overwrite. Every caller already
+  passed positionally, so the fix was inert for them — but *add a section at
+  the bottom* had been landing correctly only because Python's sort is stable
+  and the new section happened to be listed first. A property of the sort, not
+  of the intent.
+- **`history.replaceState` is the only hash write that fires no
+  `hashchange`** — which is what lets a screen record its own state in the URL
+  for a later Back without tearing itself down. `location.replace` DOES fire
+  it, and the map keys its editor on that id, so the tidy-looking choice
+  remounts the whole drawing on every tap. The consequence to write down:
+  `useHash` goes stale after a stamp, which is fine for a breadcrumb and not
+  for a navigation.
+- **jsdom dispatches `hashchange` ASYNCHRONOUSLY**, so a listener reading
+  `location.hash` at delivery reports the value at delivery, not the one being
+  announced — a test then fails for a reason that is not true. Read the
+  event's own `newURL`.
+- **Making a shared helper return its promise is not a free change.**
+  `slotWrite` was `void (async …)()` for five callers that deliberately do not
+  await it; returning the promise so a sixth could broke eleven of their tests.
+  The sixth got its own path, with the two differences written down — it is
+  awaited, and it re-derives on success only, because a failed upload wrote
+  nothing and "the drawing moved underneath you" is not true of it.
+- **A destructive edit that is many operations cannot promise the journal.**
+  §3.15's undo takes back the HEAD, so a restore-from-file offering *take back
+  the last removal* names a control that would undo one of its own many
+  writes. Measured: `record` announced it over the top of the restore's own
+  sentence. The way back from a bulk replace is the file written before it —
+  and writing that file FIRST is the safety argument, exactly as P6.4d's merge
+  had to learn.
+- **A zero is a count too.** *"0 bookcases go, and nothing stands on them"* is
+  what a two-branch dialog says about the commonest restore there is: the one
+  you do to check your backup works. Same family as `1 תמונות`, one branch
+  further out.
+- **Ask the SHELF IDS, never the geometry, when comparing two drawings.** A
+  cell at the same (case, section, column, level) is not the same shelf —
+  that is why the format carries ids — so a positional comparison reports a
+  column shrink as free while detaching the books in it.
+- **Measure the FALSE positive when you cannot measure the true one.** P6.7g's
+  column detector could not be measured on a bookcase photograph (none
+  exists), but the failure that matters — a shelf of books read as four
+  columns, because spines are long vertical edges — is measurable on every
+  real photo there is. Ten out of ten answered 1. Half a measurement, named
+  as half.
+- **Nine of thirteen was the reproduction.** The owner reported twice that a
+  drawn bookcase's columns divide the wrong way; no code path does that, and
+  saying so was right. COUNTING his drawing found nine cases whose front is
+  the short side. When the code cannot be shown wrong, measure the DATA before
+  concluding there is nothing there.
 - **A guard that reads DECLARATIONS never asks whether a selector matches
   anything.** `.capture .btn` was added to the phone touch floor with a
   comment naming *Run — the one control that spends money — at 37px* as the
