@@ -598,6 +598,26 @@ export const caseLength = (bc: Bookcase): number =>
 export const caseThickness = (bc: Bookcase): number =>
   frontIsHorizontal(bc) ? bc.rect.h : bc.rect.w
 
+/**
+ * The books look out of the SHORT side of what was drawn (P6.7h).
+ *
+ * §3.8's rule is that columns divide across the front and the front is the
+ * long face — *that is what a bookcase IS* — and `frontFor` applies it when a
+ * case is drawn or flipped. Nothing applies it afterwards: *Turn* is a manual
+ * control by design, a room can move out from under a case, and a resize that
+ * does not flip which side is longer leaves the front alone.
+ *
+ * ⚠ It is not an ERROR, which is why this is a question and not a guard. A
+ * case 5 deep and 2 wide is legal — unusual furniture, but the owner draws
+ * the footprint and the drawing is not the system's to overrule (§3.4: free
+ * measurements mean the system may never infer capacity). What it IS is worth
+ * saying: on the owner's own library **nine of thirteen** bookcases were in
+ * this state, so an elevation describing a two-unit face on a five-unit case
+ * is the commonest thing on his drawing rather than a corner case.
+ */
+export const facesTheShortSide = (bc: Bookcase): boolean =>
+  caseLength(bc) < caseThickness(bc)
+
 // --- drawing aids ----------------------------------------------------------
 
 /** The front edge as a segment — the face the books look out of. */

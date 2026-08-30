@@ -726,3 +726,57 @@ describe('filing a photo from the bookcase panel (P6.7d)', () => {
   })
 })
 
+describe('a bookcase whose front is its short side (P6.7h)', () => {
+  /**
+   * The owner raised this twice: *"upon drawing a bookcase, the columns
+   * should be vertical to the shorter dimension."* No code path draws one
+   * wrong that I could find — `frontFor` picks the long side and outranks the
+   * flush-wall guess, `withRect` re-derives on a flip, `columnDividers` draws
+   * perpendicular to the front. Then I counted his drawing: **nine of
+   * thirteen** bookcases have their front on the short side. The state is
+   * real whatever produced it, and nothing was saying so.
+   *
+   * ⚠ A NOTICE, not a guard. §3.4 — free measurements mean the system may
+   * never infer capacity — and a case five deep and two wide is legal
+   * furniture. It may SAY so, beside the Turn that fixes it.
+   */
+  const shaped = (w: number, h: number, front: 'N' | 'E' | 'S' | 'W') => ({
+    ...plan(),
+    cases: [{
+      ...newBookcase('c1', 'ארון', { x: 1, y: 0, w, h }, front, 'r1', 'f1', 1),
+      sections: [section('s1')],
+    }],
+  })
+
+  const show = (w: number, h: number, front: 'N' | 'E' | 'S' | 'W') =>
+    render(
+      <I18nProvider>
+        <Inspector doc={{ plan: shaped(w, h, front), seq: 0 }} floorId="f1"
+                   selection={{ rooms: [], cases: ['c1'], cells: [] }}
+                   actions={actions()} renaming={null} onRenamed={() => {}} />
+      </I18nProvider>,
+    )
+
+  it('says so, and names the two numbers that make it true', () => {
+    // 5 wide, 2 deep, facing WEST — the exact shape of עמוקה, קריאה and
+    // עבודה on the owner's drawing: the face is the 2-unit edge.
+    show(5, 2, 'W')
+    expect(screen.getByText(HE.faces_the_short_side(2, 5))).toBeInTheDocument()
+  })
+
+  it('says nothing at all when the front IS the long side', () => {
+    // Which is what a bookcase normally is, and the reason this is absent
+    // rather than always-shown: on a drawing where the notice is common, a
+    // line that is always there is furniture rather than information.
+    show(5, 2, 'S')
+    expect(screen.queryByText(/הצד הקצר/)).toBeNull()
+  })
+
+  it('says nothing for a SQUARE footprint, which favours neither side', () => {
+    // The boundary, and it must not be an off-by-one: 2x2 facing any way has
+    // a face as long as it is deep, so there is nothing to report.
+    show(2, 2, 'N')
+    expect(screen.queryByText(/הצד הקצר/)).toBeNull()
+  })
+})
+

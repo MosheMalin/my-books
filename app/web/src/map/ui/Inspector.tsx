@@ -30,6 +30,7 @@ import {
   MAX_DEPTH,
   allShelves,
   caseLength,
+  facesTheShortSide,
   caseThickness,
   sectionById,
   sectionIndex,
@@ -402,6 +403,32 @@ function CasePanel({
           <br />
           {T.free_measurement}
         </p>
+
+        {/*
+          P6.7h. The owner raised this twice — *"upon drawing a bookcase, the
+          columns should be vertical to the shorter dimension"* — and I could
+          not find a code path that draws one wrong. Then I counted his
+          drawing: NINE of thirteen bookcases have their front on the short
+          side, so the elevation describes a two-unit face on a five-unit
+          case. The state is real whatever produced it.
+
+          ⚠ A NOTICE, not a guard, and not an auto-correct. §3.4: free
+          measurements mean the system may never infer capacity, and a case
+          five deep and two wide is legal furniture. What it may do is SAY so,
+          beside the control that fixes it — `frontFor` applies §3.8 when a
+          case is drawn or flipped and nothing applies it afterwards, because
+          *Turn* is manual by design and a room can move out from under a
+          case.
+
+          ⚠ Absent unless true, which is the house rule and also what keeps
+          it readable: on a drawing where this is the common state, a line
+          shown always would be furniture rather than information.
+        */}
+        {facesTheShortSide(bc) && (
+          <p className="note warn rtl-safe" role="status">
+            {T.faces_the_short_side(caseLength(bc), caseThickness(bc))}
+          </p>
+        )}
       </Fold>
 
       {/*
