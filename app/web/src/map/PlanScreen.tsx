@@ -13,6 +13,8 @@ import { useI18n } from '../lib/i18n'
 import { stampPlan } from '../lib/route'
 
 import MapScreen from './MapScreen'
+import { downloadText } from './download'
+import { planFilename, serializePlan } from './core/persist'
 import type { Plan } from './core/model'
 import type { Selection } from './ui/types'
 import { EMPTY, selectCase, selectRoom } from './ui/types'
@@ -408,6 +410,30 @@ export function PlanScreen({ library, focusShelf = null }: {
         onChange={sync.record}
         saved={sync.saved}
         onReload={sync.reload}
+        /**
+         * P6.7e — the owner keeps his own copies: *"I want to be able to
+         * save copies and tries by myself."*
+         *
+         * ⚠ The file NAMES its library and its site. `toPlan` builds one
+         * site at a time, so this is one site's drawing, and a restore
+         * pointed at a different library or a different site would bind
+         * shelves that are not there. Recording it is what lets P6.7f refuse
+         * rather than half-succeed.
+         *
+         * ⚠ The flash rather than a dialog: a download that says nothing is
+         * indistinguishable from a control that did nothing, and the
+         * browser's own chrome for it is a corner of the window on a desktop
+         * and invisible on a phone.
+         */
+        onExport={(plan) => {
+          const savedAt = new Date().toISOString()
+          const site = sync.sites.find((s) => s.id === sync.siteId)
+          const name = planFilename(site?.name ?? '', savedAt)
+          downloadText(name, serializePlan(plan, {
+            library, siteId: sync.siteId, siteName: site?.name ?? '', savedAt,
+          }))
+          sync.say(T.saved_to_file(name))
+        }}
         site={{
           sites: sync.sites,
           siteId: sync.siteId,

@@ -260,6 +260,8 @@ export type MapSync = {
    * optimistic guess that disagrees with the next reload.
    */
   attachPhoto: (shelfId: string, depth: number, photo: File) => Promise<void>
+  /** Say something in the flash surface — the one that survives a re-derive. */
+  say: (text: string, ms?: number) => void
   /** Hand the current document over; the hook works out what to send. */
   record: (plan: Plan) => void
   reload: () => void
@@ -938,6 +940,17 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
     saved,
     notice,
     flash,
+    /**
+     * Say something in the flash surface (P6.7e).
+     *
+     * ⚠ EXPOSED rather than each caller keeping its own line, because this
+     * one survives a re-derive and a per-screen `useState` does not — the
+     * argument `undo_offered` already carries. A save-to-file that said
+     * nothing would be indistinguishable from a control that did nothing:
+     * the browser's own download chrome is a corner of a desktop window and
+     * is invisible on a phone.
+     */
+    say: announce,
     dismiss: () => setNotice(null),
     sites,
     siteId,

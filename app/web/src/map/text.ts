@@ -287,6 +287,9 @@ export interface MapText {
   move_section_up: (label: string) => string
   move_section_down: (label: string) => string
   section_moved: (label: string) => string
+  // --- saving the drawing to a file (P6.7e) ---
+  save_to_file: string
+  saved_to_file: (name: string) => string
   photos_are_captures: string
   shelf_depth: string
   // chrome
@@ -693,6 +696,10 @@ const HE: MapText = {
   move_section_up: (label) => `העלאת ${label} שלב אחד`,
   move_section_down: (label) => `הורדת ${label} שלב אחד`,
   section_moved: (label) => `הוזזה ${label}`,
+  save_to_file: 'שמירת השרטוט לקובץ…',
+  // ⚠ Our word first: `unicode-bidi: plaintext` resolves a paragraph from
+  // its first strong character, and a filename is Latin.
+  saved_to_file: (name) => `נשמר לקובץ ${name}`,
   photos_are_captures:
     'תמונות מגיעות מצילום המדף, לא מכאן. אפשר לצלם כמה תמונות לאותו מדף, ולכל אחת העומק שלה.',
   shelf_depth: 'עומק המדף הזה',
@@ -1026,6 +1033,8 @@ const EN: MapText = {
   move_section_up: (label) => `Move ${label} up one`,
   move_section_down: (label) => `Move ${label} down one`,
   section_moved: (label) => `Moved ${label}`,
+  save_to_file: 'Save the drawing to a file…',
+  saved_to_file: (name) => `Saved to ${name}`,
   photos_are_captures:
     'Photos arrive by photographing the shelf, not from here. A shelf can have several, each with its own depth.',
   shelf_depth: "this shelf's depth",

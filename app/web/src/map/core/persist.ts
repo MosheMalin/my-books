@@ -9,18 +9,25 @@
  * The underlay is NOT exported: a tracing image is scaffolding, and its `src`
  * is an object URL that means nothing in another session.
  *
- * ⚠ **Nothing in the shipped editor imports this module** — the port dropped
- * the lab's *File ▸ Save to file*, because the plan lives in the library now.
- * It is kept, with its tests, for the day an export comes back (a copy of the
- * drawing to hand over is a real ask), and the note is here so nobody reads a
- * tested module as a live one.
+ * ⚠ **It is live again as of P6.7e**, and the condition the old note set is
+ * the thing that changed. That note said: `parsePlan` REBUILDS section ids
+ * from array position, on the stated grounds that nothing outside the
+ * document refers to one — which stopped being true the moment
+ * `shelves.section_id` existed, and an import that re-mints ids re-addresses
+ * every shelf in the file. So **version 5 carries identity**, and the
+ * positional rebuild survives only for the older shapes, where the ids in the
+ * file really were positional and trusting them would be worse.
  *
- * ⚠⚠ And the condition on ever wiring it up again: `parsePlan` REBUILDS
- * section ids from array position, on the stated grounds that nothing outside
- * the document refers to one. That stopped being true when `shelves.
- * section_id` did — MAP_PLAN records it as one of the two conventions P6.3
- * had to honour. An import that re-mints ids would re-address every shelf in
- * the file.
+ * ⚠ What the file carries is the DRAWING plus the two ids that make it
+ * restorable over this library — not the catalogue. Shelf labels, book counts
+ * and photo counts stay out: they are the library's facts, and a file that
+ * carried them would claim a shelf holds books it has never seen. The thing
+ * that backs up a library is `tools/backup.py`.
+ *
+ * The owner settled the purpose on 2026-08-30: *a backup of THIS library*, so
+ * that importing restores the same drawing and every book stays on the shelf
+ * it was on. That is what the ids are for, and it is the whole reason this
+ * format gained a version.
  */
 
 import type { Bookcase, Floor, Plan, Room, Section, Shelf } from './model'
@@ -34,48 +41,88 @@ export const FORMAT = 'booksnap.map-lab.plan'
  *    the bookcase) is read as a single section.
  * 4: plans hold FLOORS — a file without them gets one, and everything in it
  *    lands on that floor.
+ * 5: sections and shelves carry their IDS, and the file says which library and
+ *    which site it was taken from. Everything below 5 had positional section
+ *    ids, so those are still rebuilt — reading them would re-address every
+ *    shelf in the file, which is precisely the hazard this version exists to
+ *    remove.
  *
  * Older shapes are read rather than refused because the owner keeps a real
  * drawing in a real browser, and losing it to a lab refactor would be exactly
  * the "work will not get lost" failure this file exists to prevent.
  */
-export const FORMAT_VERSION = 4
+export const FORMAT_VERSION = 5
+
+/** Which drawing this is, so a restore can refuse to be pointed at another
+ *  one. Absent in every file written before version 5. */
+export type PlanOrigin = {
+  /** The library the drawing belongs to. */
+  library: string
+  /** The SITE it is of. `toPlan` builds one site at a time, so a file is one
+   *  site's drawing and restoring it into a different one is nonsense. */
+  siteId: string
+  /** Only so a person can tell two files apart in a downloads folder. Never
+   *  matched on — a site may be renamed between the save and the restore. */
+  siteName: string
+  /** When it was written, ISO-8601. Provenance for a human, never a rule. */
+  savedAt: string
+}
 
 export type PlanFile = {
   format: typeof FORMAT
   version: number
+  origin?: PlanOrigin
   plan: Plan
 }
 
-export function serializePlan(plan: Plan): string {
+export function serializePlan(plan: Plan, origin?: PlanOrigin): string {
   const file: PlanFile = {
     format: FORMAT,
     version: FORMAT_VERSION,
-    plan: { ...plan, underlay: null, cases: plan.cases.map(withoutIdentity) },
+    ...(origin ? { origin } : {}),
+    plan: { ...plan, underlay: null, cases: plan.cases.map(forExport) },
   }
   return JSON.stringify(file, null, 2)
 }
 
+/** What a saved file is called. Dated, so two saves of one site sort. */
+export function planFilename(siteName: string, savedAt: string): string {
+  const day = savedAt.slice(0, 10)
+  // Every character Windows refuses in a filename, plus whitespace. A site is
+  // named by a person, in Hebrew, with spaces in it.
+  const site = siteName.trim().replace(/[\\/:*?"<>|\s]+/g, '-') || 'map'
+  return `booksnap-${site}-${day}.json`
+}
+
 /**
- * A bookcase with the SERVER's per-cell fields stripped (P6.4c).
+ * A bookcase as version 5 writes it.
  *
- * `readShelf` already drops `id`, `label` and `free` on the way in, for the
- * reason it gives about `books`: what stands on a slot is the library's fact,
- * not the drawing's. Writing them out anyway made a file that reads
- * identically and carries this household's shelf ids and shelf NAMES into
- * whatever the owner shares it with — a plan file is a drawing, not an
- * export of the catalogue.
+ * ⚠ The ids STAY, and that is the change P6.7e is. Everything else the
+ * server owns goes: a shelf's NAME, whether the slot is free, and the two
+ * counts. The old rule — *a plan file is a drawing, not an export of the
+ * catalogue* — is unchanged and is why they go; an id is not a catalogue
+ * fact, it is the handle without which a restore re-addresses every shelf in
+ * the file.
+ *
+ * ⚠ The counts are ZEROED rather than deleted, because `Shelf` requires
+ * them. `readShelf` forces `books: 0` on the way in for the same reason it
+ * always has: what stands on a slot is the library's fact, and a file that
+ * claimed otherwise would say a shelf holds books it has never seen.
  */
-const withoutIdentity = (bc: Bookcase): Bookcase => ({
+const forExport = (bc: Bookcase): Bookcase => ({
   ...bc,
   sections: bc.sections.map((s) => ({
     ...s,
     shelves: s.shelves.map(
-      ({ id: _id, label: _label, free: _free, ...cell }) => ({ ...cell })),
+      ({ label: _label, free: _free, ...cell }) => ({
+        ...cell, books: 0, photos: 0,
+      })),
   })),
 })
 
-export type ParseResult = { ok: true; plan: Plan } | { ok: false; error: string }
+export type ParseResult =
+  | { ok: true; plan: Plan; origin: PlanOrigin | null }
+  | { ok: false; error: string }
 
 export function parsePlan(text: string): ParseResult {
   let raw: unknown
@@ -88,6 +135,10 @@ export function parsePlan(text: string): ParseResult {
   if (raw['format'] !== FORMAT) return { ok: false, error: 'not a map-lab plan' }
   const body = raw['plan']
   if (!isRecord(body)) return { ok: false, error: 'no plan' }
+  // ⚠ The version decides whether the ids in this file MEAN anything. Below
+  // 5 they were rebuilt from array position on every write, so trusting them
+  // would bind shelves to sections that never held them.
+  const carriesIds = num(raw['version'], 0) >= 5
 
   const floors = readFloors(body)
   const home = floors[0]!.id
@@ -99,7 +150,7 @@ export function parsePlan(text: string): ParseResult {
     .filter(isPresent)
     .map((r) => ({ ...r, floorId: onKnownFloor(r.floorId) }))
   const cases = asArray(body['cases'])
-    .map(readCase)
+    .map((c) => readCase(c, carriesIds))
     .filter(isPresent)
     .map((c) => ({ ...c, floorId: onKnownFloor(c.floorId) }))
   if (rooms.length === 0 && cases.length === 0) {
@@ -107,7 +158,24 @@ export function parsePlan(text: string): ParseResult {
     // half-importing. The lab is pre-product; there is no migration to owe.
     return { ok: false, error: 'the file describes nothing this version understands' }
   }
-  return { ok: true, plan: { ...emptyPlan(), floors, rooms, cases } }
+  return { ok: true, plan: { ...emptyPlan(), floors, rooms, cases },
+           origin: readOrigin(raw['origin']) }
+}
+
+/** Where this file came from, when it says. Null for every file written
+ *  before version 5 — absent, which is not the same as unknown-and-wrong:
+ *  the caller decides what to do with a file that cannot name its site. */
+function readOrigin(v: unknown): PlanOrigin | null {
+  if (!isRecord(v)) return null
+  const library = str(v['library'], '')
+  const siteId = str(v['siteId'], '')
+  if (!library || !siteId) return null
+  return {
+    library,
+    siteId,
+    siteName: str(v['siteName'], ''),
+    savedAt: str(v['savedAt'], ''),
+  }
 }
 
 // --- readers ---------------------------------------------------------------
@@ -135,13 +203,13 @@ function readRoom(v: unknown): Room | null {
   }
 }
 
-function readCase(v: unknown): Bookcase | null {
+function readCase(v: unknown, carriesIds: boolean): Bookcase | null {
   if (!isRecord(v)) return null
   const rect = readRect(v['rect'])
   if (!rect) return null
   const id = str(v['id'], 'case')
   const roomId = v['roomId']
-  const sections = readSections(v, id)
+  const sections = readSections(v, id, carriesIds)
   if (sections.length === 0) return null
   return {
     id,
@@ -157,19 +225,34 @@ function readCase(v: unknown): Bookcase | null {
 /**
  * v3 sections if present; otherwise the v2 shape, read as one section.
  *
- * Section ids are REBUILT as `<caseId>:s<n>` rather than trusted from the
- * file: `nextSectionId` derives the next number from that pattern, so a file
- * carrying ids in any other shape would hand out a colliding id on the first
- * *add a section*. They are internal handles — nothing outside the document
- * refers to one.
+ * ⚠ **From version 5 the id in the file is KEPT.** The old note here said
+ * they are internal handles that nothing outside the document refers to — a
+ * sentence `shelves.section_id` made false, and `place.py`'s `Section`
+ * docstring records the same trap from the other side. Rebuilding them
+ * positionally re-addresses every shelf in the file.
+ *
+ * ⚠ Below version 5 they are still rebuilt, because there the ids WERE
+ * positional: every export wrote `<caseId>:s<n>` afresh, so what is in an old
+ * file is a position wearing an id's clothes.
+ *
+ * ⚠ A server id does not match `<caseId>:s<n>`, which `nextSectionId` parses
+ * to number the next section. That is not new and not a hazard: the LIVE
+ * editor has held uuid section ids from `toPlan` since P6.3, and the fallback
+ * `:s1` cannot collide twice — once one locally-minted id exists it matches
+ * the pattern and the counter moves.
  */
-function readSections(v: Record<string, unknown>, caseId: string): Section[] {
-  const listed = asArray(v['sections']).map(readSection).filter(isPresent)
-  const sections = listed.length > 0 ? listed : [readSection(v)].filter(isPresent)
-  return sections.map((s, i) => ({ ...s, id: `${caseId}:s${i + 1}` }))
+function readSections(v: Record<string, unknown>, caseId: string,
+                      carriesIds: boolean): Section[] {
+  const listed = asArray(v['sections'])
+    .map((x) => readSection(x, carriesIds)).filter(isPresent)
+  const sections = listed.length > 0
+    ? listed : [readSection(v, carriesIds)].filter(isPresent)
+  return sections.map((s, i) => ({
+    ...s, id: carriesIds && s.id ? s.id : `${caseId}:s${i + 1}`,
+  }))
 }
 
-function readSection(v: unknown): Section | null {
+function readSection(v: unknown, carriesIds: boolean): Section | null {
   if (!isRecord(v)) return null
   const columnLevels = asArray(v['columnLevels'])
     .map((n) => num(n, 1))
@@ -187,21 +270,29 @@ function readSection(v: unknown): Section | null {
     .filter((g) => inExtent({ columnLevels } as Section, g))
   const gapped = new Set(gaps.map((g) => `${g.col}:${g.level}`))
   return {
-    id: '', // assigned by readSections
+    // Kept from a v5 file; '' means `readSections` assigns a positional one.
+    id: carriesIds ? str(v['id'], '') : '',
     columnLevels,
     gaps,
     defaultLevels: Math.max(1, Math.round(num(v['defaultLevels'], DEFAULT_LEVELS))),
     defaultDepth: Math.max(1, Math.round(num(v['defaultDepth'], DEFAULT_DEPTH))),
     // A gapped cell holds no shelf, so a file listing both loses the shelf —
     // the same precedence `toPlan` applies to the server's answer.
-    shelves: asArray(v['shelves']).map(readShelf).filter(isPresent)
+    shelves: asArray(v['shelves']).map((x) => readShelf(x, carriesIds))
+      .filter(isPresent)
       .filter((s) => !gapped.has(`${s.col}:${s.level}`)),
   }
 }
 
-function readShelf(v: unknown): Shelf | null {
+function readShelf(v: unknown, carriesIds: boolean): Shelf | null {
   if (!isRecord(v)) return null
+  // ⚠ The shelf's own id, from version 5 on. This is the half that keeps a
+  // restore from moving books: a slot with no id is a slot the restore has to
+  // mint a new shelf for, and the books that stood there would be left on a
+  // row nothing points at.
+  const id = carriesIds ? str(v['id'], '') : ''
   return {
+    ...(id ? { id } : {}),
     col: Math.max(0, Math.round(num(v['col'], 0))),
     level: Math.max(0, Math.round(num(v['level'], 0))),
     depth: Math.max(1, Math.round(num(v['depth'], 1))),
