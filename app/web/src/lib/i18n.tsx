@@ -191,6 +191,15 @@ const HE = {
     shelf_not_found: 'המדף לא נמצא',
     shelf_unreachable: 'לא הצלחנו לטעון את המדף — נראה שאין חיבור לשרת',
     shelf_untitled_photo_alt: 'תמונת המדף',
+    // --- filing a photo without reading it (P6.7d) ---
+    attach_photo: 'הוספת תמונה',
+    attach_photo_at: (depth: number) => `הוספת תמונה לשורה ${depth}`,
+    // ⚠ The promise the Capture tab cannot make, and the reason this
+    // control exists at all.
+    attach_photo_hint: 'התמונה נשמרת למדף בלבד. לא נקראת, לא עולה כלום, ולא מוסיפה ספרים.',
+    attaching_photo: 'שומרים…',
+    photo_attached: 'התמונה נשמרה למדף',
+    attach_photo_failed: 'לא הצלחנו לשמור את התמונה',
     shelf_last_read: (date: string) => `נקרא לאחרונה ב-${date}`,
     shelf_never_read: 'המדף הזה עדיין לא נקרא',
     // ⚠ Our words FIRST — `unicode-bidi: plaintext` resolves a paragraph from
@@ -493,6 +502,14 @@ const EN: Strings = {
     shelf_not_found: 'Shelf not found',
     shelf_unreachable: "Couldn't load the shelf — the server looks unreachable",
     shelf_untitled_photo_alt: 'Shelf photo',
+    attach_photo: 'Add a photo',
+    attach_photo_at: (depth: number) => `Add a photo of row ${depth}`,
+    attach_photo_hint:
+      'The photo is filed against this shelf. It is not read, it costs '
+      + 'nothing, and it adds no books.',
+    attaching_photo: 'Saving…',
+    photo_attached: 'The photo is filed against this shelf',
+    attach_photo_failed: "Couldn't save that photo",
     shelf_last_read: (date: string) => `Last read ${date}`,
     shelf_never_read: 'This shelf has never been read',
     shelf_formerly: (name: string) => `Formerly also: ${name}`,

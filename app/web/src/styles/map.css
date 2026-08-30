@@ -1086,3 +1086,16 @@
 @media (max-width: 760px) {
   .mapscreen { min-height: 0; }
 }
+
+/* P6.7d — the PALETTE only. Size and layout are `books.css`'s one copy; the
+   editor's tokens (`--btn`, `--line`) exist only inside `.mapscreen`, and an
+   undefined custom property is invalid at computed-value time rather than
+   falling back — which is the exact defect `scoping.test.ts` was written
+   for, measured twice. */
+.mapscreen .attach-photo .btn-like {
+  background: var(--btn);
+  border-color: var(--line);
+  color: inherit;
+}
+.mapscreen .attach-photo { grid-column: 1 / -1; }
+

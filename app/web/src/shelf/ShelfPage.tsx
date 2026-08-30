@@ -17,7 +17,8 @@ import { formatDate, type Lang } from '@booksnap/ui'
 import { CopyBadges, StatusBadge } from '../books/Feed'
 import { ReadHistory } from './ReadHistory'
 import { useShelfDetail } from './useShelfDetail'
-import { imageUrl, type Book, type DepthStatusDTO } from '../api/client'
+import { AttachPhoto } from './AttachPhoto'
+import { attachShelfPhoto, imageUrl, type Book, type DepthStatusDTO } from '../api/client'
 
 export interface ShelfPageProps {
   shelfId: string
@@ -199,6 +200,26 @@ export function ShelfPage({ shelfId, onBack, onOpen }: ShelfPageProps) {
                   {t.add_row_behind}
                 </button>
               </div>
+
+              {/*
+                P6.7d. Beneath the depth bar on purpose: the photo is OF a
+                row, so the control that files one belongs under the control
+                that chooses which row you are looking at — and it names the
+                depth in its own label when the shelf has more than one.
+
+                ⚠ Reload after, not an optimistic paint. `photoImageId` is
+                the FIRST capture at this depth (order 0), so filing a second
+                changes nothing on screen, and a control that claimed
+                otherwise would be lying about which picture is the shelf's.
+              */}
+              <AttachPhoto
+                depth={shelfDetail.depth}
+                depthCount={state.shelf.depth_count}
+                onAttach={async (photo) => {
+                  await attachShelfPhoto(shelfId, shelfDetail.depth, photo)
+                  shelfDetail.reload()
+                }}
+              />
             </div>
           </div>
 

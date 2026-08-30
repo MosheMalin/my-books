@@ -136,6 +136,10 @@ export type MapScreenProps = {
      *  is not something `planDiff` can express. */
     moveSection: (sectionId: string, direction: 'up' | 'down',
                   label: string) => void
+    /** P6.7d — file a photograph against this cell's shelf. Stored, not
+     *  read; the map re-derives afterwards because `photos` is a document
+     *  field the server owns. */
+    attachPhoto: (shelfId: string, depth: number, photo: File) => Promise<void>
     /**
      * What this shelf's own screen knows about it (P6.5c): when it was last
      * read, and whether any row front-to-back is stale.
@@ -648,6 +652,7 @@ export default function MapScreen(props: MapScreenProps) {
     mergeShelf: props.shelves.merge,
     shelfOverview: props.shelves.overview,
     proposeLevels: props.shelves.proposeLevels,
+    attachPhoto: props.shelves.attachPhoto,
   }
 
   /** Double-click on the plan: select it and ask the panel to start editing. */

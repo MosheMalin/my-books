@@ -70,7 +70,7 @@ const actions = (): Actions => ({
   resizeCase: vi.fn(), setCaseRoom: vi.fn(), turnCase: vi.fn(), setGaps: vi.fn(),
   setColumnCount: vi.fn(), setColumnLevels: vi.fn(), setDefaultLevels: vi.fn(),
   applyDefaultLevels: vi.fn(), setDefaultDepth: vi.fn(), applyDefaultDepth: vi.fn(),
-  moveSection: vi.fn(),
+  moveSection: vi.fn(), attachPhoto: vi.fn(async () => {}),
   setShelfDepth: vi.fn(), addSection: vi.fn(), removeSection: vi.fn(),
   deleteSelection: vi.fn(), copySelection: vi.fn(), paste: vi.fn(), select: vi.fn(),
   shelvesOffTheMap: vi.fn(async () => []), bindShelf: vi.fn(),
@@ -679,3 +679,50 @@ describe('what the phone walk found (P6.4c)', () => {
     expect(screen.queryByText(HE.shelf_holds(0, 0))).toBeNull()
   })
 })
+
+describe('filing a photo from the bookcase panel (P6.7d)', () => {
+  /** The owner asked for the gesture in BOTH places — *"on the shelf itself
+   *  and also in the bookcase (when a shelf is selected)"* — and it is one
+   *  component, so the two cannot drift into two different promises about
+   *  what filing a photo costs. */
+  it('offers it on the selected cell, and files against THAT shelf', async () => {
+    const acts = actions()
+    render(
+      <I18nProvider>
+        <Inspector doc={{ plan: plan(), seq: 0 }} floorId="f1"
+                   selection={onShelf} actions={acts} renaming={null}
+                   onRenamed={() => {}} />
+      </I18nProvider>,
+    )
+
+    await userEvent.upload(
+      screen.getByLabelText('הוספת תמונה'),
+      new File([new Uint8Array([1])], 'a.jpg', { type: 'image/jpeg' }))
+
+    // ⚠ Depth 1 from the map, always: this panel has no depth picker, and a
+    // photo filed at a row the shelf does not have is the one thing
+    // `new_capture` refuses. The shelf screen is where a row is chosen.
+    // ⚠ `expect.any(File)` and then the name read off the call. A File's
+    // `name` lives on the prototype, so `objectContaining({name})` never
+    // matches one — it reports "File {}" and looks like the wrong argument.
+    expect(acts.attachPhoto).toHaveBeenCalledWith('sh-1', 1, expect.any(File))
+    const [, , sent] = vi.mocked(acts.attachPhoto).mock.calls[0]!
+    expect(sent.name).toBe('a.jpg')
+  })
+
+  it('offers nothing on a cell the server says is empty', async () => {
+    // There is no shelf to file against. Every control in that branch would
+    // be an operation on a row that does not exist (P6.4c).
+    render(
+      <I18nProvider>
+        <Inspector doc={{ plan: plan(), seq: 0 }} floorId="f1"
+                   selection={{ rooms: [], cases: ['c1'],
+                                cells: [{ caseId: 'c1', sectionId: 's1',
+                                          col: 0, level: 1 }] }}
+                   actions={actions()} renaming={null} onRenamed={() => {}} />
+      </I18nProvider>,
+    )
+    expect(screen.queryByLabelText('הוספת תמונה')).toBeNull()
+  })
+})
+

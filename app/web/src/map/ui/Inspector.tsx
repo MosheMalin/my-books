@@ -20,6 +20,7 @@ import { formatDate, Select } from '@booksnap/ui'
 import { Elevation } from './Elevation'
 import type { ShelfOverviewDTO } from '../../api/client'
 import { shelfHash } from '../../lib/route'
+import { AttachPhoto } from '../../shelf/AttachPhoto'
 import type { MergePreview, OffMapShelf, StripOrder } from '../useMapSync'
 import type { Cell, Doc, Selection } from './types'
 import { count, markCell, only, onlyCell } from './types'
@@ -84,6 +85,8 @@ export type Actions = {
   /** P6.7a — swap two sections. A SERVER write like the bind and the
    *  unbind: it changes no slot, so there is no document diff to carry it. */
   moveSection: (sectionId: string, direction: 'up' | 'down') => void
+  /** P6.7d — a photograph filed against this shelf, with no read behind it. */
+  attachPhoto: (shelfId: string, depth: number, photo: File) => Promise<void>
   deleteSelection: () => void
   copySelection: () => void
   paste: () => void
@@ -625,6 +628,26 @@ function ShelfPanel({
             <strong>{shelf.photos}</strong>
           </div>
           <p className="note">{T.photos_are_captures}</p>
+          {/*
+            P6.7d, and it stands here rather than beside the count above for
+            a reason: the count is a FACT (see the ⚠ on it) and this is the
+            one thing that can change it. The owner asked for the gesture in
+            both places — *"on the shelf itself and also in the bookcase
+            (when a shelf is selected)"* — and it is ONE component, so the
+            two cannot drift into two different promises about what filing a
+            photo costs.
+
+            ⚠ The cell's OWN declared depth, never the section's default:
+            §3.3, and a photo filed at a row the shelf does not have is the
+            one thing `new_capture` refuses.
+          */}
+          {shelf.id && (
+            <AttachPhoto
+              depth={1}
+              depthCount={shelf.depth}
+              onAttach={(photo) => actions.attachPhoto(shelf.id as string, 1, photo)}
+            />
+          )}
           {shelf.id && <ReadState shelfId={shelf.id} actions={actions} />}
           {/* ⚠ The drill DOWN, and until P6.5c the map had no way to it at
               all: `#/map/<shelfId>` has been level 3 since P2.8 and the only

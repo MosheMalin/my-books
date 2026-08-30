@@ -20,6 +20,7 @@ import { mapText, type MapText } from './text'
 import type { MapSource } from './useMapSync'
 import { useMapSync } from './useMapSync'
 import {
+  attachShelfPhoto,
   getMap,
   getShelfOverview,
   getUndoOffer,
@@ -125,6 +126,8 @@ export function PlanScreen({ library, focusShelf = null }: {
       return { map: map as never, shelves: shelves as never }
     },
     undoOffer: async () => await getUndoOffer(),
+    attachPhoto: (shelfId, depth, photo) =>
+      attachShelfPhoto(shelfId, depth, photo),
     api: {
       post: (path, body) => mapPost(path, body),
       put: (path, body) => mapPut(path, body),
@@ -432,6 +435,7 @@ export function PlanScreen({ library, focusShelf = null }: {
           previewMerge: sync.previewMerge,
           merge: sync.mergeShelf,
           moveSection: sync.moveSection,
+          attachPhoto: sync.attachPhoto,
           /* ⚠ The imported function ITSELF, not an arrow around it. An
              arrow here is a new identity every render, and the panel's
              effect depends on it: measured at 375x812, selecting one cell

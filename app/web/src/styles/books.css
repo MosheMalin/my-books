@@ -1380,3 +1380,40 @@
   text-align: center;
   margin: 2px 0;
 }
+
+/*
+ * Filing a photo against a shelf (P6.7d).
+ *
+ * ⚠ ONE component in TWO sheets' worlds — the shelf screen and the map's
+ * inspector — so the SIZE and the LAYOUT live here, once, and `map.css`
+ * overrides nothing but the palette. Writing the whole rule twice is how two
+ * copies of one control start disagreeing about the touch floor.
+ *
+ * ⚠ A file input cannot be styled, so the LABEL is the control and the input
+ * inside it is hidden. Same idiom as the capture drop zone and the level
+ * proposal.
+ *
+ * ⚠ `display: inline-flex`, and it is load-bearing: `min-height` does not
+ * apply to a non-replaced INLINE box, and the identical 44px rule measured 44
+ * inside a flex parent and 21 inside a plain div. A label is inline by
+ * default, which is exactly the case that silently exempts itself.
+ */
+.attach-photo { margin-top: 10px; }
+.attach-photo .btn-like {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 7px 13px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: var(--fs-base);
+}
+.attach-photo .btn-like:hover { border-color: var(--accent); }
+.attach-photo .btn-like input { display: none; }
+.attach-photo .note { margin: 6px 0 0; }
+
