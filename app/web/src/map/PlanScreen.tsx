@@ -453,9 +453,18 @@ export function PlanScreen({ library, focusShelf = null }: {
               return sync.say(T.restore_other_site, 6000)
 
             const cost = importCost(live, parsed.plan)
-            const question = cost.empty
-              ? T.restore_nothing_lost(cost.cases)
-              : T.restore_costs(cost.cases, cost.shelves, cost.books)
+            // ⚠ THREE sentences, not two, and the third is the one a real
+            // round trip produced: saving the drawing and restoring that same
+            // file removes nothing at all, and the two-branch version asked
+            // *"0 bookcases go, and nothing stands on them"* — a counted
+            // string enumerating zero, which is the family of defect this
+            // repo keeps meeting. Measured on the owner's own 139-shelf
+            // drawing, in a real browser.
+            const question = cost.cases === 0 && cost.shelves === 0
+              ? T.restore_removes_nothing
+              : cost.empty
+                ? T.restore_nothing_lost(cost.cases)
+                : T.restore_costs(cost.cases, cost.shelves, cost.books)
             // Two paragraphs: what it costs, then the thing that makes the
             // cost bearable. Never one sentence — "don't worry, this can be
             // taken back" glued onto a warning is a reason to say yes at

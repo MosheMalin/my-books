@@ -295,6 +295,7 @@ export interface MapText {
   restore_upload: string
   restore_not_a_plan: string
   restore_other_site: string
+  restore_removes_nothing: string
   restore_nothing_lost: (cases: number) => string
   restore_costs: (cases: number, shelves: number, books: number) => string
   restore_backup_first: string
@@ -714,6 +715,8 @@ const HE: MapText = {
   restore_not_a_plan: 'זה לא קובץ שרטוט של booksnap',
   restore_other_site:
     'הקובץ הזה שייך לאתר אחר — עברו אליו ונסו שוב',
+  restore_removes_nothing:
+    'לשחזר את השרטוט מהקובץ? שום דבר לא יוסר.',
   restore_nothing_lost: (cases) =>
     cases === 1
       ? 'לשחזר את השרטוט מהקובץ? כוננית אחת תימחק, ולא עומד עליה כלום.'
@@ -1068,6 +1071,7 @@ const EN: MapText = {
   restore_not_a_plan: 'That is not a booksnap drawing file',
   restore_other_site:
     'That file is of a different site — switch to it and try again',
+  restore_removes_nothing: 'Restore the drawing from the file? Nothing is removed.',
   restore_nothing_lost: (cases) =>
     cases === 1
       ? 'Restore the drawing from the file? One bookcase goes, and nothing stands on it.'
