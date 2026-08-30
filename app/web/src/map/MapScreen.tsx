@@ -86,6 +86,15 @@ export type MapScreenProps = {
    * like it captured what you were looking at.
    */
   onExport?: ((plan: Plan) => void) | undefined
+  /**
+   * Put a saved drawing back (P6.7f).
+   *
+   * It is handed the LIVE document and a `replace` that swaps it, rather than
+   * returning a plan: the host owns the file reading, the refusals and the
+   * question, and this component owns the undo history the swap has to enter.
+   */
+  onImport?: ((file: File, live: Plan,
+               replace: (plan: Plan) => void) => void) | undefined
   /** The sites this library has, and the one being drawn (§3.9). Passed
    *  through rather than held here: a site decides WHICH document this is, so
    *  it cannot live in the document. */
@@ -892,6 +901,17 @@ export default function MapScreen(props: MapScreenProps) {
         onDelete={deleteSelection}
         onReload={props.onReload}
         onExport={() => props.onExport?.(doc.plan)}
+        onImport={(file) => props.onImport?.(file, doc.plan, (plan) => {
+          // ⚠ Through `update`, so the restore is ONE entry on the drawing's
+          // own undo stack as well as a push. Setting the document any other
+          // way would leave Ctrl+Z stepping into a plan that no longer
+          // matches what the server was told.
+          // ⚠ `d.seq`, not the captured `doc.seq`. The counter mints local
+          // ids for NEW objects and must never step backwards — the file
+          // does not carry one, so the session's own is the only honest
+          // source, read at commit time like every other edit here.
+          update((d) => ({ seq: d.seq, plan }))
+        })}
         // ⚠ The acknowledgment is NOT said here. Adding a site re-derives,
         // which remounts this component and would take the toast with it —
         // `MapSync.flash` is the surface that survives.

@@ -262,6 +262,18 @@ export type MapSync = {
   attachPhoto: (shelfId: string, depth: number, photo: File) => Promise<void>
   /** Say something in the flash surface — the one that survives a re-derive. */
   say: (text: string, ms?: number) => void
+  /**
+   * The next push is a wholesale REPLACE whose way back is not the journal
+   * (P6.7f) — say `text`, and let no undo offer overwrite it.
+   *
+   * ⚠ This exists because a measured sentence was WRONG. A restore's push
+   * destroys things, so `record` offered *Edit ▸ take back the last removal*
+   * — and for a restore that is a promise the undo cannot keep: an import is
+   * many operations and the journal's undo takes back the head. The way back
+   * from a restore is the file written before it, which the caller has
+   * already made and already said.
+   */
+  replacing: (text: string) => void
   /** Hand the current document over; the hook works out what to send. */
   record: (plan: Plan) => void
   reload: () => void
@@ -829,6 +841,17 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
     },
     [source, startOver])
 
+  /**
+   * Set by a caller whose write has its OWN way back (P6.7f), consumed by the
+   * next push. A ref rather than state: nothing renders from it, and a state
+   * update between the caller and `record` would be one render too late.
+   */
+  const ownUndo = useRef(false)
+  const replacing = useCallback((text: string) => {
+    ownUndo.current = true
+    announce(text, 6000)
+  }, [announce])
+
   const record = useCallback((plan: Plan) => {
     setSaved('saving')
     // ⚠ SERIALISED, and the diff is computed INSIDE the task.
@@ -848,6 +871,10 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
       // and reassigning `inflight` does not cancel a chain that is already
       // running. The document this plan described is gone either way.
       if (era_ !== era.current) return
+      // ⚠ Read and CLEARED here, at the top of the task that will use it, so
+      // a push with nothing to send cannot leave it set for the next one.
+      const owned = ownUndo.current
+      ownUndo.current = false
       const ops = planDiff(confirmed.current, plan)
       // ⚠ Which of these DESTROY something, so the owner can be told the
       // removal is reversible while that is still true. See `undo_offered`
@@ -919,7 +946,11 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
         // The removal landed. Say — once, neutrally, in the surface built
         // for exactly this — that it can be taken back, and NAME the
         // control. `undo_offered` carries the argument.
-        if (destroyed) announce(T.undo_offered, 6000)
+        // ⚠ `!owned`: a caller that has already written the way back has
+        // already said what it is, and offering the journal instead would
+        // name a control that can only undo the LAST of this push's many
+        // operations.
+        if (destroyed && !owned) announce(T.undo_offered, 6000)
       } catch (err) {
         // ⚠ NOT `setError`. See `Notice`: the drawing is still on screen and
         // still the truth about what the owner drew; what failed is the
@@ -951,6 +982,7 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
      * is invisible on a phone.
      */
     say: announce,
+    replacing,
     dismiss: () => setNotice(null),
     sites,
     siteId,

@@ -1176,3 +1176,161 @@ describe('saving the drawing to a file (P6.7e)', () => {
   })
 })
 
+describe('restoring a saved drawing (P6.7f)', () => {
+  /**
+   * The owner settled the semantics: *"ask if the user is sure and say data
+   * will get unbound. if user agrees — replace."*
+   *
+   * ⚠ This is the most destructive gesture in the product, and the ONE it
+   * cannot undo: §3.15's journal takes back the head entry, and a restore is
+   * many operations. So the way back is a file written before the replace,
+   * without being asked for — which makes the ORDER the safety argument, the
+   * same shape P6.4d's merge had to learn.
+   */
+  const world = () => {
+    server.sites.push({ id: 'st1', name: 'הבית', order: 0 })
+    server.floors.push({ id: 'f1', site_id: 'st1', name: 'קרקע', order: 0 })
+    return drawOne(server, 'f1', 'a')
+  }
+
+  /** A v5 file of one site, holding whatever cases are passed. */
+  const planFile = (over: Record<string, unknown> = {}) => new File(
+    [JSON.stringify({
+      format: 'booksnap.map-lab.plan',
+      version: 5,
+      origin: { library: 'lib-test', siteId: 'st1', siteName: 'הבית',
+                savedAt: '2026-08-30T09:00:00Z' },
+      plan: {
+        floors: [{ id: 'f1', name: 'קרקע' }],
+        rooms: [{ id: 'r9', name: 'חדר מהקובץ',
+                  rect: { x: 0, y: 0, w: 6, h: 6 }, floorId: 'f1' }],
+        cases: [],
+      },
+      ...over,
+    })],
+    'drawing.json', { type: 'application/json' })
+
+  const restore = async (file: File) => {
+    await screen.findByRole('button', { name: HE.menu_plan }, WAIT)
+    await userEvent.upload(screen.getByLabelText(HE.restore_upload), file)
+  }
+
+  it('refuses a file of a DIFFERENT site, and changes nothing', async () => {
+    // `toPlan` builds one site at a time, so a file of another site describes
+    // furniture this document has never heard of — restoring it would delete
+    // everything on screen and recreate a house somewhere else.
+    world()
+    open()
+    await screen.findByRole('button', { name: HE.menu_plan }, WAIT)
+    const before = server.calls.length
+
+    await restore(planFile({
+      origin: { library: 'lib-test', siteId: 'ANOTHER', siteName: 'x',
+                savedAt: '2026-08-30T09:00:00Z' },
+    }))
+
+    expect(await screen.findByText(HE.restore_other_site, {}, WAIT))
+      .toBeInTheDocument()
+    expect(server.calls.length).toBe(before)
+  })
+
+  it('opens the file picker from the menu, not from nowhere', async () => {
+    // The item is one line of wiring and the menu test can only see its
+    // LABEL — a menu row that opens nothing reads exactly like one that
+    // does, and the guard beside it would pass forever.
+    world()
+    open()
+    await screen.findByRole('button', { name: HE.menu_plan }, WAIT)
+    const picker = screen.getByLabelText(HE.restore_upload)
+    const clicked = vi.spyOn(picker, 'click').mockImplementation(() => {})
+
+    await userEvent.click(screen.getByRole('button', { name: HE.menu_plan }))
+    await userEvent.click(
+      screen.getByRole('menuitem', { name: HE.open_from_file }))
+
+    expect(clicked).toHaveBeenCalled()
+  })
+
+  it('refuses a file that is not a drawing at all', async () => {
+    world()
+    open()
+    await restore(new File(['{"hello":1}'], 'x.json',
+                           { type: 'application/json' }))
+
+    expect(await screen.findByText(HE.restore_not_a_plan, {}, WAIT))
+      .toBeInTheDocument()
+  })
+
+  it('asks, NAMES what loses its place, and obeys a no', async () => {
+    // The fixture's shelf stands in the drawn bookcase, and the file holds no
+    // cases at all — so the honest sentence is one bookcase, one shelf.
+    world()
+    const asked: string[] = []
+    vi.stubGlobal('confirm', (q: string) => { asked.push(q); return false })
+    open()
+    await screen.findByRole('button', { name: HE.menu_plan }, WAIT)
+    const before = server.calls.length
+
+    await restore(planFile())
+
+    await waitFor(() => expect(asked).toHaveLength(1), WAIT)
+    expect(asked[0]).toContain(HE.restore_nothing_lost(1))
+    // ⚠ And the promise that makes the answer safe to give.
+    expect(asked[0]).toContain(HE.restore_backup_first)
+    expect(server.calls.length).toBe(before)
+    expect(screen.queryByText('חדר מהקובץ')).toBeNull()
+  })
+
+  it('writes the current drawing to a file BEFORE it replaces anything',
+     async () => {
+    // ⚠⚠ The order IS the safety argument. There is no undo for this, so the
+    // file written first is the only way back — and a restore that replaced
+    // and then failed to save would have destroyed the drawing and the way
+    // back to it in one press.
+    world()
+    const written: string[] = []
+    const seen = new Map<string, Blob>()
+    let n = 0
+    const url = URL as unknown as Record<string, unknown>
+    url['createObjectURL'] = (b: Blob) => {
+      const made = `blob:${(n += 1)}`
+      seen.set(made, b)
+      return made
+    }
+    url['revokeObjectURL'] = () => {}
+    const order: string[] = []
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(
+      function (this: HTMLAnchorElement) {
+        order.push('saved')
+        written.push(this.download)
+      })
+    vi.stubGlobal('confirm', () => true)
+    open()
+
+    await restore(planFile())
+
+    await waitFor(() => expect(order).toEqual(['saved']), WAIT)
+    expect(written[0]).toMatch(/^booksnap-הבית-/)
+    expect(await screen.findByText(HE.restored, {}, WAIT)).toBeInTheDocument()
+
+    // ⚠⚠ And it is still the sentence on screen after the push lands.
+    // Measured: the restore's push destroys things, so `record` announced
+    // *Edit ▸ take back the last removal* over the top of it — a promise the
+    // journal cannot keep, because an import is many operations and the undo
+    // takes back the head. The way back from a restore is the file written a
+    // line earlier, and that is what the owner must be looking at.
+    expect(screen.queryByText(HE.undo_offered)).toBeNull()
+
+    // ⚠ And the document really was REPLACED. Saying so and doing nothing
+    // is the failure mode this whole item is exposed to: the flash fires,
+    // the backup lands, and the drawing on screen is the one you were
+    // trying to replace.
+    expect(await screen.findByText('חדר מהקובץ', {}, WAIT))
+      .toBeInTheDocument()
+
+    const url2 = URL as unknown as Record<string, unknown>
+    delete url2['createObjectURL']
+    delete url2['revokeObjectURL']
+  })
+})
+

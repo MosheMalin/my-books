@@ -14,7 +14,8 @@ import { stampPlan } from '../lib/route'
 
 import MapScreen from './MapScreen'
 import { downloadText } from './download'
-import { planFilename, serializePlan } from './core/persist'
+import { parsePlan, planFilename, serializePlan } from './core/persist'
+import { importCost } from './cost'
 import type { Plan } from './core/model'
 import type { Selection } from './ui/types'
 import { EMPTY, selectCase, selectRoom } from './ui/types'
@@ -425,6 +426,59 @@ export function PlanScreen({ library, focusShelf = null }: {
          * browser's own chrome for it is a corner of the window on a desktop
          * and invisible on a phone.
          */
+        /**
+         * P6.7f — put a saved drawing back. The owner settled it: *"ask if
+         * the user is sure and say data will get unbound. if user agrees —
+         * replace."*
+         *
+         * ⚠ **It saves the current drawing to a file FIRST.** §3.15 makes
+         * every destructive map edit undoable, and this one is not, honestly:
+         * an import is many operations and the journal's undo takes back the
+         * head. So the way back is a file, written before the replace,
+         * without being asked for — and the dialog says so. That is the same
+         * argument `tools/backup.py` makes for the database.
+         *
+         * ⚠ The site is CHECKED. `toPlan` builds one site at a time, so a
+         * file of another site describes furniture this document has never
+         * heard of; restoring it would delete everything on screen and
+         * recreate a house somewhere else. A file older than version 5 names
+         * no site — absent is not wrong, and it is let through, because the
+         * cost dialog then does the talking.
+         */
+        onImport={(file, live, replace) => {
+          void (async () => {
+            const parsed = parsePlan(await file.text())
+            if (!parsed.ok) return sync.say(T.restore_not_a_plan, 6000)
+            if (parsed.origin && parsed.origin.siteId !== sync.siteId)
+              return sync.say(T.restore_other_site, 6000)
+
+            const cost = importCost(live, parsed.plan)
+            const question = cost.empty
+              ? T.restore_nothing_lost(cost.cases)
+              : T.restore_costs(cost.cases, cost.shelves, cost.books)
+            // Two paragraphs: what it costs, then the thing that makes the
+            // cost bearable. Never one sentence — "don't worry, this can be
+            // taken back" glued onto a warning is a reason to say yes at
+            // exactly the wrong moment, which is why the DELETE dialogs keep
+            // their reassurance out of the confirm entirely. Here it belongs,
+            // because the backup happens as part of the same press.
+            if (!confirm(`${question}\n\n${T.restore_backup_first}`)) return
+
+            const savedAt = new Date().toISOString()
+            const site = sync.sites.find((s) => s.id === sync.siteId)
+            downloadText(planFilename(site?.name ?? '', savedAt),
+                         serializePlan(live, {
+                           library, siteId: sync.siteId,
+                           siteName: site?.name ?? '', savedAt,
+                         }))
+            // ⚠ BEFORE the replace, because the push it triggers is what
+            // would otherwise offer the journal undo over the top of this
+            // sentence — measured, and the offer would have been a promise
+            // the journal cannot keep for a restore.
+            sync.replacing(T.restored)
+            replace(parsed.plan)
+          })()
+        }}
         onExport={(plan) => {
           const savedAt = new Date().toISOString()
           const site = sync.sites.find((s) => s.id === sync.siteId)
