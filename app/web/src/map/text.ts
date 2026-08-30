@@ -290,6 +290,15 @@ export interface MapText {
   // --- saving the drawing to a file (P6.7e) ---
   save_to_file: string
   saved_to_file: (name: string) => string
+  // --- restoring a saved drawing (P6.7f) ---
+  open_from_file: string
+  restore_upload: string
+  restore_not_a_plan: string
+  restore_other_site: string
+  restore_nothing_lost: (cases: number) => string
+  restore_costs: (cases: number, shelves: number, books: number) => string
+  restore_backup_first: string
+  restored: string
   photos_are_captures: string
   shelf_depth: string
   // chrome
@@ -700,6 +709,25 @@ const HE: MapText = {
   // ⚠ Our word first: `unicode-bidi: plaintext` resolves a paragraph from
   // its first strong character, and a filename is Latin.
   saved_to_file: (name) => `נשמר לקובץ ${name}`,
+  open_from_file: 'שחזור שרטוט מקובץ…',
+  restore_upload: 'קובץ שרטוט לשחזור',
+  restore_not_a_plan: 'זה לא קובץ שרטוט של booksnap',
+  restore_other_site:
+    'הקובץ הזה שייך לאתר אחר — עברו אליו ונסו שוב',
+  restore_nothing_lost: (cases) =>
+    cases === 1
+      ? 'לשחזר את השרטוט מהקובץ? כוננית אחת תימחק, ולא עומד עליה כלום.'
+      : `לשחזר את השרטוט מהקובץ? ${cases} כונניות יימחקו, ולא עומד עליהן כלום.`,
+  // ⚠ SHELVES and BOOKS, both, and in that order: a shelf losing its address
+  // is the thing that happens, and the books standing on it are why it
+  // matters. The books are not deleted — they stop having a place.
+  restore_costs: (cases, shelves, books) =>
+    `לשחזר את השרטוט מהקובץ? ${cases === 1 ? 'כוננית אחת תימחק' : `${cases} כונניות יימחקו`}, `
+    + `${shelves === 1 ? 'מדף אחד יאבד את מיקומו' : `${shelves} מדפים יאבדו את מיקומם`}, `
+    + `ו${books === 1 ? 'ספר אחד ישאר בלי מיקום' : `-${books} ספרים ישארו בלי מיקום`}.`,
+  restore_backup_first:
+    'השרטוט הנוכחי יישמר לקובץ קודם, כדי שתוכלו לחזור אליו.',
+  restored: 'השרטוט שוחזר מהקובץ',
   photos_are_captures:
     'תמונות מגיעות מצילום המדף, לא מכאן. אפשר לצלם כמה תמונות לאותו מדף, ולכל אחת העומק שלה.',
   shelf_depth: 'עומק המדף הזה',
@@ -1035,6 +1063,22 @@ const EN: MapText = {
   section_moved: (label) => `Moved ${label}`,
   save_to_file: 'Save the drawing to a file…',
   saved_to_file: (name) => `Saved to ${name}`,
+  open_from_file: 'Restore a drawing from a file…',
+  restore_upload: 'A drawing file to restore',
+  restore_not_a_plan: 'That is not a booksnap drawing file',
+  restore_other_site:
+    'That file is of a different site — switch to it and try again',
+  restore_nothing_lost: (cases) =>
+    cases === 1
+      ? 'Restore the drawing from the file? One bookcase goes, and nothing stands on it.'
+      : `Restore the drawing from the file? ${cases} bookcases go, and nothing stands on them.`,
+  restore_costs: (cases, shelves, books) =>
+    `Restore the drawing from the file? ${cases === 1 ? 'One bookcase goes' : `${cases} bookcases go`}, `
+    + `${shelves === 1 ? 'one shelf loses its place' : `${shelves} shelves lose their place`}, `
+    + `and ${books === 1 ? 'one book is left with nowhere' : `${books} books are left with nowhere`}.`,
+  restore_backup_first:
+    'The drawing as it stands now is saved to a file first, so you can come back to it.',
+  restored: 'The drawing was restored from the file',
   photos_are_captures:
     'Photos arrive by photographing the shelf, not from here. A shelf can have several, each with its own depth.',
   shelf_depth: "this shelf's depth",

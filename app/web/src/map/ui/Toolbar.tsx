@@ -46,6 +46,8 @@ type Props = {
   onDelete: () => void
   /** P6.7e — write the drawing on screen to a file the owner keeps. */
   onExport: () => void
+  /** P6.7f — put a saved drawing back. Destructive; the handler asks. */
+  onImport: (file: File) => void
   onReload: () => void
   onAddSite: () => void
   onUnderlay: (file: File) => void
@@ -100,6 +102,7 @@ const savedText = (T: MapText) => ({
 export function Toolbar(props: Props) {
   const T = mapText(useI18n().lang)
   const underlayRef = useRef<HTMLInputElement | null>(null)
+  const restoreRef = useRef<HTMLInputElement | null>(null)
   const nothingSelected = props.selectedCount === 0
 
   return (
@@ -140,6 +143,12 @@ export function Toolbar(props: Props) {
             // both answer "what is the state of this drawing", one by
             // fetching it and one by keeping a copy.
             { label: T.save_to_file, onSelect: props.onExport },
+            // P6.7f, directly under the save. The pair belongs together and
+            // in that order: the way out of a restore is a file you made
+            // before it, and a menu that offered only the dangerous half
+            // would be teaching the wrong habit.
+            { label: T.open_from_file,
+              onSelect: () => restoreRef.current?.click() },
             { label: T.trace, onSelect: () => underlayRef.current?.click() },
             // ⚠ The one site control a ONE-site household sees, and the only
             // place it could go: the badge's site segment does not exist yet,
@@ -248,6 +257,22 @@ export function Toolbar(props: Props) {
           {savedText(T)[props.saved]}
         </span>
       </div>
+
+      <input
+        ref={restoreRef}
+        type="file"
+        accept="application/json,.json"
+        hidden
+        aria-label={T.restore_upload}
+        onChange={(e) => {
+          const f = e.target.files?.[0]
+          if (f) props.onImport(f)
+          // ⚠ Cleared, so the same file can be chosen twice — a restore
+          // refused for the wrong site, corrected, and tried again is the
+          // ordinary path here.
+          e.target.value = ''
+        }}
+      />
 
       <input
         ref={underlayRef}

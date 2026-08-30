@@ -245,11 +245,16 @@ describe('the editor in Hebrew', () => {
     openEditor()
     await user.click(screen.getByRole('button', { name: HE.menu_plan }))
     const items = screen.getAllByRole('menuitem').map((el) => el.textContent)
-    // Reload, SAVE TO A FILE (P6.7e), trace, and the one site control a
-    // one-site household ever sees. Saving is the opposite of the lab's
-    // *Clear the plan*: it is the command that makes throwing the drawing
-    // away survivable, which is why it belongs in this menu and this test.
-    expect(items).toEqual([HE.reload, HE.save_to_file, HE.trace, HE.add_site])
+    // Reload, save to a file (P6.7e), RESTORE from one (P6.7f), trace, and
+    // the one site control a one-site household ever sees.
+    //
+    // ⚠ The restore is destructive and it is in this list, which is not a
+    // contradiction of the rule above: *Clear the plan* threw the drawing
+    // away with nothing to put it back, and this one writes the current
+    // drawing to a file before it replaces anything. The pair is the point,
+    // and they sit next to each other for that reason.
+    expect(items).toEqual([HE.reload, HE.save_to_file, HE.open_from_file,
+                           HE.trace, HE.add_site])
   })
 
   it('offers each drawing tool ONCE, as the button it already is', async () => {
