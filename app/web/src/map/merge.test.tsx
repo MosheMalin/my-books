@@ -66,6 +66,7 @@ const actions = (over: Partial<Actions> = {}): Actions => ({
   setDefaultLevels: vi.fn(), applyDefaultLevels: vi.fn(),
   setDefaultDepth: vi.fn(), applyDefaultDepth: vi.fn(), setShelfDepth: vi.fn(),
   addSection: vi.fn(), removeSection: vi.fn(), moveSection: vi.fn(),
+  attachPhoto: vi.fn(async () => {}),
   deleteSelection: vi.fn(),
   copySelection: vi.fn(), paste: vi.fn(), select: vi.fn(),
   shelvesOffTheMap: vi.fn(async () => OFF),

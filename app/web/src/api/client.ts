@@ -512,6 +512,29 @@ export async function uploadImage(
 export const createCapture = (payload: CaptureCreate, opts?: ApiOptions) =>
   send('POST', '/api/v1/captures', payload, opts) as Promise<CaptureBinding>
 
+/**
+ * File a photograph against a shelf — stored, never read (P6.7d).
+ *
+ * ⚠ **Two calls, and that is the API's own design, not a shortcut taken
+ * here.** `POST /images` stores bytes and answers a content-hash key;
+ * `POST /captures` binds one to a (shelf, depth). `images.py` argues the split
+ * at length — a re-upload is free because the key IS the hash, and progress
+ * is per photo. This wrapper exists so the two hosts that offer the gesture
+ * cannot disagree about the order or about the depth.
+ *
+ * ⚠ It starts NO read. A `Capture` names a shelf and a declared depth and
+ * knows nothing about reads; a read consumes captures. That is the whole
+ * difference between this and the Capture tab, and it is the difference the
+ * owner asked for.
+ */
+export const attachShelfPhoto = async (
+  shelfId: string, depth: number, photo: File, opts: ApiOptions = {},
+): Promise<CaptureBinding> => {
+  const image = await uploadImage(photo, photo.name, opts)
+  return createCapture(
+    { image_id: image.key, shelf_id: shelfId, depth }, opts)
+}
+
 export const patchCapture = (
   captureId: string, payload: CapturePatch, opts?: ApiOptions,
 ) => send('PATCH', `/api/v1/captures/${encodeURIComponent(captureId)}`,

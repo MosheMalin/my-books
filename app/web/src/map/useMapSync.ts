@@ -38,6 +38,14 @@ export type MapSource = {
     * that can also heal a site that never got a floor or lost its last.
     */
    ensureHome: () => Promise<{ siteId: string }>
+  /**
+   * Store a photograph and file it against (shelf, depth) — P6.7d.
+   *
+   * On the SOURCE rather than reached for inside the hook, because it is two
+   * HTTP calls with an order that `app/web/src/api/client.ts` owns, and this
+   * hook has never known what a blob is.
+   */
+  attachPhoto?: (shelfId: string, depth: number, photo: File) => Promise<unknown>
   /** Which site this library was last drawing, if anything remembers. Kept
    *  outside the hook because "where" is the app's business (one library's
    *  choice must not become another's) and the hook has no library id. */
@@ -242,6 +250,16 @@ export type MapSync = {
                 label: string) => void
   /** The plan as the server last confirmed it — the editor's starting doc. */
   initial: Plan | null
+  /**
+   * File a photograph against the shelf standing in a cell (P6.7d).
+   *
+   * A `slotWrite` for the same reason the bind and the unbind are: what it
+   * changes — `shelf.photos` — is a SERVER fact carried in the document, and
+   * no `planDiff` op can express it. So it writes, then re-derives, and the
+   * count under the owner's thumb is the one the server holds rather than an
+   * optimistic guess that disagrees with the next reload.
+   */
+  attachPhoto: (shelfId: string, depth: number, photo: File) => Promise<void>
   /** Hand the current document over; the hook works out what to send. */
   record: (plan: Plan) => void
   reload: () => void
@@ -767,6 +785,48 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
         T.section_moved(label)),
     [slotWrite, T])
 
+  /**
+   * File a photograph against a cell's shelf (P6.7d).
+   *
+   * Shaped like `slotWrite` — drain, write, re-derive — and deliberately NOT
+   * that function, for two differences that both matter:
+   *
+   *  - it is AWAITED. The control has its own busy/saved/failed line, at the
+   *    thumb, inside a panel scrolled a long way past the map's flash; so this
+   *    reports by resolving or rejecting rather than by announcing. Making
+   *    `slotWrite` return its promise instead looked tidier and broke eleven
+   *    tests of the five callers that deliberately do not await it.
+   *  - it re-derives on SUCCESS only. `slotWrite`'s rule is that its refusals
+   *    all mean the drawing moved underneath you; this one's do not — a failed
+   *    upload wrote nothing, so the document on screen is still true and
+   *    throwing it away would cost the session's undo history for a press that
+   *    changed nothing.
+   */
+  const attachPhoto = useCallback(
+    async (shelfId: string, depth: number, photo: File): Promise<void> => {
+      const attach = source.attachPhoto
+      // ABSENT rather than failing: a host that does not offer the gesture
+      // renders no control, so this can only be reached by a caller that
+      // built one anyway.
+      if (!attach) return
+      setSaved('saving')
+      // The drain is `afterSite`'s reason — re-deriving over an edit that has
+      // not reached the server is how that edit disappears.
+      await inflight.current
+      try {
+        await attach(shelfId, depth, photo)
+      } catch (err) {
+        setSaved('failed')
+        throw err
+      }
+      setSaved('saved')
+      // `shelf.photos` is a SERVER fact carried in the document and no
+      // `planDiff` op can express it, so the count under the owner's thumb has
+      // to come from a re-read rather than from an optimistic guess.
+      startOver(true)
+    },
+    [source, startOver])
+
   const record = useCallback((plan: Plan) => {
     setSaved('saving')
     // ⚠ SERIALISED, and the diff is computed INSIDE the task.
@@ -892,6 +952,7 @@ export function useMapSync(source: MapSource, T: MapText): MapSync {
     bindShelf,
     unbindShelf,
     moveSection,
+    attachPhoto,
     initial,
     record,
     reload: startOver,
