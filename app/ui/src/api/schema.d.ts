@@ -949,6 +949,14 @@ export interface paths {
          *     **1** — which is what all eleven of the owner's photographs measured on
          *     the day this shipped. The client says which it is showing; the server does
          *     not guess.
+         *
+         *     ⚠ **Columns too, since P6.7g**, after the owner photographed a bookcase
+         *     and reported *"it got the number of shelves right, but missed a column."*
+         *     It did not miss one: the band detector answers about horizontal lines and
+         *     the proposal had no column field to fill. Same photograph, same request,
+         *     one more axis — and the route's NAME is now narrower than its answer,
+         *     which is written down here rather than fixed by a rename that would churn
+         *     a committed contract for one word.
          */
         post: operations["propose_levels_api_v1_map_propose_levels_post"];
         delete?: never;
@@ -2626,6 +2634,21 @@ export interface components {
             reason: string;
         };
         /**
+         * ColumnDTO
+         * @description One vertical division of a bookcase's face, as fractions of its width.
+         *
+         *     ⚠ Its own type beside ``BandDTO``, never a reused one. UI_PLAN §1.1 gives
+         *     the three axes three words that must never be shared — column across,
+         *     level down, depth back — and a band whose ``top`` held a horizontal
+         *     position would be the exact collision that rule exists to prevent.
+         */
+        ColumnDTO: {
+            /** Left */
+            left: number;
+            /** Right */
+            right: number;
+        };
+        /**
          * CopyCreate
          * @description *"I have another copy"* (§5.1) — the only path that creates a second
          *     physical object. No ``shelf_id`` here: shelves don't exist until P2.1, so
@@ -3133,7 +3156,7 @@ export interface components {
         };
         /**
          * LevelProposalDTO
-         * @description What one photograph of a bookcase suggests its level count is (P6.6).
+         * @description What one photograph of a bookcase suggests its SHAPE is (P6.6, P6.7g).
          *
          *     ⚠ A PROPOSAL, and the word is load-bearing. §3.14: *the map may propose;
          *     only a ✓ binds*. This route writes nothing — no shelf, no section, no
@@ -3149,6 +3172,18 @@ export interface components {
         LevelProposalDTO: {
             /** Bands */
             bands: components["schemas"]["BandDTO"][];
+            /**
+             * Columns
+             * @description How many columns the photo shows — `len(columns_at)`, restated for the same reason `levels` is (P6.7g).
+             * @default 1
+             */
+            columns: number;
+            /**
+             * Columns At
+             * @description Where they are, left to right. ⚠ A FALSE column is the failure that matters: a shelf of books is a picket fence of long vertical edges. Measured 1 on all ten of the owner's full-size photographs; finding the dividers that ARE there is exercised only synthetically, because no whole-bookcase photograph exists to measure against.
+             * @default []
+             */
+            columns_at: components["schemas"]["ColumnDTO"][];
             /**
              * Levels
              * @description How many bands the photo shows — `len(bands)`, restated so a caller that only wants the number does not have to count a list.

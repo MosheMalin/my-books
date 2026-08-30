@@ -70,6 +70,7 @@ from app.api.deps import (
 from app.api.dto import (
     AddressPartsDTO,
     BandDTO,
+    ColumnDTO,
     BookcaseCreate,
     BookcaseDrawnDTO,
     BookcaseDTO,
@@ -318,7 +319,7 @@ MAX_PROPOSAL_BYTES = 12 * 1024 * 1024
 @router.post("/propose-levels", response_model=LevelProposalDTO)
 async def propose_levels(
     file: UploadFile = File(
-        description="One photo of a bookcase. NOT stored \u2014 read, measured, "
+        description="One photo of a bookcase. NOT stored — read, measured, "
                     "and dropped.",
     ),
     library: LibraryRef = Depends(require(EDIT)),
@@ -326,29 +327,37 @@ async def propose_levels(
 ) -> LevelProposalDTO:
     """How many shelf surfaces this photograph shows.
 
-    VISION \u00a77's approach B, and the one place it is strongest: `segment.py`
-    already detects horizontal shelf bands \u2014 deterministically, locally, for
-    free, tuned on this owner's own shelves \u2014 so *"the levels of a case can be
-    proposed from one photo of it and confirmed by hand"* (UI_PLAN \u00a73).
+    VISION §7's approach B, and the one place it is strongest: `segment.py`
+    already detects horizontal shelf bands — deterministically, locally, for
+    free, tuned on this owner's own shelves — so *"the levels of a case can be
+    proposed from one photo of it and confirmed by hand"* (UI_PLAN §3).
 
-    \u26a0 **It writes nothing at all**: no shelf, no section, no blob, and not the
-    photograph, which never reaches the blob store. \u00a73.14 \u2014 *the map may
-    propose; only a \u2713 binds* \u2014 and applying the number is a separate,
+    ⚠ **It writes nothing at all**: no shelf, no section, no blob, and not the
+    photograph, which never reaches the blob store. §3.14 — *the map may
+    propose; only a ✓ binds* — and applying the number is a separate,
     explicit call to the section's own levels route. A proposal that saved its
     evidence would be the first image in this product with no owner and no
     lifecycle.
 
-    \u26a0 **EDIT_MAP, though it writes nothing.** The capability answers *whose
+    ⚠ **EDIT_MAP, though it writes nothing.** The capability answers *whose
     job is this*, not *does this mutate*: this exists only to fill in a field
     on the editor, and a viewer who cannot change the drawing has no use for a
     number they cannot apply. The preview beside it (`merge/preview`) is
     EDIT_MAP for the same reason.
 
-    \u26a0 **What comes back is a fact about a PHOTOGRAPH.** A picture of half a
+    ⚠ **What comes back is a fact about a PHOTOGRAPH.** A picture of half a
     bookcase answers about that half, and a picture of a single shelf answers
-    **1** \u2014 which is what all eleven of the owner's photographs measured on
+    **1** — which is what all eleven of the owner's photographs measured on
     the day this shipped. The client says which it is showing; the server does
     not guess.
+
+    ⚠ **Columns too, since P6.7g**, after the owner photographed a bookcase
+    and reported *"it got the number of shelves right, but missed a column."*
+    It did not miss one: the band detector answers about horizontal lines and
+    the proposal had no column field to fill. Same photograph, same request,
+    one more axis — and the route's NAME is now narrower than its answer,
+    which is written down here rather than fixed by a rename that would churn
+    a committed contract for one word.
     """
     data = await file.read()
     if len(data) > MAX_PROPOSAL_BYTES:
@@ -362,9 +371,16 @@ async def propose_levels(
         # own upload says for the same cause.
         raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
                             "that file is not a photo we can read") from exc
+    try:
+        across = finder.columns(data)
+    except ValueError as exc:  # pragma: no cover - `bands` raised first
+        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                            "that file is not a photo we can read") from exc
     return LevelProposalDTO(
         levels=len(found),
         bands=[BandDTO(top=b.top, bottom=b.bottom) for b in found],
+        columns=len(across),
+        columns_at=[ColumnDTO(left=c.left, right=c.right) for c in across],
     )
 
 
@@ -373,7 +389,7 @@ def where_is(
     shelf_id: str,
     depth: int | None = Query(
         default=None, ge=1,
-        description="The row front-to-back this answer is about \u2014 a COPY's "
+        description="The row front-to-back this answer is about — a COPY's "
                     "depth, which the shelf itself does not have. Omitted, "
                     "the answer names no row.",
     ),
@@ -383,23 +399,23 @@ def where_is(
 ) -> ShelfWhereDTO:
     """Where this shelf stands, in the words a person would use.
 
-    VISION \u00a77's requirement, and the sentence this router's own docstring
+    VISION §7's requirement, and the sentence this router's own docstring
     says the map exists for: *"given a book, the UI can answer 'where is it'
     ... including which row front-to-back"*. The Books tab reaches it through
     a copy's ``shelf_id``; the shelf screen reaches it for its own id.
 
     **A shelf that stands nowhere answers 200 with a null address**, not 404.
-    Most shelves stand nowhere \u2014 they were born from a photograph and \u00a73.1
-    keeps the drawn and the photographed one population \u2014 so *not on the map
+    Most shelves stand nowhere — they were born from a photograph and §3.1
+    keeps the drawn and the photographed one population — so *not on the map
     yet* is the normal state, and a 404 would tell a screen that a shelf it is
     looking at does not exist.
 
-    \u26a0 The id resolves through the alias FIRST (\u00a73.11). A copy's
+    ⚠ The id resolves through the alias FIRST (§3.11). A copy's
     ``shelf_id`` is a stored value: after a merge it names an identity that is
     answered for rather than live, and a book whose location silently became
     *nowhere* is exactly the phantom this catalogue is built not to produce.
 
-    \u26a0 It reads the whole drawing rather than asking the store for one
+    ⚠ It reads the whole drawing rather than asking the store for one
     section's ancestry, for the reason ``GET /map`` gives one route up: a house
     is tens of rows. A dedicated query per level would be four round trips to
     save a few hundred bytes, and a fifth the day a level is added.
@@ -418,7 +434,7 @@ def where_is(
         raise _gone("shelf")
 
     plan = store.load_map(library)
-    # \u00a73.9's rule for the map's site segment, applied to the same ambiguity
+    # §3.9's rule for the map's site segment, applied to the same ambiguity
     # in a sentence: one home renders no chrome at all.
     many_sites = len(plan.sites) > 1
 
@@ -432,13 +448,13 @@ def where_is(
     if section is None:
         # Defensive, and stated as such: `sections.bookcase_id` cascades and
         # `shelves.section_id` does not, and every delete path empties a
-        # bookcase's slots first \u2014 so a shelf holding an address whose section
+        # bookcase's slots first — so a shelf holding an address whose section
         # is gone is unreachable through the API today. The same is true of
         # the three lookups below it.
-        # \u26a0 The citation that stood here was \u00a73.10a, which is the GAPS rule
+        # ⚠ The citation that stood here was §3.10a, which is the GAPS rule
         # and says nothing about this. A wrong stated reason is what makes the
         # next reader delete the guard. Answering "nowhere" is right either
-        # way \u2014 it is the same answer the unaddressed branch gives.
+        # way — it is the same answer the unaddressed branch gives.
         return out
     # ⚠ **The address has to still BE a slot of the section as loaded.**
     # `shelf.address` and this `Section` come from two different reads with no

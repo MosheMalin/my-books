@@ -148,3 +148,94 @@ describe('reordering a stack of sections (P6.7a)', () => {
       { name: HE.move_section_down(HE.section_n(1)) })).toBeNull()
   })
 })
+
+describe('proposing a shape from one photograph (P6.6, P6.7g)', () => {
+  /**
+   * The owner, having photographed a bookcase: *"it got the number of shelves
+   * right, but missed a column (actually — I do not see that it takes
+   * column)."* It did not take one: the band detector answers about
+   * horizontal lines, and the proposal had no column field at all.
+   */
+  const twoCols = (): Bookcase => ({
+    ...newBookcase('c1', '', { x: 0, y: 0, w: 4, h: 1 }, 'S', null, 'f1', 1),
+    sections: [{
+      id: 's1', columnLevels: [3, 3], gaps: [], defaultLevels: 3,
+      defaultDepth: 1, shelves: [],
+    }],
+  })
+
+  const draw = (said: { levels: number; columns: number },
+                onColumnCount = vi.fn(), onDefaultLevels = vi.fn()) => {
+    render(
+      <I18nProvider>
+        <Elevation
+          bc={twoCols()}
+          selection={EMPTY}
+          onSelectShelf={() => {}}
+          onMoveSection={() => {}}
+          onGaps={() => {}}
+          onColumnLevels={() => {}}
+          onColumnCount={onColumnCount}
+          onDefaultLevels={onDefaultLevels}
+          onProposeLevels={async () => said}
+          onDefaultDepth={() => {}}
+          onApplyDefaultLevels={() => {}}
+          onApplyDefaultDepth={() => {}}
+          onAddSection={() => {}}
+          onRemoveSection={() => {}}
+        />
+      </I18nProvider>,
+    )
+    return { onColumnCount, onDefaultLevels }
+  }
+
+  const photo = () =>
+    new File([new Uint8Array([1])], 'case.jpg', { type: 'image/jpeg' })
+
+  it('says BOTH axes, and offers the column count as a press of its own',
+     async () => {
+    // ⚠ Offered, never applied. Levels fill a creation-time DEFAULT and touch
+    // no existing shelf (§3.3); a column count IS the shape, so applying one
+    // creates or destroys real slots — and §3.14 says only a ✓ binds.
+    const { onColumnCount, onDefaultLevels } = draw({ levels: 6, columns: 4 })
+
+    await userEvent.upload(
+      screen.getByLabelText(HE.propose_levels), photo())
+
+    expect(await screen.findByText(HE.proposed_shape(6, 4))).toBeInTheDocument()
+    expect(onDefaultLevels).toHaveBeenCalledWith('s1', 6)
+    expect(onColumnCount).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByRole('button', { name: HE.apply_columns(4) }))
+    expect(onColumnCount).toHaveBeenCalledWith('s1', 4)
+  })
+
+  it('never offers a count that would REMOVE columns', async () => {
+    // Shrinking destroys slots and the books standing in them. The column
+    // control two rows up is where that happens, because it is the one that
+    // says what it costs — so this reports the number and stops.
+    const { onColumnCount } = draw({ levels: 5, columns: 1 })
+
+    await userEvent.upload(screen.getByLabelText(HE.propose_levels), photo())
+
+    expect(await screen.findByText(HE.proposed_shape(5, 1))).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: HE.apply_columns(1) })).toBeNull()
+    expect(onColumnCount).not.toHaveBeenCalled()
+  })
+
+  it('reads one-and-one as a photo of a single shelf, not as a failure',
+     async () => {
+    // The commonest picture in this library: all ten of the owner's full-size
+    // photographs answer 1 band and 1 column. Without this sentence the
+    // feature reads as broken on the input it meets most.
+    draw({ levels: 1, columns: 1 })
+
+    await userEvent.upload(screen.getByLabelText(HE.propose_levels), photo())
+
+    const said = await screen.findByText(HE.proposed_shape(1, 1))
+    expect(said.textContent).toContain('מדף אחד')
+    expect(said.textContent).toContain('עמודה אחת')
+    expect(said.textContent).toContain('צלמו את כל הכוננית')
+  })
+})
+

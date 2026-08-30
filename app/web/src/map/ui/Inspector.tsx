@@ -17,7 +17,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import { formatDate, Select } from '@booksnap/ui'
 
-import { Elevation } from './Elevation'
+import { Elevation, type Proposal } from './Elevation'
 import type { ShelfOverviewDTO } from '../../api/client'
 import { shelfHash } from '../../lib/route'
 import { AttachPhoto } from '../../shelf/AttachPhoto'
@@ -64,7 +64,7 @@ export type Actions = {
   shelfOverview: (shelfId: string) => Promise<ShelfOverviewDTO>
   /** How many shelves one photograph of a bookcase shows (P6.6). Optional:
    *  a host that cannot ask renders no control. */
-  proposeLevels?: ((photo: File) => Promise<number>) | undefined
+  proposeLevels?: ((photo: File) => Promise<Proposal>) | undefined
   bindShelf: (shelfId: string, sectionId: string, col: number, level: number,
               name: string) => void
   unbindShelf: (shelfId: string, sectionId: string, col: number,

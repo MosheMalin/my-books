@@ -19,7 +19,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from app.ports.bands import Band
+from app.ports.bands import Band, Column
 
 
 class BooksnapBandFinder:
@@ -52,3 +52,23 @@ class BooksnapBandFinder:
             path.write_bytes(image)
             found = shelf_bands(path)
         return tuple(Band(top=top, bottom=bottom) for top, bottom in found)
+
+    def columns(self, image: bytes) -> tuple[Column, ...]:
+        """The same photograph, the other axis (P6.7g).
+
+        A near-copy of `bands` above, and deliberately so rather than a shared
+        private helper taking a function: the two differ only in which engine
+        entry point they call, and threading that through a helper would hide
+        the one line a reader comes here to check. Every ⚠ on `bands` applies
+        unchanged — the empty-bytes guard is redundant, the suffix is for a
+        human, and the import is late because cv2 is expensive.
+        """
+        if not image:
+            raise ValueError("no image")
+        from booksnap.segment import shelf_columns
+
+        with tempfile.TemporaryDirectory(prefix="booksnap-bands-") as tmp:
+            path = Path(tmp) / "bookcase.jpg"
+            path.write_bytes(image)
+            found = shelf_columns(path)
+        return tuple(Column(left=left, right=right) for left, right in found)

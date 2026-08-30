@@ -987,6 +987,29 @@
         "title": "ClaimOutcomeDTO",
         "type": "object"
       },
+      "ColumnDTO": {
+        "description": "One vertical division of a bookcase's face, as fractions of its width.\n\n⚠ Its own type beside ``BandDTO``, never a reused one. UI_PLAN §1.1 gives\nthe three axes three words that must never be shared — column across,\nlevel down, depth back — and a band whose ``top`` held a horizontal\nposition would be the exact collision that rule exists to prevent.",
+        "properties": {
+          "left": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Left",
+            "type": "number"
+          },
+          "right": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Right",
+            "type": "number"
+          }
+        },
+        "required": [
+          "left",
+          "right"
+        ],
+        "title": "ColumnDTO",
+        "type": "object"
+      },
       "CopyCreate": {
         "description": "*\"I have another copy\"* (§5.1) — the only path that creates a second\nphysical object. No ``shelf_id`` here: shelves don't exist until P2.1, so\nevery copy today is unlocated regardless of how it was created.",
         "properties": {
@@ -1867,13 +1890,29 @@
         "type": "object"
       },
       "LevelProposalDTO": {
-        "description": "What one photograph of a bookcase suggests its level count is (P6.6).\n\n⚠ A PROPOSAL, and the word is load-bearing. §3.14: *the map may propose;\nonly a ✓ binds*. This route writes nothing — no shelf, no section, no\nimage, not even the photograph, which is never stored. Applying the number\nis a separate, explicit call to the section's own levels route.\n\n⚠ ``levels`` is a count of BANDS in a picture, which is not the same\nstatement as *this bookcase has N shelves*. A photo that shows part of a\ncase answers about that part; a photo of a single shelf answers **1**,\nwhich is what all eleven of the owner's photographs measured on the day\nthis shipped. The client says which of the two it is showing.",
+        "description": "What one photograph of a bookcase suggests its SHAPE is (P6.6, P6.7g).\n\n⚠ A PROPOSAL, and the word is load-bearing. §3.14: *the map may propose;\nonly a ✓ binds*. This route writes nothing — no shelf, no section, no\nimage, not even the photograph, which is never stored. Applying the number\nis a separate, explicit call to the section's own levels route.\n\n⚠ ``levels`` is a count of BANDS in a picture, which is not the same\nstatement as *this bookcase has N shelves*. A photo that shows part of a\ncase answers about that part; a photo of a single shelf answers **1**,\nwhich is what all eleven of the owner's photographs measured on the day\nthis shipped. The client says which of the two it is showing.",
         "properties": {
           "bands": {
             "items": {
               "$ref": "#/components/schemas/BandDTO"
             },
             "title": "Bands",
+            "type": "array"
+          },
+          "columns": {
+            "default": 1,
+            "description": "How many columns the photo shows — `len(columns_at)`, restated for the same reason `levels` is (P6.7g).",
+            "minimum": 1.0,
+            "title": "Columns",
+            "type": "integer"
+          },
+          "columns_at": {
+            "default": [],
+            "description": "Where they are, left to right. ⚠ A FALSE column is the failure that matters: a shelf of books is a picket fence of long vertical edges. Measured 1 on all ten of the owner's full-size photographs; finding the dividers that ARE there is exercised only synthetically, because no whole-bookcase photograph exists to measure against.",
+            "items": {
+              "$ref": "#/components/schemas/ColumnDTO"
+            },
+            "title": "Columns At",
             "type": "array"
           },
           "levels": {
@@ -5529,7 +5568,7 @@
     },
     "/api/v1/map/propose-levels": {
       "post": {
-        "description": "How many shelf surfaces this photograph shows.\n\nVISION §7's approach B, and the one place it is strongest: `segment.py`\nalready detects horizontal shelf bands — deterministically, locally, for\nfree, tuned on this owner's own shelves — so *\"the levels of a case can be\nproposed from one photo of it and confirmed by hand\"* (UI_PLAN §3).\n\n⚠ **It writes nothing at all**: no shelf, no section, no blob, and not the\nphotograph, which never reaches the blob store. §3.14 — *the map may\npropose; only a ✓ binds* — and applying the number is a separate,\nexplicit call to the section's own levels route. A proposal that saved its\nevidence would be the first image in this product with no owner and no\nlifecycle.\n\n⚠ **EDIT_MAP, though it writes nothing.** The capability answers *whose\njob is this*, not *does this mutate*: this exists only to fill in a field\non the editor, and a viewer who cannot change the drawing has no use for a\nnumber they cannot apply. The preview beside it (`merge/preview`) is\nEDIT_MAP for the same reason.\n\n⚠ **What comes back is a fact about a PHOTOGRAPH.** A picture of half a\nbookcase answers about that half, and a picture of a single shelf answers\n**1** — which is what all eleven of the owner's photographs measured on\nthe day this shipped. The client says which it is showing; the server does\nnot guess.",
+        "description": "How many shelf surfaces this photograph shows.\n\nVISION §7's approach B, and the one place it is strongest: `segment.py`\nalready detects horizontal shelf bands — deterministically, locally, for\nfree, tuned on this owner's own shelves — so *\"the levels of a case can be\nproposed from one photo of it and confirmed by hand\"* (UI_PLAN §3).\n\n⚠ **It writes nothing at all**: no shelf, no section, no blob, and not the\nphotograph, which never reaches the blob store. §3.14 — *the map may\npropose; only a ✓ binds* — and applying the number is a separate,\nexplicit call to the section's own levels route. A proposal that saved its\nevidence would be the first image in this product with no owner and no\nlifecycle.\n\n⚠ **EDIT_MAP, though it writes nothing.** The capability answers *whose\njob is this*, not *does this mutate*: this exists only to fill in a field\non the editor, and a viewer who cannot change the drawing has no use for a\nnumber they cannot apply. The preview beside it (`merge/preview`) is\nEDIT_MAP for the same reason.\n\n⚠ **What comes back is a fact about a PHOTOGRAPH.** A picture of half a\nbookcase answers about that half, and a picture of a single shelf answers\n**1** — which is what all eleven of the owner's photographs measured on\nthe day this shipped. The client says which it is showing; the server does\nnot guess.\n\n⚠ **Columns too, since P6.7g**, after the owner photographed a bookcase\nand reported *\"it got the number of shelves right, but missed a column.\"*\nIt did not miss one: the band detector answers about horizontal lines and\nthe proposal had no column field to fill. Same photograph, same request,\none more axis — and the route's NAME is now narrower than its answer,\nwhich is written down here rather than fixed by a rename that would churn\na committed contract for one word.",
         "operationId": "propose_levels_api_v1_map_propose_levels_post",
         "requestBody": {
           "content": {

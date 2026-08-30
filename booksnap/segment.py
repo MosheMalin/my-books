@@ -77,6 +77,47 @@ def shelf_bands(path: str | Path,
             for a, b in _shelf_bands(gray, cfg or CONFIG.segment)]
 
 
+def shelf_columns(path: str | Path,
+                  cfg: SegmentConfig | None = None) -> list[tuple[float, float]]:
+    """Where the column dividers are in this photo, as FRACTIONS of its width.
+
+    The sibling of :func:`shelf_bands`, added for P6.7g after the owner
+    photographed a bookcase and reported: *"it got the number of shelves
+    right, but missed a column (actually — I do not see that it takes
+    column)."* It did not: the band detector finds long HORIZONTAL lines and
+    the proposal had no column field to fill.
+
+    ⚠ **The same routine on the TRANSPOSE**, deliberately, rather than a
+    second detector: a long vertical line in an image is a long horizontal
+    line in its transpose, so this reuses the coverage threshold and the merge
+    distance that five runs of tuning gave ``_shelf_bands``. A second copy
+    would be a second set of constants to keep in step with it.
+
+    ⚠ **What is measured, and what is not.** The failure that matters here is
+    a FALSE column — a shelf full of book spines is full of long vertical
+    edges, and proposing four columns for a case that has one would be worse
+    than proposing nothing. Measured on all ten of the owner's full-size
+    photographs, every one a single shelf full of books: **1 column, ten times
+    out of ten.** The coverage threshold is what does it — a spine spans one
+    band's height, roughly a sixth of the picture, and 0.35 of the height is
+    the bar.
+
+    ⚠ The other half is NOT measured, and this is the same gap P6.6 shipped
+    with: no photograph of a whole bookcase exists in this library, so whether
+    this finds the dividers that ARE there is exercised only by a synthetic
+    fixture. Said here rather than discovered later.
+    """
+    img = cv2.imread(str(path))
+    if img is None:
+        raise ValueError(f"cannot read image: {path}")
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    width = gray.shape[1]
+    # `.copy()` because OpenCV refuses a non-contiguous array, and a transpose
+    # is a view.
+    return [(a / width, b / width)
+            for a, b in _shelf_bands(gray.T.copy(), cfg or CONFIG.segment)]
+
+
 def _vertical_coverage(band_gray: np.ndarray) -> np.ndarray:
     """Fraction of band height covered by long vertical edges, per column."""
     H, W = band_gray.shape
