@@ -60,7 +60,7 @@ import {
 } from './model'
 import type { Plan, Room } from './model'
 import { emptyPlan } from './model'
-import { parsePlan, serializePlan } from './persist'
+import { parsePlan, planFilename, serializePlan } from './persist'
 
 const rect = (x: number, y: number, w: number, h: number): Rect => ({ x, y, w, h })
 const room = (id: string, r: Rect): Room => ({ id, name: id, rect: r, floorId: 'f1' })
@@ -681,6 +681,144 @@ describe('the exported file', () => {
       plan: { rooms: [{ id: 'r1', name: '', rect: { x: 0, y: 0, w: 0, h: 5 } }], cases: [] },
     }
     expect(parsePlan(JSON.stringify(file)).ok).toBe(false)
+  })
+
+  it('carries the section and shelf IDS, so a restore re-addresses nothing', () => {
+    // ⚠⚠ THE item. `persist.ts` was unwired for five pillars with a note
+    // saying exactly this: `parsePlan` rebuilt section ids from array
+    // position, on the grounds that nothing outside the document referred to
+    // one — a sentence `shelves.section_id` made false. A file that loses
+    // these two ids is a file whose restore re-addresses every shelf in it,
+    // which is the opposite of the backup the owner asked for.
+    const withIds: Plan = {
+      ...planWith(livingRoom),
+      cases: [{
+        ...newBookcase('c1', 'ארון', rect(2, 0, 8, 1), 'S', 'r1', F),
+        sections: [{
+          id: 'sec-uuid-from-the-server',
+          columnLevels: [2], gaps: [], defaultLevels: 2, defaultDepth: 1,
+          shelves: [
+            { col: 0, level: 0, depth: 1, photos: 0, books: 0, id: 'shelf-a' },
+            { col: 0, level: 1, depth: 1, photos: 0, books: 0, id: 'shelf-b' },
+          ],
+        }],
+      }],
+    }
+
+    const back = parsePlan(serializePlan(withIds))
+    if (!back.ok) throw new Error('should parse')
+    const sec = back.plan.cases[0]!.sections[0]!
+    expect(sec.id).toBe('sec-uuid-from-the-server')
+    expect(sec.shelves.map((sh) => sh.id)).toEqual(['shelf-a', 'shelf-b'])
+  })
+
+  it('still REBUILDS the ids of a file written before version 5', () => {
+    // The other half, and it is not politeness: below 5 every export wrote
+    // `<caseId>:s<n>` afresh, so what is in an old file is a POSITION wearing
+    // an id's clothes. Trusting those would bind shelves to sections that
+    // never held them.
+    const v4 = {
+      format: 'booksnap.map-lab.plan',
+      version: 4,
+      plan: {
+        rooms: [{ id: 'r1', name: '', rect: { x: 0, y: 0, w: 20, h: 12 } }],
+        cases: [{
+          id: 'c9', name: '', rect: { x: 2, y: 0, w: 8, h: 1 }, front: 'S',
+          roomId: 'r1',
+          sections: [
+            { id: 'c1:s2', columnLevels: [1], gaps: [], defaultLevels: 1,
+              defaultDepth: 1,
+              shelves: [{ col: 0, level: 0, depth: 1, photos: 0,
+                          id: 'not-a-real-shelf' }] },
+          ],
+        }],
+      },
+    }
+    const back = parsePlan(JSON.stringify(v4))
+    if (!back.ok) throw new Error('should parse')
+    const sec = back.plan.cases[0]!.sections[0]!
+    expect(sec.id).toBe('c9:s1')
+    expect(sec.shelves[0]!.id).toBeUndefined()
+  })
+
+  it('leaves the CATALOGUE out — names and counts are the library’s', () => {
+    // The rule the file has always followed, unchanged by version 5: a plan
+    // file is a drawing. An id is a handle, not a catalogue fact; a shelf's
+    // NAME and what stands on it are the library's, and a file claiming them
+    // would say a shelf holds books it has never seen.
+    const plan: Plan = {
+      ...planWith(livingRoom),
+      cases: [{
+        ...newBookcase('c1', '', rect(2, 0, 8, 1), 'S', 'r1', F),
+        sections: [{
+          id: 's1', columnLevels: [1], gaps: [], defaultLevels: 1,
+          defaultDepth: 1,
+          shelves: [{ col: 0, level: 0, depth: 1, photos: 3, books: 7,
+                      id: 'sh', label: 'ספרי בישול', free: false }],
+        }],
+      }],
+    }
+    const text = serializePlan(plan)
+    expect(text).not.toContain('ספרי בישול')
+    expect(text).not.toContain('"free"')
+
+    const back = parsePlan(text)
+    if (!back.ok) throw new Error('should parse')
+    const shelf = back.plan.cases[0]!.sections[0]!.shelves[0]!
+    expect(shelf.id).toBe('sh')
+    expect(shelf.label).toBeUndefined()
+    expect(shelf.books).toBe(0)
+    expect(shelf.photos).toBe(0)
+  })
+
+  it('says which library and which site it is of', () => {
+    // `toPlan` builds one site at a time, so a file is ONE site's drawing.
+    // Without this a restore could be pointed at another site, or another
+    // customer's library, and would bind shelves that are not there.
+    const text = serializePlan(planWith(livingRoom), {
+      library: 'lib-1', siteId: 'st-1', siteName: 'הבית',
+      savedAt: '2026-08-30T09:00:00Z',
+    })
+    const back = parsePlan(text)
+    if (!back.ok) throw new Error('should parse')
+    expect(back.origin).toEqual({
+      library: 'lib-1', siteId: 'st-1', siteName: 'הבית',
+      savedAt: '2026-08-30T09:00:00Z',
+    })
+    // ⚠ Absent, not guessed. A file written before version 5 names no site,
+    // and inventing one would be worse than saying so.
+    const older = parsePlan(JSON.stringify({
+      format: 'booksnap.map-lab.plan', version: 4,
+      plan: { rooms: [{ id: 'r1', name: '', rect: { x: 0, y: 0, w: 4, h: 4 } }],
+              cases: [] },
+    }))
+    if (!older.ok) throw new Error('should parse')
+    expect(older.origin).toBeNull()
+
+    // ⚠ And a HALF-written origin is absent too, not half-trusted. A file
+    // whose origin names a site and no library, or a library and no site,
+    // cannot answer *may this be restored here* — and an origin that answered
+    // it with an empty string would be a restore aimed at nothing.
+    const half = parsePlan(JSON.stringify({
+      format: 'booksnap.map-lab.plan', version: 5,
+      origin: { siteName: 'הבית', savedAt: '2026-08-30T09:00:00Z' },
+      plan: { rooms: [{ id: 'r1', name: '', rect: { x: 0, y: 0, w: 4, h: 4 } }],
+              cases: [] },
+    }))
+    if (!half.ok) throw new Error('should parse')
+    expect(half.origin).toBeNull()
+  })
+
+  it('names the file after the site and the day', () => {
+    // Two saves of one site on two days must not overwrite each other in a
+    // downloads folder, and a site is named by a person, in Hebrew, with
+    // spaces in it.
+    expect(planFilename('הבית שלנו', '2026-08-30T09:00:00Z'))
+      .toBe('booksnap-הבית-שלנו-2026-08-30.json')
+    expect(planFilename('  ', '2026-08-30T09:00:00Z'))
+      .toBe('booksnap-map-2026-08-30.json')
+    expect(planFilename('a/b:c', '2026-08-30T09:00:00Z'))
+      .toBe('booksnap-a-b-c-2026-08-30.json')
   })
 
   it('keeps a room and a bookcase that were drawn flush EXACTLY flush', () => {

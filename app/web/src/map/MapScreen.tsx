@@ -77,6 +77,15 @@ export type MapScreenProps = {
   onChange: (plan: Plan) => void
   saved: 'saving' | 'saved' | 'failed'
   onReload: () => void
+  /**
+   * Write the drawing ON SCREEN to a file (P6.7e).
+   *
+   * ⚠ The current document, not `sync.initial`. Those two disagree from the
+   * first unsaved edit onwards, and a *save to file* that quietly wrote the
+   * last thing the SERVER said would be the worst kind of backup: it looks
+   * like it captured what you were looking at.
+   */
+  onExport?: ((plan: Plan) => void) | undefined
   /** The sites this library has, and the one being drawn (§3.9). Passed
    *  through rather than held here: a site decides WHICH document this is, so
    *  it cannot live in the document. */
@@ -882,6 +891,7 @@ export default function MapScreen(props: MapScreenProps) {
         onPaste={paste}
         onDelete={deleteSelection}
         onReload={props.onReload}
+        onExport={() => props.onExport?.(doc.plan)}
         // ⚠ The acknowledgment is NOT said here. Adding a site re-derives,
         // which remounts this component and would take the toast with it —
         // `MapSync.flash` is the surface that survives.

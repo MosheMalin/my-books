@@ -1076,3 +1076,103 @@ describe('coming back to where you were (P6.7c)', () => {
   })
 })
 
+describe('saving the drawing to a file (P6.7e)', () => {
+  /**
+   * The owner: *"I'm missing an explicit save or export for the map. I want
+   * to be able to save copies and tries by myself. How else can a user try
+   * and save backups he can later upload?"*
+   *
+   * The format's own guarantees are pinned in `core.test.ts`. What is here is
+   * the wiring: that the menu item writes a file at all, that it writes the
+   * document ON SCREEN, and that it says so.
+   */
+  const saved = () => {
+    const written: { name: string; text: string }[] = []
+    const seen = new Map<string, Blob>()
+    let n = 0
+    // ⚠ The two STATIC methods, never the `URL` global itself. Replacing it
+    // wholesale takes `new URL(...)` with it, which the fake server uses to
+    // route every request — the editor then renders its "could not load"
+    // state and the test fails somewhere that has nothing to do with saving.
+    // Measured, writing this. jsdom implements neither method, so they are
+    // assigned rather than spied, and `afterEach` deletes them.
+    const url = URL as unknown as Record<string, unknown>
+    url['createObjectURL'] = (b: Blob) => {
+      const made = `blob:${(n += 1)}`
+      seen.set(made, b)
+      return made
+    }
+    url['revokeObjectURL'] = () => {}
+    // jsdom performs no navigation for a download, so the anchor's click is
+    // where the file "arrives". Reading the Blob back is what proves the
+    // bytes, rather than trusting that a URL was minted.
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        const blob = seen.get(this.href)
+        if (blob) void blob.text().then((text) =>
+          written.push({ name: this.download, text }))
+      })
+    return { written, click }
+  }
+
+  afterEach(() => {
+    const url = URL as unknown as Record<string, unknown>
+    delete url['createObjectURL']
+    delete url['revokeObjectURL']
+  })
+
+  it('writes the document ON SCREEN, naming its library and site', async () => {
+    // ⚠ On screen, not `sync.initial`. Those two disagree from the first
+    // unsaved edit onwards, and a save that quietly wrote the last thing the
+    // SERVER said would be the worst kind of backup — it looks like it
+    // captured what you were looking at.
+    server.sites.push({ id: 'st1', name: 'הבית', order: 0 })
+    server.floors.push({ id: 'f1', site_id: 'st1', name: 'קרקע', order: 0 })
+    drawOne(server, 'f1', 'a')
+    const file = saved()
+    open()
+    await screen.findByRole('button', { name: HE.menu_plan }, WAIT)
+
+    // ⚠ An UNSAVED edit first, and it is the whole point of this assertion:
+    // `doc.plan` and `sync.initial` agree until the session's first edit and
+    // never again, so a save reading the wrong one passes every test that
+    // exports a freshly loaded drawing.
+    await userEvent.click(screen.getByRole('button', { name: HE.floor_menu }))
+    await userEvent.click(screen.getByRole('menuitem', { name: HE.add_floor }))
+    await screen.findByText(HE.floor_n(2), {}, WAIT)
+
+    await userEvent.click(screen.getByRole('button', { name: HE.menu_plan }))
+    await userEvent.click(screen.getByRole('menuitem', { name: HE.save_to_file }))
+
+    await waitFor(() => expect(file.written).toHaveLength(1), WAIT)
+    const { name, text } = file.written[0]!
+    expect(name).toMatch(/^booksnap-הבית-\d{4}-\d{2}-\d{2}\.json$/)
+    const body = JSON.parse(text) as {
+      version: number
+      origin: { library: string; siteId: string }
+      plan: { floors: unknown[]; cases: { sections: { id: string }[] }[] }
+    }
+    expect(body.plan.floors).toHaveLength(2)
+    expect(body.version).toBe(5)
+    expect(body.origin).toMatchObject({ library: 'lib-test', siteId: 'st1' })
+    expect(body.plan.cases[0]!.sections[0]!.id).toBe('sec-a')
+  })
+
+  it('says it saved, and names the file', async () => {
+    // A download that says nothing is indistinguishable from a control that
+    // did nothing: the browser's own chrome for it is a corner of a desktop
+    // window and is invisible on a phone.
+    server.sites.push({ id: 'st1', name: 'הבית', order: 0 })
+    server.floors.push({ id: 'f1', site_id: 'st1', name: 'קרקע', order: 0 })
+    saved()
+    open()
+    await screen.findByRole('button', { name: HE.menu_plan }, WAIT)
+
+    await userEvent.click(screen.getByRole('button', { name: HE.menu_plan }))
+    await userEvent.click(screen.getByRole('menuitem', { name: HE.save_to_file }))
+
+    expect(await screen.findByText(/^נשמר לקובץ booksnap-/, {}, WAIT))
+      .toBeInTheDocument()
+  })
+})
+

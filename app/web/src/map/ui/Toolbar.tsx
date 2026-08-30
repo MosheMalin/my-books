@@ -44,6 +44,8 @@ type Props = {
   onCopy: () => void
   onPaste: () => void
   onDelete: () => void
+  /** P6.7e — write the drawing on screen to a file the owner keeps. */
+  onExport: () => void
   onReload: () => void
   onAddSite: () => void
   onUnderlay: (file: File) => void
@@ -134,6 +136,10 @@ export function Toolbar(props: Props) {
           label={T.menu_plan}
           items={[
             { label: T.reload, onSelect: props.onReload },
+            // P6.7e. A PLAN-level command, beside *reload from the server*:
+            // both answer "what is the state of this drawing", one by
+            // fetching it and one by keeping a copy.
+            { label: T.save_to_file, onSelect: props.onExport },
             { label: T.trace, onSelect: () => underlayRef.current?.click() },
             // ⚠ The one site control a ONE-site household sees, and the only
             // place it could go: the badge's site segment does not exist yet,
