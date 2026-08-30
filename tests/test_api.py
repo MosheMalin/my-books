@@ -194,7 +194,8 @@ def _app(principal: StubPrincipal | None = None, store=None, shelves=None,
          blobs=None, reads=None, reader=None, jobs=None, decisions=None,
          duplicates=None, tenancy=None, auth=None, mailer=None, clock=None,
          invites=None, oauth_states=None, providers=None, maps=None,
-         undo=None, principal_provider=None, recycle: bool = True):
+         undo=None, bands=None, principal_provider=None,
+         recycle: bool = True):
     """Build (or recycle) an app with these ports bound.
 
     :param recycle: pass ``False`` for an app whose per-app state a later test
@@ -241,6 +242,7 @@ def _app(principal: StubPrincipal | None = None, store=None, shelves=None,
         identity_providers=providers if providers is not None else {},
         mailer=mailer if mailer is not None else StubMailer(),
         clock=clock if clock is not None else StubClock(),
+        band_finder=bands,
         id_gen=SeqIdGen(),
     )
     if not recycle:
@@ -8179,3 +8181,94 @@ def test_every_port_create_app_accepts_reaches_bind_ports():
         f"create_app accepts these and never passes them to bind_ports: "
         f"{missing}"
     )
+
+class StubBandFinder:
+    """A BandFinder that answers what the test says, and records what it saw.
+
+    ⚠ A STUB, not the engine, and the same reason `StubReader` is one: what
+    this route has to get right is the HTTP shape, the refusals and the
+    capability. Whether the detector is any good is measured in
+    `tests/test_bands.py` and, for the half that can be, on the owner's real
+    photographs — running cv2 here would make an API test hostage to image
+    tuning and would say nothing extra about the route.
+    """
+
+    def __init__(self, bands=(), columns=(), raises=False):
+        from app.ports.bands import Band, Column
+        self._bands = tuple(Band(top=a, bottom=b) for a, b in bands)
+        self._columns = tuple(Column(left=a, right=b) for a, b in columns)
+        self.raises = raises
+        self.seen: list[bytes] = []
+
+    def bands(self, image: bytes):
+        self.seen.append(image)
+        if self.raises:
+            raise ValueError("not an image")
+        return self._bands
+
+    def columns(self, image: bytes):
+        self.seen.append(image)
+        if self.raises:
+            raise ValueError("not an image")
+        return self._columns
+
+
+def test_a_photo_is_measured_on_both_axes_and_stored_nowhere():
+    """P6.6 and P6.7g through the wire, and the route's FIRST body test.
+
+    The owner: *"it got the number of shelves right, but missed a column
+    (actually — I do not see that it takes column)."* It did not take one —
+    the band detector answers about horizontal lines, and until P6.7g the
+    proposal had no column field at all.
+
+    ⚠ The claim that matters as much as the numbers is the last one: the
+    photograph reaches no blob store. A proposal that saved its evidence would
+    be the first image in this product with no owner and no lifecycle.
+    """
+    finder = StubBandFinder(bands=((0.0, 0.5), (0.5, 1.0)),
+                            columns=((0.0, 0.3), (0.3, 0.7), (0.7, 1.0)))
+    with _blobs() as blobs, TestClient(_app(blobs=blobs, bands=finder)) as client:
+        got = client.post("/api/v1/map/propose-levels",
+                          files={"file": ("case.jpg", b"pretend-jpeg",
+                                          "image/jpeg")})
+        assert got.status_code == 200, got.text
+        body = got.json()
+        assert body["levels"] == 2
+        assert body["bands"] == [{"top": 0.0, "bottom": 0.5},
+                                 {"top": 0.5, "bottom": 1.0}]
+        assert body["columns"] == 3
+        assert [c["left"] for c in body["columns_at"]] == [0.0, 0.3, 0.7]
+        # The bytes really were handed over — once per axis, one read.
+        assert finder.seen == [b"pretend-jpeg", b"pretend-jpeg"]
+
+        # ⚠ NOTHING was stored. `list_all` is the blob store's own view, so
+        # this is not a test of what the route meant to do.
+        assert list(blobs.list_keys(TEST_LIBRARY)) == []
+
+
+def test_a_file_that_is_not_a_photo_is_415_and_not_500():
+    """415 rather than 400: the request was well-formed and the MEDIA was not,
+    which is what the blob store's own upload answers for the same cause. A
+    mutating LAN route that answers 500 is one the phone client classifies as
+    *dropped* and retries forever."""
+    with TestClient(_app(bands=StubBandFinder(raises=True))) as client:
+        got = client.post("/api/v1/map/propose-levels",
+                          files={"file": ("x.pdf", b"%PDF-1.4", "application/pdf")})
+        assert got.status_code == 415, got.text
+
+
+def test_a_photo_bigger_than_the_cap_is_refused_before_it_is_decoded():
+    """The cap is a DoS guard on an endpoint that decodes whatever it is
+    handed, and it is checked before the finder is called — measured by the
+    stub having seen nothing."""
+    from app.api.routers.map import MAX_PROPOSAL_BYTES as _MAX_PROPOSAL
+
+    finder = StubBandFinder(bands=((0.0, 1.0),))
+    with TestClient(_app(bands=finder)) as client:
+        got = client.post(
+            "/api/v1/map/propose-levels",
+            files={"file": ("big.jpg", b"x" * (_MAX_PROPOSAL + 1),
+                            "image/jpeg")})
+        assert got.status_code == 413, got.text
+        assert finder.seen == []
+

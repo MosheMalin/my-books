@@ -530,8 +530,14 @@ export function PlanScreen({ library, focusShelf = null }: {
              effect depends on it: measured at 375x812, selecting one cell
              fetched its overview FOUR times. */
           overview: getShelfOverview,
-          proposeLevels: async (photo: File) =>
-            (await proposeLevels(photo)).levels,
+          // ⚠ BOTH axes since P6.7g, and the whole DTO is not passed on:
+          // the panel needs two numbers, and handing it the band and column
+          // spans as well would invite a second drawing of the photograph
+          // nobody has asked for.
+          proposeLevels: async (photo: File) => {
+            const p = await proposeLevels(photo)
+            return { levels: p.levels, columns: p.columns }
+          },
         }}
       />
     </>

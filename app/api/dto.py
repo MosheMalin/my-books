@@ -1616,8 +1616,21 @@ class BandDTO(BaseModel):
     bottom: float = Field(ge=0, le=1)
 
 
+class ColumnDTO(BaseModel):
+    """One vertical division of a bookcase's face, as fractions of its width.
+
+    ⚠ Its own type beside ``BandDTO``, never a reused one. UI_PLAN §1.1 gives
+    the three axes three words that must never be shared — column across,
+    level down, depth back — and a band whose ``top`` held a horizontal
+    position would be the exact collision that rule exists to prevent.
+    """
+
+    left: float = Field(ge=0.0, le=1.0)
+    right: float = Field(ge=0.0, le=1.0)
+
+
 class LevelProposalDTO(BaseModel):
-    """What one photograph of a bookcase suggests its level count is (P6.6).
+    """What one photograph of a bookcase suggests its SHAPE is (P6.6, P6.7g).
 
     ⚠ A PROPOSAL, and the word is load-bearing. §3.14: *the map may propose;
     only a ✓ binds*. This route writes nothing — no shelf, no section, no
@@ -1637,6 +1650,20 @@ class LevelProposalDTO(BaseModel):
                           "does not have to count a list.",
     )
     bands: list[BandDTO]
+    columns: int = Field(
+        default=1, ge=1,
+        description="How many columns the photo shows — `len(columns_at)`, "
+                    "restated for the same reason `levels` is (P6.7g).",
+    )
+    columns_at: list[ColumnDTO] = Field(
+        default=[],
+        description="Where they are, left to right. ⚠ A FALSE column is the "
+                    "failure that matters: a shelf of books is a picket "
+                    "fence of long vertical edges. Measured 1 on all ten of "
+                    "the owner's full-size photographs; finding the dividers "
+                    "that ARE there is exercised only synthetically, because "
+                    "no whole-bookcase photograph exists to measure against.",
+    )
 
 
 class AddressPartsDTO(BaseModel):

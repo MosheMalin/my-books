@@ -41,6 +41,22 @@ class Band:
     bottom: float
 
 
+@dataclass(frozen=True)
+class Column:
+    """One vertical division of a bookcase's face, as FRACTIONS of its width.
+
+    ⚠ **A separate type from :class:`Band`, and not a matter of taste.**
+    UI_PLAN §1.1 gives the three axes three words that must never be shared —
+    **column** across, **level** down, **depth** back — and a `Band` whose
+    `top` held a horizontal position would be exactly the collision that rule
+    exists to prevent. The AST check in the tests already refuses "row" and
+    "band" for a depth; this is the same discipline one axis over.
+    """
+
+    left: float
+    right: float
+
+
 class BandFinder(Protocol):
     """Something that can count the shelf surfaces in one photograph."""
 
@@ -58,5 +74,25 @@ class BandFinder(Protocol):
         picture* — which is what a photo of a SINGLE shelf looks like, and
         what all 11 of the owner's photographs measured when this port was
         written.
+        """
+        ...
+
+    def columns(self, image: bytes) -> tuple[Column, ...]:
+        """Every column this photo shows, left to right (P6.7g).
+
+        The owner, having photographed a bookcase: *"it got the number of
+        shelves right, but missed a column."* It did — the band detector
+        answers about horizontal lines and the proposal had no column field.
+
+        ⚠ The failure that matters is a FALSE column. A shelf of books is a
+        picket fence of long vertical edges, and proposing four columns for a
+        case that has one is worse than proposing nothing. Measured on all ten
+        of the owner's full-size photographs, every one a shelf full of books:
+        **one column, ten times out of ten.**
+
+        ⚠ The other direction is NOT measured, exactly as P6.6's band count
+        was not: no photograph of a whole bookcase exists in this library, so
+        whether the dividers that ARE there get found is exercised by a
+        synthetic fixture only. Same `ValueError` for undecodable bytes.
         """
         ...

@@ -96,7 +96,13 @@ function fakeMapServer() {
     const path = url.pathname.replace('/api/v1', '')
     const method = init?.method ?? 'GET'
     state.calls.push(`${method} ${path}`)
-    const body = init?.body ? JSON.parse(String(init.body)) : {}
+    // ⚠ A FormData body is NOT JSON, and `String(new FormData())` is
+    // "[object FormData]" — which throws here and surfaces in the editor as
+    // *"we could not read that photo"*, for a photo the fake never looked at.
+    // The one multipart route (P6.7g's proposal) is answered before any of
+    // this is used, but the guard belongs at the parse: the next multipart
+    // call should not have to rediscover it.
+    const body = typeof init?.body === 'string' ? JSON.parse(init.body) : {}
 
     if (method === 'GET' && path === '/map') {
       return respond({
@@ -158,6 +164,12 @@ function fakeMapServer() {
                        restored: { shelves: 5 }, changed: [] })
     }
     if (method === 'POST') {
+      // P6.7g — the one multipart route the editor calls. Answered before
+      // the JSON handling below, because its body is a FormData and every
+      // line under here assumes an object.
+      if (path === '/map/propose-levels') {
+        return respond({ levels: 6, bands: [], columns: 4, columns_at: [] })
+      }
       if (state.holding || (state.holdFloors && path === '/map/floors'))
         await new Promise<void>((go) => state.held.push(go))
       if (state.dropNext) {
@@ -1365,6 +1377,39 @@ describe('restoring a saved drawing (P6.7f)', () => {
     const url2 = URL as unknown as Record<string, unknown>
     delete url2['createObjectURL']
     delete url2['revokeObjectURL']
+  })
+})
+
+describe('what the panel is told about a photograph (P6.7g)', () => {
+  /**
+   * ⚠ *An argument accepted and not forwarded is a fix that reports success.*
+   *
+   * CLAUDE.md records this failure twice — `_record` took `wrote` and never
+   * passed it on; `create_app` took `band_finder` and never handed it to
+   * `bind_ports`. The engine measures columns, the route answers them, the
+   * panel renders them, and the one line between the client call and the
+   * panel is a mapping that can quietly drop one. Both rings stay green.
+   */
+  it('hands the panel the COLUMN count the server sent, not a default',
+     async () => {
+    server.sites.push({ id: 'st1', name: 'הבית', order: 0 })
+    server.floors.push({ id: 'f1', site_id: 'st1', name: 'קרקע', order: 0 })
+    drawOne(server, 'f1', 'a')
+
+    render(
+      <I18nProvider>
+        <PlanScreen library="lib-test" focusShelf="bc-a" />
+      </I18nProvider>,
+    )
+    const control = await screen.findByLabelText(HE.propose_levels, {}, WAIT)
+
+    await userEvent.upload(
+      control, new File([new Uint8Array([1])], 'case.jpg',
+                        { type: 'image/jpeg' }))
+
+    // The fake answers 6 levels and 4 columns; the sentence must name both.
+    expect(await screen.findByText(HE.proposed_shape(6, 4), {}, WAIT))
+      .toBeInTheDocument()
   })
 })
 

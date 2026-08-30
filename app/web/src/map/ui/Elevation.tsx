@@ -20,6 +20,9 @@ import { mapText } from '../text'
  * and claims nothing more.
  */
 
+/** What one photograph says about a section's shape (P6.6, P6.7g). */
+export type Proposal = { levels: number; columns: number }
+
 import type { Bookcase, Section } from '../core/model'
 import { MAX_DEPTH, columnCount, isGap, sectionsTopDown, shelfAt, shelvesDifferingFromDefaultDepth, shelvesInColumns } from '../core/model'
 import { nothingBound } from '../cost'
@@ -35,9 +38,9 @@ export type ElevationProps = {
   onColumnLevels: (sectionId: string, col: number, levels: number) => void
   onColumnCount: (sectionId: string, count: number) => void
   onDefaultLevels: (sectionId: string, n: number) => void
-  /** P6.6 — count the shelves in a photo. Optional: a host that does not
-   *  offer it renders no control at all (absent, not disabled). */
-  onProposeLevels?: ((photo: File) => Promise<number>) | undefined
+  /** P6.6/P6.7g — measure a photo on both axes. Optional: a host that does
+   *  not offer it renders no control at all (absent, not disabled). */
+  onProposeLevels?: ((photo: File) => Promise<Proposal>) | undefined
   onDefaultDepth: (sectionId: string, n: number) => void
   onApplyDefaultLevels: (sectionId: string) => void
   onApplyDefaultDepth: (sectionId: string) => void
@@ -72,16 +75,22 @@ export type ElevationProps = {
  * owner's eleven images is; without that sentence the feature would read as
  * broken on the commonest picture in the library.
  */
-function ProposeLevels({ sectionId, label, many, propose, onCount }: {
+function ProposeLevels({ sectionId, label, many, columnsNow, propose,
+                         onCount, onColumns }: {
   sectionId: string
   label: string
   many: boolean
-  propose: ((photo: File) => Promise<number>) | undefined
+  /** How many columns this section has TODAY — what the proposal is compared
+   *  against, because growing and shrinking are different gestures. */
+  columnsNow: number
+  propose: ((photo: File) => Promise<Proposal>) | undefined
   onCount: (n: number) => void
+  onColumns: (n: number) => void
 }) {
   const T = mapText(useI18n().lang)
   const [state, setState] = useState<'idle' | 'busy' | 'failed'>('idle')
   const [said, setSaid] = useState<string>('')
+  const [offered, setOffered] = useState<number>(0)
   if (!propose) return null
   return (
     <div className="propose-levels">
@@ -101,11 +110,22 @@ function ProposeLevels({ sectionId, label, many, propose, onCount }: {
             if (!photo) return
             setState('busy')
             setSaid('')
+            setOffered(0)
             void propose(photo)
-              .then((n) => {
+              .then(({ levels, columns }) => {
                 setState('idle')
-                setSaid(T.proposed_levels(n))
-                if (n > 1) onCount(n)
+                setSaid(T.proposed_shape(levels, columns))
+                if (levels > 1) onCount(levels)
+                // ⚠ The columns are OFFERED, never applied. Levels fill a
+                // creation-time DEFAULT and touch no existing shelf (§3.3);
+                // a column count IS the shape, so applying one destroys slots
+                // — and §3.14 says only a ✓ binds. The press below is that ✓.
+                //
+                // ⚠ And only when it GROWS. Shrinking removes real slots and
+                // the books standing in them; the column control two rows up
+                // is where that happens, because it is the one that says what
+                // it costs.
+                if (columns > columnsNow) setOffered(columns)
               })
               .catch(() => setState('failed'))
           }}
@@ -116,6 +136,19 @@ function ProposeLevels({ sectionId, label, many, propose, onCount }: {
           : state === 'failed' ? T.propose_failed
             : said || T.propose_levels_hint}
       </p>
+      {/* ABSENT until there is something to offer, and gone again the moment
+          another photo is chosen — a stale offer names a number from a
+          picture the owner has stopped looking at. */}
+      {offered > 0 && (
+        <button
+          type="button"
+          aria-label={many ? `${T.apply_columns(offered)} — ${label}`
+                           : T.apply_columns(offered)}
+          onClick={() => { onColumns(offered); setOffered(0) }}
+        >
+          {T.apply_columns(offered)}
+        </button>
+      )}
     </div>
   )
 }
@@ -468,8 +501,10 @@ function SectionBlock({
           {T.apply}
         </button>
         <ProposeLevels sectionId={sec.id} label={label} many={many}
+                       columnsNow={cols}
                        propose={props.onProposeLevels}
-                       onCount={(n) => props.onDefaultLevels(sec.id, n)} />
+                       onCount={(n) => props.onDefaultLevels(sec.id, n)}
+                       onColumns={(n) => props.onColumnCount(sec.id, n)} />
         <label>
           <span>{T.new_depth}</span>
           <input
