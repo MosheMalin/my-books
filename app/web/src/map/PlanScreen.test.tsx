@@ -1281,6 +1281,40 @@ describe('restoring a saved drawing (P6.7f)', () => {
     expect(screen.queryByText('חדר מהקובץ')).toBeNull()
   })
 
+  it('says nothing is removed when the file holds everything on screen',
+     async () => {
+    // ⚠ MEASURED in a real browser, on the owner's 139-shelf drawing: save
+    // the drawing and restore that same file, and the two-branch version
+    // asked *"0 bookcases go, and nothing stands on them."* A counted string
+    // enumerating zero — and this is the commonest restore there is, because
+    // it is what happens when you check that your backup works.
+    const shelf = world()
+    const asked: string[] = []
+    vi.stubGlobal('confirm', (q: string) => { asked.push(q); return false })
+    open()
+    await screen.findByRole('button', { name: HE.menu_plan }, WAIT)
+
+    // A file holding exactly what is on screen, shelf id and all.
+    await restore(planFile({
+      plan: {
+        floors: [{ id: 'f1', name: 'קרקע' }],
+        rooms: [],
+        cases: [{
+          id: 'bc-a', name: '', rect: { x: 0, y: 0, w: 4, h: 1 },
+          front: 'S', roomId: null, floorId: 'f1',
+          sections: [{ id: 'sec-a', columnLevels: [1], gaps: [],
+                       defaultLevels: 1, defaultDepth: 1,
+                       shelves: [{ col: 0, level: 0, depth: 1, photos: 0,
+                                   books: 0, id: shelf }] }],
+        }],
+      },
+    }))
+
+    await waitFor(() => expect(asked).toHaveLength(1), WAIT)
+    expect(asked[0]).toContain(HE.restore_removes_nothing)
+    expect(asked[0]).not.toContain('0')
+  })
+
   it('writes the current drawing to a file BEFORE it replaces anything',
      async () => {
     // ⚠⚠ The order IS the safety argument. There is no undo for this, so the
