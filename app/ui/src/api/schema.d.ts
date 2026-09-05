@@ -913,58 +913,6 @@ export interface paths {
         patch: operations["patch_place_api_v1_map_places__place_id__patch"];
         trace?: never;
     };
-    "/api/v1/map/propose-levels": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Propose Levels
-         * @description How many shelf surfaces this photograph shows.
-         *
-         *     VISION §7's approach B, and the one place it is strongest: `segment.py`
-         *     already detects horizontal shelf bands — deterministically, locally, for
-         *     free, tuned on this owner's own shelves — so *"the levels of a case can be
-         *     proposed from one photo of it and confirmed by hand"* (UI_PLAN §3).
-         *
-         *     ⚠ **It writes nothing at all**: no shelf, no section, no blob, and not the
-         *     photograph, which never reaches the blob store. §3.14 — *the map may
-         *     propose; only a ✓ binds* — and applying the number is a separate,
-         *     explicit call to the section's own levels route. A proposal that saved its
-         *     evidence would be the first image in this product with no owner and no
-         *     lifecycle.
-         *
-         *     ⚠ **EDIT_MAP, though it writes nothing.** The capability answers *whose
-         *     job is this*, not *does this mutate*: this exists only to fill in a field
-         *     on the editor, and a viewer who cannot change the drawing has no use for a
-         *     number they cannot apply. The preview beside it (`merge/preview`) is
-         *     EDIT_MAP for the same reason.
-         *
-         *     ⚠ **What comes back is a fact about a PHOTOGRAPH.** A picture of half a
-         *     bookcase answers about that half, and a picture of a single shelf answers
-         *     **1** — which is what all eleven of the owner's photographs measured on
-         *     the day this shipped. The client says which it is showing; the server does
-         *     not guess.
-         *
-         *     ⚠ **Columns too, since P6.7g**, after the owner photographed a bookcase
-         *     and reported *"it got the number of shelves right, but missed a column."*
-         *     It did not miss one: the band detector answers about horizontal lines and
-         *     the proposal had no column field to fill. Same photograph, same request,
-         *     one more axis — and the route's NAME is now narrower than its answer,
-         *     which is written down here rather than fixed by a rename that would churn
-         *     a committed contract for one word.
-         */
-        post: operations["propose_levels_api_v1_map_propose_levels_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/map/sections": {
         parameters: {
             query?: never;
@@ -2181,26 +2129,6 @@ export interface components {
             /** Answers */
             answers?: components["schemas"]["AnswerIn"][];
         };
-        /**
-         * BandDTO
-         * @description One horizontal shelf surface a photograph shows, as fractions of its
-         *     height. Fractions because the client draws them over an image it has
-         *     scaled to fit a phone.
-         */
-        BandDTO: {
-            /** Bottom */
-            bottom: number;
-            /** Top */
-            top: number;
-        };
-        /** Body_propose_levels_api_v1_map_propose_levels_post */
-        Body_propose_levels_api_v1_map_propose_levels_post: {
-            /**
-             * File
-             * @description One photo of a bookcase. NOT stored — read, measured, and dropped.
-             */
-            file: string;
-        };
         /** Body_upload_image_api_v1_images_post */
         Body_upload_image_api_v1_images_post: {
             /**
@@ -2632,21 +2560,6 @@ export interface components {
              * @default
              */
             reason: string;
-        };
-        /**
-         * ColumnDTO
-         * @description One vertical division of a bookcase's face, as fractions of its width.
-         *
-         *     ⚠ Its own type beside ``BandDTO``, never a reused one. UI_PLAN §1.1 gives
-         *     the three axes three words that must never be shared — column across,
-         *     level down, depth back — and a band whose ``top`` held a horizontal
-         *     position would be the exact collision that rule exists to prevent.
-         */
-        ColumnDTO: {
-            /** Left */
-            left: number;
-            /** Right */
-            right: number;
         };
         /**
          * CopyCreate
@@ -3153,42 +3066,6 @@ export interface components {
             lent_to: string;
             /** Returned At */
             returned_at?: string | null;
-        };
-        /**
-         * LevelProposalDTO
-         * @description What one photograph of a bookcase suggests its SHAPE is (P6.6, P6.7g).
-         *
-         *     ⚠ A PROPOSAL, and the word is load-bearing. §3.14: *the map may propose;
-         *     only a ✓ binds*. This route writes nothing — no shelf, no section, no
-         *     image, not even the photograph, which is never stored. Applying the number
-         *     is a separate, explicit call to the section's own levels route.
-         *
-         *     ⚠ ``levels`` is a count of BANDS in a picture, which is not the same
-         *     statement as *this bookcase has N shelves*. A photo that shows part of a
-         *     case answers about that part; a photo of a single shelf answers **1**,
-         *     which is what all eleven of the owner's photographs measured on the day
-         *     this shipped. The client says which of the two it is showing.
-         */
-        LevelProposalDTO: {
-            /** Bands */
-            bands: components["schemas"]["BandDTO"][];
-            /**
-             * Columns
-             * @description How many columns the photo shows — `len(columns_at)`, restated for the same reason `levels` is (P6.7g).
-             * @default 1
-             */
-            columns: number;
-            /**
-             * Columns At
-             * @description Where they are, left to right. ⚠ A FALSE column is the failure that matters: a shelf of books is a picket fence of long vertical edges. Measured 1 on all ten of the owner's full-size photographs; finding the dividers that ARE there is exercised only synthetically, because no whole-bookcase photograph exists to measure against.
-             * @default []
-             */
-            columns_at: components["schemas"]["ColumnDTO"][];
-            /**
-             * Levels
-             * @description How many bands the photo shows — `len(bands)`, restated so a caller that only wants the number does not have to count a list.
-             */
-            levels: number;
         };
         /**
          * LibraryCreate
@@ -5558,39 +5435,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PlaceDTO"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    propose_levels_api_v1_map_propose_levels_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "multipart/form-data": components["schemas"]["Body_propose_levels_api_v1_map_propose_levels_post"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LevelProposalDTO"];
                 };
             };
             /** @description Validation Error */

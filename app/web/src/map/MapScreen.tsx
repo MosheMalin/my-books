@@ -32,7 +32,6 @@ import type { History } from './core/history'
 import { canRedo, canUndo, commit, initHistory, redo, undo } from './core/history'
 import { FloorBadge } from './ui/FloorBadge'
 import { Inspector, type Actions } from './ui/Inspector'
-import type { Proposal } from './ui/Elevation'
 import { PlanCanvas } from './ui/PlanCanvas'
 import { Toolbar } from './ui/Toolbar'
 import type { Clipboard, Doc, Selection, Theme, Tool } from './ui/types'
@@ -172,9 +171,6 @@ export type MapScreenProps = {
      * says there is something to look at, the shelf screen says what.
      */
     overview: (shelfId: string) => Promise<ShelfOverviewDTO>
-    /** P6.6 — count the shelves in one photograph. Optional everywhere: a
-     *  host that does not offer it makes the control ABSENT. */
-    proposeLevels?: ((photo: File) => Promise<Proposal>) | undefined
   }
 }
 
@@ -670,7 +666,6 @@ export default function MapScreen(props: MapScreenProps) {
     previewMerge: props.shelves.previewMerge,
     mergeShelf: props.shelves.merge,
     shelfOverview: props.shelves.overview,
-    proposeLevels: props.shelves.proposeLevels,
     attachPhoto: props.shelves.attachPhoto,
   }
 

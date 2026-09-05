@@ -17,7 +17,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import { formatDate, Select } from '@booksnap/ui'
 
-import { Elevation, type Proposal } from './Elevation'
+import { Elevation } from './Elevation'
 import type { ShelfOverviewDTO } from '../../api/client'
 import { shelfHash } from '../../lib/route'
 import { AttachPhoto } from '../../shelf/AttachPhoto'
@@ -65,7 +65,6 @@ export type Actions = {
   shelfOverview: (shelfId: string) => Promise<ShelfOverviewDTO>
   /** How many shelves one photograph of a bookcase shows (P6.6). Optional:
    *  a host that cannot ask renders no control. */
-  proposeLevels?: ((photo: File) => Promise<Proposal>) | undefined
   bindShelf: (shelfId: string, sectionId: string, col: number, level: number,
               name: string) => void
   unbindShelf: (shelfId: string, sectionId: string, col: number,
@@ -465,7 +464,6 @@ function CasePanel({
         onColumnLevels={(sectionId, col, n) => actions.setColumnLevels(bc.id, sectionId, col, n)}
         onColumnCount={(sectionId, n) => actions.setColumnCount(bc.id, sectionId, n)}
         onDefaultLevels={(sectionId, n) => actions.setDefaultLevels(bc.id, sectionId, n)}
-        onProposeLevels={actions.proposeLevels}
         onDefaultDepth={(sectionId, n) => actions.setDefaultDepth(bc.id, sectionId, n)}
         onApplyDefaultLevels={(sectionId) => actions.applyDefaultLevels(bc.id, sectionId)}
         onApplyDefaultDepth={(sectionId) => actions.applyDefaultDepth(bc.id, sectionId)}

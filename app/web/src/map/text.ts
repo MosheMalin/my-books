@@ -274,22 +274,6 @@ export interface MapText {
   last_read: string
   rows_stale: (n: number) => string
   open_this_shelf: string
-  // --- levels proposed from a photo (P6.6) ---
-  propose_levels: string
-  propose_levels_hint: string
-  proposing_levels: string
-  /** ⚠ ONE key, with its own singular branch — not a second key beside it.
-   *  The counted-string guard reads the TYPE, so `(n: number) => string`
-   *  is a declaration that this string agrees with a number, and it
-   *  caught «נספרו 1 מדפים» the moment it was written. The singular
-   *  is not just grammar here: counting one band means the photo showed a
-   *  single shelf, which is worth saying rather than merely conjugating. */
-  proposed_shape: (levels: number, columns: number) => string
-  /** P6.7g — the ✓ that binds a proposed COLUMN count. Levels fill a
-   *  creation-time default and touch nothing; a column count is the shape
-   *  itself, so it needs a press of its own. */
-  apply_columns: (n: number) => string
-  propose_failed: string
   // --- reordering a stack of sections (P6.7a) ---
   move_section_up: (label: string) => string
   move_section_down: (label: string) => string
@@ -712,27 +696,10 @@ const HE: MapText = {
     ? 'שורה אחת לא נקראה מזמן — פתחו את המדף כדי לראות איזו'
     : `${n} שורות לא נקראו מזמן — פתחו את המדף כדי לראות אילו`),
   open_this_shelf: 'פתחו את המדף הזה →',
-  propose_levels: 'הצעה מתמונה',
-  propose_levels_hint:
-    'צלמו את כל הכוננית — נספור את המדפים ונציע מספר. התמונה לא נשמרת, ולא משתנה כלום עד שתלחצו החלה.',
-  proposing_levels: 'סופרים…',
   // ⚠ ONE sentence for both axes, every branch singular-aware. `1 מדפים`
   // shipped live in this product before the guard that reads the TYPE caught
   // the class — and a two-argument counted string is exactly the shape that
   // guard had to be widened for.
-  proposed_shape: (levels, columns) => {
-    const l = levels === 1 ? 'מדף אחד' : `${levels} מדפים`
-    const c = columns === 1 ? 'עמודה אחת' : `${columns} עמודות`
-    const both = `נספרו בתמונה ${l} ו-${c}`
-    // One and one is a photo of a single shelf — the commonest picture in
-    // this library, and it must not read as a failure.
-    return levels === 1 && columns === 1
-      ? `${both} — אם צילמתם מדף בודד, צלמו את כל הכוננית`
-      : both
-  },
-  apply_columns: (n) =>
-    n === 1 ? 'קבעו עמודה אחת' : `קבעו ${n} עמודות`,
-  propose_failed: 'לא הצלחנו לקרוא את התמונה הזאת',
   move_section_up: (label) => `העלאת ${label} שלב אחד`,
   move_section_down: (label) => `הורדת ${label} שלב אחד`,
   section_moved: (label) => `הוזזה ${label}`,
@@ -1086,22 +1053,6 @@ const EN: MapText = {
     ? 'One row has not been read in a while — open the shelf to see which'
     : `${n} rows have not been read in a while — open the shelf to see which`),
   open_this_shelf: 'Open this shelf →',
-  propose_levels: 'Propose from a photo',
-  propose_levels_hint:
-    'Photograph the WHOLE bookcase — we count the shelves and suggest a '
-    + 'number. The photo is not stored, and nothing changes until you press '
-    + 'apply.',
-  proposing_levels: 'Counting…',
-  proposed_shape: (levels, columns) => {
-    const l = levels === 1 ? 'one shelf' : `${levels} shelves`
-    const c = columns === 1 ? 'one column' : `${columns} columns`
-    const both = `Counted ${l} and ${c} in the photo`
-    return levels === 1 && columns === 1
-      ? `${both} — if that was a photo of a single shelf, photograph the whole bookcase`
-      : both
-  },
-  apply_columns: (n) => (n === 1 ? 'Set to one column' : `Set to ${n} columns`),
-  propose_failed: "Couldn't read that photo",
   move_section_up: (label) => `Move ${label} up one`,
   move_section_down: (label) => `Move ${label} down one`,
   section_moved: (label) => `Moved ${label}`,

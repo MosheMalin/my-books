@@ -691,41 +691,6 @@ export const getShelfWhere = (
     opts,
   )
 
-/**
- * How many shelf surfaces one photo of a bookcase shows (P6.6).
- *
- * ⚠ The photo is NOT uploaded in the sense the rest of this file means: the
- * route stores nothing, and this is the only multipart call in the product
- * whose bytes never reach a blob. A proposal is transient by design — nothing
- * enters the library unapproved, and an image kept "for the proposal" would be
- * the first blob with no owner and no lifecycle.
- */
-export type LevelProposal = components['schemas']['LevelProposalDTO']
-
-export async function proposeLevels(
-  photo: File | Blob, opts: ApiOptions = {},
-): Promise<LevelProposal> {
-  // ⚠ NOT through `send()`. That helper sets `Content-Type:
-  // application/json` and `JSON.stringify`s its body — which turns a
-  // `FormData` into `{}` and answers **422**, with the client printing *"we
-  // could not read that photo"* for a photo the server never saw. Measured in
-  // a browser after the identical request through a bare `fetch` answered
-  // 200. `uploadImage` above bypasses it for exactly this reason and says so;
-  // this is the second multipart call in the product and it has to make the
-  // same choice, not inherit the wrong one.
-  const doFetch = opts.fetchImpl ?? globalThis.fetch
-  const body = new FormData()
-  body.append('file', photo, 'bookcase.jpg')
-  const path = '/api/v1/map/propose-levels'
-  const res = await doFetch(path, {
-    method: 'POST', headers: headersFor(opts), body,
-    ...(opts.signal ? { signal: opts.signal } : {}),
-  })
-  if (!res.ok) throw apiError(res.status, path,
-                              `POST ${path} failed: ${res.status}`)
-  return (await res.json()) as LevelProposal
-}
-
 export const mapPost = (path: string, body?: unknown, opts?: ApiOptions) =>
   send('POST', `/api/v1${path}`, body, opts) as Promise<any>
 

@@ -1042,22 +1042,6 @@
   }
 }
 
-/* The proposal (P6.6). A file input is unstyleable, so the LABEL is the
-   control and the input inside it is hidden — the same idiom the capture
-   tab's drop zone uses. `btn-like` rather than `btn`: `.btn` is the product's
-   class and this sheet is scoped to the editor, which has its own. */
-.mapscreen .propose-levels { grid-column: 1 / -1; }
-.mapscreen .propose-levels .btn-like {
-  display: inline-flex;
-  align-items: center;
-  min-height: 44px;
-  padding: 6px 12px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--btn);
-  cursor: pointer;
-}
-.mapscreen .propose-levels .btn-like input { display: none; }
 
 /* ⚠ The editor has to accept the box the shell gives it, and the SHELL's
    breakpoint is 760 — not this sheet's 640.
