@@ -306,7 +306,6 @@ function CasePanel({
   onRenamed: () => void
 }) {
   const T = mapText(useI18n().lang)
-  const room = plan.rooms.find((r) => r.id === bc.roomId) ?? null
   const wanted = renaming?.kind === 'case' && renaming.id === bc.id
   const nameRef = useRenameFocus(wanted, onRenamed)
   return (
@@ -342,6 +341,8 @@ function CasePanel({
             onChange={(e) => actions.renameCase(bc.id, e.target.value)}
           />
         </label>
+
+        <Hint about={T.free_measurement_about}>{T.free_measurement}</Hint>
 
         <Size
           w={bc.rect.w}
@@ -389,22 +390,26 @@ function CasePanel({
           </button>
         </div>
 
-        <p className="note">
-          {T.case_facts(caseLength(bc), caseThickness(bc), allShelves(bc).length)}
+        {/*
+          ⚠ What is left of this line, and why (P6.8e). The owner: *"the text
+          'יחידה אחת של קיר, 5 לעומק כפי שצויירה וכו' — not very clear. why do we
+          need it?"* Mostly we did not: the SIZE was already in the fold's own
+          summary AND in the two number boxes above, and the ROOM was already
+          in the Select two rows up. Three copies of the width and two of the
+          room, in a panel the same owner called too crowded.
+
+          What is NOT said anywhere else is how many shelves this piece of
+          furniture holds, so that is what survives — with the section count
+          when there is more than one, because then the shelves are divided
+          between them and the number alone is misleading.
+
+          The measurement rule keeps its ⓘ, and it now sits beside the SIZE
+          boxes it explains rather than under a sentence that no longer
+          mentions measurements.
+        */}
+        <p className="note rtl-safe">
+          {T.case_shelves(allShelves(bc).length)}
           {bc.sections.length > 1 ? T.in_sections(bc.sections.length) : ''}
-          {/* ⚠ The SAME name the room's own controls print. Falling back to
-              a bare "unnamed" glued the Hebrew preposition onto it — the
-              panel read בללא שם — and disagreed with the Select two rows
-              above, which has always called this room חדר 26×25. */}
-          {room
-            ? T.in_room(room.name || T.unnamed_room(room.rect.w, room.rect.h))
-            : T.in_no_room}
-          {'.'}
-          {/* ⚠ The FACTS stay — they describe the bookcase in front of you.
-              What moves behind the ⓘ is the RULE, which is the same sentence
-              on every bookcase in the library and is therefore the definition
-              of noise on the twelfth one. */}
-          <Hint about={T.free_measurement_about}>{T.free_measurement}</Hint>
         </p>
 
         {/*
@@ -429,7 +434,16 @@ function CasePanel({
         */}
         {facesTheShortSide(bc) && (
           <p className="note warn rtl-safe" role="status">
-            {T.faces_the_short_side(caseLength(bc), caseThickness(bc))}
+            {T.faces_the_short_side}
+            {/* ⚠ The STATE is four words and stays; the numbers behind it and
+                the remedy go behind the ⓘ (owner, P6.8e: *"I think it can be
+                in a i icon near the הספרים פונים אל"*). The line this
+                panel follows is unchanged — a state is on screen, its
+                explanation is asked for — and the sentence was simply doing
+                both jobs at once. */}
+            <Hint about={T.faces_the_short_side}>
+              {T.faces_the_short_side_why(caseLength(bc), caseThickness(bc))}
+            </Hint>
           </p>
         )}
       </Fold>

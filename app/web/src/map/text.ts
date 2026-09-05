@@ -182,12 +182,16 @@ export interface MapText {
   cases_move_with_room: string
   case_details: string
   case_summary: (name: string, w: number, h: number, side: string) => string
-  case_facts: (units: number, deep: number, shelves: number) => string
+  /** ⚠ Replaced `case_facts`, which restated the width, the depth and the
+   *  room — all three already on screen (P6.8e). What is left is the one
+   *  fact nothing else says. */
+  case_shelves: (shelves: number) => string
   /** P6.7h — said only when the drawn face is the SHORT side. Names the
    *  control that fixes it, because a notice with no remedy is noise. */
-  faces_the_short_side: (across: number, deep: number) => string
-  in_room: (name: string) => string
-  in_no_room: string
+  /** The STATE, short, on screen (P6.8e). */
+  faces_the_short_side: string
+  /** The numbers and the remedy, behind its ⓘ. */
+  faces_the_short_side_why: (across: number, deep: number) => string
   in_sections: (n: number) => string
   free_measurement: string
   /** What the ⓘ beside it is ABOUT — its accessible name, never the
@@ -521,22 +525,20 @@ const HE: MapText = {
     'אלה זזות כשהחדר הזה זז — כולל אלה שעומדות עכשיו מחוץ למתאר שלו.',
   case_details: 'שם, גודל, חדר, כיוון',
   case_summary: (name, w, h, side) => `${name} · ${w}×${h} · פונה ${side}`,
-  case_facts: (units, deep, shelves) =>
-    `${units === 1 ? 'יחידה אחת' : `${units} יחידות`} של קיר, ${deep} לעומק כפי שצוירה · ${
-      shelves === 1 ? 'מדף אחד' : `${shelves} מדפים`}`,
+  case_shelves: (shelves) =>
+    shelves === 1 ? 'מדף אחד' : `${shelves} מדפים`,
   // ⚠ Our words first — the numbers are neutral characters and
   // `unicode-bidi: plaintext` takes its direction from the first STRONG one.
   // ⚠ The unit noun, singular-aware, exactly as `case_facts` two rows up
   // does it. A bare *"across 1"* is the counted-string defect this table's
   // own guard exists for — and it caught this string on the way in.
-  faces_the_short_side: (across, deep) => {
+  faces_the_short_side: 'הספרים פונים אל הצד הקצר',
+  faces_the_short_side_why: (across, deep) => {
     const a = across === 1 ? 'יחידה אחת' : `${across} יחידות`
     const d = deep === 1 ? 'יחידה אחת' : `${deep} יחידות`
-    return `הספרים פונים אל הצד הקצר: העמודות מתחלקות על פני ${a}, והכוננית ${d} לעומק. אם לא לכך התכוונתם, סובבו אותה.`
+    return `העמודות מתחלקות על פני ${a}, והכוננית ${d} לעומק. אם לא לכך התכוונתם, סובבו אותה.`
   },
-  in_room: (name) => ` · ב${name}`,   // caller passes a NAMED room
 
-  in_no_room: ' · לא מחוברת לחדר',
   in_sections: (n) => (n === 1 ? ' ביחידה אחת' : ` ב-${n} יחידות`),
   free_measurement_about: 'המידות',
   gap_about: 'תא ריק',
@@ -929,17 +931,14 @@ const EN: MapText = {
     'These move when this room moves — including any that now stand outside its outline.',
   case_details: 'Name, size, room, facing',
   case_summary: (name, w, h, side) => `${name} · ${w}×${h} · faces ${side}`,
-  case_facts: (units, deep, shelves) =>
-    `${units === 1 ? '1 unit' : `${units} units`} of wall, ${deep} deep as drawn · ${
-      shelves === 1 ? '1 shelf' : `${shelves} shelves`}`,
-  faces_the_short_side: (across, deep) => {
+  case_shelves: (shelves) => (shelves === 1 ? '1 shelf' : `${shelves} shelves`),
+  faces_the_short_side: 'The books face the short side',
+  faces_the_short_side_why: (across, deep) => {
     const a = across === 1 ? '1 unit' : `${across} units`
     const d = deep === 1 ? '1 unit' : `${deep} units`
-    return `The books face the SHORT side: the columns divide across ${a}, `
-      + `and the case is ${d} deep. Turn it if that is not what you drew.`
+    return `The columns divide across ${a}, and the case is ${d} deep. `
+      + 'Turn it if that is not what you drew.'
   },
-  in_room: (name) => ` · in ${name}`,
-  in_no_room: ' · attached to no room',
   in_sections: (n) => (n === 1 ? ' in one section' : ` in ${n} sections`),
   free_measurement_about: 'the measurements',
   gap_about: 'an empty cell',

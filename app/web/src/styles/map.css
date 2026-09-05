@@ -192,6 +192,27 @@
   flex-direction: column;
   flex: 1;
   min-height: 320px;
+  /*
+   * ⚠ The editor's OWN ink, at its root, and it is a bug fix rather than
+   * tidiness (P6.8d).
+   *
+   * `color` inherits from the nearest ancestor that DECLARES one, and the
+   * nearest was `body`, outside this subtree — where `--ink` resolves to the
+   * product's palette. So every element in here that did not set a colour of
+   * its own was painted the PRODUCT's ink on the MAP's panel: in the dark map
+   * theme that is #12161c on #1b1f26, which is invisible.
+   *
+   * Measured on the owner's map: the storey badge showed nothing at rest and
+   * its name appeared only in the menu, which paints itself. `.site-name` and
+   * `.badge-sep` beside it were fine — they set `color: var(--dim)` — and
+   * that asymmetry is what made it look like a missing name rather than a
+   * missing colour.
+   *
+   * Declared HERE rather than on the badge so the whole class is closed: any
+   * map element without an explicit colour now inherits the map's, which is
+   * the only palette that agrees with what it is drawn on.
+   */
+  color: var(--ink);
 }
 
 /* --- toolbar ------------------------------------------------------------- */

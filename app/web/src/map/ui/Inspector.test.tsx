@@ -134,18 +134,20 @@ describe('the case panel on a phone', () => {
     expect(screen.getByText(HE.col_head(1))).toBeInTheDocument()
   })
 
-  it('calls an unnamed room what its own controls call it', () => {
-    // ⚠ ' · ב' + 'ללא שם' is not Hebrew — the panel read "בללא שם" — and it
-    // disagreed with the Select two rows above, which has always called this
-    // room "חדר 10×8". One room, one name, in the same fold.
+  it('names an unnamed room in ONE place, and by its size', () => {
+    // ⚠ This test used to guard a DISAGREEMENT: the facts note said
+    // "בללא שם" — not Hebrew — while the Select two rows above called the
+    // same room "חדר 10×8". P6.8e deleted the note, because the room was
+    // already in the Select and the size already in two other places, so the
+    // two namers became one and the collision it guarded cannot recur.
+    //
+    // What is left to protect is the half that is still a decision: an
+    // unnamed room is named by its SIZE, not by the word "unnamed", and it
+    // is named ONCE. A second namer is how the old defect started.
     show({ rooms: [], cases: ['c1'], cells: [] })
-    // The Select offers the room by that name, and the note names it too —
-    // which is the point: they used to disagree.
     const said = screen.getAllByText(new RegExp(HE.unnamed_room(10, 8)))
-    expect(said.length).toBeGreaterThan(1)
-    const note = said.find((el) => el.classList.contains('note'))
-    expect(note, 'the case note never names the room').toBeDefined()
-    expect(note!.textContent).not.toContain(`ב${HE.unnamed}`)
+    expect(said).toHaveLength(1)
+    expect(document.body.textContent).not.toContain(`ב${HE.unnamed}`)
   })
 
   it('puts the bookcase’s own delete ABOVE the grid, not below it (P6.7b)', () => {
@@ -782,7 +784,23 @@ describe('a bookcase whose front is its short side (P6.7h)', () => {
     // 5 wide, 2 deep, facing WEST — the exact shape of עמוקה, קריאה and
     // עבודה on the owner's drawing: the face is the 2-unit edge.
     show(5, 2, 'W')
-    expect(screen.getByText(HE.faces_the_short_side(2, 5))).toBeInTheDocument()
+    expect(screen.getByText(HE.faces_the_short_side)).toBeInTheDocument()
+  })
+
+  it('keeps the numbers and the remedy behind its ⓘ', async () => {
+    // The owner, on this very sentence: *"I think it can be in a i icon near
+    // the הספרים פונים אל"*. The STATE is four words and stays — it is
+    // true of this bookcase and false of the next one, and he asked twice
+    // before anything said it at all. The measurements behind it and the
+    // instruction to turn the case are the explanation, and they are asked
+    // for.
+    show(5, 2, 'W')
+    expect(screen.queryByText(HE.faces_the_short_side_why(2, 5))).toBeNull()
+
+    await userEvent.click(screen.getByRole('button',
+      { name: HE_APP_EXPLAIN(HE.faces_the_short_side) }))
+    expect(screen.getByText(HE.faces_the_short_side_why(2, 5)))
+      .toBeInTheDocument()
   })
 
   it('says nothing at all when the front IS the long side', () => {
@@ -814,9 +832,11 @@ describe('what hides behind an ⓘ, and what may not (P6.8b)', () => {
    */
   it('hides the measurement RULE and keeps the measurements', () => {
     show({ rooms: [], cases: ['c1'], cells: [] })
-    // The facts are on screen: 4 units of wall, 1 deep, its shelves.
-    expect(screen.getByText(new RegExp(HE.case_facts(4, 1, 5).slice(0, 12))))
-      .toBeInTheDocument()
+    // The fact that is on screen is the one nothing else says: how many
+    // shelves. The width, the depth and the room were dropped in P6.8e —
+    // three copies of the size and two of the room, in a panel its owner
+    // called too crowded.
+    expect(screen.getByText(HE.case_shelves(5))).toBeInTheDocument()
     // The rule behind them is not.
     expect(screen.queryByText(new RegExp(HE.free_measurement.slice(0, 20))))
       .toBeNull()
@@ -838,7 +858,7 @@ describe('what hides behind an ⓘ, and what may not (P6.8b)', () => {
                    actions={actions()} renaming={null} onRenamed={() => {}} />
       </I18nProvider>,
     )
-    expect(screen.getByText(HE.faces_the_short_side(2, 5))).toBeInTheDocument()
+    expect(screen.getByText(HE.faces_the_short_side)).toBeInTheDocument()
   })
 
   it('gives every ⓘ a name that says what it explains', () => {
