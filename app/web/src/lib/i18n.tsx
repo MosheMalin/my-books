@@ -192,6 +192,9 @@ const HE = {
     shelf_unreachable: 'לא הצלחנו לטעון את המדף — נראה שאין חיבור לשרת',
     shelf_untitled_photo_alt: 'תמונת המדף',
     // --- filing a photo without reading it (P6.7d) ---
+    // ⚠ Names its SUBJECT. Twenty ⓘ buttons all called "explanation" is
+    // the accessible-name collision this repo keeps meeting.
+    explain: (about: string) => `הסבר: ${about}`,
     attach_photo: 'הוספת תמונה',
     attach_photo_at: (depth: number) => `הוספת תמונה לשורה ${depth}`,
     // ⚠ The promise the Capture tab cannot make, and the reason this
@@ -502,6 +505,7 @@ const EN: Strings = {
     shelf_not_found: 'Shelf not found',
     shelf_unreachable: "Couldn't load the shelf — the server looks unreachable",
     shelf_untitled_photo_alt: 'Shelf photo',
+    explain: (about: string) => `Explain: ${about}`,
     attach_photo: 'Add a photo',
     attach_photo_at: (depth: number) => `Add a photo of row ${depth}`,
     attach_photo_hint:

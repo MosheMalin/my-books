@@ -1083,3 +1083,11 @@
 }
 .mapscreen .attach-photo { grid-column: 1 / -1; }
 
+/* P6.8b — the ⓘ's PALETTE only; its size and layout are `books.css`'s one
+   copy. The editor's tokens exist solely inside `.mapscreen`, and an
+   undefined custom property is invalid at computed-value time rather than
+   falling back, which is the defect `scoping.test.ts` was written for. */
+.mapscreen .hint-ask { color: var(--dim); }
+.mapscreen .hint-ask:hover,
+.mapscreen .hint-ask[aria-expanded="true"] { color: var(--ink); }
+

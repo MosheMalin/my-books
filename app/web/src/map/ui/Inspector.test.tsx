@@ -22,6 +22,9 @@ import type { Plan, Section } from '../core/model'
 import { mapText } from '../text'
 
 const HE = mapText('he')
+/** The ⓘ's accessible name comes from the APP's table, not the map's — the
+ *  control is shared by both screens. */
+const HE_APP_EXPLAIN = (about: string) => `הסבר: ${about}`
 
 afterEach(() => {
   cleanup()
@@ -390,10 +393,28 @@ describe('the elevation, with cells switched off (P6.3.2b)', () => {
     }))
   })
 
-  it('explains a hole on SCREEN, not only in a tooltip a phone never shows', () => {
+  it('explains a hole behind an ⓘ you can PRESS, never a hover title', async () => {
+    // ⚠ This test used to assert the sentence was always on screen. The
+    // owner changed that (P6.8b: *"explanation messages should be tooltips,
+    // and not 'in the face' of the users"*), and what it guards now is the
+    // half that has not changed and was MEASURED: a hover `title` is
+    // invisible on a phone, and the phone is the device this is catalogued
+    // from. So the explanation may be hidden — it may not be unreachable.
     const acts = actions()
     showPlan({ rooms: [], cases: ['c1'], cells: [] }, acts, holed())
+
+    expect(screen.queryByText(/לחיצה מחזירה מדף/)).toBeNull()
+    const ask = screen.getByRole('button', { name: HE_APP_EXPLAIN(HE.gap_about) })
+    // Nothing in a `title`: that is the attribute the measurement ruled out.
+    expect(ask).not.toHaveAttribute('title')
+
+    await userEvent.click(ask)
     expect(screen.getByText(/לחיצה מחזירה מדף/)).toBeTruthy()
+
+    // And it closes again — an explanation that cannot be dismissed is the
+    // crowding it was moved out of.
+    await userEvent.click(ask)
+    expect(screen.queryByText(/לחיצה מחזירה מדף/)).toBeNull()
   })
 })
 
@@ -777,6 +798,63 @@ describe('a bookcase whose front is its short side (P6.7h)', () => {
     // a face as long as it is deep, so there is nothing to report.
     show(2, 2, 'N')
     expect(screen.queryByText(/הצד הקצר/)).toBeNull()
+  })
+})
+
+describe('what hides behind an ⓘ, and what may not (P6.8b)', () => {
+  /**
+   * The owner: *"explanation messages should be tooltips, and not 'in the
+   * face' of the users… the feeling is that it's too crowded."*
+   *
+   * ⚠ The distinction this block exists to pin: an EXPLANATION goes behind
+   * the ⓘ — a rule you could not guess, the same sentence on every bookcase.
+   * A STATE or a COUNT does not. Hiding those would be saying less rather
+   * than making room, and the notice about a front on the short side is
+   * precisely the thing the owner asked twice to be told about.
+   */
+  it('hides the measurement RULE and keeps the measurements', () => {
+    show({ rooms: [], cases: ['c1'], cells: [] })
+    // The facts are on screen: 4 units of wall, 1 deep, its shelves.
+    expect(screen.getByText(new RegExp(HE.case_facts(4, 1, 5).slice(0, 12))))
+      .toBeInTheDocument()
+    // The rule behind them is not.
+    expect(screen.queryByText(new RegExp(HE.free_measurement.slice(0, 20))))
+      .toBeNull()
+    expect(screen.getByRole('button',
+      { name: HE_APP_EXPLAIN(HE.free_measurement_about) })).toBeInTheDocument()
+  })
+
+  it('keeps a NOTICE about this bookcase on screen', async () => {
+    // P6.7h's line. It is not an explanation — it is true of this case and
+    // false of the next one, and the owner raised it twice before it was
+    // said at all.
+    render(
+      <I18nProvider>
+        <Inspector doc={{ plan: { ...plan(), cases: [{
+          ...newBookcase('c1', 'ארון', { x: 1, y: 0, w: 2, h: 5 }, 'N', 'r1', 'f1', 1),
+          sections: [section('s1')],
+        }] }, seq: 0 }} floorId="f1"
+                   selection={{ rooms: [], cases: ['c1'], cells: [] }}
+                   actions={actions()} renaming={null} onRenamed={() => {}} />
+      </I18nProvider>,
+    )
+    expect(screen.getByText(HE.faces_the_short_side(2, 5))).toBeInTheDocument()
+  })
+
+  it('gives every ⓘ a name that says what it explains', () => {
+    // ⚠ Twenty buttons called "explanation" is the accessible-name collision
+    // CLAUDE.md records, and a panel showing a selected cell has several.
+    // Asserted as *the name contains its subject*, not merely as *the names
+    // differ*: on a panel that happens to render one ⓘ, uniqueness is true
+    // of any label at all and the guard is not looking.
+    show(onShelf)
+    const names = screen.getAllByRole('button')
+      .map((b) => b.getAttribute('aria-label') ?? '')
+      .filter((n) => n.startsWith('הסבר:'))
+    expect(names.length).toBeGreaterThan(1)
+    expect(new Set(names).size).toBe(names.length)
+    expect(names).toContain(`הסבר: ${HE.free_measurement_about}`)
+    expect(names).toContain(`הסבר: ${HE.photos_attached}`)
   })
 })
 

@@ -20,6 +20,7 @@ import { formatDate, Select } from '@booksnap/ui'
 import { Elevation } from './Elevation'
 import type { ShelfOverviewDTO } from '../../api/client'
 import { shelfHash } from '../../lib/route'
+import { Hint } from '../../lib/Hint'
 import { AttachPhoto } from '../../shelf/AttachPhoto'
 import type { MergePreview, OffMapShelf, StripOrder } from '../useMapSync'
 import type { Cell, Doc, Selection } from './types'
@@ -182,7 +183,7 @@ function Many({
       <button type="button" className="danger" onClick={actions.deleteSelection}>
         {T.delete_all(count(selection))}
       </button>
-      <p className="note">{T.rooms_keep_their_cases}</p>
+      <Hint about={T.delete_room}>{T.rooms_keep_their_cases}</Hint>
     </div>
   )
 }
@@ -399,8 +400,11 @@ function CasePanel({
             ? T.in_room(room.name || T.unnamed_room(room.rect.w, room.rect.h))
             : T.in_no_room}
           {'.'}
-          <br />
-          {T.free_measurement}
+          {/* ⚠ The FACTS stay — they describe the bookcase in front of you.
+              What moves behind the ⓘ is the RULE, which is the same sentence
+              on every bookcase in the library and is therefore the definition
+              of noise on the twelfth one. */}
+          <Hint about={T.free_measurement_about}>{T.free_measurement}</Hint>
         </p>
 
         {/*
@@ -652,7 +656,7 @@ function ShelfPanel({
             <span>{T.photos_attached}</span>
             <strong>{shelf.photos}</strong>
           </div>
-          <p className="note">{T.photos_are_captures}</p>
+          <Hint about={T.photos_attached}>{T.photos_are_captures}</Hint>
           {/*
             P6.7d, and it stands here rather than beside the count above for
             a reason: the count is a FACT (see the ⚠ on it) and this is the

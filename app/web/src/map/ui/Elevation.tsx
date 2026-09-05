@@ -1,6 +1,7 @@
 import { useState } from 'react'
 
 import { useI18n } from '../../lib/i18n'
+import { Hint } from '../../lib/Hint'
 import { mapText } from '../text'
 /**
  * The bookcase, front-on — the SECOND geometry (MAP_PLAN §3.2).
@@ -230,12 +231,16 @@ function SectionBlock({
         </div>
       )}
 
-      {/* ⚠ On screen, not in a `title`. The hole's own explanation lived in a
-          hover tooltip, which a phone never shows — and the phone is the
-          device this is catalogued from. One line, only while the section
-          has a hole, saying the one thing that is not discoverable. */}
+      {/* ⚠ Behind an ⓘ since P6.8b, and NOT behind a `title`. The original
+          note here recorded that a hover tooltip is invisible on a phone,
+          which is still true and is exactly why this is a disclosure with a
+          44px target rather than a hover. Still only while the section has a
+          hole: an explanation of holes on a section that has none is the
+          crowding the owner asked to be rid of. */}
       {sec.gaps.length > 0 && (
-        <p className="note rtl-safe elev-gap-hint">{T.gaps_are_tappable}</p>
+        <div className="elev-gap-hint">
+          <Hint about={T.gap_about}>{T.gaps_are_tappable}</Hint>
+        </div>
       )}
 
       {/* The scroll lives HERE, around one section's columns — not around the

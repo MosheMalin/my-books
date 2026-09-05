@@ -190,6 +190,10 @@ export interface MapText {
   in_no_room: string
   in_sections: (n: number) => string
   free_measurement: string
+  /** What the ⓘ beside it is ABOUT — its accessible name, never the
+   *  explanation itself (P6.8b). */
+  free_measurement_about: string
+  gap_about: string
   counts: (rooms: number, cases: number) => string
   step_room: string
   step_case: string
@@ -534,6 +538,8 @@ const HE: MapText = {
 
   in_no_room: ' · לא מחוברת לחדר',
   in_sections: (n) => (n === 1 ? ' ביחידה אחת' : ` ב-${n} יחידות`),
+  free_measurement_about: 'המידות',
+  gap_about: 'תא ריק',
   free_measurement:
     'מדידה חופשית — יחסית לקירות החדר, לעולם לא בסנטימטרים, ושום דבר כאן אינו מסיק כמה ספרים נכנסים.',
   counts: (rooms, cases) =>
@@ -935,6 +941,8 @@ const EN: MapText = {
   in_room: (name) => ` · in ${name}`,
   in_no_room: ' · attached to no room',
   in_sections: (n) => (n === 1 ? ' in one section' : ` in ${n} sections`),
+  free_measurement_about: 'the measurements',
+  gap_about: 'an empty cell',
   free_measurement:
     'Free measurement — relative to this room’s walls, never centimetres, and nothing here infers how many books fit.',
   counts: (rooms, cases) =>
