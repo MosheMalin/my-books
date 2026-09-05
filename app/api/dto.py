@@ -1607,65 +1607,6 @@ class MergeRefusalDTO(BaseModel):
     say: str
 
 
-class BandDTO(BaseModel):
-    """One horizontal shelf surface a photograph shows, as fractions of its
-    height. Fractions because the client draws them over an image it has
-    scaled to fit a phone."""
-
-    top: float = Field(ge=0, le=1)
-    bottom: float = Field(ge=0, le=1)
-
-
-class ColumnDTO(BaseModel):
-    """One vertical division of a bookcase's face, as fractions of its width.
-
-    ⚠ Its own type beside ``BandDTO``, never a reused one. UI_PLAN §1.1 gives
-    the three axes three words that must never be shared — column across,
-    level down, depth back — and a band whose ``top`` held a horizontal
-    position would be the exact collision that rule exists to prevent.
-    """
-
-    left: float = Field(ge=0.0, le=1.0)
-    right: float = Field(ge=0.0, le=1.0)
-
-
-class LevelProposalDTO(BaseModel):
-    """What one photograph of a bookcase suggests its SHAPE is (P6.6, P6.7g).
-
-    ⚠ A PROPOSAL, and the word is load-bearing. §3.14: *the map may propose;
-    only a ✓ binds*. This route writes nothing — no shelf, no section, no
-    image, not even the photograph, which is never stored. Applying the number
-    is a separate, explicit call to the section's own levels route.
-
-    ⚠ ``levels`` is a count of BANDS in a picture, which is not the same
-    statement as *this bookcase has N shelves*. A photo that shows part of a
-    case answers about that part; a photo of a single shelf answers **1**,
-    which is what all eleven of the owner's photographs measured on the day
-    this shipped. The client says which of the two it is showing.
-    """
-
-    levels: int = Field(
-        ge=1, description="How many bands the photo shows — `len(bands)`, "
-                          "restated so a caller that only wants the number "
-                          "does not have to count a list.",
-    )
-    bands: list[BandDTO]
-    columns: int = Field(
-        default=1, ge=1,
-        description="How many columns the photo shows — `len(columns_at)`, "
-                    "restated for the same reason `levels` is (P6.7g).",
-    )
-    columns_at: list[ColumnDTO] = Field(
-        default=[],
-        description="Where they are, left to right. ⚠ A FALSE column is the "
-                    "failure that matters: a shelf of books is a picket "
-                    "fence of long vertical edges. Measured 1 on all ten of "
-                    "the owner's full-size photographs; finding the dividers "
-                    "that ARE there is exercised only synthetically, because "
-                    "no whole-bookcase photograph exists to measure against.",
-    )
-
-
 class AddressPartsDTO(BaseModel):
     """A shelf's address as PARTS, never as a sentence.
 

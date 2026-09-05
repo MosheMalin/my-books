@@ -182,14 +182,22 @@ export interface MapText {
   cases_move_with_room: string
   case_details: string
   case_summary: (name: string, w: number, h: number, side: string) => string
-  case_facts: (units: number, deep: number, shelves: number) => string
+  /** ⚠ Replaced `case_facts`, which restated the width, the depth and the
+   *  room — all three already on screen (P6.8e). What is left is the one
+   *  fact nothing else says. */
+  case_shelves: (shelves: number) => string
   /** P6.7h — said only when the drawn face is the SHORT side. Names the
    *  control that fixes it, because a notice with no remedy is noise. */
-  faces_the_short_side: (across: number, deep: number) => string
-  in_room: (name: string) => string
-  in_no_room: string
+  /** The STATE, short, on screen (P6.8e). */
+  faces_the_short_side: string
+  /** The numbers and the remedy, behind its ⓘ. */
+  faces_the_short_side_why: (across: number, deep: number) => string
   in_sections: (n: number) => string
   free_measurement: string
+  /** What the ⓘ beside it is ABOUT — its accessible name, never the
+   *  explanation itself (P6.8b). */
+  free_measurement_about: string
+  gap_about: string
   counts: (rooms: number, cases: number) => string
   step_room: string
   step_case: string
@@ -274,22 +282,6 @@ export interface MapText {
   last_read: string
   rows_stale: (n: number) => string
   open_this_shelf: string
-  // --- levels proposed from a photo (P6.6) ---
-  propose_levels: string
-  propose_levels_hint: string
-  proposing_levels: string
-  /** ⚠ ONE key, with its own singular branch — not a second key beside it.
-   *  The counted-string guard reads the TYPE, so `(n: number) => string`
-   *  is a declaration that this string agrees with a number, and it
-   *  caught «נספרו 1 מדפים» the moment it was written. The singular
-   *  is not just grammar here: counting one band means the photo showed a
-   *  single shelf, which is worth saying rather than merely conjugating. */
-  proposed_shape: (levels: number, columns: number) => string
-  /** P6.7g — the ✓ that binds a proposed COLUMN count. Levels fill a
-   *  creation-time default and touch nothing; a column count is the shape
-   *  itself, so it needs a press of its own. */
-  apply_columns: (n: number) => string
-  propose_failed: string
   // --- reordering a stack of sections (P6.7a) ---
   move_section_up: (label: string) => string
   move_section_down: (label: string) => string
@@ -533,23 +525,23 @@ const HE: MapText = {
     'אלה זזות כשהחדר הזה זז — כולל אלה שעומדות עכשיו מחוץ למתאר שלו.',
   case_details: 'שם, גודל, חדר, כיוון',
   case_summary: (name, w, h, side) => `${name} · ${w}×${h} · פונה ${side}`,
-  case_facts: (units, deep, shelves) =>
-    `${units === 1 ? 'יחידה אחת' : `${units} יחידות`} של קיר, ${deep} לעומק כפי שצוירה · ${
-      shelves === 1 ? 'מדף אחד' : `${shelves} מדפים`}`,
+  case_shelves: (shelves) =>
+    shelves === 1 ? 'מדף אחד' : `${shelves} מדפים`,
   // ⚠ Our words first — the numbers are neutral characters and
   // `unicode-bidi: plaintext` takes its direction from the first STRONG one.
   // ⚠ The unit noun, singular-aware, exactly as `case_facts` two rows up
   // does it. A bare *"across 1"* is the counted-string defect this table's
   // own guard exists for — and it caught this string on the way in.
-  faces_the_short_side: (across, deep) => {
+  faces_the_short_side: 'הספרים פונים אל הצד הקצר',
+  faces_the_short_side_why: (across, deep) => {
     const a = across === 1 ? 'יחידה אחת' : `${across} יחידות`
     const d = deep === 1 ? 'יחידה אחת' : `${deep} יחידות`
-    return `הספרים פונים אל הצד הקצר: העמודות מתחלקות על פני ${a}, והכוננית ${d} לעומק. אם לא לכך התכוונתם, סובבו אותה.`
+    return `העמודות מתחלקות על פני ${a}, והכוננית ${d} לעומק. אם לא לכך התכוונתם, סובבו אותה.`
   },
-  in_room: (name) => ` · ב${name}`,   // caller passes a NAMED room
 
-  in_no_room: ' · לא מחוברת לחדר',
   in_sections: (n) => (n === 1 ? ' ביחידה אחת' : ` ב-${n} יחידות`),
+  free_measurement_about: 'המידות',
+  gap_about: 'תא ריק',
   free_measurement:
     'מדידה חופשית — יחסית לקירות החדר, לעולם לא בסנטימטרים, ושום דבר כאן אינו מסיק כמה ספרים נכנסים.',
   counts: (rooms, cases) =>
@@ -712,27 +704,10 @@ const HE: MapText = {
     ? 'שורה אחת לא נקראה מזמן — פתחו את המדף כדי לראות איזו'
     : `${n} שורות לא נקראו מזמן — פתחו את המדף כדי לראות אילו`),
   open_this_shelf: 'פתחו את המדף הזה →',
-  propose_levels: 'הצעה מתמונה',
-  propose_levels_hint:
-    'צלמו את כל הכוננית — נספור את המדפים ונציע מספר. התמונה לא נשמרת, ולא משתנה כלום עד שתלחצו החלה.',
-  proposing_levels: 'סופרים…',
   // ⚠ ONE sentence for both axes, every branch singular-aware. `1 מדפים`
   // shipped live in this product before the guard that reads the TYPE caught
   // the class — and a two-argument counted string is exactly the shape that
   // guard had to be widened for.
-  proposed_shape: (levels, columns) => {
-    const l = levels === 1 ? 'מדף אחד' : `${levels} מדפים`
-    const c = columns === 1 ? 'עמודה אחת' : `${columns} עמודות`
-    const both = `נספרו בתמונה ${l} ו-${c}`
-    // One and one is a photo of a single shelf — the commonest picture in
-    // this library, and it must not read as a failure.
-    return levels === 1 && columns === 1
-      ? `${both} — אם צילמתם מדף בודד, צלמו את כל הכוננית`
-      : both
-  },
-  apply_columns: (n) =>
-    n === 1 ? 'קבעו עמודה אחת' : `קבעו ${n} עמודות`,
-  propose_failed: 'לא הצלחנו לקרוא את התמונה הזאת',
   move_section_up: (label) => `העלאת ${label} שלב אחד`,
   move_section_down: (label) => `הורדת ${label} שלב אחד`,
   section_moved: (label) => `הוזזה ${label}`,
@@ -956,18 +931,17 @@ const EN: MapText = {
     'These move when this room moves — including any that now stand outside its outline.',
   case_details: 'Name, size, room, facing',
   case_summary: (name, w, h, side) => `${name} · ${w}×${h} · faces ${side}`,
-  case_facts: (units, deep, shelves) =>
-    `${units === 1 ? '1 unit' : `${units} units`} of wall, ${deep} deep as drawn · ${
-      shelves === 1 ? '1 shelf' : `${shelves} shelves`}`,
-  faces_the_short_side: (across, deep) => {
+  case_shelves: (shelves) => (shelves === 1 ? '1 shelf' : `${shelves} shelves`),
+  faces_the_short_side: 'The books face the short side',
+  faces_the_short_side_why: (across, deep) => {
     const a = across === 1 ? '1 unit' : `${across} units`
     const d = deep === 1 ? '1 unit' : `${deep} units`
-    return `The books face the SHORT side: the columns divide across ${a}, `
-      + `and the case is ${d} deep. Turn it if that is not what you drew.`
+    return `The columns divide across ${a}, and the case is ${d} deep. `
+      + 'Turn it if that is not what you drew.'
   },
-  in_room: (name) => ` · in ${name}`,
-  in_no_room: ' · attached to no room',
   in_sections: (n) => (n === 1 ? ' in one section' : ` in ${n} sections`),
+  free_measurement_about: 'the measurements',
+  gap_about: 'an empty cell',
   free_measurement:
     'Free measurement — relative to this room’s walls, never centimetres, and nothing here infers how many books fit.',
   counts: (rooms, cases) =>
@@ -1086,22 +1060,6 @@ const EN: MapText = {
     ? 'One row has not been read in a while — open the shelf to see which'
     : `${n} rows have not been read in a while — open the shelf to see which`),
   open_this_shelf: 'Open this shelf →',
-  propose_levels: 'Propose from a photo',
-  propose_levels_hint:
-    'Photograph the WHOLE bookcase — we count the shelves and suggest a '
-    + 'number. The photo is not stored, and nothing changes until you press '
-    + 'apply.',
-  proposing_levels: 'Counting…',
-  proposed_shape: (levels, columns) => {
-    const l = levels === 1 ? 'one shelf' : `${levels} shelves`
-    const c = columns === 1 ? 'one column' : `${columns} columns`
-    const both = `Counted ${l} and ${c} in the photo`
-    return levels === 1 && columns === 1
-      ? `${both} — if that was a photo of a single shelf, photograph the whole bookcase`
-      : both
-  },
-  apply_columns: (n) => (n === 1 ? 'Set to one column' : `Set to ${n} columns`),
-  propose_failed: "Couldn't read that photo",
   move_section_up: (label) => `Move ${label} up one`,
   move_section_down: (label) => `Move ${label} down one`,
   section_moved: (label) => `Moved ${label}`,

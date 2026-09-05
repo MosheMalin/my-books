@@ -48,15 +48,12 @@ from dataclasses import replace
 from fastapi import (
     APIRouter,
     Depends,
-    File,
     HTTPException,
     Query,
-    UploadFile,
     status,
 )
 
 from app.api.deps import (
-    get_band_finder,
     get_book_store,
     get_clock,
     get_decision_store,
@@ -69,8 +66,6 @@ from app.api.deps import (
 )
 from app.api.dto import (
     AddressPartsDTO,
-    BandDTO,
-    ColumnDTO,
     BookcaseCreate,
     BookcaseDrawnDTO,
     BookcaseDTO,
@@ -100,13 +95,11 @@ from app.api.dto import (
     SiteDTO,
     SitePatch,
     SlotDepthPatch,
-    LevelProposalDTO,
     ShelfWhereDTO,
     SlotRemovalDTO,
     UndoOfferDTO,
 )
 from app.api.policy import require
-from app.ports.bands import BandFinder
 from app.domain import (
     AlreadyOnTheMap,
     Bookcase,
@@ -308,80 +301,6 @@ def get_map(
     normal state and not an error.
     """
     return MapDTO.of(store.load_map(library))
-
-
-#: A photograph of a bookcase, bounded. The blob store has its own, larger
-#: ceiling for images it KEEPS; this one is never stored, so the only thing
-#: the number protects is the seconds a Canny pass costs on a request thread.
-MAX_PROPOSAL_BYTES = 12 * 1024 * 1024
-
-
-@router.post("/propose-levels", response_model=LevelProposalDTO)
-async def propose_levels(
-    file: UploadFile = File(
-        description="One photo of a bookcase. NOT stored — read, measured, "
-                    "and dropped.",
-    ),
-    library: LibraryRef = Depends(require(EDIT)),
-    finder: BandFinder = Depends(get_band_finder),
-) -> LevelProposalDTO:
-    """How many shelf surfaces this photograph shows.
-
-    VISION §7's approach B, and the one place it is strongest: `segment.py`
-    already detects horizontal shelf bands — deterministically, locally, for
-    free, tuned on this owner's own shelves — so *"the levels of a case can be
-    proposed from one photo of it and confirmed by hand"* (UI_PLAN §3).
-
-    ⚠ **It writes nothing at all**: no shelf, no section, no blob, and not the
-    photograph, which never reaches the blob store. §3.14 — *the map may
-    propose; only a ✓ binds* — and applying the number is a separate,
-    explicit call to the section's own levels route. A proposal that saved its
-    evidence would be the first image in this product with no owner and no
-    lifecycle.
-
-    ⚠ **EDIT_MAP, though it writes nothing.** The capability answers *whose
-    job is this*, not *does this mutate*: this exists only to fill in a field
-    on the editor, and a viewer who cannot change the drawing has no use for a
-    number they cannot apply. The preview beside it (`merge/preview`) is
-    EDIT_MAP for the same reason.
-
-    ⚠ **What comes back is a fact about a PHOTOGRAPH.** A picture of half a
-    bookcase answers about that half, and a picture of a single shelf answers
-    **1** — which is what all eleven of the owner's photographs measured on
-    the day this shipped. The client says which it is showing; the server does
-    not guess.
-
-    ⚠ **Columns too, since P6.7g**, after the owner photographed a bookcase
-    and reported *"it got the number of shelves right, but missed a column."*
-    It did not miss one: the band detector answers about horizontal lines and
-    the proposal had no column field to fill. Same photograph, same request,
-    one more axis — and the route's NAME is now narrower than its answer,
-    which is written down here rather than fixed by a rename that would churn
-    a committed contract for one word.
-    """
-    data = await file.read()
-    if len(data) > MAX_PROPOSAL_BYTES:
-        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                            "that photo is too large to measure")
-    try:
-        found = finder.bands(data)
-    except ValueError as exc:
-        # Not a decodable image. 415 rather than 400: the request was
-        # well-formed and the MEDIA was not, which is what the blob store's
-        # own upload says for the same cause.
-        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-                            "that file is not a photo we can read") from exc
-    try:
-        across = finder.columns(data)
-    except ValueError as exc:  # pragma: no cover - `bands` raised first
-        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-                            "that file is not a photo we can read") from exc
-    return LevelProposalDTO(
-        levels=len(found),
-        bands=[BandDTO(top=b.top, bottom=b.bottom) for b in found],
-        columns=len(across),
-        columns_at=[ColumnDTO(left=c.left, right=c.right) for c in across],
-    )
 
 
 @router.get("/where/{shelf_id}", response_model=ShelfWhereDTO)

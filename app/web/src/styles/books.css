@@ -1417,3 +1417,37 @@
 .attach-photo .btn-like input { display: none; }
 .attach-photo .note { margin: 6px 0 0; }
 
+/*
+ * An explanation you have to ask for (P6.8b).
+ *
+ * ⚠ A DISCLOSURE, never a `title`. A hover tooltip is invisible on a phone,
+ * which CLAUDE.md records as measured — so the ⓘ is a real button with a
+ * real target, and the sentence appears in the flow beneath it.
+ *
+ * ⚠ The GLYPH is small and the TARGET is not. `min-height`/`min-width` 44
+ * with a transparent box around a 15px character: the phone touch floor is
+ * about the finger, not about the ink.
+ *
+ * ⚠ `display: inline-flex` on the wrapper and `block` on the said text, so
+ * the ask sits inline with what it explains and the answer starts its own
+ * line. A `min-height` on an INLINE box does nothing (measured: 44 declared,
+ * 21 computed), which is why the button is a flex item here.
+ */
+.hint { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.hint-ask {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.hint-ask:hover, .hint-ask[aria-expanded="true"] { color: var(--accent); }
+.hint-said { flex-basis: 100%; margin: 0 0 4px; }
+

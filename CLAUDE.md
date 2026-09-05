@@ -453,6 +453,23 @@ different world — the product never reads it.
   request in a browser answered *500: no BandFinder bound*. There is now a
   meta-test reading both SIGNATURES and the call site, because the next port
   will be added by somebody who has not read this line.
+- **"Make it a tooltip" cannot mean `title` on a phone.** A hover tooltip is
+  invisible there, which is measured and already written down — so an
+  explanation moved into one is deleted, not tucked away. `lib/Hint.tsx` is
+  the shape: a 44×44 ⓘ that reveals on press. And the line it draws is the
+  reusable part — an EXPLANATION hides (a rule you could not guess, the same
+  sentence on every bookcase, noise by the twelfth one); a STATE, a COUNT or a
+  REFUSAL does not.
+- **Measure again after the removal, before building the rest of the plan.**
+  P6.8c was chosen by the owner and became pointless before it was written:
+  the block it would have folded away was 168px only because the control
+  P6.8a deleted forced its own row, and 44px afterwards — the same height as
+  the fold header that would have hidden it. Building it would have looked
+  like progress and produced none.
+- **A uniqueness assertion on a list of one is not looking.** *"Every ⓘ has
+  its own name"* passed with every name blanked, because the panel under test
+  rendered exactly one. Assert that each name CONTAINS its subject, on a view
+  that has several.
 - **A function that sorts its argument cannot express a REORDER**, and
   `renumber_sections`'s docstring said "in the order given" while the code
   sorted by the ordinals it was about to overwrite. Every caller already

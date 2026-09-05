@@ -26,7 +26,6 @@ from app.ports.decisions import DecisionStore
 from app.ports.duplicates import DuplicateQueue
 from app.ports.jobs import JobRunner
 from app.ports.map import MapStore
-from app.ports.bands import BandFinder
 from app.ports.reader import Reader
 from app.ports.store import BookStore, ReadStore, ShelfStore
 from app.ports.tenancy import TenancyStore
@@ -326,10 +325,6 @@ def get_duplicate_queue() -> DuplicateQueue:
 
 def get_reader() -> Reader:
     raise RuntimeError("no Reader bound; build the app via create_app")
-
-
-def get_band_finder() -> BandFinder:
-    raise RuntimeError("no BandFinder bound; build the app via create_app")
 
 
 def get_job_runner() -> JobRunner:

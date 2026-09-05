@@ -791,6 +791,53 @@ this pillar.**
 | **P6.6** | ✅ *Optional:* bookcase photo → proposed levels via `segment.py`, confirmed by hand. ⚠ Shipped UNMEASURED on its target input — see below. | S | |
 | **P6.7** | **What the owner found walking it** (2026-08-30) — eight points from the first real session with the finished pillar. Decomposed **a–h** below. Not a new pillar: every one of them is a hole in something P6.0–P6.6 shipped. | M | ✅ a–h |
 
+### P6.8 — the bookcase panel, decluttered  *(2026-08-30)*
+
+The owner, after walking P6.7: *"I want to improve the UI of the bookcase
+management. it's way too complex and loaded. explanation messages should be
+tooltips, and not 'in the face' of the users… the feeling is that it's too
+crowded."* And, separately: *"the shelves analysis by picture — I want to
+remove it. it's easy for the users to describe it, and it's not cost effective
+to ask them to take a picture for this."*
+
+Measured first, on מרכזית at 375×812 — 13 bookcases, 139 addressed shelves:
+
+| | before | after a | after b |
+|---|---|---|---|
+| panel height (fold closed) | 1427px | 1179px | 1179px |
+| panel height (fold open) | 1498px | — | 1434px |
+| explanatory prose | 4 notes, 256 chars, **252px** | 2 notes, 64 chars, 36px | 2 notes, 106 chars, 54px behind an ⓘ |
+| file inputs in the panel | 2 | 0 | 0 |
+| per-section defaults block | 168px | 44px | 44px |
+
+**a — the photo analysis comes out.** ✅ Reverses P6.6 and P6.7g. The hint was
+**108px per section**, so it was the single largest block of text in the panel
+and most of what made it feel loaded. 1344 lines deleted against 10 added.
+`segment._shelf_bands` STAYS — it is stage 1 of the reading pipeline, and the
+sweep plus all three spotchecks passing unchanged is the check that nothing
+broke.
+
+**b — an explanation you have to ask for.** ✅ `lib/Hint.tsx`. ⚠ Not a `title`:
+CLAUDE.md records that a hover tooltip is invisible on a phone, so a `title`
+would delete these sentences rather than tuck them away. A disclosure with a
+44×44 target instead, verified in a real browser.
+
+The line it draws is the item's lasting part: an EXPLANATION hides — a rule
+you could not guess, the same sentence on every bookcase, and therefore the
+definition of noise on the twelfth one. A STATE or a COUNT does not. *"18
+units of wall, 2 deep, 42 shelves"* stays; *"free measurement — relative to
+this room's walls"* hides; P6.7h's notice that a case faces its short side
+stays, with a test saying so.
+
+**c — collapsing the section defaults: MEASURED AND DROPPED.** The plan was to
+fold the defaults away, and the owner chose it. Item **a** made it pointless
+before it was built: the block was 168px because the photo control forced its
+own row, and with that gone the two number fields sit in ONE 44px row. A fold
+header is 44px. Collapsing it would save nothing and add a press.
+
+Recorded rather than built, because building it would have looked like
+progress and produced none.
+
 ### P6.7 — the eight points, and what each one actually is
 
 The owner ran the finished pillar against his own house and came back with

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 
 import { useI18n } from '../../lib/i18n'
+import { Hint } from '../../lib/Hint'
 import { mapText } from '../text'
 /**
  * The bookcase, front-on — the SECOND geometry (MAP_PLAN §3.2).
@@ -20,9 +21,6 @@ import { mapText } from '../text'
  * and claims nothing more.
  */
 
-/** What one photograph says about a section's shape (P6.6, P6.7g). */
-export type Proposal = { levels: number; columns: number }
-
 import type { Bookcase, Section } from '../core/model'
 import { MAX_DEPTH, columnCount, isGap, sectionsTopDown, shelfAt, shelvesDifferingFromDefaultDepth, shelvesInColumns } from '../core/model'
 import { nothingBound } from '../cost'
@@ -38,9 +36,6 @@ export type ElevationProps = {
   onColumnLevels: (sectionId: string, col: number, levels: number) => void
   onColumnCount: (sectionId: string, count: number) => void
   onDefaultLevels: (sectionId: string, n: number) => void
-  /** P6.6/P6.7g — measure a photo on both axes. Optional: a host that does
-   *  not offer it renders no control at all (absent, not disabled). */
-  onProposeLevels?: ((photo: File) => Promise<Proposal>) | undefined
   onDefaultDepth: (sectionId: string, n: number) => void
   onApplyDefaultLevels: (sectionId: string) => void
   onApplyDefaultDepth: (sectionId: string) => void
@@ -55,102 +50,6 @@ export type ElevationProps = {
    * agree only because both ends say so.
    */
   onMoveSection: (sectionId: string, direction: 'up' | 'down') => void
-}
-
-/**
- * Count the shelves in one photograph, and offer the number (P6.6).
- *
- * VISION §7's approach B, where it is strongest: `segment.py` already finds
- * horizontal shelf bands, deterministically and for free, so *"the levels of a
- * case can be proposed from one photo of it and confirmed by hand"* (UI_PLAN
- * §3).
- *
- * ⚠ It fills in the field beside it and stops. §3.14 — *the map may propose;
- * only a ✓ binds* — so *apply* is the control that already existed, pressed by
- * a person who has read the number. Nothing here writes, and the photograph is
- * never stored.
- *
- * ⚠ **One is a real answer and says so.** A photo with no horizontal rule
- * across it is a photo of a single shelf, which is what every one of the
- * owner's eleven images is; without that sentence the feature would read as
- * broken on the commonest picture in the library.
- */
-function ProposeLevels({ sectionId, label, many, columnsNow, propose,
-                         onCount, onColumns }: {
-  sectionId: string
-  label: string
-  many: boolean
-  /** How many columns this section has TODAY — what the proposal is compared
-   *  against, because growing and shrinking are different gestures. */
-  columnsNow: number
-  propose: ((photo: File) => Promise<Proposal>) | undefined
-  onCount: (n: number) => void
-  onColumns: (n: number) => void
-}) {
-  const T = mapText(useI18n().lang)
-  const [state, setState] = useState<'idle' | 'busy' | 'failed'>('idle')
-  const [said, setSaid] = useState<string>('')
-  const [offered, setOffered] = useState<number>(0)
-  if (!propose) return null
-  return (
-    <div className="propose-levels">
-      <label className="btn-like">
-        <span>{T.propose_levels}</span>
-        <input
-          type="file"
-          accept="image/*"
-          aria-label={many ? `${T.propose_levels} — ${label}` : T.propose_levels}
-          onChange={(e) => {
-            const photo = e.target.files?.[0]
-            // ⚠ Cleared straight away, so choosing the SAME file twice fires
-            // again — a file input does not raise `change` for an unchanged
-            // value, and "nothing happened" after a retry reads as a dead
-            // control.
-            e.target.value = ''
-            if (!photo) return
-            setState('busy')
-            setSaid('')
-            setOffered(0)
-            void propose(photo)
-              .then(({ levels, columns }) => {
-                setState('idle')
-                setSaid(T.proposed_shape(levels, columns))
-                if (levels > 1) onCount(levels)
-                // ⚠ The columns are OFFERED, never applied. Levels fill a
-                // creation-time DEFAULT and touch no existing shelf (§3.3);
-                // a column count IS the shape, so applying one destroys slots
-                // — and §3.14 says only a ✓ binds. The press below is that ✓.
-                //
-                // ⚠ And only when it GROWS. Shrinking removes real slots and
-                // the books standing in them; the column control two rows up
-                // is where that happens, because it is the one that says what
-                // it costs.
-                if (columns > columnsNow) setOffered(columns)
-              })
-              .catch(() => setState('failed'))
-          }}
-        />
-      </label>
-      <p className="note" id={`propose-${sectionId}`}>
-        {state === 'busy' ? T.proposing_levels
-          : state === 'failed' ? T.propose_failed
-            : said || T.propose_levels_hint}
-      </p>
-      {/* ABSENT until there is something to offer, and gone again the moment
-          another photo is chosen — a stale offer names a number from a
-          picture the owner has stopped looking at. */}
-      {offered > 0 && (
-        <button
-          type="button"
-          aria-label={many ? `${T.apply_columns(offered)} — ${label}`
-                           : T.apply_columns(offered)}
-          onClick={() => { onColumns(offered); setOffered(0) }}
-        >
-          {T.apply_columns(offered)}
-        </button>
-      )}
-    </div>
-  )
 }
 
 export function Elevation(props: ElevationProps) {
@@ -332,12 +231,16 @@ function SectionBlock({
         </div>
       )}
 
-      {/* ⚠ On screen, not in a `title`. The hole's own explanation lived in a
-          hover tooltip, which a phone never shows — and the phone is the
-          device this is catalogued from. One line, only while the section
-          has a hole, saying the one thing that is not discoverable. */}
+      {/* ⚠ Behind an ⓘ since P6.8b, and NOT behind a `title`. The original
+          note here recorded that a hover tooltip is invisible on a phone,
+          which is still true and is exactly why this is a disclosure with a
+          44px target rather than a hover. Still only while the section has a
+          hole: an explanation of holes on a section that has none is the
+          crowding the owner asked to be rid of. */}
       {sec.gaps.length > 0 && (
-        <p className="note rtl-safe elev-gap-hint">{T.gaps_are_tappable}</p>
+        <div className="elev-gap-hint">
+          <Hint about={T.gap_about}>{T.gaps_are_tappable}</Hint>
+        </div>
       )}
 
       {/* The scroll lives HERE, around one section's columns — not around the
@@ -500,11 +403,6 @@ function SectionBlock({
         >
           {T.apply}
         </button>
-        <ProposeLevels sectionId={sec.id} label={label} many={many}
-                       columnsNow={cols}
-                       propose={props.onProposeLevels}
-                       onCount={(n) => props.onDefaultLevels(sec.id, n)}
-                       onColumns={(n) => props.onColumnCount(sec.id, n)} />
         <label>
           <span>{T.new_depth}</span>
           <input

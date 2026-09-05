@@ -32,7 +32,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from app.adapters.booksnap_bands import BooksnapBandFinder
 from app.adapters.booksnap_reader import BooksnapReader
 from app.adapters.console_mailer import ConsoleMailer
 from app.adapters.smtp_mailer import SmtpMailer
@@ -279,11 +278,6 @@ def build() -> object:
         # chain: a book confirmed once should match instantly on every later
         # shelf, which is what the tuning server gets from ConfirmedCatalog.
         reader=BooksnapReader(blob_store=blobs, book_store=books),
-        # P6.6 — stage 1's band detector, synchronous and free. NOT part of
-        # the reader: a read is a queued, rate-capped, chargeable job that
-        # can produce a Book; this measures one photograph and writes
-        # nothing.
-        band_finder=BooksnapBandFinder(),
         # P3.4: a bounded queue with per-tenant round-robin fairness. Two
         # workers on a 4-core machine that is also serving HTTP — a read is
         # either engine-CPU (spines) or a paid API call (llmpage), and ten at
