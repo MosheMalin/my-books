@@ -190,6 +190,7 @@ def create_app(
     identity_providers: dict | None = None,
     session_secure: bool | None = None,
     web_dist: Path | None = None,
+    root_path: str = "",
 ) -> FastAPI:
     """Build the product API.
 
@@ -204,10 +205,18 @@ def create_app(
         without it bound fails loudly rather than serving nothing.
     :param web_dist: built client assets to serve in production. ``None`` in
         dev, where Vite serves the client and proxies ``/api`` here.
+    :param root_path: the URL prefix the whole product lives under when it
+        shares a domain with something else (``/booksnap`` on
+        ``malinvishne.com/booksnap``). ``""`` means the domain root. Starlette
+        strips it from an incoming path that carries it and leaves one that
+        does not alone, so the proxy in front need not rewrite anything —
+        and the two places that BUILD a browser-facing path (the OAuth
+        redirects and the OAuth cookie) read it back off the request scope.
     """
     app = FastAPI(
         title=API_TITLE,
         version=__version__,
+        root_path=root_path,
         # Every route is versioned (H3). The prefix lives on the router, not
         # on each path, so an unversioned route cannot be added by accident.
         openapi_url="/api/v1/openapi.json",

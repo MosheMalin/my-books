@@ -2,22 +2,14 @@
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { basePathFromEnv } from './basePath.ts'
 
 /** `@booksnap/ui` is consumed as SOURCE, from the sibling directory — see
  *  `app/ui/README.md` for why there is no build step in between. */
 const UI = fileURLToPath(new URL('../ui/src', import.meta.url))
 
-/**
- * Dev: Vite serves the client and proxies /api to the product server.
- * Prod: `npm run build` emits dist/, which FastAPI mounts (see app/main.py).
- *
- * Port 8757 is the product API, one above the tuning server's 8756 — both run
- * side by side through pillars 1-2 (IMPLEMENTATION_PLAN, Risk 1).
- *
- * No CDN: everything is bundled locally, consistent with the project's
- * offline/credential posture (D3).
- */
 export default defineConfig({
+  base: basePathFromEnv(process.env.BOOKSNAP_BASE_PATH),
   plugins: [react()],
   resolve: {
     alias: [{ find: /^@booksnap\/ui(\/.*)?$/, replacement: `${UI}$1` }],

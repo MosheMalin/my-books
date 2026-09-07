@@ -82,12 +82,31 @@ OAUTH_FAILED = "#/login?error=provider"
 _MAX_NEXT = 200
 
 
-def _failed() -> RedirectResponse:
+def _root(request: Request) -> str:
+    """The URL prefix this deployment lives under (`create_app(root_path=)`),
+    ``""`` at a domain root.
+
+    ⚠ Every browser-facing path this router BUILDS goes through here: a
+    redirect to ``/#/…`` from a product served at ``/booksnap/`` lands on
+    whatever else the domain hosts, and a cookie scoped to
+    ``/api/v1/auth/oauth`` is never sent back to
+    ``/booksnap/api/v1/auth/oauth/…`` — the binding cookie then reads as
+    "a browser that did not start this flow", and every provider sign-in
+    is refused with the one sentence that is true of a forgery.
+    """
+    return request.scope.get("root_path", "") or ""
+
+
+def _oauth_cookie_path(request: Request) -> str:
+    return f"{_root(request)}{API_PREFIX}/auth/oauth"
+
+
+def _failed(request: Request) -> RedirectResponse:
     """One answer for every refusal, and the binding cookie cleared with
     it — a flow that ended has no second attempt."""
-    answer = RedirectResponse(f"/{OAUTH_FAILED}",
+    answer = RedirectResponse(f"{_root(request)}/{OAUTH_FAILED}",
                               status_code=status.HTTP_303_SEE_OTHER)
-    answer.delete_cookie(deps.OAUTH_COOKIE, path=f"{API_PREFIX}/auth/oauth")
+    answer.delete_cookie(deps.OAUTH_COOKIE, path=_oauth_cookie_path(request))
     return answer
 
 
@@ -336,7 +355,7 @@ def start_oauth(
         httponly=True,
         samesite="none" if _form_post(chosen.key) else "lax",
         secure=secure or _form_post(chosen.key),
-        path=f"{API_PREFIX}/auth/oauth",
+        path=_oauth_cookie_path(request),
     )
     return answer
 
@@ -357,7 +376,7 @@ def oauth_callback_get(
     secure: bool = Depends(deps.get_session_secure),
 ) -> RedirectResponse:
     """Google's redirect back: a top-level GET."""
-    return _finish_oauth(provider, code, state,
+    return _finish_oauth(request, provider, code, state,
                          request.cookies.get(deps.OAUTH_COOKIE, ""),
                          auth, tenancy, states, providers, clock, ids, secure)
 
@@ -383,14 +402,14 @@ async def oauth_callback_post(
     unauthenticated POST safe to expose at all.
     """
     form = await request.form()
-    return _finish_oauth(provider, str(form.get("code") or ""),
+    return _finish_oauth(request, provider, str(form.get("code") or ""),
                          str(form.get("state") or ""),
                          request.cookies.get(deps.OAUTH_COOKIE, ""),
                          auth, tenancy, states, providers, clock, ids, secure)
 
 
-def _finish_oauth(provider: str, code: str, state: str, binding: str,
-                  auth: AuthStore, tenancy: TenancyStore,
+def _finish_oauth(request: Request, provider: str, code: str, state: str,
+                  binding: str, auth: AuthStore, tenancy: TenancyStore,
                   states: OAuthStateStore, providers: dict, clock: Clock,
                   ids: IdGen, secure: bool) -> RedirectResponse:
     """One implementation for both response modes.
@@ -409,12 +428,12 @@ def _finish_oauth(provider: str, code: str, state: str, binding: str,
         # one this list was missing — presented by a browser that did not
         # start it. One answer for all of them, like every other
         # credential refusal here.
-        return _failed()
+        return _failed(request)
     try:
         identity = chosen.exchange(code=code, verifier=in_flight.verifier,
                                    nonce=in_flight.nonce)
     except OAuthError:
-        return _failed()
+        return _failed(request)
 
     # THE anchor: a verified address is a verified address, whoever
     # confirmed it. Signing in with Google to the address that has been
@@ -432,10 +451,11 @@ def _finish_oauth(provider: str, code: str, state: str, binding: str,
 
     session_token = secrets.token_urlsafe(32)
     auth.save_session(new_session(session_token, user.id, now))
-    landing = RedirectResponse(f"/{in_flight.next_hash or ''}",
-                               status_code=status.HTTP_303_SEE_OTHER)
+    landing = RedirectResponse(
+        f"{_root(request)}/{in_flight.next_hash or ''}",
+        status_code=status.HTTP_303_SEE_OTHER)
     # The flow is over: the binding cookie has no second use.
-    landing.delete_cookie(deps.OAUTH_COOKIE, path=f"{API_PREFIX}/auth/oauth")
+    landing.delete_cookie(deps.OAUTH_COOKIE, path=_oauth_cookie_path(request))
     landing.set_cookie(
         deps.SESSION_COOKIE,
         session_token,

@@ -168,6 +168,62 @@ naming both versions. **Take a backup first anyway** — there is no down
 step, and a rollback of the code past a schema change means restoring, which
 is the drill above.
 
+## Under a path prefix — malinvishne.com/booksnap
+
+The owner's domain already hosts the family's site at its root, so the
+product lives on a **path**, and one setting carries that everywhere:
+
+```
+BOOKSNAP_BASE_PATH=/booksnap
+BOOKSNAP_PUBLIC_URL=https://malinvishne.com/booksnap
+BOOKSNAP_DOMAIN=booksnap.malinvishne.com     # the VPS's own hostname (Caddy's cert)
+```
+
+What the prefix does, and where — because it lives in two places that
+cannot read each other:
+
+- **Build time.** Compose hands it to the image build as an `ARG`, Vite
+  bakes it into `index.html` as the asset URLs (`/booksnap/assets/…`), and
+  the client prepends it to every request it makes and every URL it hands
+  the browser (`app/web/src/api/client.ts:apiUrl` — one function, every
+  funnel; `basePath()` reads Vite's `BASE_URL`).
+- **Run time.** The server gets the same variable as FastAPI's `root_path`.
+  Starlette strips the prefix from a path that carries it and leaves one
+  that does not alone, so the proxy passes the path through **untouched**
+  and a request that reaches the origin directly still routes. The two
+  paths the server BUILDS — the OAuth redirects and the OAuth binding
+  cookie's `Path` — read it back off the request (`auth.py:_root`); at a
+  domain root the cookie was scoped to `/api/v1/auth/oauth`, which a
+  browser at `/booksnap/api/v1/…` never sends back, and every genuine
+  provider sign-in would have been refused as a forgery.
+- **The check.** `app/main.py:check_web_base` reads the page it is about
+  to serve and refuses to start when its asset URLs were built for another
+  prefix, naming both values. Built for `/` and served under `/booksnap`,
+  the page loads, asks for `/assets/…` at the domain root and renders
+  nothing — with no request ever reaching this server to log.
+
+The emailed sign-in link and the OAuth `redirect_uri`s are built from
+`BOOKSNAP_PUBLIC_URL`, so they carry the prefix by construction — the
+Google OAuth client must list
+`https://malinvishne.com/booksnap/api/v1/auth/oauth/google/callback`.
+
+**Cloudflare** does the path routing. The apex record stays where it is;
+two things are added to the zone:
+
+1. a DNS-only `A` record `booksnap.malinvishne.com` → the VPS, which is
+   what Caddy obtains its certificate for, exactly as at a domain root;
+2. a Worker (`deploy/cloudflare-worker.js`) on the route
+   `malinvishne.com/booksnap*`, with the variable
+   `BOOKSNAP_ORIGIN=booksnap.malinvishne.com`. It forwards the request to
+   the origin with the prefix intact, answers the bare `/booksnap` itself,
+   rewrites a redirect that names the origin host, and drops the origin's
+   HSTS header (that decision belongs to the zone, not to one path).
+
+⚠ Rebuilding with a different prefix is `docker compose up -d --build`
+with the new `.env` — a `--build` is what re-bakes the page. Building the
+client by hand on Windows from Git Bash needs `MSYS_NO_PATHCONV=1`, or
+`/booksnap` arrives as `/C:/Program Files/Git/booksnap` (measured).
+
 ## What is verified, and what is not
 
 Verified, on the owner's real data and by the gate:

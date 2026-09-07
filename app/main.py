@@ -165,6 +165,58 @@ def _identity_providers() -> dict:
     return providers
 
 
+def base_path(raw: str | None = None) -> str:
+    """The URL prefix the product is served under, normalised.
+
+    ``BOOKSNAP_BASE_PATH`` is what an operator types, and an operator types
+    ``/booksnap``, ``/booksnap/`` or ``booksnap`` meaning the same thing —
+    so every spelling lands on ``"/booksnap"`` (leading slash, none
+    trailing), and the domain root (``""``, ``/``, unset) lands on ``""``,
+    which is what FastAPI's ``root_path`` wants. The client's build reads
+    the SAME variable (``app/web/vite.config.ts``) with the opposite
+    trailing-slash convention, which is why both normalise rather than
+    trust the spelling.
+    """
+    value = (os.environ.get("BOOKSNAP_BASE_PATH", "") if raw is None
+             else raw).strip().strip("/")
+    return f"/{value}" if value else ""
+
+
+def check_web_base(web_dist: Path, base: str) -> None:
+    """Refuse a built client that was built for a different prefix.
+
+    The prefix lives in two places that cannot read each other: the
+    server's ``root_path`` (runtime) and Vite's ``base`` (build time, baked
+    into ``index.html`` as absolute asset URLs). Built for ``/`` and served
+    at ``/booksnap``, the page loads, asks for ``/assets/index-….js`` at
+    the domain root, and renders NOTHING — with no error the server could
+    log, because the request never reaches it. So the server reads the
+    page it is about to serve and refuses at start-up, naming both values,
+    rather than serving a blank screen on the first visit.
+
+    Nothing to check when there is no build (dev: Vite serves the client
+    itself), and a build with no absolute asset URL at all is left alone.
+    """
+    index = web_dist / "index.html"
+    if not index.is_file():
+        return
+    import re
+
+    html = index.read_text(encoding="utf-8")
+    built_for = {m.group(1) for m in re.finditer(
+        r'(?:src|href)="(/[^"]*?)assets/', html)}
+    if not built_for:
+        return
+    want = f"{base}/"
+    if built_for != {want}:
+        raise RuntimeError(
+            f"the built client under {web_dist} was built for "
+            f"{sorted(built_for)} but BOOKSNAP_BASE_PATH says {want!r}: "
+            f"rebuild app/web with the same BOOKSNAP_BASE_PATH, or the page "
+            f"will load and its scripts will not"
+        )
+
+
 def _session_secure() -> bool:
     """Whether this deployment puts TLS in front.
 
@@ -227,7 +279,13 @@ def build() -> object:
     blobs = DiskBlobStore(blob_root())
     books = SqliteBookStore(path)
     tenancy = SqliteTenancyStore(path)
+    base = base_path()
+    check_web_base(WEB_DIST, base)
     return create_app(
+        # The URL prefix when the product shares a domain
+        # (malinvishne.com/booksnap). "" at a domain root. The proxy passes
+        # the path through untouched; Starlette strips the prefix itself.
+        root_path=base,
         docs=os.environ.get("BOOKSNAP_DOCS") == "1",
         # P4.1b: identity is the session cookie, resolved per request —
         # the dev principal and its bootstrap are DELETED, not parked

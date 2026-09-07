@@ -714,3 +714,74 @@ def test_the_deploy_runbook_names_the_drill_command_that_exists():
     ignored = (_REPO / ".dockerignore").read_text(encoding="utf-8")
     for secret in (".env", "work/", "**/node_modules/"):
         assert secret in ignored, f"{secret} reaches the build daemon"
+
+
+# --- served under a URL prefix (malinvishne.com/booksnap) -----------------
+
+
+def test_the_base_path_is_normalised_from_every_spelling_an_operator_types():
+    """One variable, two consumers with opposite trailing-slash
+    conventions (FastAPI's `root_path` wants none, Vite's `base` wants
+    one) — so the server accepts every spelling and lands on its own."""
+    from app.main import base_path
+
+    for raw in ("", "/", "//", "   "):
+        assert base_path(raw) == "", raw
+    for raw in ("/booksnap", "/booksnap/", "booksnap", "booksnap/",
+                " /booksnap/ "):
+        assert base_path(raw) == "/booksnap", raw
+    assert base_path("/a/b/") == "/a/b"
+
+
+def test_the_server_refuses_a_client_built_for_another_prefix():
+    """Built for `/` and served under `/booksnap`, the page loads and asks
+    for `/assets/…` at the domain root: nothing renders and nothing is
+    logged, because the request never reaches this server. The refusal
+    is at start-up, naming both values."""
+    import tempfile
+    from pathlib import Path
+    from app.main import check_web_base
+
+    with tempfile.TemporaryDirectory() as tmp:
+        dist = Path(tmp)
+        page = dist / "index.html"
+
+        # No build at all (dev): nothing to check.
+        check_web_base(dist, "/booksnap")
+
+        page.write_text('<script type="module" crossorigin '
+                        'src="/booksnap/assets/index-abc.js"></script>'
+                        '<link rel="stylesheet" href="/booksnap/assets/i.css">',
+                        encoding="utf-8")
+        check_web_base(dist, "/booksnap")          # agrees: fine
+        try:
+            check_web_base(dist, "")
+        except RuntimeError as exc:
+            assert "/booksnap/" in str(exc) and "BOOKSNAP_BASE_PATH" in str(exc)
+        else:
+            raise AssertionError("a build for /booksnap/ was served at /")
+
+        page.write_text('<script src="/assets/index-abc.js"></script>',
+                        encoding="utf-8")
+        check_web_base(dist, "")                   # agrees: fine
+        try:
+            check_web_base(dist, "/booksnap")
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("a build for / was served at /booksnap")
+
+
+def test_the_deployment_feeds_the_prefix_to_both_the_build_and_the_server():
+    """Two consumers of one variable: compose must hand it to the image
+    build (Vite bakes it into the page) AND to the running server (its
+    `root_path`). Feeding one is the blank page `check_web_base` exists
+    to refuse."""
+    compose = (_REPO / "docker-compose.yml").read_text(encoding="utf-8")
+    assert "BOOKSNAP_BASE_PATH: ${BOOKSNAP_BASE_PATH:-/}" in compose, (
+        "the client build is not told the prefix")
+    assert "BOOKSNAP_BASE_PATH: ${BOOKSNAP_BASE_PATH:-}" in compose, (
+        "the server is not told the prefix")
+    dockerfile = (_REPO / "Dockerfile").read_text(encoding="utf-8")
+    assert "ARG BOOKSNAP_BASE_PATH" in dockerfile
+    assert 'BOOKSNAP_BASE_PATH="$BOOKSNAP_BASE_PATH" npm run build' in dockerfile

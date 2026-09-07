@@ -104,6 +104,30 @@ export function getCurrentLibrary(): string | undefined {
 }
 
 /**
+ * The URL prefix this build is served under — `""` at a domain root,
+ * `"/booksnap"` when the product shares a domain (malinvishne.com/booksnap).
+ *
+ * Vite bakes `base` into `import.meta.env.BASE_URL` (always with a trailing
+ * slash), and the server reads the same `BOOKSNAP_BASE_PATH` for its
+ * `root_path` — see `app/main.py:check_web_base`, which refuses to serve a
+ * build made for a different prefix. Read per call, not once at import:
+ * a test stubs the env, and a module constant would have read the value
+ * before the stub existed.
+ */
+export function basePath(): string {
+  const raw = import.meta.env.BASE_URL ?? '/'
+  return raw.replace(/\/+$/, '')
+}
+
+/** EVERY path this module hands the browser goes through here — the API
+ *  paths stay `/api/v1/…` (they are keys into the generated schema and
+ *  the server's own routes), and the prefix is added at the wire, once. A
+ *  request built without it works at a domain root and 404s under
+ *  `/booksnap`, so a new funnel that forgets this fails in exactly the
+ *  deployment nobody tests on a laptop. */
+export const apiUrl = (path: string): string => `${basePath()}${path}`
+
+/**
  * A URL the BROWSER fetches — an `<img src>`, a download `<a href>` — rather
  * than one this module fetches itself.
  *
@@ -121,7 +145,7 @@ export function browserUrl(path: string, params: Record<string, string> = {}): s
   const qs = new URLSearchParams(params)
   if (currentLibrary) qs.set('library', currentLibrary)
   const s = qs.toString()
-  return s ? `${path}?${s}` : path
+  return apiUrl(s ? `${path}?${s}` : path)
 }
 
 /** The photo, or one of its renditions, addressable from an `<img>`. */
@@ -153,7 +177,7 @@ export async function apiGet<P extends ApiPath>(
 ): Promise<GetResponse<P>> {
   const doFetch = opts.fetchImpl ?? globalThis.fetch
   const url = withQuery(path, opts.query)
-  const res = await doFetch(url, {
+  const res = await doFetch(apiUrl(url), {
     headers: headersFor(opts),
     ...(opts.signal ? { signal: opts.signal } : {}),
   })
@@ -194,8 +218,8 @@ export const listProviders = (opts?: ApiOptions) =>
  *  the flow is a redirect the provider must see, and an XHR would
  *  follow it into an opaque cross-origin response. */
 export const providerStartUrl = (provider: string, next: string): string =>
-  `/api/v1/auth/oauth/${encodeURIComponent(provider)}/start`
-  + `?next=${encodeURIComponent(next)}`
+  apiUrl(`/api/v1/auth/oauth/${encodeURIComponent(provider)}/start`
+    + `?next=${encodeURIComponent(next)}`)
 
 // --- members and invites (P4.3) --------------------------------------------
 //
@@ -235,9 +259,10 @@ export const acceptInvite = (token: string, opts?: ApiOptions) =>
        opts) as Promise<LibraryDTO[]>
 
 /** The share-link an admin hands over their own channel. Built client-side:
- *  the browser knows the origin the invitee must land on. */
+ *  the browser knows the origin the invitee must land on — and the prefix
+ *  under it, which `location.origin` does not carry. */
 export const inviteLink = (token: string): string =>
-  `${globalThis.location.origin}/#/invite?token=${encodeURIComponent(token)}`
+  `${globalThis.location.origin}${basePath()}/#/invite?token=${encodeURIComponent(token)}`
 
 // --- tenancy (P3.1) --------------------------------------------------------
 //
@@ -280,7 +305,7 @@ export async function getBook(
 ): Promise<BookDetail> {
   const doFetch = opts.fetchImpl ?? globalThis.fetch
   const path = `/api/v1/books/${encodeURIComponent(id)}`
-  const res = await doFetch(path, {
+  const res = await doFetch(apiUrl(path), {
     headers: headersFor(opts),
     ...(opts.signal ? { signal: opts.signal } : {}),
   })
@@ -314,7 +339,7 @@ async function send(
     body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
   )
 
-  const res = await doFetch(path, {
+  const res = await doFetch(apiUrl(path), {
     method,
     headers,
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
@@ -461,7 +486,7 @@ export type DepthStatusDTO = components['schemas']['DepthStatusDTO']
  *  below is what earns it a name. */
 async function getJson<T>(path: string, opts: ApiOptions = {}): Promise<T> {
   const doFetch = opts.fetchImpl ?? globalThis.fetch
-  const res = await doFetch(path, {
+  const res = await doFetch(apiUrl(path), {
     headers: headersFor(opts),
     ...(opts.signal ? { signal: opts.signal } : {}),
   })
@@ -499,7 +524,7 @@ export async function uploadImage(
   body.append('file', file, filename)
   body.append('filename', filename)
   const path = '/api/v1/images'
-  const res = await doFetch(path, {
+  const res = await doFetch(apiUrl(path), {
     method: 'POST', headers: headersFor(opts), body,
     ...(opts.signal ? { signal: opts.signal } : {}),
   })

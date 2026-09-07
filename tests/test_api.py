@@ -195,11 +195,14 @@ def _app(principal: StubPrincipal | None = None, store=None, shelves=None,
          duplicates=None, tenancy=None, auth=None, mailer=None, clock=None,
          invites=None, oauth_states=None, providers=None, maps=None,
          undo=None, principal_provider=None,
-         recycle: bool = True):
+         recycle: bool = True, root_path: str = ""):
     """Build (or recycle) an app with these ports bound.
 
     :param recycle: pass ``False`` for an app whose per-app state a later test
         must not inherit. Everything else is recycled at the end of the test.
+    :param root_path: the URL prefix the app is served under. A prefixed app
+        is never recycled: the pool's apps were built for the domain root,
+        and `root_path` is a constructor argument, not a rebindable port.
     """
     p = principal or StubPrincipal()
     # ⚠ The map and shelf stores are WIRED TO EACH OTHER. SQLite gets that
@@ -244,8 +247,8 @@ def _app(principal: StubPrincipal | None = None, store=None, shelves=None,
         clock=clock if clock is not None else StubClock(),
         id_gen=SeqIdGen(),
     )
-    if not recycle:
-        return create_app(**ports)
+    if not recycle or root_path:
+        return create_app(**ports, root_path=root_path)
     if _APP_POOL:
         app = _APP_POOL.pop()
         app.dependency_overrides.clear()
@@ -5252,7 +5255,7 @@ class StubProvider:
                                 provider=self._key)
 
 
-def _oauth_world(**kwargs):
+def _oauth_world(root_path: str = "", **kwargs):
     """The REAL session principal, so these drive the whole chain: the
     cookie the callback sets is the one every later request is resolved
     from, exactly as in production."""
@@ -5263,8 +5266,122 @@ def _oauth_world(**kwargs):
     tenancy = _tenancy(StubPrincipal())
     app = _app(tenancy=tenancy, oauth_states=states,
                providers={provider.key: provider},
-               principal_provider=session_principal)
+               principal_provider=session_principal, root_path=root_path)
     return app, provider, states, tenancy
+
+
+# --- served under a URL prefix (malinvishne.com/booksnap) -----------------
+#
+# The product shares a domain with something else, so everything it serves
+# and every path it BUILDS carries the prefix. The API and the static client
+# are Starlette's job (`root_path`); the two paths this router constructs —
+# the OAuth redirects and the OAuth binding cookie — are ours, and each has
+# a failure that is silent at a domain root and total under a prefix.
+
+PREFIX = "/booksnap"
+
+
+def test_under_a_prefix_the_api_answers_at_the_prefixed_path_and_the_bare_one():
+    """Starlette strips a prefix the request carries and leaves one it does
+    not — so the proxy in front passes the path through untouched, and a
+    request that reaches the origin directly still routes. Neither
+    spelling is a 404."""
+    with TestClient(_app(root_path=PREFIX)) as c:
+        assert c.get(f"{PREFIX}{API_PREFIX}/meta").status_code == 200
+        assert c.get(f"{API_PREFIX}/meta").status_code == 200
+        # The prefix is not a wildcard: a path under it that is not a
+        # route is still nothing.
+        assert c.get(f"{PREFIX}{API_PREFIX}/no-such-route").status_code == 404
+
+
+def test_under_a_prefix_the_built_client_is_served_under_it(tmp_path=None):
+    """`/booksnap/` is the page, and the bare `/booksnap` redirects INTO
+    the prefix rather than to the domain's root — a redirect to `/` would
+    land on whatever else the domain hosts."""
+    import tempfile
+    from pathlib import Path
+    from app.api.app import create_app
+
+    with tempfile.TemporaryDirectory() as tmp:
+        dist = Path(tmp)
+        (dist / "index.html").write_text(
+            '<div id="root"></div><script src="/booksnap/assets/a.js">',
+            encoding="utf-8")
+        (dist / "assets").mkdir()
+        (dist / "assets" / "a.js").write_text("1", encoding="utf-8")
+        app = create_app(lambda: StubPrincipal(), docs=False, web_dist=dist,
+                         root_path=PREFIX)
+        with TestClient(app) as c:
+            page = c.get(f"{PREFIX}/")
+            assert page.status_code == 200 and 'id="root"' in page.text
+            assert c.get(f"{PREFIX}/assets/a.js").status_code == 200
+            bare = c.get(PREFIX, follow_redirects=False)
+            assert bare.status_code in (301, 307, 308), bare.status_code
+            assert bare.headers["location"].endswith(f"{PREFIX}/"), (
+                bare.headers["location"])
+
+
+def test_a_provider_sign_in_under_a_prefix_lands_under_it_and_its_cookie_travels():
+    """The binding cookie is scoped to the OAuth routes' PATH. Scoped to
+    `/api/v1/auth/oauth` while the browser is at `/booksnap/api/v1/…`, it
+    is never sent back — the callback then sees a browser that "did not
+    start this flow" and refuses every genuine sign-in with the sentence
+    that is true of a forgery. The client's cookie jar here enforces the
+    same path rule a browser does, which is what makes this a gate: with
+    the prefix missing from the cookie, the callback below answers the
+    failure redirect instead of a session."""
+    app, provider, _states, _tenancy = _oauth_world(root_path=PREFIX)
+    with TestClient(app) as c:
+        start = c.get(f"{PREFIX}{API_PREFIX}/auth/oauth/google/start",
+                      params={"next": "#/books"}, follow_redirects=False)
+        assert start.status_code == 307
+        set_cookie = start.headers["set-cookie"]
+        assert f"Path={PREFIX}{API_PREFIX}/auth/oauth" in set_cookie, set_cookie
+
+        landed = c.get(f"{PREFIX}{API_PREFIX}/auth/oauth/google/callback",
+                       params={"code": "code-1",
+                               "state": provider.seen[0]["state"]},
+                       follow_redirects=False)
+        assert landed.status_code == 303, landed.text
+        assert "booksnap_session" in landed.cookies, (
+            "the binding cookie did not come back to the prefixed callback")
+        # …and the landing is INSIDE the prefix, on the route asked for.
+        assert landed.headers["location"] == f"{PREFIX}/#/books"
+        assert c.get(f"{PREFIX}{API_PREFIX}/libraries").status_code == 200
+
+
+def test_a_refused_provider_sign_in_under_a_prefix_lands_on_the_prefixed_login():
+    """The one sentence every refusal lands on is at `/#/login?error=…` —
+    and under a prefix, `/` is somebody else's page."""
+    from app.api.routers.auth import OAUTH_FAILED
+
+    app, _provider, _states, _tenancy = _oauth_world(root_path=PREFIX)
+    with TestClient(app) as c:
+        refused = c.get(f"{PREFIX}{API_PREFIX}/auth/oauth/google/callback",
+                        params={"code": "code-1", "state": "forged"},
+                        follow_redirects=False)
+        assert refused.status_code == 303
+        assert refused.headers["location"] == f"{PREFIX}/{OAUTH_FAILED}"
+        # The cleared cookie names the prefixed path too, or the stale
+        # binding stays in the jar for the next attempt.
+        assert f"Path={PREFIX}{API_PREFIX}/auth/oauth" in refused.headers[
+            "set-cookie"]
+
+
+def test_at_a_domain_root_the_oauth_paths_carry_no_prefix():
+    """The other direction of the same rule, so a prefix cannot leak into
+    the deployment that has none."""
+    from app.api.routers.auth import OAUTH_FAILED
+
+    app, _provider, _states, _tenancy = _oauth_world()
+    with TestClient(app) as c:
+        start = c.get(f"{API_PREFIX}/auth/oauth/google/start",
+                      follow_redirects=False)
+        assert f"Path={API_PREFIX}/auth/oauth;" in start.headers["set-cookie"]
+        refused = c.get(f"{API_PREFIX}/auth/oauth/google/callback",
+                        params={"code": "c", "state": "forged"},
+                        follow_redirects=False)
+        assert refused.headers["location"] == f"/{OAUTH_FAILED}"
 
 
 def test_the_login_screen_is_offered_only_the_providers_that_work():

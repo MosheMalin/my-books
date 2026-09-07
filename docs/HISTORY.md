@@ -4393,3 +4393,55 @@ tenth room in the owner's library. It was removed and the diff against the
 backup proved it was the only change, but the cause was not isolated — the
 `computer` click tool was timing out at 30s on every plan click, so whether a
 genuine tap can draw a room is not established. Filed rather than claimed.
+
+## Deploy under a path prefix — malinvishne.com/booksnap
+
+The owner's domain hosts the family's site at its root and the product was to
+live at `/booksnap`. Everything that assumed a domain root, and what each one
+would have done under a prefix:
+
+- **Every client URL was absolute** (`/api/v1/…`, `<img src>`, the export
+  links, the provider-sign-in redirect, the invite link built from
+  `location.origin`). One function now — `client.ts:apiUrl` — with `basePath()`
+  reading Vite's `BASE_URL` per call, and a test that enumerates the five
+  fetch funnels and the three browser-followed URLs. A funnel that bypasses it
+  fails the module's own assertion (`doFetch(` count equals `doFetch(apiUrl(`).
+- **The server built two paths of its own.** The OAuth redirects (`/#/login?
+  error=…`, `/#/<next>`) would have landed on the family's site; the OAuth
+  binding cookie, scoped to `/api/v1/auth/oauth`, is never sent by a browser
+  at `/booksnap/api/v1/auth/oauth/…` — so every genuine provider sign-in would
+  have been refused as "a browser that did not start this flow". `auth.py:_root`
+  reads `scope["root_path"]`; the cookie-path gate is the TestClient's own jar
+  enforcing the browser's path rule (blank `_root` and the callback answers the
+  failure redirect instead of a session — mutation-checked, two tests red).
+- **Starlette does the rest.** `FastAPI(root_path=…)` plus `get_route_path`
+  strips a prefix the request carries and leaves one it does not — measured
+  before building on it: `/booksnap/api/v1/meta` and `/api/v1/meta` both 200,
+  `/booksnap` → 307 `/booksnap/`, static assets under the prefix served. So the
+  proxy passes the path through UNTOUCHED (no `handle_path`, no uvicorn
+  `--root-path` — that one PREPENDS, and a non-stripping proxy would then
+  double it).
+- **The prefix lives in two places that cannot read each other** — Vite's
+  `base` at build time, `root_path` at run time — and the failure of a
+  mismatch is a page that loads and renders nothing, with no request ever
+  reaching the server. `app/main.py:check_web_base` reads `index.html`'s asset
+  URLs at start-up and refuses, naming both. It fired on its first outing: the
+  image built from Git Bash with `--build-arg BOOKSNAP_BASE_PATH=/booksnap` had
+  been built for `/C:/Program Files/Git/booksnap/` — MSYS rewrites a leading
+  `/` into a Windows path in arguments — and the smoke run refused to import
+  `app.main` with exactly that string. `MSYS_NO_PATHCONV=1`, rebuilt, smoke
+  green: 17 checks under the prefix, including *built for THIS prefix* and the
+  bare-prefix redirect; then the same image with the variable unset refused
+  again (`['/booksnap/']` against `'/'`).
+
+Cloudflare's side is a Worker on `malinvishne.com/booksnap*` forwarding to a
+DNS-only `booksnap.malinvishne.com` (Caddy's certificate, unchanged), answering
+the bare `/booksnap` itself, rewriting a redirect that names the origin host,
+and dropping the origin's year-long HSTS — that decision is the zone's. Known
+and written down rather than fixed: behind the Worker every visitor shares one
+per-source sign-in window (15 links/hour), because Caddy hands uvicorn the
+peer's address and the peer is the Worker; the header the Worker offers is not
+believed until what actually arrives has been measured.
+
+Gate green (13/13); 7 new client tests and 8 new Python ones, both batteries
+mutation-checked and restored byte-exact.
