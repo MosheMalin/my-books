@@ -289,11 +289,14 @@ What sharing a domain MEANS, stated plainly (security review):
   no error logged. **Not measured live:** the visitor-header rate door —
   it would take sixteen real mails to bounce; the pieces are asserted
   structurally and the collapse it prevents was measured at review.
-- **Not yet enabled:** Google sign-in. The prefixed callback
-  `https://malinvishne.com/booksnap/api/v1/auth/oauth/google/callback` must
-  be registered on the OAuth client first; until then the credentials are
-  deliberately absent from the server's `.env` (absent, not disabled).
-  HSTS at the zone is likewise the owner's dashboard step.
+- **Google sign-in** went live the same day, once the owner registered
+  the prefixed callback on the OAuth client — and only after compose
+  learned to forward the credentials at all (the first attempt put them
+  in `.env` and nothing happened; the gate that enumerates the keys from
+  `app/main.py` is the record of that). Verified: `/auth/providers`
+  answers `["google"]` and `/oauth/google/start` redirects to Google with
+  `redirect_uri=https://malinvishne.com/booksnap/api/v1/auth/oauth/google/callback`.
+  HSTS at the zone remains the owner's dashboard step.
 
 ⚠ Rebuilding with a different prefix is `docker compose up -d --build`
 with the new `.env` — a `--build` is what re-bakes the page. Building the
