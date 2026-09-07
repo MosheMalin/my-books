@@ -8,6 +8,13 @@ import { basePathFromEnv } from './basePath.ts'
  *  `app/ui/README.md` for why there is no build step in between. */
 const UI = fileURLToPath(new URL('../ui/src', import.meta.url))
 
+/**
+ * Dev: Vite serves the client and proxies /api to the product server.
+ * Prod: `npm run build` emits dist/, which FastAPI mounts (see app/main.py).
+ *
+ * No CDN: everything is bundled locally, consistent with the project's
+ * offline/credential posture (D3).
+ */
 export default defineConfig({
   base: basePathFromEnv(process.env.BOOKSNAP_BASE_PATH),
   plugins: [react()],

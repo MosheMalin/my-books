@@ -9,7 +9,6 @@ malinvishne.com/booksnap deployment) every request below carries the prefix,
 the way it arrives from the proxy — and the page's asset URLs are checked to
 carry it too, which is the build-time half of the same setting.
 """
-import re
 import sys
 
 from fastapi.testclient import TestClient
@@ -68,8 +67,7 @@ check("and the books route now resolves",
 
 page = client.get(f"{BASE}/").text
 check("the built client is served", "<div id=\"root\">" in page, True)
-assets = sorted(set(re.findall(r'(?:src|href)="(/[^"]*?)assets/', page)))
-check("...built for THIS prefix", assets, [f"{BASE}/"])
+check("...built for THIS prefix", sorted(app.main.built_bases(page)), [f"{BASE}/"])
 if BASE:
     bare = client.get(BASE, follow_redirects=False)
     check("the bare prefix redirects INTO the prefix",

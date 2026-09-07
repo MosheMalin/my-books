@@ -30,6 +30,11 @@ services:
       BOOKSNAP_PUBLIC_URL: ${BOOKSNAP_PUBLIC_URL:?set it to https://your.domain}
       # Empty at a domain root; `/booksnap` when the product shares one.
       BOOKSNAP_BASE_PATH: ${BOOKSNAP_BASE_PATH:-}
+      # The visitor's address behind the Cloudflare Worker, for the sign-in
+      # rate door. Caddy strips this header from anything not arriving from
+      # Cloudflare's ranges (deploy/Caddyfile), which is what makes binding
+      # it safe HERE and nowhere else.
+      BOOKSNAP_VISITOR_HEADER: X-Booksnap-Visitor
       BOOKSNAP_SESSION_SECURE: "1"
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       NLI_API_KEY: ${NLI_API_KEY:-}

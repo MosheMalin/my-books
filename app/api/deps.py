@@ -56,6 +56,23 @@ SESSION_COOKIE = "booksnap_session"
 OAUTH_COOKIE = "booksnap_oauth"
 
 
+def get_visitor_header() -> str | None:
+    """The request header carrying the visitor's address, or ``None``.
+
+    ⚠ ``None`` everywhere but the one deployment whose proxy STAMPS it.
+    Behind the Cloudflare Worker (DEPLOY.md "Under a path prefix") every
+    request reaches Caddy from a Cloudflare address, so the per-source
+    sign-in rate door — keyed on the peer — collapses to one bucket for
+    everyone (15 links an hour lock the household out; measured at review).
+    The Worker forwards the visitor's address in ``X-Booksnap-Visitor``,
+    Caddy DELETES that header from any request not arriving from
+    Cloudflare's published ranges, and compose binds its name here. Bound
+    nowhere else: honouring a caller-supplied header on the LAN posture is
+    the "whatever the caller types" hole the Dockerfile records.
+    """
+    return None
+
+
 def get_session_secure() -> bool:
     """Whether the session cookie carries ``Secure`` (P4.4).
 

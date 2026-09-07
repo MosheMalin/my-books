@@ -4,6 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>booksnap</title>
+    <!-- Absolute, so Vite rewrites it under `base`: without one the browser
+         asks for /favicon.ico at the domain ROOT, which under a prefix is
+         the family site's icon or nothing (UX review). -->
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   </head>
   <body>
     <div id="root"></div>

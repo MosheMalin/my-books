@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Three spines on a shelf: the product's own subject. Vector, so it
+       is one file for every size, and served from under the prefix. -->
+  <rect x="4" y="52" width="56" height="6" rx="2" fill="#6b4f2a"/>
+  <rect x="10" y="12" width="12" height="40" rx="1.5" fill="#3b6fd6"/>
+  <rect x="25" y="8" width="14" height="44" rx="1.5" fill="#d64545"/>
+  <rect x="42" y="16" width="12" height="36" rx="1.5" fill="#2f9e6b"/>
+  <rect x="12.5" y="18" width="7" height="2" fill="#fff" opacity=".8"/>
+  <rect x="28" y="14" width="8" height="2" fill="#fff" opacity=".8"/>
+  <rect x="44.5" y="22" width="7" height="2" fill="#fff" opacity=".8"/>
+</svg>

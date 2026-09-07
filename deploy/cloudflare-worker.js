@@ -18,11 +18,15 @@
  * Bound as a Worker "variable": BOOKSNAP_ORIGIN — the origin hostname.
  */
 const PREFIX = '/booksnap'
+/** The one host this Worker answers for. Cloudflare routes it by hostname
+ *  already; pinning it means a redirect is never rewritten onto a host a
+ *  caller chose (security review). */
+const PUBLIC_HOST = 'malinvishne.com'
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url)
-    const publicHost = url.host
+    const publicHost = PUBLIC_HOST
 
     // `/booksnap` with no slash: the page is at `/booksnap/`, and the origin
     // would answer the same redirect naming ITS host — so it is answered
@@ -34,13 +38,15 @@ export default {
 
     url.host = env.BOOKSNAP_ORIGIN
     const upstream = new Request(url.toString(), request)
-    // The visitor's address, offered to the origin for its sign-in rate
-    // door. ⚠ NOT believed there yet: Caddy hands uvicorn the peer's
-    // address, and the peer is this Worker — so every visitor shares one
-    // per-source window (15 links/hour) until Caddy is taught to trust
-    // this header from Cloudflare's addresses only. Believing it from
-    // anyone is the "whatever the caller types" hole the Dockerfile
-    // records; the measurement of what actually arrives comes first.
+    // The visitor's address, for the origin's sign-in rate door: Caddy
+    // believes it from Cloudflare's ranges only (deploy/Caddyfile) and
+    // the api keys the door on it (BOOKSNAP_VISITOR_HEADER).
+    // Stamped, never maybe-stamped: `new Request(url, request)` copied the
+    // caller's headers, so a caller-supplied X-Booksnap-Visitor must be
+    // deleted BEFORE the edge's value is set — unconditionally, or the
+    // origin trusts whatever was typed on the one request the edge header
+    // is missing (security review).
+    upstream.headers.delete('X-Booksnap-Visitor')
     const visitor = request.headers.get('CF-Connecting-IP')
     if (visitor) upstream.headers.set('X-Booksnap-Visitor', visitor)
 
@@ -49,6 +55,9 @@ export default {
 
     // An absolute redirect naming the origin host would send the browser
     // AROUND the Worker; rewrite it to the host the visitor came in on.
+    // Any OTHER host passes through on purpose: a provider sign-in is a
+    // legitimate redirect to accounts.google.com, and the origin builds no
+    // Location from caller input (`auth.py:_root` is configuration).
     const location = out.headers.get('Location')
     if (location) {
       try {

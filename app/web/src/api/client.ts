@@ -125,7 +125,7 @@ export function basePath(): string {
  *  request built without it works at a domain root and 404s under
  *  `/booksnap`, so a new funnel that forgets this fails in exactly the
  *  deployment nobody tests on a laptop. */
-export const apiUrl = (path: string): string => `${basePath()}${path}`
+const apiUrl = (path: string): string => `${basePath()}${path}`
 
 /**
  * A URL the BROWSER fetches — an `<img src>`, a download `<a href>` — rather

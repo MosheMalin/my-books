@@ -9,6 +9,9 @@
  * there, which is why the rule is one function and this file enumerates its
  * callers.
  */
+import { readFileSync, readdirSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -92,6 +95,63 @@ describe('at a domain root', () => {
   })
 })
 
+describe('every funnel in the module goes through the prefix', () => {
+  // Enumerated from the SOURCE, not from the import list above: with
+  // BASE_URL '/' the prefix is the identity, so no behavioural test can
+  // see a funnel that skipped it — measured: un-prefixing all four
+  // `doFetch(path)` sites turned exactly ONE test red. The rule is the
+  // module's own, and this is the assertion that reads the module.
+  const source = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), 'client.ts'), 'utf8')
+
+  it('every fetch call is doFetch(apiUrl(…))', () => {
+    const calls = source.match(/doFetch\(/g) ?? []
+    const prefixed = source.match(/doFetch\(apiUrl\(/g) ?? []
+    expect(calls.length).toBeGreaterThanOrEqual(5)   // non-vacuous
+    expect(prefixed.length).toBe(calls.length)
+  })
+
+  it('every URL built on location.origin adds basePath() right after it', () => {
+    const origins = source.match(/globalThis\.location\.origin\}/g) ?? []
+    const prefixed = source.match(/globalThis\.location\.origin\}\$\{basePath\(\)\}/g) ?? []
+    expect(origins.length).toBeGreaterThanOrEqual(1)
+    expect(prefixed.length).toBe(origins.length)
+  })
+
+  it('no component shows a person an address built on location.host without the prefix', () => {
+    // A URL handed to a HUMAN to retype (the capture tab's phone hint)
+    // is one no fetch-watching test can see — it named the domain root
+    // in the first prefixed build (UX review). Enumerated from the whole
+    // source tree, not from a list of known callers.
+    const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+    const offenders: string[] = []
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name)
+        if (entry.isDirectory()) { if (entry.name !== 'test') walk(path); continue }
+        if (!/\.tsx?$/.test(entry.name) || /\.test\.tsx?$/.test(entry.name)) continue
+        const text = readFileSync(path, 'utf8')
+        for (const line of text.split('\n')) {
+          const code = line.trim()
+          if (/^(\/\/|\*|\/\*)/.test(code)) continue      // a comment, not a URL
+          if (!/location\.(host|origin)\b/.test(code)) continue
+          if (!code.includes('basePath()')) offenders.push(`${entry.name}: ${code}`)
+        }
+      }
+    }
+    walk(root)
+    expect(offenders).toEqual([])
+  })
+
+  it('no request path is handed to fetch by a name other than doFetch', () => {
+    // A `globalThis.fetch(` or bare `fetch(` call would be a funnel the
+    // first assertion cannot see.
+    const bare = source.match(/(?<![.\w])fetch\(/g) ?? []
+    const viaGlobal = source.match(/globalThis\.fetch\(/g) ?? []
+    expect(bare.length + viaGlobal.length).toBe(0)
+  })
+})
+
 describe('the build reads the same variable the server does', () => {
   it('normalises every spelling an operator types to Vite\'s "/x/"', () => {
     for (const root of [undefined, '', '/', '//', '  ']) {
@@ -99,6 +159,15 @@ describe('the build reads the same variable the server does', () => {
     }
     for (const spelled of ['/booksnap', '/booksnap/', 'booksnap', ' /booksnap/ ']) {
       expect(basePathFromEnv(spelled)).toBe('/booksnap/')
+    }
+  })
+
+  it('rejects a spelling that is not a URL path rather than mangling it', () => {
+    // `/\evil.com` survives a slash strip; a browser then resolves the
+    // backslash as a slash entering the authority and every request
+    // leaves the origin. The MSYS-rewritten Windows path is the same rule.
+    for (const bad of ['/\\evil.com', '/C:/Program Files/Git/booksnap', '/a b', '/x?y']) {
+      expect(() => basePathFromEnv(bad)).toThrow(/not a URL path/)
     }
   })
 })

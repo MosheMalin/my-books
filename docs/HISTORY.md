@@ -4445,3 +4445,78 @@ believed until what actually arrives has been measured.
 
 Gate green (13/13); 7 new client tests and 8 new Python ones, both batteries
 mutation-checked and restored byte-exact.
+
+### What three reviews found in it
+
+Quality, security and UX ran on the commit, each in its own detached
+worktree; the follow-up folds them in. What they found, ranked by what it
+would have cost:
+
+- **The prefix had a THIRD spelling nobody checked.** `BOOKSNAP_PUBLIC_URL`
+  is the variable the domain gets typed into, and the sign-in link and the
+  OAuth `redirect_uri` are string-concatenated from it. `https://malinvishne.com`
+  beside `BOOKSNAP_BASE_PATH=/booksnap` — the natural thing to type — would
+  have mailed every sign-in link to the family's site and handed Google a
+  callback at the domain root: sign-in dead by both routes on a fresh deploy,
+  with no error anywhere, and DEPLOY.md saying "by construction".
+  `app/main.py:public_url` refuses it naming both values (quality MAJOR 3,
+  security MINOR 6 — found independently).
+- **The mismatch refusal fired at IMPORT, and `import app.main` is the
+  pre-commit gate.** A prefixed `dist/` left on disk turned three of the
+  commit's own tests red and killed `tools/api_contract.py --check` — a
+  developer following the new DEPLOY.md could not commit. Both the quality
+  and the security reviewer hit it by accident. Moved into the app's
+  lifespan: uvicorn answers *Application startup failed*, import stays
+  inert. Measured in the image: `python -c "import app.main"` with a
+  mismatched build prints nothing; the container's CMD refuses.
+- **Deleting the check's call site left 1246 tests green.** The function
+  was gated, the wiring was not — the `band_finder` family. The lifespan
+  test enters start-up through `TestClient` and is the gate on the call.
+- **Three of five client funnels were unattacked.** Un-prefixing all four
+  `doFetch(path)` sites turned ONE test red: with `BASE_URL='/'` the prefix
+  is the identity, so no behavioural test outside `client.test.ts` can see
+  a funnel that skipped it, and that file enumerated its callers from a
+  list. The guard now reads the module: every `doFetch(` is
+  `doFetch(apiUrl(`, every `location.origin` is followed by `basePath()`.
+- **The capture tab told the owner to open the domain root.** *"From your
+  phone, open localhost:8797"* — built from `window.location.host`, which
+  carries no path. On the real deployment that sentence names the family's
+  website. A URL handed to a HUMAN is one no fetch-watching test sees; the
+  guard walks the source tree for `location.host|origin` outside comments
+  and requires `basePath()` on the line (UX MAJOR 1). Measured: the
+  appended `/booksnap` sits inside the Hebrew sentence as one LTR run — no
+  isolate needed.
+- **The sign-in rate door collapsed behind the Worker.** Caddy hands uvicorn
+  the peer, and the peer is Cloudflare: 15 link requests from anyone
+  answered the household's next one with 429 for an hour (security MAJOR 1,
+  measured against the real app). The Worker now stamps the visitor in
+  `X-Booksnap-Visitor` — deleting any caller-supplied value FIRST, or the
+  one request the edge header is missing trusts what was typed — Caddy
+  deletes the header from every peer outside Cloudflare's published ranges,
+  and compose binds the header's NAME (`BOOKSNAP_VISITOR_HEADER`) so the
+  door reads it there and nowhere else. Three pieces, one structural test
+  that all three are present; the effect is measured on the live deploy.
+- **The 90-day session cookie was `Path=/` on a shared domain** — attached
+  to every request to the family's site, into that host's logs. Scoped to
+  `/booksnap/`, with the legacy `Path=/` cookie cleared beside it. Only half
+  a boundary, and DEPLOY.md now says which half: anything on the apex can
+  still SET a cookie for this path, so the apex site is inside the trust
+  boundary (security MAJOR 2).
+- **`/\evil.com` survived the slash strip** on both sides, and a browser
+  resolves the backslash as a slash entering the authority. Both normalisers
+  reject anything but unreserved characters, by name.
+- Smaller: HSTS must now be set at the zone (the Worker drops the origin's);
+  the origin is a second front door (documented, not closed); the favicon
+  was the one URL that escaped the prefix; `_lan_base_url` carries the
+  prefix; the `assets/` coupling to Vite's `assetsDir` is stated where the
+  regex lives; a docstring constraint (*no CDN*) that the diff had deleted is
+  back.
+
+Declined with a reason: the Worker rewrites a `Location` naming the origin
+and passes any OTHER host through — a provider sign-in is a legitimate
+redirect to accounts.google.com, so "drop unknown hosts" would break OAuth.
+The public host is pinned to a constant instead.
+
+Mutation-checked, each restored byte-exact: the session path, the visitor
+header, the lifespan call, the public-URL check (one named test red each),
+and the phone-hint scan (one red). Gate green again.

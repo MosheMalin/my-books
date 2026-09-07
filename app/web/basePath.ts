@@ -18,5 +18,15 @@
  */
 export function basePathFromEnv(raw: string | undefined): string {
   const trimmed = (raw ?? '').trim().replace(/^\/+|\/+$/g, '')
+  // Reject rather than mangle: `/\evil.com` survives a slash strip and a
+  // browser resolves the backslash as a slash entering the authority, so
+  // every request would leave the origin (security review, measured).
+  // Same rule as `app/main.py:base_path`: unreserved URL characters only.
+  if (trimmed && !/^[A-Za-z0-9._~-]+(\/[A-Za-z0-9._~-]+)*$/.test(trimmed)) {
+    throw new Error(
+      `BOOKSNAP_BASE_PATH=${JSON.stringify(raw)} is not a URL path: segments of `
+      + `letters, digits, '.', '_', '~' and '-' only, separated by '/'`,
+    )
+  }
   return trimmed ? `/${trimmed}/` : '/'
 }

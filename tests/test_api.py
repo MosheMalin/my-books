@@ -195,7 +195,7 @@ def _app(principal: StubPrincipal | None = None, store=None, shelves=None,
          duplicates=None, tenancy=None, auth=None, mailer=None, clock=None,
          invites=None, oauth_states=None, providers=None, maps=None,
          undo=None, principal_provider=None,
-         recycle: bool = True, root_path: str = ""):
+         recycle: bool = True, root_path: str = "", visitor_header=None):
     """Build (or recycle) an app with these ports bound.
 
     :param recycle: pass ``False`` for an app whose per-app state a later test
@@ -243,6 +243,7 @@ def _app(principal: StubPrincipal | None = None, store=None, shelves=None,
         oauth_state_store=(oauth_states if oauth_states is not None
                            else MemoryOAuthStateStore()),
         identity_providers=providers if providers is not None else {},
+        visitor_header=visitor_header,
         mailer=mailer if mailer is not None else StubMailer(),
         clock=clock if clock is not None else StubClock(),
         id_gen=SeqIdGen(),
@@ -5348,6 +5349,23 @@ def test_a_provider_sign_in_under_a_prefix_lands_under_it_and_its_cookie_travels
         # …and the landing is INSIDE the prefix, on the route asked for.
         assert landed.headers["location"] == f"{PREFIX}/#/books"
         assert c.get(f"{PREFIX}{API_PREFIX}/libraries").status_code == 200
+        # The SESSION cookie is scoped to the prefix too: on a shared
+        # domain a Path=/ cookie rides along to the family's site at the
+        # apex, into that host's logs (security review). And a cookie set
+        # at "/" by the pre-prefix deployment is cleared beside it.
+        sessions = [h for h in landed.headers.get_list("set-cookie")
+                    if h.startswith("booksnap_session=")]
+        assert any(f"Path={PREFIX}/;" in h or h.endswith(f"Path={PREFIX}/")
+                   for h in sessions), sessions
+        assert any("Path=/;" in h or h.endswith("Path=/") for h in sessions
+                   if "Max-Age=0" in h or "max-age=0" in h.lower()), sessions
+        # Sign-out clears both paths — the live one and the legacy one.
+        out = c.delete(f"{PREFIX}{API_PREFIX}/auth/session")
+        assert out.status_code == 204
+        cleared = [h for h in out.headers.get_list("set-cookie")
+                   if h.startswith("booksnap_session=")]
+        assert len(cleared) == 2, cleared
+        assert c.get(f"{PREFIX}{API_PREFIX}/libraries").status_code == 401
 
 
 def test_a_refused_provider_sign_in_under_a_prefix_lands_on_the_prefixed_login():
@@ -5382,6 +5400,58 @@ def test_at_a_domain_root_the_oauth_paths_carry_no_prefix():
                         params={"code": "c", "state": "forged"},
                         follow_redirects=False)
         assert refused.headers["location"] == f"/{OAUTH_FAILED}"
+
+    # …and the session cookie is Path=/ with NO legacy clearing beside it:
+    # at a domain root the two paths are one cookie.
+    app, provider, _states, _tenancy = _oauth_world()
+    with TestClient(app) as c:
+        c.get(f"{API_PREFIX}/auth/oauth/google/start", follow_redirects=False)
+        landed = c.get(f"{API_PREFIX}/auth/oauth/google/callback",
+                       params={"code": "code-1",
+                               "state": provider.seen[0]["state"]},
+                       follow_redirects=False)
+        sessions = [h for h in landed.headers.get_list("set-cookie")
+                    if h.startswith("booksnap_session=")]
+        assert len(sessions) == 1 and "Path=/" in sessions[0], sessions
+        assert "Path=/;" in sessions[0] or sessions[0].endswith("Path=/")
+
+
+def test_the_rate_door_reads_the_visitor_header_only_where_the_deployment_binds_it():
+    """Behind the Cloudflare Worker every request reaches the origin from
+    a Cloudflare address, so the per-source sign-in window collapses to
+    one bucket: 15 links from anyone lock the household out for an hour
+    (security review, measured). The deployment whose proxy STAMPS the
+    visitor's address binds the header's name; everywhere else the same
+    header is whatever the caller typed, and is ignored."""
+    from app.domain.auth import LINK_RATE_PER_SOURCE
+
+    def links(client, n, header):
+        return [client.post(f"{API_PREFIX}/auth/link",
+                            json={"email": f"p{i}-{header}@example.com"},
+                            headers={"X-Booksnap-Visitor": f"198.51.100.{i}"}
+                            ).status_code for i in range(n)]
+
+    # Unbound: distinct header values are ONE source (the peer).
+    with TestClient(_app()) as c:
+        got = links(c, LINK_RATE_PER_SOURCE + 1, "unbound")
+        assert got[:LINK_RATE_PER_SOURCE] == [202] * LINK_RATE_PER_SOURCE
+        assert got[-1] == 429, "a caller-typed header split the window"
+
+    # Bound: each stamped address is its own window…
+    with TestClient(_app(visitor_header="X-Booksnap-Visitor")) as c:
+        got = links(c, LINK_RATE_PER_SOURCE + 1, "bound")
+        assert got == [202] * (LINK_RATE_PER_SOURCE + 1), got
+        # …and one address still has its own cap.
+        same = [c.post(f"{API_PREFIX}/auth/link",
+                       json={"email": f"q{i}@example.com"},
+                       headers={"X-Booksnap-Visitor": "203.0.113.7"}
+                       ).status_code for i in range(LINK_RATE_PER_SOURCE + 1)]
+        assert same[-1] == 429, same
+        # A request the proxy did NOT stamp (Caddy deleted the header)
+        # falls back to the peer, exactly as before.
+        bare = c.post(f"{API_PREFIX}/auth/link",
+                      json={"email": "bare@example.com"})
+        assert bare.status_code == 202
 
 
 def test_the_login_screen_is_offered_only_the_providers_that_work():

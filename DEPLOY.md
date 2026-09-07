@@ -203,9 +203,18 @@ cannot read each other:
   nothing — with no request ever reaching this server to log.
 
 The emailed sign-in link and the OAuth `redirect_uri`s are built from
-`BOOKSNAP_PUBLIC_URL`, so they carry the prefix by construction — the
-Google OAuth client must list
+`BOOKSNAP_PUBLIC_URL` — a THIRD spelling of the prefix, and the one the
+domain gets typed into. `app/main.py:public_url` refuses to build the
+app when its path is not the served prefix (`https://malinvishne.com`
+beside `BOOKSNAP_BASE_PATH=/booksnap` would mail every sign-in link to the
+family's site and hand Google a callback at the domain root, with no
+error anywhere). The Google OAuth client must list
 `https://malinvishne.com/booksnap/api/v1/auth/oauth/google/callback`.
+
+The mismatch refusals fire at **start-up** (`Application startup failed`
+in the container log), not at import — `tools/api_contract.py` and the
+pre-commit hook import `app.main`, and a prefixed build left in
+`app/web/dist` must not lock a developer out of committing.
 
 **Cloudflare** does the path routing. The apex record stays where it is;
 two things are added to the zone:
@@ -218,6 +227,38 @@ two things are added to the zone:
    the origin with the prefix intact, answers the bare `/booksnap` itself,
    rewrites a redirect that names the origin host, and drops the origin's
    HSTS header (that decision belongs to the zone, not to one path).
+
+3. **HSTS at the zone** (SSL/TLS → Edge Certificates → HSTS): the Worker
+   deliberately drops the origin's `Strict-Transport-Security`, so unless
+   the zone sets its own, `http://malinvishne.com/booksnap` is a plaintext
+   first hop until Cloudflare's redirect (security review).
+
+What sharing a domain MEANS, stated plainly (security review):
+
+- **The family's site is inside this product's trust boundary.** The
+  session cookie is scoped to `Path=/booksnap/` so it no longer rides
+  along on every request to the apex and into that host's logs — but a
+  path is not a boundary for writes: anything served anywhere on
+  `malinvishne.com` can set a cookie for this path or fetch this API with
+  credentials. If the apex is ever hosted somewhere the owner does not
+  control, that sentence is the decision.
+- **The origin is a second front door.** `booksnap.malinvishne.com` is a
+  public record with a public certificate (Certificate Transparency keeps
+  it), and the product answers there at both `/booksnap/` and `/`. Same
+  app, same auth, same body cap — not a hole today, but anything
+  protective placed at the Cloudflare layer is skipped by addressing the
+  origin directly; the day that layer gains a WAF rule or rate limit, the
+  origin needs Authenticated Origin Pulls or a shared-secret header.
+- **The sign-in rate door.** Behind the Worker every request reaches
+  Caddy from a Cloudflare address, so the per-source window (15 links an
+  hour) would be one bucket for everyone. The Worker stamps the visitor's
+  address in `X-Booksnap-Visitor`, Caddy deletes that header from any
+  request not arriving from Cloudflare's published ranges, and compose
+  binds its name (`BOOKSNAP_VISITOR_HEADER`) so the api keys the window
+  on it. Three pieces; `tests/test_integrations.py` asserts all three are
+  present, and the deploy measures the effect (two addresses, two windows).
+  Cloudflare's ranges are in the Caddyfile by value — re-check them against
+  https://www.cloudflare.com/ips when a deploy is years old.
 
 ⚠ Rebuilding with a different prefix is `docker compose up -d --build`
 with the new `.env` — a `--build` is what re-bakes the page. Building the
