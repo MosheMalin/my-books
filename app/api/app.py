@@ -23,6 +23,7 @@ from app.api.deps import (
     get_invite_store,
     get_oauth_state_store,
     get_session_secure,
+    get_visitor_header,
     get_blob_store,
     get_book_store,
     get_clock,
@@ -109,6 +110,7 @@ def bind_ports(
     oauth_state_store: OAuthStateStore | None = None,
     identity_providers: dict | None = None,
     session_secure: bool | None = None,
+    visitor_header: str | None = None,
 ) -> None:
     """Point an already-built app's ports at these implementations.
 
@@ -127,6 +129,8 @@ def bind_ports(
     app.dependency_overrides[get_principal] = principal_provider
     if session_secure is not None:
         app.dependency_overrides[get_session_secure] = _always(session_secure)
+    if visitor_header is not None:
+        app.dependency_overrides[get_visitor_header] = _always(visitor_header)
     for dep, impl in ((get_book_store, book_store), (get_clock, clock),
                       (get_id_gen, id_gen), (get_shelf_store, shelf_store),
                       (get_map_store, map_store),
@@ -189,7 +193,10 @@ def create_app(
     oauth_state_store: OAuthStateStore | None = None,
     identity_providers: dict | None = None,
     session_secure: bool | None = None,
+    visitor_header: str | None = None,
     web_dist: Path | None = None,
+    root_path: str = "",
+    lifespan: Callable | None = None,
 ) -> FastAPI:
     """Build the product API.
 
@@ -204,10 +211,22 @@ def create_app(
         without it bound fails loudly rather than serving nothing.
     :param web_dist: built client assets to serve in production. ``None`` in
         dev, where Vite serves the client and proxies ``/api`` here.
+    :param root_path: the URL prefix the whole product lives under when it
+        shares a domain with something else (``/booksnap`` on
+        ``malinvishne.com/booksnap``). ``""`` means the domain root. Starlette
+        strips it from an incoming path that carries it and leaves one that
+        does not alone, so the proxy in front need not rewrite anything —
+        and the two places that BUILD a browser-facing path (the OAuth
+        redirects and the OAuth cookie) read it back off the request scope.
+    :param lifespan: start-up/shutdown context, for checks that must refuse
+        to SERVE without refusing to IMPORT — the contract tool and the
+        pre-commit hook both import ``app.main``.
     """
     app = FastAPI(
+        lifespan=lifespan,
         title=API_TITLE,
         version=__version__,
+        root_path=root_path,
         # Every route is versioned (H3). The prefix lives on the router, not
         # on each path, so an unversioned route cannot be added by accident.
         openapi_url="/api/v1/openapi.json",
@@ -255,6 +274,7 @@ def create_app(
         oauth_state_store=oauth_state_store,
         identity_providers=identity_providers,
         session_secure=session_secure,
+        visitor_header=visitor_header,
     )
 
     # Static client last: mounting at "/" first would shadow the API routes.

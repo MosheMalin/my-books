@@ -714,3 +714,202 @@ def test_the_deploy_runbook_names_the_drill_command_that_exists():
     ignored = (_REPO / ".dockerignore").read_text(encoding="utf-8")
     for secret in (".env", "work/", "**/node_modules/"):
         assert secret in ignored, f"{secret} reaches the build daemon"
+
+
+# --- served under a URL prefix (malinvishne.com/booksnap) -----------------
+
+
+def test_the_base_path_is_normalised_from_every_spelling_an_operator_types():
+    """One variable, two consumers with opposite trailing-slash
+    conventions (FastAPI's `root_path` wants none, Vite's `base` wants
+    one) — so the server accepts every spelling and lands on its own."""
+    from app.main import base_path
+
+    for raw in ("", "/", "//", "   "):
+        assert base_path(raw) == "", raw
+    for raw in ("/booksnap", "/booksnap/", "booksnap", "booksnap/",
+                " /booksnap/ "):
+        assert base_path(raw) == "/booksnap", raw
+    assert base_path("/a/b/") == "/a/b"
+
+
+def test_the_server_refuses_a_client_built_for_another_prefix():
+    """Built for `/` and served under `/booksnap`, the page loads and asks
+    for `/assets/…` at the domain root: nothing renders and nothing is
+    logged, because the request never reaches this server. The refusal
+    is at start-up, naming both values."""
+    import tempfile
+    from pathlib import Path
+    from app.main import check_web_base
+
+    with tempfile.TemporaryDirectory() as tmp:
+        dist = Path(tmp)
+        page = dist / "index.html"
+
+        # No build at all (dev): nothing to check.
+        check_web_base(dist, "/booksnap")
+
+        page.write_text('<script type="module" crossorigin '
+                        'src="/booksnap/assets/index-abc.js"></script>'
+                        '<link rel="stylesheet" href="/booksnap/assets/i.css">',
+                        encoding="utf-8")
+        check_web_base(dist, "/booksnap")          # agrees: fine
+        try:
+            check_web_base(dist, "")
+        except RuntimeError as exc:
+            assert "/booksnap/" in str(exc) and "BOOKSNAP_BASE_PATH" in str(exc)
+        else:
+            raise AssertionError("a build for /booksnap/ was served at /")
+
+        page.write_text('<script src="/assets/index-abc.js"></script>',
+                        encoding="utf-8")
+        check_web_base(dist, "")                   # agrees: fine
+        try:
+            check_web_base(dist, "/booksnap")
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("a build for / was served at /booksnap")
+
+
+def test_a_base_path_that_is_a_windows_path_is_refused_by_name():
+    """Git Bash rewrites `/booksnap` to `/C:/Program Files/Git/booksnap`
+    (measured). Served under that, nothing would be wrong enough to fail
+    and nothing right enough to work."""
+    from app.main import base_path
+
+    for raw in ("/C:/Program Files/Git/booksnap", "C:\\x", "/a b"):
+        try:
+            base_path(raw)
+        except RuntimeError as exc:
+            assert "MSYS_NO_PATHCONV" in str(exc)
+        else:
+            raise AssertionError(f"{raw!r} was accepted as a URL prefix")
+    # Reject rather than mangle (security review): a backslash survives a
+    # slash strip and a browser reads it as a slash entering the
+    # authority — `/\\evil.com/api` resolves to https://evil.com/api.
+    for raw in ("/\\evil.com", "/x?y", "/a//b", "/%2e%2e", "/ü"):
+        try:
+            base_path(raw)
+        except RuntimeError as exc:
+            assert "not a URL path" in str(exc)
+        else:
+            raise AssertionError(f"{raw!r} was accepted as a URL prefix")
+
+
+def test_the_public_url_must_carry_the_same_prefix_the_server_serves():
+    """The sign-in link and the OAuth redirect_uri are built from
+    BOOKSNAP_PUBLIC_URL — a third spelling of the prefix, and the one an
+    operator types the domain into. Disagreeing, every link mails a URL on
+    the family's site and sign-in is dead by both routes with no error."""
+    import os
+    from app.main import public_url
+
+    saved = os.environ.get("BOOKSNAP_PUBLIC_URL")
+    try:
+        cases = [
+            ("https://malinvishne.com/booksnap", "/booksnap", True),
+            ("https://malinvishne.com/booksnap/", "/booksnap", True),
+            ("https://malinvishne.com", "/booksnap", False),
+            ("https://malinvishne.com/", "/booksnap", False),
+            ("https://malinvishne.com/other", "/booksnap", False),
+            ("https://books.example.com", "", True),
+            ("https://books.example.com/", "", True),
+            ("https://books.example.com/booksnap", "", False),
+        ]
+        for url, base, ok in cases:
+            os.environ["BOOKSNAP_PUBLIC_URL"] = url
+            try:
+                got = public_url(base)
+            except RuntimeError as exc:
+                assert not ok, (url, base, str(exc))
+                assert "BOOKSNAP_PUBLIC_URL" in str(exc) and url.rstrip("/") in str(exc)
+            else:
+                assert ok, (url, base, "was accepted")
+                assert got == url.rstrip("/")
+    finally:
+        if saved is None:
+            os.environ.pop("BOOKSNAP_PUBLIC_URL", None)
+        else:
+            os.environ["BOOKSNAP_PUBLIC_URL"] = saved
+
+
+def test_the_server_refuses_to_START_with_a_client_built_for_another_prefix():
+    """The refusal is wired into the app's LIFESPAN: importing `app.main`
+    stays inert (the contract tool and the pre-commit hook import it, and
+    a prefixed build left in dist/ must not lock a developer out of
+    committing), and uvicorn refuses at start-up. Entering the lifespan
+    is what makes this a gate on the CALL SITE — the function was gated
+    already, and deleting its call left 1246 tests green."""
+    import os
+    import tempfile
+    from pathlib import Path
+    from fastapi.testclient import TestClient
+
+    import app.main
+
+    with tempfile.TemporaryDirectory() as tmp:
+        dist = Path(tmp) / "dist"
+        dist.mkdir()
+        (dist / "index.html").write_text(
+            '<script type="module" crossorigin src="/booksnap/assets/i.js">',
+            encoding="utf-8")
+        saved = {k: os.environ.get(k) for k in (
+            "BOOKSNAP_DB", "BOOKSNAP_BLOBS", "BOOKSNAP_BASE_PATH",
+            "BOOKSNAP_PUBLIC_URL")}
+        os.environ["BOOKSNAP_DB"] = str(Path(tmp) / "p.db")
+        os.environ["BOOKSNAP_BLOBS"] = str(Path(tmp) / "blobs")
+        os.environ.pop("BOOKSNAP_BASE_PATH", None)          # served at "/"
+        os.environ["BOOKSNAP_PUBLIC_URL"] = "https://books.example.com"
+        real_dist = app.main.WEB_DIST
+        app.main.WEB_DIST = dist
+        try:
+            built = app.main.build()                        # import-time: inert
+            try:
+                with TestClient(built):                     # start-up: refused
+                    pass
+            except RuntimeError as exc:
+                assert "/booksnap/" in str(exc) and "'/'" in str(exc), str(exc)
+            else:
+                raise AssertionError(
+                    "a build for /booksnap/ started serving at / — the "
+                    "lifespan no longer calls check_web_base")
+        finally:
+            app.main.WEB_DIST = real_dist
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+
+def test_the_visitor_header_is_bound_by_compose_and_stripped_by_caddy():
+    """The rate door's fix is three pieces that must agree: the Worker
+    stamps the header, Caddy deletes it from anything not arriving from
+    Cloudflare, and compose binds its NAME so the api reads it. Two of
+    the three without the third is either the collapse (no binding) or
+    the caller's own field (no stripping)."""
+    compose = (_REPO / "docker-compose.yml").read_text(encoding="utf-8")
+    caddy = (_REPO / "deploy" / "Caddyfile").read_text(encoding="utf-8")
+    worker = (_REPO / "deploy" / "cloudflare-worker.js").read_text(encoding="utf-8")
+    assert "BOOKSNAP_VISITOR_HEADER: X-Booksnap-Visitor" in compose
+    assert "header_up -X-Booksnap-Visitor" in caddy, (
+        "Caddy no longer strips the visitor header from non-Cloudflare peers")
+    assert "remote_ip 173.245.48.0/20" in caddy
+    assert "upstream.headers.delete('X-Booksnap-Visitor')" in worker, (
+        "the Worker maybe-stamps: a caller-supplied value survives")
+
+
+def test_the_deployment_feeds_the_prefix_to_both_the_build_and_the_server():
+    """Two consumers of one variable: compose must hand it to the image
+    build (Vite bakes it into the page) AND to the running server (its
+    `root_path`). Feeding one is the blank page `check_web_base` exists
+    to refuse."""
+    compose = (_REPO / "docker-compose.yml").read_text(encoding="utf-8")
+    assert "BOOKSNAP_BASE_PATH: ${BOOKSNAP_BASE_PATH:-/}" in compose, (
+        "the client build is not told the prefix")
+    assert "BOOKSNAP_BASE_PATH: ${BOOKSNAP_BASE_PATH:-}" in compose, (
+        "the server is not told the prefix")
+    dockerfile = (_REPO / "Dockerfile").read_text(encoding="utf-8")
+    assert "ARG BOOKSNAP_BASE_PATH" in dockerfile
+    assert 'BOOKSNAP_BASE_PATH="$BOOKSNAP_BASE_PATH" npm run build' in dockerfile

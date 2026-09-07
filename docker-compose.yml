@@ -14,13 +14,27 @@
 
 services:
   api:
-    build: .
+    build:
+      context: .
+      args:
+        # The URL prefix, baked into the client at build time — the SAME
+        # variable the runtime env below hands the server. One .env line
+        # feeds both; the server refuses a build made for another prefix.
+        BOOKSNAP_BASE_PATH: ${BOOKSNAP_BASE_PATH:-/}
     restart: unless-stopped
     environment:
       # The domain the emailed sign-in link must point AT — not localhost,
       # which on the recipient's phone is the recipient's phone (P4.1b's UX
-      # review measured exactly that dead end).
+      # review measured exactly that dead end). Under a prefix it carries
+      # the prefix too: https://malinvishne.com/booksnap.
       BOOKSNAP_PUBLIC_URL: ${BOOKSNAP_PUBLIC_URL:?set it to https://your.domain}
+      # Empty at a domain root; `/booksnap` when the product shares one.
+      BOOKSNAP_BASE_PATH: ${BOOKSNAP_BASE_PATH:-}
+      # The visitor's address behind the Cloudflare Worker, for the sign-in
+      # rate door. Caddy strips this header from anything not arriving from
+      # Cloudflare's ranges (deploy/Caddyfile), which is what makes binding
+      # it safe HERE and nowhere else.
+      BOOKSNAP_VISITOR_HEADER: X-Booksnap-Visitor
       BOOKSNAP_SESSION_SECURE: "1"
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       NLI_API_KEY: ${NLI_API_KEY:-}

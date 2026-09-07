@@ -168,6 +168,103 @@ naming both versions. **Take a backup first anyway** — there is no down
 step, and a rollback of the code past a schema change means restoring, which
 is the drill above.
 
+## Under a path prefix — malinvishne.com/booksnap
+
+The owner's domain already hosts the family's site at its root, so the
+product lives on a **path**, and one setting carries that everywhere:
+
+```
+BOOKSNAP_BASE_PATH=/booksnap
+BOOKSNAP_PUBLIC_URL=https://malinvishne.com/booksnap
+BOOKSNAP_DOMAIN=booksnap.malinvishne.com     # the VPS's own hostname (Caddy's cert)
+```
+
+What the prefix does, and where — because it lives in two places that
+cannot read each other:
+
+- **Build time.** Compose hands it to the image build as an `ARG`, Vite
+  bakes it into `index.html` as the asset URLs (`/booksnap/assets/…`), and
+  the client prepends it to every request it makes and every URL it hands
+  the browser (`app/web/src/api/client.ts:apiUrl` — one function, every
+  funnel; `basePath()` reads Vite's `BASE_URL`).
+- **Run time.** The server gets the same variable as FastAPI's `root_path`.
+  Starlette strips the prefix from a path that carries it and leaves one
+  that does not alone, so the proxy passes the path through **untouched**
+  and a request that reaches the origin directly still routes. The two
+  paths the server BUILDS — the OAuth redirects and the OAuth binding
+  cookie's `Path` — read it back off the request (`auth.py:_root`); at a
+  domain root the cookie was scoped to `/api/v1/auth/oauth`, which a
+  browser at `/booksnap/api/v1/…` never sends back, and every genuine
+  provider sign-in would have been refused as a forgery.
+- **The check.** `app/main.py:check_web_base` reads the page it is about
+  to serve and refuses to start when its asset URLs were built for another
+  prefix, naming both values. Built for `/` and served under `/booksnap`,
+  the page loads, asks for `/assets/…` at the domain root and renders
+  nothing — with no request ever reaching this server to log.
+
+The emailed sign-in link and the OAuth `redirect_uri`s are built from
+`BOOKSNAP_PUBLIC_URL` — a THIRD spelling of the prefix, and the one the
+domain gets typed into. `app/main.py:public_url` refuses to build the
+app when its path is not the served prefix (`https://malinvishne.com`
+beside `BOOKSNAP_BASE_PATH=/booksnap` would mail every sign-in link to the
+family's site and hand Google a callback at the domain root, with no
+error anywhere). The Google OAuth client must list
+`https://malinvishne.com/booksnap/api/v1/auth/oauth/google/callback`.
+
+The mismatch refusals fire at **start-up** (`Application startup failed`
+in the container log), not at import — `tools/api_contract.py` and the
+pre-commit hook import `app.main`, and a prefixed build left in
+`app/web/dist` must not lock a developer out of committing.
+
+**Cloudflare** does the path routing. The apex record stays where it is;
+two things are added to the zone:
+
+1. a DNS-only `A` record `booksnap.malinvishne.com` → the VPS, which is
+   what Caddy obtains its certificate for, exactly as at a domain root;
+2. a Worker (`deploy/cloudflare-worker.js`) on the route
+   `malinvishne.com/booksnap*`, with the variable
+   `BOOKSNAP_ORIGIN=booksnap.malinvishne.com`. It forwards the request to
+   the origin with the prefix intact, answers the bare `/booksnap` itself,
+   rewrites a redirect that names the origin host, and drops the origin's
+   HSTS header (that decision belongs to the zone, not to one path).
+
+3. **HSTS at the zone** (SSL/TLS → Edge Certificates → HSTS): the Worker
+   deliberately drops the origin's `Strict-Transport-Security`, so unless
+   the zone sets its own, `http://malinvishne.com/booksnap` is a plaintext
+   first hop until Cloudflare's redirect (security review).
+
+What sharing a domain MEANS, stated plainly (security review):
+
+- **The family's site is inside this product's trust boundary.** The
+  session cookie is scoped to `Path=/booksnap/` so it no longer rides
+  along on every request to the apex and into that host's logs — but a
+  path is not a boundary for writes: anything served anywhere on
+  `malinvishne.com` can set a cookie for this path or fetch this API with
+  credentials. If the apex is ever hosted somewhere the owner does not
+  control, that sentence is the decision.
+- **The origin is a second front door.** `booksnap.malinvishne.com` is a
+  public record with a public certificate (Certificate Transparency keeps
+  it), and the product answers there at both `/booksnap/` and `/`. Same
+  app, same auth, same body cap — not a hole today, but anything
+  protective placed at the Cloudflare layer is skipped by addressing the
+  origin directly; the day that layer gains a WAF rule or rate limit, the
+  origin needs Authenticated Origin Pulls or a shared-secret header.
+- **The sign-in rate door.** Behind the Worker every request reaches
+  Caddy from a Cloudflare address, so the per-source window (15 links an
+  hour) would be one bucket for everyone. The Worker stamps the visitor's
+  address in `X-Booksnap-Visitor`, Caddy deletes that header from any
+  request not arriving from Cloudflare's published ranges, and compose
+  binds its name (`BOOKSNAP_VISITOR_HEADER`) so the api keys the window
+  on it. Three pieces; `tests/test_integrations.py` asserts all three are
+  present, and the deploy measures the effect (two addresses, two windows).
+  Cloudflare's ranges are in the Caddyfile by value — re-check them against
+  https://www.cloudflare.com/ips when a deploy is years old.
+
+⚠ Rebuilding with a different prefix is `docker compose up -d --build`
+with the new `.env` — a `--build` is what re-bakes the page. Building the
+client by hand on Windows from Git Bash needs `MSYS_NO_PATHCONV=1`, or
+`/booksnap` arrives as `/C:/Program Files/Git/booksnap` (measured).
+
 ## What is verified, and what is not
 
 Verified, on the owner's real data and by the gate:

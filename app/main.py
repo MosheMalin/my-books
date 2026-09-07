@@ -30,6 +30,7 @@ Populate it once with::
 from __future__ import annotations
 
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from app.adapters.booksnap_reader import BooksnapReader
@@ -112,9 +113,9 @@ def _lan_base_url() -> str:
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
             probe.connect(("192.0.2.1", 80))   # TEST-NET; no packet leaves
-            return f"http://{probe.getsockname()[0]}:5173"
+            return f"http://{probe.getsockname()[0]}:5173{base_path()}"
     except OSError:
-        return "http://localhost:5173"
+        return f"http://localhost:5173{base_path()}"
 
 
 def blob_root() -> Path:
@@ -138,7 +139,7 @@ def _identity_providers() -> dict:
     """
     from app.adapters.oidc import AppleProvider, OidcProvider
 
-    public = os.environ.get("BOOKSNAP_PUBLIC_URL") or _lan_base_url()
+    public = public_url()
     providers: dict = {}
 
     google_id = os.environ.get("BOOKSNAP_GOOGLE_CLIENT_ID", "").strip()
@@ -163,6 +164,120 @@ def _identity_providers() -> dict:
             redirect_uri=f"{public}/api/v1/auth/oauth/apple/callback",
         )
     return providers
+
+
+def base_path(raw: str | None = None) -> str:
+    """The URL prefix the product is served under, normalised.
+
+    ``BOOKSNAP_BASE_PATH`` is what an operator types, and an operator types
+    ``/booksnap``, ``/booksnap/`` or ``booksnap`` meaning the same thing —
+    so every spelling lands on ``"/booksnap"`` (leading slash, none
+    trailing), and the domain root (``""``, ``/``, unset) lands on ``""``,
+    which is what FastAPI's ``root_path`` wants. The client's build reads
+    the SAME variable (``app/web/vite.config.ts``) with the opposite
+    trailing-slash convention, which is why both normalise rather than
+    trust the spelling.
+    """
+    value = (os.environ.get("BOOKSNAP_BASE_PATH", "") if raw is None
+             else raw).strip().strip("/")
+    # ⚠ Git Bash rewrites a leading "/" in a variable it passes to a
+    # native program: `BOOKSNAP_BASE_PATH=/booksnap python …` arrives as
+    # `/C:/Program Files/Git/booksnap` (measured). A prefix with a colon
+    # or whitespace in it is that rewrite, not a URL — refuse it by name
+    # rather than serve under it.
+    if ":" in value or any(ch.isspace() for ch in value):
+        raise RuntimeError(
+            f"BOOKSNAP_BASE_PATH={value!r} is not a URL path. From Git "
+            f"Bash a leading '/' is rewritten into a Windows path; run "
+            f"with MSYS_NO_PATHCONV=1 or from PowerShell."
+        )
+    # Reject rather than mangle: `/\evil.com` survives a slash strip, and
+    # a browser resolves a backslash as a slash entering the authority —
+    # `new URL('/\\evil.com/api', origin)` is `https://evil.com/api`
+    # (security review, measured). Unreserved URL characters only.
+    import re
+
+    if value and not re.fullmatch(r"[A-Za-z0-9._~-]+(/[A-Za-z0-9._~-]+)*", value):
+        raise RuntimeError(
+            f"BOOKSNAP_BASE_PATH={value!r} is not a URL path: segments of "
+            f"letters, digits, '.', '_', '~' and '-' only, separated by '/'"
+        )
+    return f"/{value}" if value else ""
+
+
+def public_url(base: str | None = None) -> str:
+    """Where the emailed sign-in link and the OAuth ``redirect_uri`` point.
+
+    ``BOOKSNAP_PUBLIC_URL``, or the LAN guess when unset — and its PATH
+    must be the same prefix the server is serving under. The prefix is
+    otherwise a third spelling nobody checks: with ``/booksnap`` served and
+    ``https://malinvishne.com`` typed here, every sign-in link mails a URL
+    on the family's site and Google is handed a callback at the domain
+    root — sign-in dead by both routes, on a fresh deploy, with no error
+    anywhere. Refused here, naming both values, like the client build.
+    """
+    from urllib.parse import urlparse
+
+    public = (os.environ.get("BOOKSNAP_PUBLIC_URL") or _lan_base_url()).rstrip("/")
+    want = base_path() if base is None else base
+    have = urlparse(public).path.rstrip("/")
+    if have != want:
+        raise RuntimeError(
+            f"BOOKSNAP_PUBLIC_URL={public!r} has the path {have!r} but "
+            f"BOOKSNAP_BASE_PATH says {want or '/'!r}: the sign-in link and "
+            f"the OAuth callbacks would point at a path this server does "
+            f"not serve. Make them agree (e.g. "
+            f"BOOKSNAP_PUBLIC_URL=https://your.domain{want})."
+        )
+    return public
+
+
+def built_bases(html: str) -> set[str]:
+    """The URL prefixes a built ``index.html``'s absolute asset URLs carry.
+
+    ⚠ ``assets/`` is Vite's default ``build.assetsDir``, which
+    ``app/web/vite.config.ts`` leaves at its default. Rename it there and
+    this returns the empty set — and the mismatch check below stays
+    SILENT rather than refusing. One regex, shared with ``deploy/smoke.py``.
+    """
+    import re
+
+    return {m.group(1) for m in re.finditer(
+        r'(?:src|href)="(/[^"]*?)assets/', html)}
+
+
+def check_web_base(web_dist: Path, base: str) -> None:
+    """Refuse a built client that was built for a different prefix.
+
+    The prefix lives in two places that cannot read each other: the
+    server's ``root_path`` (runtime) and Vite's ``base`` (build time, baked
+    into ``index.html`` as absolute asset URLs). Built for ``/`` and served
+    at ``/booksnap``, the page loads, asks for ``/assets/index-….js`` at
+    the domain root, and renders NOTHING — with no error the server could
+    log, because the request never reaches it. So the server reads the
+    page it is about to serve and refuses at START-UP (the app's lifespan,
+    not import — the contract tool and the pre-commit hook import
+    ``app.main``, and a prefixed build left in ``dist/`` must not lock a
+    developer out of committing), naming both values, rather than serving
+    a blank screen on the first visit.
+
+    Nothing to check when there is no build (dev: Vite serves the client
+    itself), and a build with no absolute asset URL at all is left alone.
+    """
+    index = web_dist / "index.html"
+    if not index.is_file():
+        return
+    built_for = built_bases(index.read_text(encoding="utf-8"))
+    if not built_for:
+        return
+    want = f"{base}/"
+    if built_for != {want}:
+        raise RuntimeError(
+            f"the built client under {web_dist} was built for "
+            f"{sorted(built_for)} but BOOKSNAP_BASE_PATH says {want!r}: "
+            f"rebuild app/web with the same BOOKSNAP_BASE_PATH, or the page "
+            f"will load and its scripts will not"
+        )
 
 
 def _session_secure() -> bool:
@@ -194,7 +309,7 @@ def _mailer():
     rather than a branch inside a route (the credential-preflight rule).
     """
     host = os.environ.get("BOOKSNAP_SMTP_HOST", "").strip()
-    public = os.environ.get("BOOKSNAP_PUBLIC_URL") or _lan_base_url()
+    public = public_url()
     if not host:
         # ⚠ REFUSE in a deployed posture. ConsoleMailer prints the raw
         # sign-in link, which is the inversion its own module note says
@@ -227,7 +342,27 @@ def build() -> object:
     blobs = DiskBlobStore(blob_root())
     books = SqliteBookStore(path)
     tenancy = SqliteTenancyStore(path)
+    base = base_path()
+
+    @asynccontextmanager
+    async def lifespan(_app):
+        # At START-UP, not at import: uvicorn refuses to serve ("Application
+        # startup failed"), while `import app.main` — the contract tool,
+        # the pre-commit hook — stays inert. Deleting this call is caught
+        # by `test_the_server_refuses_to_START_with_a_client_built_for_
+        # another_prefix`, which enters the lifespan.
+        check_web_base(WEB_DIST, base)
+        yield
+
     return create_app(
+        # The URL prefix when the product shares a domain
+        # (malinvishne.com/booksnap). "" at a domain root. The proxy passes
+        # the path through untouched; Starlette strips the prefix itself.
+        root_path=base,
+        lifespan=lifespan,
+        # Bound ONLY by the deployment whose proxy stamps it (compose, behind
+        # the Cloudflare Worker) — see deps.get_visitor_header.
+        visitor_header=os.environ.get("BOOKSNAP_VISITOR_HEADER", "").strip() or None,
         docs=os.environ.get("BOOKSNAP_DOCS") == "1",
         # P4.1b: identity is the session cookie, resolved per request —
         # the dev principal and its bootstrap are DELETED, not parked

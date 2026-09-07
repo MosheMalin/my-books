@@ -82,16 +82,69 @@ OAUTH_FAILED = "#/login?error=provider"
 _MAX_NEXT = 200
 
 
-def _failed() -> RedirectResponse:
+def _root(request: Request) -> str:
+    """The URL prefix this deployment lives under (`create_app(root_path=)`),
+    ``""`` at a domain root.
+
+    ⚠ Every browser-facing path this router BUILDS goes through here: a
+    redirect to ``/#/…`` from a product served at ``/booksnap/`` lands on
+    whatever else the domain hosts, and a cookie scoped to
+    ``/api/v1/auth/oauth`` is never sent back to
+    ``/booksnap/api/v1/auth/oauth/…`` — the binding cookie then reads as
+    "a browser that did not start this flow", and every provider sign-in
+    is refused with the one sentence that is true of a forgery.
+    """
+    return request.scope.get("root_path", "") or ""
+
+
+def _oauth_cookie_path(request: Request) -> str:
+    return f"{_root(request)}{API_PREFIX}/auth/oauth"
+
+
+def _session_cookie_path(request: Request) -> str:
+    """``/`` at a domain root; ``/booksnap/`` under a prefix.
+
+    On a SHARED domain a ``Path=/`` session cookie rides along on every
+    request to the family's site at the apex — into that host's logs and
+    whatever reads them (security review). Scoping it stops the
+    transmission. It is only half a boundary: anything served on the same
+    host can still SET a cookie for this path (fixation) or fetch this
+    API with credentials, so the apex site is inside this product's trust
+    boundary — DEPLOY.md says so. The other half has no cookie attribute.
+    """
+    return f"{_root(request)}/"
+
+
+def _set_session(response: Response, request: Request, token: str,
+                 secure: bool) -> None:
+    """One place for the session cookie's attributes, both sign-in routes."""
+    if _root(request):
+        # A cookie set at "/" before this deployment moved under a prefix
+        # would sit beside the new one with the same name, and the browser
+        # sends both. Clear it once; at a domain root the two paths are
+        # the same cookie and there is nothing to clear.
+        response.delete_cookie(deps.SESSION_COOKIE, path="/")
+    response.set_cookie(
+        deps.SESSION_COOKIE,
+        token,
+        max_age=int(SESSION_LIFETIME.total_seconds()),
+        httponly=True,       # a script that can read the cookie can BE you
+        samesite="lax",      # the link lands via navigation; Lax lets it in
+        secure=secure,       # see the module note: per-deployment, not fixed
+        path=_session_cookie_path(request),
+    )
+
+
+def _failed(request: Request) -> RedirectResponse:
     """One answer for every refusal, and the binding cookie cleared with
     it — a flow that ended has no second attempt."""
-    answer = RedirectResponse(f"/{OAUTH_FAILED}",
+    answer = RedirectResponse(f"{_root(request)}/{OAUTH_FAILED}",
                               status_code=status.HTTP_303_SEE_OTHER)
-    answer.delete_cookie(deps.OAUTH_COOKIE, path=f"{API_PREFIX}/auth/oauth")
+    answer.delete_cookie(deps.OAUTH_COOKIE, path=_oauth_cookie_path(request))
     return answer
 
 
-def _source_hash(request: Request) -> str:
+def _source_hash(request: Request, visitor_header: str | None = None) -> str:
     """The requesting client's address, hashed for the rate window.
 
     Honestly: an UNSALTED hash of an IP is a rate-limit key, not
@@ -109,7 +162,18 @@ def _source_hash(request: Request) -> str:
     hour — measured at review). The fix belongs to the deployment: run
     uvicorn with --proxy-headers --forwarded-allow-ips=<proxy>, never an
     unconditional X-Forwarded-For read here (that hands the bypass back).
+
+    Behind the Cloudflare Worker the peer is Cloudflare, and the same
+    collapse returns one hop out. The deployment that has that proxy
+    BINDS a header name (`deps.get_visitor_header`); the header is read
+    only then, and Caddy is what guarantees it was stamped by Cloudflare
+    and not typed by the caller. Absent the binding — every other posture
+    — a caller-supplied header is ignored.
     """
+    if visitor_header:
+        stamped = request.headers.get(visitor_header, "").strip()
+        if stamped:
+            return hash_token(stamped)
     host = request.client.host if request.client else ""
     return hash_token(host)
 
@@ -121,6 +185,7 @@ def request_login_link(
     auth: AuthStore = Depends(deps.get_auth_store),
     mailer: Mailer = Depends(deps.get_mailer),
     clock: Clock = Depends(deps.get_clock),
+    visitor_header: str | None = Depends(deps.get_visitor_header),
 ) -> dict:
     """Mail a sign-in link. **202 whatever the address is** — known member,
     stranger, or future sign-up all read the same, so the route cannot be
@@ -135,7 +200,7 @@ def request_login_link(
                             "that does not look like an email address")
     now = clock.now_iso()
     since = rate_window_start(now)
-    source = _source_hash(request)
+    source = _source_hash(request, visitor_header)
     # Expired tokens serve no redeem and no rate window; what they DO hold
     # is an address in cleartext, forever, for anyone who ever typed one.
     # Each request sweeps — no cron to forget, cost one indexed DELETE.
@@ -166,6 +231,7 @@ def request_login_link(
              status_code=status.HTTP_201_CREATED)
 def redeem_login_link(
     body: SessionCreate,
+    request: Request,
     response: Response,
     auth: AuthStore = Depends(deps.get_auth_store),
     tenancy: TenancyStore = Depends(deps.get_tenancy_store),
@@ -206,15 +272,7 @@ def redeem_login_link(
                 raise
     session_token = secrets.token_urlsafe(32)
     auth.save_session(new_session(session_token, user.id, now))
-    response.set_cookie(
-        deps.SESSION_COOKIE,
-        session_token,
-        max_age=int(SESSION_LIFETIME.total_seconds()),
-        httponly=True,       # a script that can read the cookie can BE you
-        samesite="lax",      # the link lands via navigation; Lax lets it in
-        secure=secure,       # see the module note: per-deployment, not fixed
-        path="/",
-    )
+    _set_session(response, request, session_token, secure)
     return UserDTO(id=user.id, display_name=user.display_name)
 
 
@@ -233,7 +291,9 @@ def sign_out(
     raw = request.cookies.get(deps.SESSION_COOKIE)
     if raw:
         auth.revoke_session(hash_token(raw), at=clock.now_iso())
-    response.delete_cookie(deps.SESSION_COOKIE, path="/")
+    response.delete_cookie(deps.SESSION_COOKIE, path=_session_cookie_path(request))
+    if _root(request):
+        response.delete_cookie(deps.SESSION_COOKIE, path="/")
 
 # --- Google and Apple (P4.2, VISION §3) -----------------------------------
 
@@ -336,7 +396,7 @@ def start_oauth(
         httponly=True,
         samesite="none" if _form_post(chosen.key) else "lax",
         secure=secure or _form_post(chosen.key),
-        path=f"{API_PREFIX}/auth/oauth",
+        path=_oauth_cookie_path(request),
     )
     return answer
 
@@ -357,7 +417,7 @@ def oauth_callback_get(
     secure: bool = Depends(deps.get_session_secure),
 ) -> RedirectResponse:
     """Google's redirect back: a top-level GET."""
-    return _finish_oauth(provider, code, state,
+    return _finish_oauth(request, provider, code, state,
                          request.cookies.get(deps.OAUTH_COOKIE, ""),
                          auth, tenancy, states, providers, clock, ids, secure)
 
@@ -383,14 +443,14 @@ async def oauth_callback_post(
     unauthenticated POST safe to expose at all.
     """
     form = await request.form()
-    return _finish_oauth(provider, str(form.get("code") or ""),
+    return _finish_oauth(request, provider, str(form.get("code") or ""),
                          str(form.get("state") or ""),
                          request.cookies.get(deps.OAUTH_COOKIE, ""),
                          auth, tenancy, states, providers, clock, ids, secure)
 
 
-def _finish_oauth(provider: str, code: str, state: str, binding: str,
-                  auth: AuthStore, tenancy: TenancyStore,
+def _finish_oauth(request: Request, provider: str, code: str, state: str,
+                  binding: str, auth: AuthStore, tenancy: TenancyStore,
                   states: OAuthStateStore, providers: dict, clock: Clock,
                   ids: IdGen, secure: bool) -> RedirectResponse:
     """One implementation for both response modes.
@@ -409,12 +469,12 @@ def _finish_oauth(provider: str, code: str, state: str, binding: str,
         # one this list was missing — presented by a browser that did not
         # start it. One answer for all of them, like every other
         # credential refusal here.
-        return _failed()
+        return _failed(request)
     try:
         identity = chosen.exchange(code=code, verifier=in_flight.verifier,
                                    nonce=in_flight.nonce)
     except OAuthError:
-        return _failed()
+        return _failed(request)
 
     # THE anchor: a verified address is a verified address, whoever
     # confirmed it. Signing in with Google to the address that has been
@@ -432,17 +492,10 @@ def _finish_oauth(provider: str, code: str, state: str, binding: str,
 
     session_token = secrets.token_urlsafe(32)
     auth.save_session(new_session(session_token, user.id, now))
-    landing = RedirectResponse(f"/{in_flight.next_hash or ''}",
-                               status_code=status.HTTP_303_SEE_OTHER)
+    landing = RedirectResponse(
+        f"{_root(request)}/{in_flight.next_hash or ''}",
+        status_code=status.HTTP_303_SEE_OTHER)
     # The flow is over: the binding cookie has no second use.
-    landing.delete_cookie(deps.OAUTH_COOKIE, path=f"{API_PREFIX}/auth/oauth")
-    landing.set_cookie(
-        deps.SESSION_COOKIE,
-        session_token,
-        max_age=int(SESSION_LIFETIME.total_seconds()),
-        httponly=True,
-        samesite="lax",
-        secure=secure,
-        path="/",
-    )
+    landing.delete_cookie(deps.OAUTH_COOKIE, path=_oauth_cookie_path(request))
+    _set_session(landing, request, session_token, secure)
     return landing

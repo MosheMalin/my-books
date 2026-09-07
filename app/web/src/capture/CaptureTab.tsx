@@ -9,6 +9,7 @@
  * note on why `lib/books.tsx` is hand-rolled for the same reason).
  */
 import { useRef } from 'react'
+import { basePath } from '../api/client'
 import { useI18n } from '../lib/i18n'
 import { CaptureRow } from './CaptureRow'
 import { ImageWorkspace } from './ImageWorkspace'
@@ -89,7 +90,8 @@ export function CaptureTab() {
               }}
             />
             <p className="tiny muted phonehint">
-              📱 {t.phone_hint(typeof window !== 'undefined' ? window.location.host : '')}
+              📱 {t.phone_hint(typeof window !== 'undefined'
+                ? `${window.location.host}${basePath()}` : '')}
             </p>
 
             {cap.items.length > 0 && (

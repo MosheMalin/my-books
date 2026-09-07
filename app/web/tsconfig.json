@@ -21,6 +21,9 @@
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "noEmit": true,
+    // vite.config.ts names its helper with the extension, which is what
+    // Vite's coming native config loader (plain Node) can resolve.
+    "allowImportingTsExtensions": true,
 
     /* The shared library, consumed as source. It is compiled by THIS
        tsconfig, which is why app/ui carries the identical strictness — a

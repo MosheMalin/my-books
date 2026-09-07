@@ -22,7 +22,12 @@ COPY app/ui app/ui
 COPY app/web/package.json app/web/package-lock.json* app/web/
 RUN cd app/web && npm ci
 COPY app/web app/web
-RUN cd app/web && npm run build
+# The URL prefix is baked into the page at BUILD time (Vite's `base`), and
+# read again at RUN time by the server (`root_path`). Compose feeds both from
+# the one `BOOKSNAP_BASE_PATH` in .env; the server refuses to start when the
+# two disagree (`app/main.py:check_web_base`), naming both values.
+ARG BOOKSNAP_BASE_PATH=/
+RUN cd app/web && BOOKSNAP_BASE_PATH="$BOOKSNAP_BASE_PATH" npm run build
 
 # --- runtime ---------------------------------------------------------------
 FROM python:3.13-slim-bookworm AS runtime

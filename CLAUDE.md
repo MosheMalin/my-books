@@ -615,6 +615,16 @@ different world — the product never reads it.
   and *"Internal React error"* in a real browser while the ring stayed green:
   every test mounted the panel already pointing at a cell. Walk the
   TRANSITION, not the destination.
+- **A URL prefix lives in two places that cannot read each other.** Vite
+  bakes `BOOKSNAP_BASE_PATH` into the page at BUILD time; the server reads it
+  at RUN time as `root_path`. Built for one and served under the other, the
+  page loads, asks for `/assets/…` at the domain root and renders nothing —
+  with no request reaching the server to log. `app/main.py:check_web_base`
+  refuses at start-up naming both values. Every client URL goes through
+  `client.ts:apiUrl`; every server-built path through `auth.py:_root` (the
+  OAuth cookie's `Path` is the one that silently refuses every sign-in).
+  And from Git Bash, `BOOKSNAP_BASE_PATH=/booksnap` arrives as
+  `/C:/Program Files/Git/booksnap` — `MSYS_NO_PATHCONV=1` (measured).
 - **Reviewers get DETACHED worktrees, never a shared branch.**
   `git worktree add -f <dir> <branch>` four times puts one ref in four trees,
   so a commit in the primary moves it under all of them — three reviews
