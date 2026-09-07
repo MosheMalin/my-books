@@ -4534,3 +4534,9 @@ nothing in the log. What the deploy did NOT measure: the visitor-header rate
 door in effect — it would cost sixteen real mails to bounce, so the pieces
 stay structurally asserted and the collapse they prevent stays the review's
 measurement.
+
+Google sign-in: the owner completed the full round trip from an incognito
+window the same evening and landed on the existing account. What kept it
+off for an hour was not Google: compose never forwarded the credentials
+into the container, and the gate that enumerates app/main.py's settings is
+what that hour bought.
