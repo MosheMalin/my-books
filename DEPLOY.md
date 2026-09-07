@@ -260,6 +260,41 @@ What sharing a domain MEANS, stated plainly (security review):
   Cloudflare's ranges are in the Caddyfile by value — re-check them against
   https://www.cloudflare.com/ips when a deploy is years old.
 
+### The live deployment (2026-09-08)
+
+- **Host:** Hetzner Cloud CX23 (2 vCPU, 4 GB, Ubuntu 24.04, Helsinki),
+  server name `booksnap`, created from the API with the owner's deploy key
+  `~/.ssh/booksnap_deploy`; cloud-init installed Docker and a `ufw` that
+  admits 22/80/443 only. Hetzner retired the CX22 the week this landed.
+- **Checkout:** `/opt/booksnap`, a clone of the public GitHub repo, so
+  upgrading is the runbook's `git pull && docker compose up -d --build`.
+  `.env` is mode 600 and holds the Gmail app password as the SMTP
+  credential (`smtp.gmail.com:587`, STARTTLS).
+- **Data:** the owner's library was restored from a backup taken on the
+  laptop the same day (`tools/backup.py`, drilled locally, `scp`'d,
+  restored with `--i-mean-it`, drilled again on the server: 286 books, 36
+  photographs, schema v24). The daily `backup` service has been running
+  since; copying its output off the box is still the owner's job (the
+  `rsync` above).
+- **Cloudflare:** the DNS-only record, the Worker `booksnap-path` and the
+  route were created through the API with a token scoped to the zone;
+  `D:\tmp\deploy\cloudflare.sh` is the script, re-runnable.
+- **Verified from outside:** the family's site at the root and its
+  `/learning/…` page unchanged; `/booksnap` → 301 `/booksnap/` from the
+  Worker; the page's assets and icon under the prefix; the API 401 before
+  sign-in; the origin's `X-Content-Type-Options`, CSP and Referrer-Policy
+  pass through and HSTS does not; Caddy obtained its certificate on the
+  first try (tls-alpn-01, three Let's Encrypt vantage points); a sign-in
+  link requested through the live page was accepted by Gmail's SMTP with
+  no error logged. **Not measured live:** the visitor-header rate door —
+  it would take sixteen real mails to bounce; the pieces are asserted
+  structurally and the collapse it prevents was measured at review.
+- **Not yet enabled:** Google sign-in. The prefixed callback
+  `https://malinvishne.com/booksnap/api/v1/auth/oauth/google/callback` must
+  be registered on the OAuth client first; until then the credentials are
+  deliberately absent from the server's `.env` (absent, not disabled).
+  HSTS at the zone is likewise the owner's dashboard step.
+
 ⚠ Rebuilding with a different prefix is `docker compose up -d --build`
 with the new `.env` — a `--build` is what re-bakes the page. Building the
 client by hand on Windows from Git Bash needs `MSYS_NO_PATHCONV=1`, or

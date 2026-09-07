@@ -4520,3 +4520,17 @@ The public host is pinned to a constant instead.
 Mutation-checked, each restored byte-exact: the session path, the visitor
 header, the lifespan call, the public-URL check (one named test red each),
 and the phone-hint scan (one red). Gate green again.
+
+### Landed on the internet (2026-09-08)
+
+Hetzner CX23 in Helsinki (the CX22 the plan named had been retired that
+week), created from the API with a deploy key; Cloudflare's record, Worker
+and route created from the API with a zone-scoped token; the library seeded
+from a same-day laptop backup, drilled on both machines (286 books, 36
+photographs, v24). Caddy had its certificate 14 seconds after `up`. The
+family's site at the root answered byte-identical before and after. First
+sign-in link requested through the live page: Gmail's SMTP accepted it with
+nothing in the log. What the deploy did NOT measure: the visitor-header rate
+door in effect — it would cost sixteen real mails to bounce, so the pieces
+stay structurally asserted and the collapse they prevent stays the review's
+measurement.
