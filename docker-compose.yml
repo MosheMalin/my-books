@@ -38,6 +38,21 @@ services:
       BOOKSNAP_SESSION_SECURE: "1"
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       NLI_API_KEY: ${NLI_API_KEY:-}
+      # Provider sign-in (P4.2): each provider appears on the login screen
+      # only when its credentials exist — "configuration decides", so an
+      # empty value here is a provider that is ABSENT, not broken. ⚠ The
+      # container never sees the host's .env (it is dockerignored, and the
+      # composition root's dotenv loader reads the image's own root), so a
+      # key that is not listed HERE does not reach the app at all: the first
+      # live deploy shipped Google's credentials into .env and the button
+      # never appeared. `tests/test_integrations.py` now asserts every
+      # BOOKSNAP_* key app/main.py reads is either here or in the Dockerfile.
+      BOOKSNAP_GOOGLE_CLIENT_ID: ${BOOKSNAP_GOOGLE_CLIENT_ID:-}
+      BOOKSNAP_GOOGLE_CLIENT_SECRET: ${BOOKSNAP_GOOGLE_CLIENT_SECRET:-}
+      BOOKSNAP_APPLE_CLIENT_ID: ${BOOKSNAP_APPLE_CLIENT_ID:-}
+      BOOKSNAP_APPLE_TEAM_ID: ${BOOKSNAP_APPLE_TEAM_ID:-}
+      BOOKSNAP_APPLE_KEY_ID: ${BOOKSNAP_APPLE_KEY_ID:-}
+      BOOKSNAP_APPLE_PRIVATE_KEY: ${BOOKSNAP_APPLE_PRIVATE_KEY:-}
       # ⚠ Refusing, not defaulting: with no SMTP host the composition
       # root would bind the DEV mailer, which prints sign-in links to
       # the container log — a live credential for anyone who can read

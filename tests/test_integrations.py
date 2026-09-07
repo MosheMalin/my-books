@@ -913,3 +913,30 @@ def test_the_deployment_feeds_the_prefix_to_both_the_build_and_the_server():
     dockerfile = (_REPO / "Dockerfile").read_text(encoding="utf-8")
     assert "ARG BOOKSNAP_BASE_PATH" in dockerfile
     assert 'BOOKSNAP_BASE_PATH="$BOOKSNAP_BASE_PATH" npm run build' in dockerfile
+
+
+def test_every_setting_the_composition_root_reads_reaches_the_container():
+    """The container never sees the host's .env (dockerignored; the dotenv
+    loader reads the IMAGE's root), so a BOOKSNAP_* key app/main.py reads
+    is live in production only if compose lists it or the Dockerfile sets
+    it. Enumerated from the SOURCE: the first live deploy shipped Google's
+    credentials into .env and the sign-in button never appeared, because
+    the compose file listed the keys somebody remembered."""
+    import re
+
+    read = set(re.findall(r'environ(?:\.get\(|\[)"(BOOKSNAP_[A-Z_]+)"',
+                          (_REPO / "app" / "main.py").read_text(encoding="utf-8")))
+    assert len(read) >= 15, read                       # non-vacuous
+    compose = (_REPO / "docker-compose.yml").read_text(encoding="utf-8")
+    api = compose.split("\n  staff:")[0]              # the api service only
+    passed = set(re.findall(r"^\s+(BOOKSNAP_[A-Z_]+):", api, flags=re.M))
+    dockerfile = (_REPO / "Dockerfile").read_text(encoding="utf-8")
+    baked = set(re.findall(r"(BOOKSNAP_[A-Z_]+)=", dockerfile))
+    # Deliberately NOT forwarded, each with its reason on record.
+    excused = {
+        "BOOKSNAP_DOCS",   # swagger-ui from a CDN on the session origin: off
+    }
+    missing = read - passed - baked - excused
+    assert not missing, (
+        f"app/main.py reads {sorted(missing)} but the deployment never "
+        f"hands them to the container: set in .env, they do nothing")
